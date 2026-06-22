@@ -32,8 +32,8 @@ interface Step3Props {
 const contactFields = [
   { value: 'name', label: 'Contact Name' },
   { value: 'phone', label: 'Phone Number' },
-  { value: 'email', label: 'Email Address' },
-  { value: 'company', label: 'Company' },
+  { value: 'email', label: 'Endereço de e-mail' },
+  { value: 'company', label: 'Empresa' },
 ];
 
 const SAMPLE_CONTACT: Contact = {
@@ -197,7 +197,7 @@ export function Step3Personalize({
       {placeholders.length === 0 ? (
         <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
           <p className="text-sm text-muted-foreground">
-            This template has no variables to personalize.
+            Este modelo não possui variáveis para personalizar.
           </p>
         </div>
       ) : (
@@ -220,7 +220,7 @@ export function Step3Personalize({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      Mapping Type
+                      Tipo de associação
                     </label>
                     <Select
                       value={mapping.type}
@@ -238,7 +238,7 @@ export function Step3Personalize({
                         <SelectItem value="static">Static Value</SelectItem>
                         <SelectItem value="field">Contact Field</SelectItem>
                         <SelectItem value="custom_field">
-                          Custom Field
+                          Campo personalizado
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -246,7 +246,7 @@ export function Step3Personalize({
 
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {mapping.type === 'static' ? 'Value' : 'Field'}
+                      {mapping.type === 'static' ? 'Valor' : 'Field'}
                     </label>
                     {mapping.type === 'static' ? (
                       <Input
@@ -286,7 +286,7 @@ export function Step3Personalize({
                           <SelectValue
                             placeholder={
                               loadingFields
-                                ? 'Loading…'
+                                ? 'Carregando…'
                                 : customFields.length === 0
                                   ? 'No custom fields'
                                   : 'Select custom field…'
@@ -347,14 +347,14 @@ export function Step3Personalize({
           className="border-border text-muted-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back
+          Voltar
         </Button>
         <Button
           onClick={onNext}
           disabled={unmappedKeys.length > 0}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          Next
+          Avançar
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>

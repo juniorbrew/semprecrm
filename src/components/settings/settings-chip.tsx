@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * Small status / role pill used across the settings redesign
- * (Overview tiles, WhatsApp banner, the "Active" appearance markers).
+ * (Overview tiles, WhatsApp banner, the "Ativo" appearance markers).
  *
  * Status colours (emerald = good, amber = attention) follow the same
  * Tailwind palette the members tab already uses for role chips — they

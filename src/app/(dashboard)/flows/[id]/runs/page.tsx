@@ -62,12 +62,12 @@ const STATUS_META: Record<
   { label: string; classes: string; icon: typeof Clock }
 > = {
   active: {
-    label: "Active",
+    label: "Ativo",
     classes: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
     icon: PlayCircle,
   },
   completed: {
-    label: "Completed",
+    label: "Concluído",
     classes: "border-border bg-muted text-muted-foreground",
     icon: CircleCheck,
   },
@@ -87,7 +87,7 @@ const STATUS_META: Record<
     icon: PauseCircle,
   },
   failed: {
-    label: "Failed",
+    label: "Falhou",
     classes: "border-red-600/40 bg-red-500/10 text-red-300",
     icon: CircleAlert,
   },
@@ -180,7 +180,7 @@ export default function FlowRunsPage() {
         <ArrowLeft className="h-3 w-3" />
         {flow.name}
       </button>
-      <h1 className="text-xl font-semibold text-foreground">Runs</h1>
+      <h1 className="text-xl font-semibold text-foreground">Execuções</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         The 50 most recent times this flow ran. Expand a row to see the engine&apos;s
         per-step log.
@@ -279,7 +279,7 @@ function RunCard({
           <div className="flex flex-col gap-1">
             {events.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No events recorded for this run.
+                Nenhum evento registrado nesta execução.
               </p>
             ) : (
               events.map((ev, ix) => <EventLine key={ix} ev={ev} />)

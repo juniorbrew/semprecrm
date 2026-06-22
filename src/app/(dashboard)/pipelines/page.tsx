@@ -41,7 +41,7 @@ const SPEC_DEFAULT_STAGES = [
   { name: "Qualified", color: "#eab308", position: 1 }, // yellow
   { name: "Proposal Sent", color: "#f97316", position: 2 }, // orange
   { name: "Negotiation", color: "#8b5cf6", position: 3 }, // purple
-  { name: "Won", color: "#22c55e", position: 4 }, // green
+  { name: "Ganho", color: "#22c55e", position: 4 }, // green
 ];
 
 export default function PipelinesPage() {
@@ -62,7 +62,7 @@ export default function PipelinesPage() {
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Deal form state is lifted here so both the top-bar "Add Deal" and
+  // Deal form state is lifted here so both the top-bar "Adicionar negócio" and
   // the per-column "+" trigger the same Sheet.
   const [dealFormOpen, setDealFormOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
@@ -77,7 +77,7 @@ export default function PipelinesPage() {
       .select("*")
       .order("created_at");
     if (error) {
-      console.error("Failed to load pipelines:", error.message);
+      console.error("Falha ao carregar funis:", error.message);
       return [];
     }
     return data ?? [];
@@ -425,7 +425,7 @@ export default function PipelinesPage() {
       <Dialog open={newPipelineOpen} onOpenChange={setNewPipelineOpen}>
         <DialogContent className="sm:max-w-sm bg-popover border-border">
           <DialogHeader>
-            <DialogTitle className="text-popover-foreground">New Pipeline</DialogTitle>
+            <DialogTitle className="text-popover-foreground">Novo funil</DialogTitle>
           </DialogHeader>
           <div className="py-2">
             <Label className="text-muted-foreground">Pipeline Name</Label>
@@ -448,14 +448,14 @@ export default function PipelinesPage() {
               onClick={() => setNewPipelineOpen(false)}
               className="border-border text-muted-foreground hover:bg-muted"
             >
-              Cancel
+              Cancelar
             </Button>
             <Button
               onClick={handleCreatePipeline}
               disabled={creating || !newPipelineName.trim()}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              {creating ? "Creating..." : "Create Pipeline"}
+              {creating ? "Criando..." : "Criar funil"}
             </Button>
           </DialogFooter>
         </DialogContent>

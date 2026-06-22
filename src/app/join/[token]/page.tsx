@@ -12,7 +12,7 @@
 //   ├──────────────────────┼───────────────┼─────────────────────────┤
 //   │ loading              │ —             │ spinner                  │
 //   │ ok:false (any reason)│ —             │ friendly error + signup  │
-//   │ ok:true              │ signed out    │ "Sign up" + "Sign in"    │
+//   │ ok:true              │ signed out    │ "Sign up" + "Entrar"    │
 //   │ ok:true              │ signed in     │ "Accept" button → redeem │
 //   └──────────────────────┴───────────────┴─────────────────────────┘
 //
@@ -66,9 +66,9 @@ interface PeekFail {
 type PeekResult = PeekOk | PeekFail;
 
 const ROLE_LABEL: Record<PeekOk['role'], string> = {
-  admin: 'Admin',
-  agent: 'Agent',
-  viewer: 'Viewer',
+  admin: 'Administrador',
+  agent: 'Agente',
+  viewer: 'Visualizador',
 };
 
 const FAIL_COPY: Record<PeekFail['reason'], { title: string; body: string }> = {
@@ -85,7 +85,7 @@ const FAIL_COPY: Record<PeekFail['reason'], { title: string; body: string }> = {
     body: 'This invitation has expired. Ask the account admin to send a new one — they take a few seconds to generate.',
   },
   server_error: {
-    title: 'Something went wrong',
+    title: 'Algo deu errado',
     body: 'We couldn’t verify this invitation right now. Try refreshing the page in a moment.',
   },
 };
@@ -109,7 +109,7 @@ export default function JoinPage() {
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
-  // Extracted so the "Try again" button on the server_error card
+  // Extracted so the "Tentar novamente" button on the server_error card
   // can re-run the same logic without remounting the component.
   const loadPeekAndAuth = useCallback(async () => {
     if (!token) return;
@@ -197,7 +197,7 @@ export default function JoinPage() {
       window.location.href = '/dashboard';
     } catch (err) {
       console.error('[join] redeem error:', err);
-      toast.error('Could not reach the server');
+      toast.error('Não foi possível acessar o servidor');
       setAccepting(false);
     }
   }, [token]);

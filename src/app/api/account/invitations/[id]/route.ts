@@ -61,7 +61,7 @@ export async function DELETE(
       // account). 404 either way — surfacing "exists but not
       // yours" would leak existence.
       return NextResponse.json(
-        { error: "Invitation not found" },
+        { error: "Convite não encontrado" },
         { status: 404 },
       );
     }

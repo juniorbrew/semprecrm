@@ -32,7 +32,7 @@ export function ValidationPanel() {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-background p-3 text-sm font-medium text-emerald-300">
         <CircleCheck className="h-4 w-4 shrink-0" />
-        No issues. Ready to activate.
+        Nenhum problema. Pronto para ativar.
       </div>
     );
   }

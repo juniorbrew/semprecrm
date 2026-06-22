@@ -56,7 +56,7 @@ export default function EditAutomationPage({
           onClick={() => router.push("/automations")}
           className="text-sm text-primary hover:text-primary/80"
         >
-          Back to Automations
+          Voltar para Automações
         </button>
       </div>
     )

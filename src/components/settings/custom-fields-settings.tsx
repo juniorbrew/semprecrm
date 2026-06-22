@@ -24,10 +24,10 @@ export function CustomFieldsSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-foreground">
           <SlidersHorizontal className="size-4 text-primary" />
-          Custom fields
+          Campos personalizados
           <SettingsChip variant="admin" className="font-medium">
             <Shield />
-            Admin
+            Administrador
           </SettingsChip>
         </CardTitle>
         <CardDescription className="text-muted-foreground">

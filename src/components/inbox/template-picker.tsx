@@ -317,7 +317,7 @@ export function TemplatePicker({
                 className="border-border text-popover-foreground hover:bg-muted"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back
+                Voltar
               </Button>
               <Button
                 disabled={!canConfirm}
@@ -333,7 +333,7 @@ export function TemplatePicker({
               onClick={() => handleOpenChange(false)}
               className="border-border text-popover-foreground hover:bg-muted"
             >
-              Cancel
+              Cancelar
             </Button>
           )}
         </DialogFooter>

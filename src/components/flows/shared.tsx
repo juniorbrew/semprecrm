@@ -71,7 +71,7 @@ export const NODE_META: Record<
 > = {
   start: { label: "Start", icon: PlayCircle, color: "text-emerald-400" },
   send_message: {
-    label: "Send message",
+    label: "Enviar mensagem",
     icon: MessageCircle,
     color: "text-sky-400",
   },

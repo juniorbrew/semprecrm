@@ -35,7 +35,7 @@ export function CustomFieldsManager({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-popover text-popover-foreground sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-popover-foreground">Custom fields</DialogTitle>
+          <DialogTitle className="text-popover-foreground">Campos personalizados</DialogTitle>
           <DialogDescription className="text-muted-foreground">
             Define extra contact fields (e.g. ZIP code, lead source). They
             appear on every contact and in the “Update Contact Field” automation

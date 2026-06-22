@@ -194,7 +194,7 @@ export function ContactForm({
         }
       }
 
-      toast.success(isEdit ? 'Contact updated' : 'Contact created');
+      toast.success(isEdit ? 'Contato atualizado' : 'Contato criado');
       onOpenChange(false);
       onSaved();
     } catch (err: unknown) {
@@ -214,7 +214,7 @@ export function ContactForm({
         }
         return;
       }
-      const message = err instanceof Error ? err.message : 'Failed to save contact';
+      const message = err instanceof Error ? err.message : 'Falha ao salvar contato';
       toast.error(message);
     } finally {
       setSaving(false);
@@ -226,7 +226,7 @@ export function ContactForm({
       <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-popover-foreground">
-            {isEdit ? 'Edit Contact' : 'Add Contact'}
+            {isEdit ? 'Editar contato' : 'Adicionar contato'}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {isEdit
@@ -325,7 +325,7 @@ export function ContactForm({
           </div>
 
           <div className="space-y-2">
-            <Label className="text-muted-foreground">Tags</Label>
+            <Label className="text-muted-foreground">Etiquetas</Label>
             {loadingTags ? (
               <div className="flex items-center gap-2 text-muted-foreground text-sm">
                 <Loader2 className="size-3 animate-spin" />
@@ -333,7 +333,7 @@ export function ContactForm({
               </div>
             ) : tags.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No tags available. Create tags in Settings.
+                Nenhuma etiqueta disponível. Crie etiquetas nas Configurações.
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
@@ -370,7 +370,7 @@ export function ContactForm({
               onClick={() => onOpenChange(false)}
               className="border-border text-muted-foreground hover:bg-muted"
             >
-              Cancel
+              Cancelar
             </Button>
             <Button
               type="submit"
@@ -378,7 +378,7 @@ export function ContactForm({
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {saving && <Loader2 className="size-4 animate-spin" />}
-              {isEdit ? 'Update' : 'Create'}
+              {isEdit ? 'Atualizar' : 'Criar'}
             </Button>
           </DialogFooter>
         </form>

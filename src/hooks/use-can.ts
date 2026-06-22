@@ -35,7 +35,7 @@ export type CanAction =
  *
  * Example:
  *   const canEdit = useCan("edit-settings");
- *   <Button disabled={!canEdit} title={canEdit ? "Save" : "Read-only"} />
+ *   <Button disabled={!canEdit} title={canEdit ? "Salvar" : "Read-only"} />
  */
 export function useCan(action: CanAction): boolean {
   const { profileLoading, accountRole } = useAuth();

@@ -53,7 +53,7 @@ const audienceOptions: {
   },
   {
     type: 'tags',
-    label: 'Filter by Tags',
+    label: 'Filtrar por etiquetas',
     description: 'Target contacts with specific tags',
     icon: Tags,
   },
@@ -90,7 +90,7 @@ export function Step2SelectAudience({
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
 
-  // Tags are used both by the primary "Filter by Tags" audience type
+  // Tags are used both by the primary "Filtrar por etiquetas" audience type
   // AND by the exclude-list below — so always load once on mount.
   useEffect(() => {
     async function fetchTags() {
@@ -189,7 +189,7 @@ export function Step2SelectAudience({
         );
         setEstimatedCount(effective.length);
       } else {
-        // "All" — fetch the total, then subtract exclude set if any.
+        // "Todos" — fetch the total, then subtract exclude set if any.
         const { count } = await supabase
           .from('contacts')
           .select('*', { count: 'exact', head: true });
@@ -251,7 +251,7 @@ export function Step2SelectAudience({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Select Audience</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Choose who will receive this broadcast.
+          Escolha quem receberá este disparo.
         </p>
       </div>
 
@@ -310,7 +310,7 @@ export function Step2SelectAudience({
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
           ) : tags.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No tags found. Create tags in Settings.
+              Nenhuma etiqueta encontrada. Crie etiquetas nas Configurações.
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -346,7 +346,7 @@ export function Step2SelectAudience({
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
           ) : customFields.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No custom fields defined. Create one in Settings → Custom Fields.
+              Nenhum campo personalizado definido. Crie um em Configurações → Campos personalizados.
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)]">
@@ -381,7 +381,7 @@ export function Step2SelectAudience({
                 type="text"
                 value={audience.customField?.value ?? ''}
                 onChange={(e) => updateCustomField({ value: e.target.value })}
-                placeholder="Value"
+                placeholder="Valor"
                 className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
               />
             </div>
@@ -394,7 +394,7 @@ export function Step2SelectAudience({
         <div className="mb-3 flex items-center gap-2">
           <X className="h-4 w-4 text-red-400" />
           <p className="text-sm font-medium text-foreground">
-            Exclude contacts with these tags
+            Excluir contatos com estas etiquetas
           </p>
           <span className="text-xs text-muted-foreground">(optional)</span>
         </div>
@@ -428,7 +428,7 @@ export function Step2SelectAudience({
 
       {/* Audience Summary */}
       <div className="rounded-xl border border-border bg-card/50 p-4">
-        <p className="mb-2 text-sm font-medium text-foreground">Audience Summary</p>
+        <p className="mb-2 text-sm font-medium text-foreground">Resumo do público</p>
         {loadingCount ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -444,7 +444,7 @@ export function Step2SelectAudience({
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Select an audience type to see the estimate.
+            Selecione um tipo de público para ver a estimativa.
           </p>
         )}
       </div>
@@ -456,14 +456,14 @@ export function Step2SelectAudience({
           className="border-border text-muted-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back
+          Voltar
         </Button>
         <Button
           onClick={onNext}
           disabled={!isValid}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          Next
+          Avançar
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>

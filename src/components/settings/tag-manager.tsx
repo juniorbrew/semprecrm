@@ -153,7 +153,7 @@ export function TagManager() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-foreground">
           <TagIcon className="size-4 text-primary" />
-          Tags
+          Etiquetas
         </CardTitle>
         <CardDescription className="text-muted-foreground">
           Colour-coded labels for grouping and filtering contacts.
@@ -265,7 +265,7 @@ export function TagManager() {
               onClick={() => setDeleteDialogOpen(false)}
               disabled={deleting}
             >
-              Cancel
+              Cancelar
             </Button>
             <Button
               variant="destructive"

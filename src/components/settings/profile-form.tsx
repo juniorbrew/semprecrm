@@ -207,7 +207,7 @@ export function ProfileForm() {
   return (
     <section className="max-w-2xl animate-in fade-in-50 duration-200">
       <SettingsPanelHead
-        title="Your profile"
+        title="Seu perfil"
         description="How you show up across the app. Your avatar and name appear in the header, sidebar, and anywhere your teammates see you."
       />
       <form onSubmit={onSubmit} className="space-y-4">
@@ -239,7 +239,7 @@ export function ProfileForm() {
                 disabled={saving}
               >
                 <Upload className="size-4" />
-                {currentAvatar ? 'Change photo' : 'Upload photo'}
+                {currentAvatar ? 'Alterar foto' : 'Upload photo'}
               </Button>
               {currentAvatar && (
                 <Button
@@ -307,7 +307,7 @@ export function ProfileForm() {
             </p>
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-muted-foreground">Role</dt>
+                <dt className="text-muted-foreground">Função</dt>
                 <dd className="mt-0.5 font-mono text-foreground">
                   {profile?.role ?? 'user'}
                 </dd>
@@ -343,7 +343,7 @@ export function ProfileForm() {
                 Saving…
               </>
             ) : (
-              'Save changes'
+              'Salvar alterações'
             )}
           </Button>
         </div>

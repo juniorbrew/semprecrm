@@ -68,9 +68,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Choose a Template</h2>
+        <h2 className="text-lg font-semibold text-foreground">Escolha um modelo</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Select an approved message template for your broadcast.
+          Selecione um modelo de mensagem aprovado para o disparo.
         </p>
       </div>
 
@@ -119,14 +119,14 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
 
       <div className="flex items-center justify-between border-t border-border pt-4">
         <Button variant="outline" onClick={onBack} className="border-border text-muted-foreground">
-          Back
+          Voltar
         </Button>
         <Button
           onClick={onNext}
           disabled={!selectedTemplate}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          Next
+          Avançar
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>

@@ -14,7 +14,7 @@
  *     "true" / "false", list row title) so a branching flow reads
  *     as a real decision tree.
  *   - Click a node → side-sheet opens with the same per-node form
- *     the list view uses, plus "Set as entry" / "Delete".
+ *     the list view uses, plus "Set as entry" / "Excluir".
  *   - Drag from a source handle on one node to a target handle on
  *     another → wires that slot's `next_node_key`. Per-slot handles
  *     for multi-outgoing types (condition, send_buttons, send_list)
@@ -153,7 +153,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         </span>
         {isEntry && (
           <span className="ml-auto rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-300">
-            Entry
+            Entrada
           </span>
         )}
       </div>
@@ -482,7 +482,7 @@ function FlowCanvasInner() {
           onEdgesDelete={handleEdgesDelete}
           // Default is "Backspace" only — accept both so Mac users
           // hitting Delete (Fn+Backspace) get the same behavior.
-          deleteKeyCode={["Backspace", "Delete"]}
+          deleteKeyCode={["Backspace", "Excluir"]}
           nodesConnectable={true}
           edgesFocusable={true}
           elementsSelectable={true}
@@ -570,7 +570,7 @@ function NodeEditSheet({
             <span>{meta.label}</span>
             {isEntry && (
               <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                Entry
+                Entrada
               </span>
             )}
           </SheetTitle>
@@ -591,7 +591,7 @@ function NodeEditSheet({
         <SheetFooter className="border-t border-border px-5 py-3 sm:flex-row sm:justify-between">
           {!isEntry ? (
             <Button variant="ghost" size="sm" onClick={onSetEntry}>
-              Set as entry
+              Definir como entrada
             </Button>
           ) : (
             <span />
@@ -603,7 +603,7 @@ function NodeEditSheet({
             className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Delete node
+            Excluir nó
           </Button>
         </SheetFooter>
       </SheetContent>
@@ -659,10 +659,10 @@ function CanvasAddNodeButton() {
     <DropdownMenu>
       <DropdownMenuTrigger
         className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-lg transition-colors hover:bg-muted"
-        aria-label="Add node"
+        aria-label="Adicionar nó"
       >
         <Plus className="h-3.5 w-3.5" />
-        Add node
+        Adicionar nó
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="border-border bg-popover">
         {ADD_NODE_TYPES.map((t) => {

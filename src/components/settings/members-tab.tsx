@@ -79,9 +79,9 @@ interface Invitation {
 // Editable roles in the inline dropdown. Owner is never an option —
 // promotions go through the (deferred) Transfer Ownership flow.
 const EDITABLE_ROLES: { value: AccountRole; label: string; hint: string }[] = [
-  { value: 'admin', label: 'Admin', hint: 'Manage members + everything' },
-  { value: 'agent', label: 'Agent', hint: 'Use features; no settings' },
-  { value: 'viewer', label: 'Viewer', hint: 'Read-only across the app' },
+  { value: 'admin', label: 'Administrador', hint: 'Manage members + everything' },
+  { value: 'agent', label: 'Agente', hint: 'Use features; no settings' },
+  { value: 'viewer', label: 'Visualizador', hint: 'Read-only across the app' },
 ];
 
 // Per-role chip metadata (icon / label / colour) lives in the shared
@@ -151,7 +151,7 @@ export function MembersTab() {
       }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
-      toast.error('Could not reach the server');
+      toast.error('Não foi possível acessar o servidor');
     } finally {
       setLoading(false);
     }
@@ -203,7 +203,7 @@ export function MembersTab() {
         ),
       );
       console.error('[MembersTab] role change error:', err);
-      toast.error('Could not reach the server');
+      toast.error('Não foi possível acessar o servidor');
     } finally {
       setPendingMemberAction(null);
     }
@@ -229,7 +229,7 @@ export function MembersTab() {
       setRemovingMember(null);
     } catch (err) {
       console.error('[MembersTab] remove error:', err);
-      toast.error('Could not reach the server');
+      toast.error('Não foi possível acessar o servidor');
     } finally {
       setPendingMemberAction(null);
     }
@@ -249,7 +249,7 @@ export function MembersTab() {
       setInvitations((prev) => prev.filter((i) => i.id !== invite.id));
     } catch (err) {
       console.error('[MembersTab] revoke error:', err);
-      toast.error('Could not reach the server');
+      toast.error('Não foi possível acessar o servidor');
     }
   }
 
@@ -264,7 +264,7 @@ export function MembersTab() {
   return (
     <section className="animate-in fade-in-50 space-y-6 duration-200">
       <SettingsPanelHead
-        title="Team members"
+        title="Membros da equipe"
         description="People with access to this account. Roles control what each teammate can do."
         action={
           <RequireRole min="admin">
@@ -438,7 +438,7 @@ export function MembersTab() {
                   No pending invitations.
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Click <span className="text-muted-foreground">Invite member</span>{' '}
+                  Click <span className="text-muted-foreground">Convidar membro</span>{' '}
                   above to generate a shareable link.
                 </p>
               </CardContent>
@@ -529,7 +529,7 @@ export function MembersTab() {
               onClick={() => setRemovingMember(null)}
               className="border-border text-muted-foreground hover:bg-muted"
             >
-              Cancel
+              Cancelar
             </Button>
             <Button
               onClick={handleRemove}
@@ -542,7 +542,7 @@ export function MembersTab() {
                   Removing...
                 </>
               ) : (
-                'Remove member'
+                'Remover membro'
               )}
             </Button>
           </DialogFooter>

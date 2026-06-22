@@ -48,7 +48,7 @@ export function ResponseTimeChart({
       <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold text-foreground">
-            Average First Response Time
+            Tempo médio da primeira resposta
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Minutes to reply to a customer&apos;s first unreplied message, by

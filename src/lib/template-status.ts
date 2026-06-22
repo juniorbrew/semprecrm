@@ -19,11 +19,11 @@ export const templateStatusConfig: Record<
   TemplateStatusDisplay
 > = {
   DRAFT: {
-    label: 'Draft',
+    label: 'Rascunho',
     classes: 'bg-slate-600/20 text-muted-foreground border-slate-600/30',
   },
   PENDING: {
-    label: 'Pending',
+    label: 'Pendente',
     classes: 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30',
   },
   APPROVED: {
@@ -35,7 +35,7 @@ export const templateStatusConfig: Record<
     classes: 'bg-red-600/20 text-red-400 border-red-600/30',
   },
   PAUSED: {
-    label: 'Paused',
+    label: 'Pausado',
     classes: 'bg-orange-600/20 text-orange-400 border-orange-600/30',
   },
   DISABLED: {

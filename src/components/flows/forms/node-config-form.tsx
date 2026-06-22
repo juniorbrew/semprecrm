@@ -329,7 +329,7 @@ function SendButtonsForm({
             className="mt-2"
           >
             <Plus className="h-3.5 w-3.5" />
-            Add button
+            Adicionar botão
           </Button>
         )}
       </div>
@@ -555,7 +555,7 @@ function SendListForm({
                 className="mt-1"
               >
                 <Plus className="h-3.5 w-3.5" />
-                Add row
+                Adicionar linha
               </Button>
             )}
           </div>
@@ -566,7 +566,7 @@ function SendListForm({
         {sections.length < 10 && (
           <Button variant="outline" size="sm" onClick={addSection}>
             <Plus className="h-3.5 w-3.5" />
-            Add section
+            Adicionar seção
           </Button>
         )}
       </div>
@@ -710,7 +710,7 @@ function ConditionForm({
         </div>
         {showValue && (
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Value</label>
+            <label className="mb-1 block text-xs text-muted-foreground">Valor</label>
             <Input
               value={cfg.value ?? ""}
               onChange={(e) => onUpdateConfig({ value: e.target.value })}
@@ -951,7 +951,7 @@ function SendMediaForm({
             <SelectItem value="image">Image (PNG, JPEG, WebP)</SelectItem>
             <SelectItem value="video">Video (MP4, 3GP)</SelectItem>
             <SelectItem value="document">
-              Document (PDF, Word, Excel, PowerPoint, TXT)
+              Documento (PDF, Word, Excel, PowerPoint, TXT)
             </SelectItem>
           </SelectContent>
         </Select>
@@ -991,12 +991,12 @@ function SendMediaForm({
             {uploading ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Uploading…
+                Enviando…
               </>
             ) : (
               <>
                 <Upload className="h-3.5 w-3.5" />
-                Click to upload (max 16 MB)
+                Clique para enviar (máx. 16 MB)
               </>
             )}
           </button>
@@ -1025,7 +1025,7 @@ function SendMediaForm({
       {isDocument && (
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">
-            Filename shown to the customer (documents only)
+            Nome do arquivo exibido ao cliente (somente documentos)
           </label>
           <Input
             value={cfg.filename ?? ""}

@@ -81,7 +81,7 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
   return {
     activeConversations: {
       current: openConvCur.count ?? 0,
-      // "vs yesterday" on a current-state count has no clean answer
+      // "em relação a ontem" on a current-state count has no clean answer
       // without snapshots — we show the delta in NEW open conversations
       // today vs yesterday. That's the business-meaningful daily signal.
       previous: (newConvToday.count ?? 0) - (newConvYesterday.count ?? 0),

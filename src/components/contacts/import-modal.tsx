@@ -524,7 +524,7 @@ export function ImportModal({
                         )}
                         {previewHasTags && (
                           <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">
-                            Tags
+                            Etiquetas
                           </th>
                         )}
                       </tr>
@@ -627,7 +627,7 @@ export function ImportModal({
             onClick={() => handleOpenChange(false)}
             className="border-border text-muted-foreground hover:bg-muted"
           >
-            {result ? 'Close' : 'Cancel'}
+            {result ? 'Fechar' : 'Cancelar'}
           </Button>
           {!result && (
             <Button

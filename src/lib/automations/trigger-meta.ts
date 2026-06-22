@@ -1,9 +1,10 @@
-import type { AutomationTriggerType } from '@/types'
+import type { AutomationTriggerType } from '@/types';
+import type { Language } from '@/lib/i18n';
 
 export interface TriggerMeta {
-  label: string
+  label: string;
   /** Tailwind classes for the Badge pill on the list row. */
-  pillClass: string
+  pillClass: string;
 }
 
 export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
@@ -35,25 +36,55 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Time-Based',
     pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
   },
+};
+
+const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
+  new_message_received: 'Nova mensagem',
+  first_inbound_message: 'Primeira mensagem do contato',
+  keyword_match: 'Correspondência de palavra-chave',
+  new_contact_created: 'Novo contato',
+  conversation_assigned: 'Conversa atribuída',
+  tag_added: 'Etiqueta adicionada',
+  time_based: 'Baseado em horário',
+};
+
+export function triggerMeta(
+  t: AutomationTriggerType | string,
+  language: Language = 'en-US'
+): TriggerMeta {
+  const meta = TRIGGER_META[t as AutomationTriggerType] ?? {
+    label: t,
+    pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
+  };
+  return language === 'pt-BR'
+    ? {
+        ...meta,
+        label: PT_BR_TRIGGER_LABELS[t as AutomationTriggerType] ?? meta.label,
+      }
+    : meta;
 }
 
-export function triggerMeta(t: AutomationTriggerType | string): TriggerMeta {
-  return (
-    TRIGGER_META[t as AutomationTriggerType] ?? {
-      label: t,
-      pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
-    }
-  )
-}
-
-export function formatRelative(iso: string | null | undefined): string {
-  if (!iso) return 'never'
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return 'never'
-  const diffSec = Math.round((Date.now() - then) / 1000)
-  if (diffSec < 60) return 'just now'
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
-  if (diffSec < 2_592_000) return `${Math.floor(diffSec / 86400)}d ago`
-  return new Date(iso).toLocaleDateString()
+export function formatRelative(
+  iso: string | null | undefined,
+  language: Language = 'en-US'
+): string {
+  const pt = language === 'pt-BR';
+  if (!iso) return pt ? 'nunca' : 'never';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return pt ? 'nunca' : 'never';
+  const diffSec = Math.round((Date.now() - then) / 1000);
+  if (diffSec < 60) return pt ? 'agora' : 'just now';
+  if (diffSec < 3600)
+    return pt
+      ? `há ${Math.floor(diffSec / 60)} min`
+      : `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400)
+    return pt
+      ? `há ${Math.floor(diffSec / 3600)} h`
+      : `${Math.floor(diffSec / 3600)}h ago`;
+  if (diffSec < 2_592_000)
+    return pt
+      ? `há ${Math.floor(diffSec / 86400)} d`
+      : `${Math.floor(diffSec / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString(language);
 }

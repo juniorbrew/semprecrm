@@ -400,7 +400,7 @@ export function MessageComposer({
             onClick={onOpenTemplates}
           >
             <LayoutTemplate className="mr-1 h-3 w-3" />
-            Templates
+            Modelos
           </Button>
         </div>
       )}
@@ -459,7 +459,7 @@ export function MessageComposer({
             onClick={cancelRecording}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-card hover:text-foreground"
           >
-            Cancel
+            Cancelar
           </button>
           <Button
             size="sm"
@@ -481,7 +481,7 @@ export function MessageComposer({
                   ? "Read-only — your role can't send messages"
                   : inputsDisabled
                     ? undefined
-                    : "Attach media"
+                    : "Anexar mídia"
               }
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -494,19 +494,19 @@ export function MessageComposer({
             <DropdownMenuContent align="start" className="border-border bg-popover">
               <DropdownMenuItem onClick={() => imageInputRef.current?.click()}>
                 <ImageIcon className="mr-2 h-4 w-4" />
-                Photo
+                Foto
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => videoInputRef.current?.click()}>
                 <Video className="mr-2 h-4 w-4" />
-                Video
+                Vídeo
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
                 <FileText className="mr-2 h-4 w-4" />
-                Document
+                Documento
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => void startRecording()}>
                 <Mic className="mr-2 h-4 w-4" />
-                Voice note
+                Mensagem de voz
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -565,7 +565,7 @@ export function MessageComposer({
           under the textarea left edge. */}
       {!draft && !recording && (
         <p className="mt-1 pl-[5.5rem] text-[10px] text-muted-foreground">
-          Type &apos;/&apos; for quick replies
+          Digite &apos;/&apos; para respostas rápidas
         </p>
       )}
     </div>

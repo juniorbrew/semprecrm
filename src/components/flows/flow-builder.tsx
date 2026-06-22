@@ -266,7 +266,7 @@ function TriggerPanel({
 }) {
   return (
     <section className="rounded-lg border border-border bg-card p-4">
-      <h2 className="mb-3 text-sm font-semibold text-foreground">Trigger</h2>
+      <h2 className="mb-3 text-sm font-semibold text-foreground">Gatilho</h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">When…</label>
@@ -289,10 +289,10 @@ function TriggerPanel({
                 A message contains a keyword
               </SelectItem>
               <SelectItem value="first_inbound_message">
-                Customer&apos;s first ever inbound message
+                Primeira mensagem recebida do cliente
               </SelectItem>
               <SelectItem value="manual">
-                Manual only (no auto-trigger)
+                Somente manual (sem gatilho automático)
               </SelectItem>
             </SelectContent>
           </Select>
@@ -300,7 +300,7 @@ function TriggerPanel({
         {state.trigger_type === "keyword" && (
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">
-              Keywords (comma-separated)
+              Palavras-chave (separadas por vírgula)
             </label>
             <KeywordsInput
               keywords={
@@ -425,7 +425,7 @@ function NodeCard({
                 variant="outline"
                 className="border-primary/40 bg-primary/10 text-[10px] text-primary"
               >
-                Entry
+                Entrada
               </Badge>
             )}
           </div>
@@ -456,7 +456,7 @@ function NodeCard({
             <div className="flex items-center gap-2">
               {!isEntry && (
                 <Button variant="ghost" size="sm" onClick={onSetEntry}>
-                  Set as entry
+                  Definir como entrada
                 </Button>
               )}
             </div>
@@ -467,7 +467,7 @@ function NodeCard({
               className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Remove node
+              Remover nó
             </Button>
           </div>
           {issues.length > 0 && (
@@ -528,7 +528,7 @@ function NodeConfigWithAdvanced({
           <div className="mt-3 flex flex-col gap-3">
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">
-                Node key (internal identifier — keep stable for analytics)
+                Chave do nó (identificador interno — mantenha estável para análises)
               </label>
               <Input
                 value={node.node_key}
@@ -574,10 +574,10 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-        aria-label="Add node"
+        aria-label="Adicionar nó"
       >
         <Plus className="h-3.5 w-3.5" />
-        Add node
+        Adicionar nó
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="border-border bg-popover">
         {types.map((t) => {

@@ -252,7 +252,7 @@ export function DealForm({
         <div className="flex h-full flex-col">
           <SheetHeader className="border-b border-border/50 p-4">
             <SheetTitle className="text-popover-foreground">
-              {deal ? "Edit Deal" : "New Deal"}
+              {deal ? "Editar negócio" : "New Deal"}
             </SheetTitle>
           </SheetHeader>
 
@@ -262,13 +262,13 @@ export function DealForm({
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Deal title"
+                placeholder="Título do negócio"
                 className="border-border bg-muted text-foreground"
               />
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">Contact</Label>
+              <Label className="text-muted-foreground">Contato</Label>
               <select
                 value={contactId}
                 onChange={(e) => setContactId(e.target.value)}
@@ -295,7 +295,7 @@ export function DealForm({
 
             <div className="grid grid-cols-[1fr_110px] gap-3">
               <div className="grid gap-2">
-                <Label className="text-muted-foreground">Value</Label>
+                <Label className="text-muted-foreground">Valor</Label>
                 <div className="relative">
                   <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -308,7 +308,7 @@ export function DealForm({
                 </div>
               </div>
               <div className="grid gap-2">
-                <Label className="text-muted-foreground">Currency</Label>
+                <Label className="text-muted-foreground">Moeda</Label>
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
@@ -324,7 +324,7 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">Expected Close Date</Label>
+              <Label className="text-muted-foreground">Data prevista de fechamento</Label>
               <Input
                 type="date"
                 value={expectedCloseDate}
@@ -349,13 +349,13 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">Assigned To</Label>
+              <Label className="text-muted-foreground">Atribuído a</Label>
               <select
                 value={assignedTo}
                 onChange={(e) => setAssignedTo(e.target.value)}
                 className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
               >
-                <option value="">Unassigned</option>
+                <option value="">Não atribuído</option>
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.full_name || p.email}
@@ -365,7 +365,7 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">Notes</Label>
+              <Label className="text-muted-foreground">Observações</Label>
               <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -433,14 +433,14 @@ export function DealForm({
                 onClick={() => onOpenChange(false)}
                 className="flex-1 border-border bg-transparent text-muted-foreground hover:bg-muted"
               >
-                Cancel
+                Cancelar
               </Button>
               <Button
                 onClick={handleSave}
                 disabled={saving || !title.trim() || !contactId || !stageId}
                 className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
               >
-                {saving ? "Saving..." : deal ? "Save Changes" : "Create Deal"}
+                {saving ? "Salvando..." : deal ? "Save Changes" : "Criar negócio"}
               </Button>
             </div>
 
@@ -455,7 +455,7 @@ export function DealForm({
                       disabled={deleting}
                       className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
                     >
-                      Cancel
+                      Cancelar
                     </button>
                     <button
                       type="button"
@@ -463,7 +463,7 @@ export function DealForm({
                       disabled={deleting}
                       className="rounded bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-50"
                     >
-                      {deleting ? "Deleting..." : "Confirm"}
+                      {deleting ? "Excluindo..." : "Confirm"}
                     </button>
                   </div>
                 </div>

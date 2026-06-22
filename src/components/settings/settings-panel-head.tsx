@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 /**
  * Section header shown at the top of every settings panel — a title,
  * a one-line description, and an optional right-aligned action (e.g.
- * "New template", "Invite member"). Mirrors the mockup's `.panel-head`.
+ * "New template", "Convidar membro"). Mirrors the mockup's `.panel-head`.
  */
 export function SettingsPanelHead({
   title,

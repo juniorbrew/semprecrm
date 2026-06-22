@@ -55,8 +55,8 @@ interface FlowRow {
 }
 
 const STATUS_LABELS: Record<FlowRow["status"], string> = {
-  draft: "Draft",
-  active: "Active",
+  draft: "Rascunho",
+  active: "Ativo",
   archived: "Archived",
 };
 
@@ -204,7 +204,7 @@ export default function FlowsPage() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-foreground">Flows</h1>
+            <h1 className="text-2xl font-semibold text-foreground">Fluxos</h1>
             <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
               Beta
             </span>
@@ -220,7 +220,7 @@ export default function FlowsPage() {
           onClick={() => setCreateOpen(true)}
         >
           <Plus className="h-4 w-4" />
-          New flow
+          Novo fluxo
         </GatedButton>
       </header>
 
@@ -249,16 +249,16 @@ export default function FlowsPage() {
             sm-scoped 384px wins at every real desktop breakpoint. */}
         <DialogContent className="sm:max-w-4xl bg-popover text-popover-foreground">
           <DialogHeader>
-            <DialogTitle>Create a new flow</DialogTitle>
+            <DialogTitle>Criar um novo fluxo</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Start from a template or build from scratch.
+              Comece com um modelo ou crie do zero.
             </DialogDescription>
           </DialogHeader>
 
           {templates.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                Start from a template
+                Começar com um modelo
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {templates.map((t) => {
@@ -290,7 +290,7 @@ export default function FlowsPage() {
 
           <div className="space-y-2 border-t border-border pt-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Or start blank
+              Ou começar em branco
             </p>
             <Input
               value={newName}
@@ -309,11 +309,11 @@ export default function FlowsPage() {
               onClick={() => setCreateOpen(false)}
               disabled={creating}
             >
-              Cancel
+              Cancelar
             </Button>
             <Button onClick={handleCreate} disabled={!newName.trim() || creating}>
               {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-              Create blank flow
+              Criar fluxo em branco
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -335,7 +335,7 @@ function EmptyState({
         <Workflow className="h-6 w-6 text-muted-foreground" />
       </div>
       <h2 className="mt-4 text-base font-medium text-foreground">
-        No flows yet
+        Ainda não há fluxos
       </h2>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">
         Build your first conversation — a welcome menu, an order lookup, an FAQ
@@ -349,7 +349,7 @@ function EmptyState({
         className="mt-5"
       >
         <Plus className="h-4 w-4" />
-        Create your first flow
+        Crie seu primeiro fluxo
       </GatedButton>
     </div>
   );
@@ -406,7 +406,7 @@ function FlowCard({
       <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
         <Button variant="ghost" size="sm" onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
-          Edit
+          Editar
         </Button>
         <Button
           variant="ghost"
@@ -415,7 +415,7 @@ function FlowCard({
           className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
         >
           <Trash2 className="h-3.5 w-3.5" />
-          Delete
+          Excluir
         </Button>
       </div>
     </div>

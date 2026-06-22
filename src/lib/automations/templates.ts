@@ -3,32 +3,36 @@ import type {
   AutomationStepType,
   AutomationTriggerConfig,
   AutomationTriggerType,
-} from '@/types'
+} from '@/types';
+import type { Language } from '@/lib/i18n';
 
 export type TemplateSlug =
   | 'welcome_message'
   | 'out_of_office'
   | 'lead_qualifier'
-  | 'follow_up_reminder'
+  | 'follow_up_reminder';
 
 export interface TemplateStepSeed {
-  step_type: AutomationStepType
-  step_config: AutomationStepConfig
-  branch?: 'yes' | 'no' | null
+  step_type: AutomationStepType;
+  step_config: AutomationStepConfig;
+  branch?: 'yes' | 'no' | null;
   /** Index (within this seed list) of the Condition parent, if nested. */
-  parent_index?: number | null
+  parent_index?: number | null;
 }
 
 export interface AutomationTemplateDefinition {
-  slug: TemplateSlug
-  name: string
-  description: string
-  trigger_type: AutomationTriggerType
-  trigger_config: AutomationTriggerConfig
-  steps: TemplateStepSeed[]
+  slug: TemplateSlug;
+  name: string;
+  description: string;
+  trigger_type: AutomationTriggerType;
+  trigger_config: AutomationTriggerConfig;
+  steps: TemplateStepSeed[];
 }
 
-export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefinition> = {
+export const AUTOMATION_TEMPLATES: Record<
+  TemplateSlug,
+  AutomationTemplateDefinition
+> = {
   welcome_message: {
     slug: 'welcome_message',
     name: 'Welcome Message',
@@ -70,8 +74,7 @@ export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefini
       {
         step_type: 'send_message',
         step_config: {
-          text:
-            "Thanks for your message! Our team is offline right now (9am–6pm) and will reply first thing tomorrow.",
+          text: 'Thanks for your message! Our team is offline right now (9am–6pm) and will reply first thing tomorrow.',
         },
         parent_index: 0,
         branch: 'yes',
@@ -91,8 +94,7 @@ export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefini
       {
         step_type: 'send_message',
         step_config: {
-          text:
-            "Great — happy to help with pricing! Quick question: roughly how many seats are you looking for?",
+          text: 'Great — happy to help with pricing! Quick question: roughly how many seats are you looking for?',
         },
       },
       {
@@ -119,14 +121,83 @@ export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefini
       {
         step_type: 'send_message',
         step_config: {
-          text:
-            "Just circling back — did you have any other questions for us? Happy to help!",
+          text: 'Just circling back — did you have any other questions for us? Happy to help!',
         },
       },
     ],
   },
-}
+};
 
 export function getTemplate(slug: string): AutomationTemplateDefinition | null {
-  return AUTOMATION_TEMPLATES[slug as TemplateSlug] ?? null
+  return AUTOMATION_TEMPLATES[slug as TemplateSlug] ?? null;
+}
+
+const PT_BR_TEMPLATE_COPY: Record<
+  TemplateSlug,
+  { name: string; description: string; messages: Record<string, string> }
+> = {
+  welcome_message: {
+    name: 'Mensagem de boas-vindas',
+    description:
+      'Responda automaticamente ao primeiro contato com uma saudação.',
+    messages: {
+      "Hi! 👋 Thanks for reaching out. We'll get back to you shortly.":
+        'Olá! 👋 Obrigado por entrar em contato. Retornaremos em breve.',
+    },
+  },
+  out_of_office: {
+    name: 'Fora do horário',
+    description: 'Responda fora do expediente para ninguém ficar esperando.',
+    messages: {
+      'Thanks for your message! Our team is offline right now (9am–6pm) and will reply first thing tomorrow.':
+        'Obrigado pela mensagem! Nossa equipe está fora do expediente agora (9h–18h) e responderá amanhã no início do dia.',
+    },
+  },
+  lead_qualifier: {
+    name: 'Qualificação de lead',
+    description:
+      'Faça perguntas de qualificação para filtrar os leads recebidos.',
+    messages: {
+      'Great — happy to help with pricing! Quick question: roughly how many seats are you looking for?':
+        'Ótimo — será um prazer ajudar! Uma pergunta rápida: aproximadamente quantas licenças você procura?',
+    },
+  },
+  follow_up_reminder: {
+    name: 'Lembrete de acompanhamento',
+    description:
+      'Envie um lembrete se o contato não responder em até 24 horas.',
+    messages: {
+      'Just circling back — did you have any other questions for us? Happy to help!':
+        'Passando para acompanhar — ficou alguma dúvida? Será um prazer ajudar!',
+    },
+  },
+};
+
+export function localizeAutomationTemplate(
+  template: AutomationTemplateDefinition,
+  language: Language
+): AutomationTemplateDefinition {
+  if (language !== 'pt-BR') return template;
+  const copy = PT_BR_TEMPLATE_COPY[template.slug];
+  return {
+    ...template,
+    name: copy.name,
+    description: copy.description,
+    trigger_config:
+      template.slug === 'lead_qualifier'
+        ? {
+            ...template.trigger_config,
+            keywords: ['preço', 'orçamento', 'comprar'],
+          }
+        : template.trigger_config,
+    steps: template.steps.map((step) => ({
+      ...step,
+      step_config:
+        'text' in step.step_config &&
+        typeof step.step_config.text === 'string' &&
+        copy.messages[step.step_config.text]
+          ? { ...step.step_config, text: copy.messages[step.step_config.text] }
+          : step.step_config,
+    })),
+  };
 }

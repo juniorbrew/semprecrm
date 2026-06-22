@@ -550,7 +550,7 @@ export function WhatsAppConfig() {
         {/* API Credentials */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-foreground">API Credentials</CardTitle>
+            <CardTitle className="text-foreground">Credenciais da API</CardTitle>
             <CardDescription className="text-muted-foreground">
               Enter your Meta WhatsApp Business API credentials.
             </CardDescription>
@@ -702,7 +702,7 @@ export function WhatsAppConfig() {
                 Saving...
               </>
             ) : (
-              'Save Configuration'
+              'Salvar configuração'
             )}
           </Button>
           <Button

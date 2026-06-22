@@ -55,7 +55,7 @@ export function MessageActions({
     }
     try {
       await navigator.clipboard.writeText(text);
-      toast.success("Copied");
+      toast.success("Copiado");
     } catch {
       toast.error("Copy failed");
     }
@@ -137,7 +137,7 @@ export function MessageActions({
           type="button"
           onClick={handleCopy}
           className="flex h-5 w-5 items-center justify-center rounded-full text-popover-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Copy"
+          aria-label="Copiar"
         >
           <Copy className="h-3.5 w-3.5" />
         </button>

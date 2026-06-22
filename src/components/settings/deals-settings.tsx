@@ -70,7 +70,7 @@ export function DealsSettings() {
   return (
     <section className="max-w-2xl animate-in fade-in-50 duration-200">
       <SettingsPanelHead
-        title="Deals & currency"
+        title="Negócios e moeda"
         description="The currency used for new deals and for pipeline and dashboard totals."
       />
       <Card>
@@ -87,7 +87,7 @@ export function DealsSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2 sm:max-w-xs">
-            <Label className="text-muted-foreground">Currency</Label>
+            <Label className="text-muted-foreground">Moeda</Label>
             <select
               value={selected}
               onChange={(e) => setSelected(e.target.value)}
@@ -119,7 +119,7 @@ export function DealsSettings() {
                   Saving...
                 </>
               ) : (
-                "Save"
+                "Salvar"
               )}
             </Button>
           )}
