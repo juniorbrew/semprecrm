@@ -172,6 +172,43 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Pipeline Name': 'Nome do funil',
   'New stage name': 'Nome da nova etapa',
   'Create a new pipeline': 'Criar um novo funil',
+  // Pipelines — deal drawer (read view first, edit second)
+  'Deal details': 'Detalhes do negócio',
+  'Edit deal': 'Editar negócio',
+  'Back to deal': 'Voltar ao negócio',
+  'Open deal': 'Em aberto',
+  Timeline: 'Linha do tempo',
+  'No contact': 'Sem contato',
+  'Last update': 'Última atualização',
+  'Expected close': 'Fechamento previsto',
+  Closes: 'Fecha em',
+  'Add a note': 'Adicionar uma observação',
+  'No conversation with this contact yet':
+    'Ainda não há conversa com este contato',
+  'No contact linked to this deal': 'Nenhum contato vinculado a este negócio',
+  'Last message': 'Última mensagem',
+  'Deal moved': 'Negócio movido',
+  'Mark as Won': 'Marcar como ganho',
+  'Mark as Lost': 'Marcar como perdido',
+  'Advance stage': 'Avançar etapa',
+  'Deal title': 'Título do negócio',
+  'Expected close date': 'Data prevista de fechamento',
+  'Assigned to': 'Atribuído a',
+  'Save changes': 'Salvar alterações',
+  'Saving...': 'Salvando...',
+  'Deleting...': 'Excluindo...',
+  'Create deal': 'Criar negócio',
+  Confirm: 'Confirmar',
+  'Currently in': 'Atualmente em',
+  'Last stage': 'Última etapa',
+  'Next stage': 'Próxima etapa',
+  'Contact deleted': 'Contato excluído',
+  unread: 'não lida',
+  'Days in pipeline': 'Dias no funil',
+  'Deal value': 'Valor do negócio',
+  'Start a conversation': 'Iniciar conversa',
+  Overdue: 'Atrasado',
+  'Due today': 'Vence hoje',
 
   // Inbox
   'Search conversations...': 'Pesquisar conversas...',
@@ -230,6 +267,12 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Create deals in Pipelines to see stage breakdowns here.':
     'Crie negócios nos Funis para ver aqui a divisão por etapas.',
   'Pipeline value by stage': 'Valor do funil por etapa',
+  'Incoming': 'Recebidas',
+  'Outgoing': 'Enviadas',
+  'View all →': 'Ver tudo →',
+  'Refresh': 'Atualizar',
+  'Refresh dashboard data': 'Atualizar os dados do painel',
+  'Open deals by stage': 'Negócios abertos por etapa',
   'This chart fills in as you reply to customer messages.':
     'Este gráfico será preenchido conforme você responder às mensagens dos clientes.',
 
@@ -526,6 +569,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   "Triggers on a contact's first-ever inbound message":
     'Aciona na primeira mensagem recebida de um contato',
   'Manual trigger': 'Acionamento manual',
+  'Triggers on:': 'Aciona com:',
   'New Lead': 'Novo lead',
   'Proposal Sent': 'Proposta enviada',
   'Sales Pipeline': 'Funil de vendas',
@@ -826,4 +870,161 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Go to': 'Acesse',
   'Paste the': 'Cole o',
   'from above': 'acima',
+  // Inbox triage (round 1)
+  Assign: 'Atribuir',
+  Expired: 'Expirado',
+  '(me)': '(eu)',
+  'Try another queue tab or status filter.':
+    'Tente outra aba da fila ou outro filtro de status.',
+  'Contact details will appear here': 'Os detalhes do contato aparecem aqui',
+  // Contacts — detail panel (conversation-first)
+  'Open conversation': 'Abrir conversa',
+  'Start conversation': 'Iniciar conversa',
+  'Previous conversations': 'Conversas anteriores',
+  'No conversations with this contact yet.':
+    'Ainda não há conversas com este contato.',
+  'Open in inbox': 'Abrir na caixa de entrada',
+  Conversations: 'Conversas',
+  Fields: 'Campos',
+  Deals: 'Negócios',
+  'Editing contact': 'Editando contato',
+  'Failed to start conversation': 'Falha ao iniciar a conversa',
+  'You do not have permission to start conversations':
+    'Você não tem permissão para iniciar conversas',
+  'Delete contact': 'Excluir contato',
+  'Copy phone': 'Copiar telefone',
+  'Add note': 'Adicionar observação',
+  'No notes yet.': 'Ainda não há observações.',
+  'Delete note': 'Excluir observação',
+  'No custom fields defined. Create them in Settings.':
+    'Nenhum campo personalizado definido. Crie-os nas Configurações.',
+  'Click a tag to add or remove it from this contact.':
+    'Clique em uma etiqueta para adicioná-la ou removê-la deste contato.',
+  'No tags available. Create tags in Settings.':
+    'Nenhuma etiqueta disponível. Crie etiquetas nas Configurações.',
+  'Save custom fields': 'Salvar campos personalizados',
+  Created: 'Criado em',
+  Unnamed: 'Sem nome',
+  'View details': 'Ver detalhes',
+
+  // Broadcasts — list / detail / wizard (round 1 localisation pass)
+  Recipients: 'Destinatários',
+  Delivery: 'Entrega',
+  'Total Recipients': 'Total de destinatários',
+  Replied: 'Respondeu',
+  Responded: 'Responderam',
+  Funnel: 'Funil',
+  of: 'de',
+  'Scheduled for': 'Agendado para',
+  'Sent on': 'Enviado em',
+  'Not sent yet': 'Ainda não enviado',
+  'Broadcast deleted': 'Disparo excluído',
+  'Delete broadcast': 'Excluir disparo',
+  'Broadcast actions': 'Ações do disparo',
+  'This will permanently delete the broadcast and its recipient report. This action cannot be undone.':
+    'Isso excluirá permanentemente o disparo e o relatório de destinatários. Esta ação não pode ser desfeita.',
+  'Failed to save draft': 'Falha ao salvar o rascunho',
+  'Calculating…': 'Calculando…',
+  'estimated recipients': 'destinatários estimados',
+  Summary: 'Resumo',
+  'Live Preview': 'Pré-visualização',
+  'e.g. Summer Sale Announcement': 'ex.: Promoção de verão',
+  selected: 'selecionadas',
+  is: 'é',
+  contains: 'contém',
+  'CSV list': 'Lista CSV',
+  'Manage templates': 'Gerenciar modelos',
+  'Search templates…': 'Pesquisar modelos…',
+  'No template matches your search.':
+    'Nenhum modelo corresponde à pesquisa.',
+  'Only approved templates can be used in broadcasts.':
+    'Somente modelos aprovados podem ser usados em disparos.',
+  'approved templates': 'modelos aprovados',
+  'Failed to load broadcasts': 'Falha ao carregar os disparos',
+  // Wizard — step indicator, step headings and copy
+  Personalize: 'Personalizar',
+  Steps: 'Etapas',
+  'Choose a template': 'Escolha um modelo',
+  'Select an approved message template for the broadcast.':
+    'Selecione um modelo de mensagem aprovado para o disparo.',
+  'Choose who will receive this broadcast.':
+    'Escolha quem receberá este disparo.',
+  'Select an audience type to see the estimate.':
+    'Selecione um tipo de público para ver a estimativa.',
+  'Exclude contacts with these tags': 'Excluir contatos com estas etiquetas',
+  'No tags found. Create tags in Settings.':
+    'Nenhuma etiqueta encontrada. Crie etiquetas nas Configurações.',
+  'No custom fields defined. Create one in Settings → Custom fields.':
+    'Nenhum campo personalizado definido. Crie um em Configurações → Campos personalizados.',
+  'This template has no variables to personalize.':
+    'Este modelo não possui variáveis para personalizar.',
+  'Mapping type': 'Tipo de associação',
+  Operator: 'Operador',
+  'Name the broadcast, review the details and send.':
+    'Dê um nome ao disparo, revise os detalhes e envie.',
+  'Save as draft': 'Salvar como rascunho',
+  'Confirm broadcast': 'Confirmar disparo',
+  'contacts using the template': 'contatos usando o modelo',
+  // WhatsApp template categories (Meta enum, title-cased in the DB)
+  Marketing: 'Marketing',
+  Utility: 'Utilidade',
+  Authentication: 'Autenticação',
+  // Meta template review statuses (src/lib/template-status.ts)
+  Approved: 'Aprovado',
+  Rejected: 'Rejeitado',
+  Disabled: 'Desativado',
+  'In Appeal': 'Em recurso',
+  'Pending Deletion': 'Exclusão pendente',
+
+  // Automations builder (src/components/automations/automation-builder.tsx)
+  'Edit rule': 'Editar regra',
+  'New rule': 'Nova regra',
+  'Rule name': 'Nome da regra',
+  'Unsaved changes': 'Alterações não salvas',
+  'Describe what this rule does (optional)':
+    'Descreva o que esta regra faz (opcional)',
+  'When should this rule run?': 'Quando esta regra deve rodar?',
+  Conditions: 'Condições',
+  'Only continue when all conditions are true':
+    'Só continua quando todas as condições forem verdadeiras',
+  'Add condition': 'Adicionar condição',
+  'What to do, in order': 'O que fazer, nesta ordem',
+  'No conditions — actions run for every trigger event.':
+    'Sem condições — as ações rodam para todo evento do gatilho.',
+  AND: 'E',
+  'Remove condition': 'Remover condição',
+  'Removing keeps the actions below it.': 'Remover mantém as ações abaixo dela.',
+  'No actions yet. Add the first one.': 'Ainda não há ações. Adicione a primeira.',
+  'Add action': 'Adicionar ação',
+  Yes: 'Sim',
+  No: 'Não',
+  'Nothing selected': 'Nada selecionado',
+  'Select the trigger, a condition or an action to edit it here.':
+    'Selecione o gatilho, uma condição ou uma ação para editar aqui.',
+  'Trigger type': 'Tipo de gatilho',
+  Tag: 'Etiqueta',
+  Schedule: 'Agendamento',
+  'Keywords (comma-separated)': 'Palavras-chave (separadas por vírgula)',
+  'Match type': 'Tipo de correspondência',
+  'Sent to the contact on WhatsApp as a plain text message.':
+    'Enviada ao contato no WhatsApp como mensagem de texto simples.',
+  'Sets the conversation status to "closed". No configuration needed.':
+    'Define o status da conversa como "encerrada". Nenhuma configuração é necessária.',
+  Check: 'Verificar',
+  'Contact field equals': 'Campo do contato é igual a',
+  'Message contains': 'A mensagem contém',
+  'Time of day is between': 'Horário do dia está entre',
+  'Text to look for': 'Texto a procurar',
+  'Start time': 'Início',
+  'End time': 'Fim',
+  'Overnight windows like 18:00–09:00 are supported.':
+    'Janelas que viram a noite, como 18:00–09:00, são aceitas.',
+  'The actions only run when this condition is true.':
+    'As ações só rodam quando esta condição for verdadeira.',
+  'Steps under "Yes" run when true; steps under "No" run otherwise.':
+    'As etapas em "Sim" rodam quando verdadeira; as etapas em "Não" rodam caso contrário.',
+  'Assign conversation': 'Atribuir conversa',
+  'Close conversation': 'Encerrar conversa',
+  Messages: 'Mensagens',
+  'Flow control': 'Controle de fluxo',
 };

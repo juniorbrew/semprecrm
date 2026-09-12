@@ -205,6 +205,47 @@ export interface MessageReaction {
   created_at: string;
 }
 
+/** `conversation_events.event_type` — closed list enforced by a CHECK. */
+export type ConversationEventType =
+  | 'assigned'
+  | 'unassigned'
+  | 'status_changed'
+  | 'label_added'
+  | 'label_removed'
+  | 'note_added';
+
+/**
+ * Type-specific details stored in `conversation_events.payload`.
+ * `actor_name` is a display snapshot taken when the row was written;
+ * the client prefers the live profile name when it has one.
+ */
+export interface ConversationEventPayload {
+  actor_name?: string;
+  /** `assigned` */
+  assignee_user_id?: string;
+  assignee_name?: string;
+  self_assigned?: boolean;
+  /** `status_changed` */
+  status?: ConversationStatus;
+  previous_status?: ConversationStatus;
+  /** `label_added` / `label_removed` */
+  tag_id?: string;
+  tag_name?: string;
+  /** `note_added` */
+  note_id?: string;
+}
+
+/** Row of `conversation_events` (migration 024). */
+export interface ConversationEventRecord {
+  id: string;
+  account_id: string;
+  conversation_id: string;
+  actor_user_id?: string | null;
+  event_type: ConversationEventType;
+  payload: ConversationEventPayload;
+  created_at: string;
+}
+
 export interface WhatsAppConfig {
   id: string;
   user_id: string;

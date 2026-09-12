@@ -3,6 +3,10 @@
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
+/* Pipelines board: fixed-height, per-column scrolling only when the
+   viewport is wide enough for the KPI strip to stay on one row and
+   tall enough to show a useful slice of each column. */
+@custom-variant board-fit (@media (min-width: 80rem) and (min-height: 760px));
 
 @theme inline {
   --color-background: var(--background);
