@@ -367,7 +367,7 @@ function AutomationCard({
             </span>
             <span className="tabular-nums">
               {language === 'pt-BR'
-                ? `${automation.execution_count} execução${automation.execution_count === 1 ? '' : 'ões'}`
+                ? `${automation.execution_count} ${automation.execution_count === 1 ? 'execução' : 'execuções'}`
                 : `${automation.execution_count} run${automation.execution_count === 1 ? '' : 's'}`}
             </span>
             <span aria-hidden>·</span>
