@@ -5,6 +5,35 @@ import {
   getRecipientStatus,
   recipientStatusConfig,
 } from "./broadcast-status";
+import { EN_TO_PT, translateLiteral } from "./i18n";
+
+describe("status labels are localised through the i18n catalogue", () => {
+  it("every broadcast status label has a pt-BR translation", () => {
+    for (const [key, v] of Object.entries(broadcastStatusConfig)) {
+      expect(EN_TO_PT[v.label], `broadcast status "${key}"`).toBeTruthy();
+      expect(translateLiteral(v.label, "pt-BR")).not.toBe(v.label);
+    }
+  });
+
+  it("every recipient status label has a pt-BR translation", () => {
+    for (const [key, v] of Object.entries(recipientStatusConfig)) {
+      expect(EN_TO_PT[v.label], `recipient status "${key}"`).toBeTruthy();
+      expect(translateLiteral(v.label, "pt-BR")).not.toBe(v.label);
+    }
+  });
+
+  it("renders the recipient statuses the way the pt-BR UI expects", () => {
+    expect(translateLiteral(recipientStatusConfig.replied.label, "pt-BR")).toBe(
+      "Respondeu",
+    );
+    expect(translateLiteral(recipientStatusConfig.read.label, "pt-BR")).toBe(
+      "Lido",
+    );
+    expect(translateLiteral(broadcastStatusConfig.scheduled.label, "pt-BR")).toBe(
+      "Agendado",
+    );
+  });
+});
 
 describe("getBroadcastStatus", () => {
   it("returns the matching config for known statuses", () => {

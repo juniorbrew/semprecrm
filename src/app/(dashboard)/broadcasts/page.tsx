@@ -13,8 +13,33 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Radio, Plus, Loader2 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Radio,
+  Plus,
+  Loader2,
+  ChevronRight,
+  MoreHorizontal,
+  Eye,
+  Trash2,
+  CalendarClock,
+} from 'lucide-react';
+import { toast } from 'sonner';
 import { useCan } from '@/hooks/use-can';
+import { useLanguage } from '@/hooks/use-language';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 
@@ -46,7 +71,7 @@ function RateCell({
       <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
         {pct}%
       </span>
-      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
         <div
           className={`h-1.5 rounded-full ${color}`}
           style={{ width: `${pct}%` }}
@@ -56,12 +81,20 @@ function RateCell({
   );
 }
 
+/** Placeholder for cells that have nothing meaningful to show yet. */
+function EmptyCell() {
+  return <span className="text-muted-foreground/60">—</span>;
+}
+
 export default function BroadcastsPage() {
   const router = useRouter();
+  const { t, language } = useLanguage();
   const canCreate = useCan('send-messages');
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Broadcast | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -77,7 +110,8 @@ export default function BroadcastsPage() {
       if (fetchError) throw fetchError;
       setBroadcasts(data ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao carregar disparos');
+      // English key — translated where it is rendered.
+      setError(err instanceof Error ? err.message : 'Failed to load broadcasts');
     } finally {
       setLoading(false);
     }
@@ -128,6 +162,37 @@ export default function BroadcastsPage() {
     };
   }, [anySending]);
 
+  async function handleDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    const supabase = createClient();
+    // broadcast_recipients cascades on broadcasts.id (migration 001), so
+    // a single delete is sufficient — same rule as the detail page.
+    const { error: delErr } = await supabase
+      .from('broadcasts')
+      .delete()
+      .eq('id', pendingDelete.id);
+    setDeleting(false);
+    if (delErr) {
+      toast.error(`${t('Failed to delete')}: ${delErr.message}`);
+      return;
+    }
+    setBroadcasts((prev) => prev.filter((b) => b.id !== pendingDelete.id));
+    setPendingDelete(null);
+    toast.success(t('Broadcast deleted'));
+  }
+
+  function formatDate(iso: string) {
+    return new Date(iso).toLocaleDateString(language);
+  }
+
+  function formatDateTime(iso: string) {
+    return new Date(iso).toLocaleString(language, {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+  }
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -139,9 +204,9 @@ export default function BroadcastsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-red-400">{t(error)}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
-          Tentar novamente
+          {t('Try again')}
         </Button>
       </div>
     );
@@ -154,7 +219,7 @@ export default function BroadcastsPage() {
       {anySending && (
         <div
           role="progressbar"
-          aria-label="Broadcast in progress"
+          aria-label={t('Broadcast in progress')}
           className="broadcast-indeterminate fixed inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-muted"
         >
           <div className="broadcast-indeterminate-bar h-0.5 bg-primary" />
@@ -179,9 +244,9 @@ export default function BroadcastsPage() {
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Disparos</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('Broadcasts')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Send bulk messages to your contacts using approved templates.
+            {t('Send bulk messages to your contacts using approved templates.')}
           </p>
         </div>
         <GatedButton
@@ -191,16 +256,16 @@ export default function BroadcastsPage() {
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
-          New Broadcast
+          {t('New Broadcast')}
         </GatedButton>
       </div>
 
       {broadcasts.length === 0 ? (
         <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
           <Radio className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">No broadcasts yet</p>
+          <p className="text-sm font-medium text-foreground">{t('No broadcasts yet')}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Create your first broadcast to reach your contacts at scale.
+            {t('Create your first broadcast to reach your contacts at scale.')}
           </p>
           <GatedButton
             canAct={canCreate}
@@ -209,7 +274,7 @@ export default function BroadcastsPage() {
             className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="h-4 w-4" />
-            New Broadcast
+            {t('New Broadcast')}
           </GatedButton>
         </div>
       ) : (
@@ -217,48 +282,100 @@ export default function BroadcastsPage() {
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-muted-foreground">Nome</TableHead>
-                <TableHead className="hidden text-muted-foreground md:table-cell">Template</TableHead>
-                <TableHead className="hidden text-right text-muted-foreground sm:table-cell">
-                  Recipients
+                <TableHead className="text-muted-foreground">{t('Name')}</TableHead>
+                <TableHead className="hidden text-muted-foreground xl:table-cell">
+                  {t('Template')}
                 </TableHead>
-                <TableHead className="hidden text-muted-foreground lg:table-cell">Delivery</TableHead>
-                <TableHead className="hidden text-muted-foreground lg:table-cell">Lido</TableHead>
-                <TableHead className="text-muted-foreground">Status</TableHead>
-                <TableHead className="hidden text-muted-foreground sm:table-cell">Data</TableHead>
+                <TableHead className="hidden text-right text-muted-foreground sm:table-cell">
+                  {t('Recipients')}
+                </TableHead>
+                <TableHead className="hidden text-muted-foreground lg:table-cell">
+                  {t('Delivery')}
+                </TableHead>
+                <TableHead className="hidden text-muted-foreground lg:table-cell">
+                  {t('Read')}
+                </TableHead>
+                <TableHead className="text-muted-foreground">{t('Status')}</TableHead>
+                <TableHead className="hidden text-muted-foreground xl:table-cell">
+                  {t('Date')}
+                </TableHead>
+                <TableHead className="w-20 text-right text-muted-foreground">
+                  <span className="sr-only">{t('Actions')}</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {broadcasts.map((broadcast) => {
                 const status = getBroadcastStatus(broadcast.status);
+                const isDraft = broadcast.status === 'draft';
+                const isScheduled = broadcast.status === 'scheduled';
+                // Drafts and scheduled sends have no delivery data yet —
+                // an empty 0% bar reads like a failure, so show what the
+                // user actually wants to know (when it goes out) instead.
+                const hasProgress = !isDraft && !isScheduled;
+                const open = () => router.push(`/broadcasts/${broadcast.id}`);
                 return (
                   <TableRow
                     key={broadcast.id}
-                    className="cursor-pointer border-border hover:bg-muted/50"
-                    onClick={() => router.push(`/broadcasts/${broadcast.id}`)}
+                    tabIndex={0}
+                    onClick={open}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') open();
+                    }}
+                    className="group cursor-pointer border-border transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
                   >
-                    <TableCell className="font-medium text-foreground">
+                    <TableCell className="min-w-[10rem] max-w-xs whitespace-normal font-medium text-foreground transition-colors group-hover:text-primary">
                       {broadcast.name}
                     </TableCell>
-                    <TableCell className="hidden text-muted-foreground md:table-cell">
-                      {broadcast.template_name}
+                    <TableCell className="hidden text-muted-foreground xl:table-cell">
+                      <span
+                        className="block max-w-[11rem] truncate"
+                        title={broadcast.template_name}
+                      >
+                        {broadcast.template_name}
+                      </span>
                     </TableCell>
                     <TableCell className="hidden text-right text-muted-foreground tabular-nums sm:table-cell">
-                      {broadcast.total_recipients}
+                      {isDraft && broadcast.total_recipients === 0 ? (
+                        <EmptyCell />
+                      ) : (
+                        broadcast.total_recipients
+                      )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
-                      <RateCell
-                        value={broadcast.delivered_count}
-                        total={broadcast.total_recipients}
-                        color="bg-primary"
-                      />
+                      {hasProgress ? (
+                        <RateCell
+                          value={broadcast.delivered_count}
+                          total={broadcast.total_recipients}
+                          color="bg-primary"
+                        />
+                      ) : isScheduled && broadcast.scheduled_at ? (
+                        <span className="inline-flex max-w-[11rem] items-start gap-1.5 whitespace-normal text-xs leading-snug text-muted-foreground">
+                          <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400" />
+                          <span>
+                            {t('Scheduled for')}
+                            <br />
+                            <span className="text-foreground">
+                              {formatDateTime(broadcast.scheduled_at)}
+                            </span>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/70">
+                          {t('Not sent yet')}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
-                      <RateCell
-                        value={broadcast.read_count}
-                        total={broadcast.total_recipients}
-                        color="bg-blue-500"
-                      />
+                      {hasProgress ? (
+                        <RateCell
+                          value={broadcast.read_count}
+                          total={broadcast.total_recipients}
+                          color="bg-blue-500"
+                        />
+                      ) : (
+                        <EmptyCell />
+                      )}
                     </TableCell>
                     <TableCell>
                       <span
@@ -270,11 +387,54 @@ export default function BroadcastsPage() {
                             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-yellow-400" />
                           </span>
                         )}
-                        {status.label}
+                        {t(status.label)}
                       </span>
                     </TableCell>
-                    <TableCell className="hidden text-muted-foreground sm:table-cell">
-                      {new Date(broadcast.created_at).toLocaleDateString()}
+                    <TableCell className="hidden text-muted-foreground xl:table-cell">
+                      {formatDate(broadcast.created_at)}
+                    </TableCell>
+                    {/* Row actions — the cell swallows clicks so the menu
+                        (and its portal, which bubbles through React) never
+                        triggers the row navigation. */}
+                    <TableCell
+                      className="text-right"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t('Broadcast actions')}
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                              />
+                            }
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="border-border bg-popover">
+                            <DropdownMenuItem onClick={open}>
+                              <Eye className="h-4 w-4" />
+                              {t('View details')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              disabled={broadcast.status === 'sending'}
+                              onClick={() => setPendingDelete(broadcast)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {t('Delete')}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                        <ChevronRight
+                          aria-hidden="true"
+                          className="h-4 w-4 text-muted-foreground/50 transition-colors group-hover:text-primary"
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -283,6 +443,52 @@ export default function BroadcastsPage() {
           </Table>
         </div>
       )}
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen && !deleting) setPendingDelete(null);
+        }}
+      >
+        <DialogContent className="border-border bg-popover sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">
+              {t('Delete broadcast')}
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              <span className="font-medium text-popover-foreground">
+                {pendingDelete?.name}
+              </span>
+              {' — '}
+              {t(
+                'This will permanently delete the broadcast and its recipient report. This action cannot be undone.',
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingDelete(null)}
+              disabled={deleting}
+              className="border-border text-muted-foreground"
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {t('Delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
