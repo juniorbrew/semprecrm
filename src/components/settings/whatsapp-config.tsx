@@ -13,9 +13,12 @@ import {
   Zap,
   AlertTriangle,
   RotateCcw,
+  QrCode,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth, useEntitlements } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,6 +31,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
+import { WhatsAppQrPanel } from './whatsapp-qr-panel';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
@@ -35,7 +39,156 @@ const MASKED_TOKEN = '••••••••••••••••';
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
+type ChannelChoice = 'official' | 'qr';
+
+/**
+ * Settings → WhatsApp.
+ *
+ * "Como conectar" chooser on top: one card per channel, each shown
+ * only when its module is on for the account (`channel_official`,
+ * `channel_qr`). Below it, the panel for the chosen channel. With no
+ * channel module at all the page says so instead of rendering a form
+ * the API would reject.
+ */
 export function WhatsAppConfig() {
+  const { t } = useLanguage();
+  const ent = useEntitlements();
+  const officialOn = ent.modules.channel_official;
+  const qrOn = ent.modules.channel_qr;
+
+  const [choice, setChoice] = useState<ChannelChoice | null>(null);
+  // Default to the first channel the plan includes; a stored pick
+  // survives only while it is still allowed.
+  const active: ChannelChoice | null =
+    choice && ((choice === 'official' && officialOn) || (choice === 'qr' && qrOn))
+      ? choice
+      : officialOn
+        ? 'official'
+        : qrOn
+          ? 'qr'
+          : null;
+
+  const head = (
+    <SettingsPanelHead
+      title={t('WhatsApp connection')}
+      description={t(
+        'Choose how this account talks to WhatsApp: the official Meta Business API or a number linked by QR code.',
+      )}
+    />
+  );
+
+  if (!ent.ready) {
+    return (
+      <section className="animate-in fade-in-50 duration-200">
+        {head}
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="size-6 animate-spin text-primary" />
+        </div>
+      </section>
+    );
+  }
+
+  if (!officialOn && !qrOn) {
+    return (
+      <section className="animate-in fade-in-50 duration-200">
+        {head}
+        <Alert className="border-border bg-card">
+          <AlertTitle className="mb-1 text-foreground">{t('No channel included in your plan')}</AlertTitle>
+          <AlertDescription className="text-sm text-muted-foreground">
+            {t('Your current plan does not include a WhatsApp channel. Get in touch with the SempreCRM team to add one.')}
+          </AlertDescription>
+        </Alert>
+      </section>
+    );
+  }
+
+  return (
+    <section className="animate-in fade-in-50 duration-200">
+      {head}
+      <div className="mb-6">
+        <p className="mb-2 text-sm font-medium text-foreground">{t('How to connect')}</p>
+        <div role="radiogroup" aria-label={t('How to connect')} className="grid gap-3 sm:grid-cols-2">
+          {officialOn && (
+            <ChannelCard
+              selected={active === 'official'}
+              onSelect={() => setChoice('official')}
+              icon={<Zap className="size-4" />}
+              title={t('Official WhatsApp API')}
+              description={t('Meta Cloud API with templates, broadcasts and the 24-hour window. Recommended for scale.')}
+              badge={t('Recommended')}
+            />
+          )}
+          {qrOn && (
+            <ChannelCard
+              selected={active === 'qr'}
+              onSelect={() => setChoice('qr')}
+              icon={<QrCode className="size-4" />}
+              title={t('WhatsApp via QR code')}
+              description={t('Link an existing number by scanning a QR code, like WhatsApp Web. For 1:1 support only.')}
+              badge={t('Unofficial')}
+            />
+          )}
+        </div>
+      </div>
+
+      {active === 'qr' ? <WhatsAppQrPanel /> : <WhatsAppOfficialConfig />}
+    </section>
+  );
+}
+
+function ChannelCard({
+  selected,
+  onSelect,
+  icon,
+  title,
+  description,
+  badge,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  badge?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        'flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors',
+        selected
+          ? 'border-primary bg-primary-soft shadow-[inset_0_0_0_1px_var(--color-primary)]'
+          : 'border-border bg-card hover:bg-muted/50',
+      )}
+    >
+      <span
+        className={cn(
+          'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md',
+          selected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
+        )}
+      >
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-foreground">{title}</span>
+          {badge && (
+            <span className="rounded-full border border-border bg-muted px-2 py-px text-[10px] font-medium text-muted-foreground">
+              {badge}
+            </span>
+          )}
+        </span>
+        <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{description}</span>
+      </span>
+    </button>
+  );
+}
+
+/** The Meta Cloud API form — unchanged behaviour, now one of two panels. */
+function WhatsAppOfficialConfig() {
   const supabase = createClient();
   // After multi-user, whatsapp_config is one-row-per-account, not
   // one-row-per-user. We pull `accountId` straight off the auth
@@ -361,26 +514,15 @@ export function WhatsAppConfig() {
 
   if (loading) {
     return (
-      <section className="animate-in fade-in-50 duration-200">
-        <SettingsPanelHead
-          title="WhatsApp connection"
-          description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
-        />
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="size-6 animate-spin text-primary" />
-        </div>
-      </section>
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="size-6 animate-spin text-primary" />
+      </div>
     );
   }
 
   const showResetBanner = resetReason === 'token_corrupted';
 
   return (
-    <section className="animate-in fade-in-50 duration-200">
-      <SettingsPanelHead
-        title="WhatsApp connection"
-        description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
-      />
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
@@ -841,6 +983,5 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
-    </section>
   );
 }

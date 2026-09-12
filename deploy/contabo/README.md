@@ -92,6 +92,26 @@ No app da Meta, configure o webhook para `https://SEU.DOMINIO/api/whatsapp/webho
 que você definir em Configurações do CRM. Depois, em Configurações → WhatsApp dentro do app, cole o
 token de acesso e o phone number id. O token é criptografado com a `ENCRYPTION_KEY` desta VPS.
 
+## 6.1 Canal QR (WhatsApp Web, opcional)
+
+O canal "WhatsApp via QR code" usa um segundo processo, `wa-gateway` (Baileys), que roda na mesma VPS
+sob o PM2 e conversa com o app por loopback. Passos:
+
+1. Crie `services/wa-gateway/.env` a partir de `services/wa-gateway/.env.example` (`APP_URL`,
+   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WA_GATEWAY_SECRET`, `WA_DATA_DIR=/var/lib/semprecrm/wa`).
+2. No `.env.local` do app, defina `WA_GATEWAY_URL=http://127.0.0.1:3201` e o **mesmo**
+   `WA_GATEWAY_SECRET`. Sem eles a opção QR aparece desabilitada em Configurações → WhatsApp.
+3. Rode o `deploy.sh` normalmente — ele faz `npm ci && npm run build` no gateway e sobe/recarrega o app
+   `wa-gateway` do `ecosystem.config.cjs` quando o `.env` existe.
+4. O estado de autenticação fica em `/var/lib/semprecrm/wa/<account_id>/`; o `backup.sh` já inclui a pasta.
+   Perder essa pasta obriga a ler o QR de novo.
+5. Libere o módulo `channel_qr` para a conta em `/platform` e conecte em Configurações → WhatsApp →
+   "WhatsApp via QR code".
+
+Detalhes do serviço (variáveis, rotas internas, logs, limitações do protocolo) em
+`services/wa-gateway/README.md`. Lembre o aviso da tela: o canal não é oficial e o número pode ser banido;
+disparos e modelos continuam só na API oficial.
+
 ## 7. Redeploys
 
 ```bash

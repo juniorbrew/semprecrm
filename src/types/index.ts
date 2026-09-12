@@ -177,11 +177,20 @@ export interface ContactNote {
 
 export type ConversationStatus = 'open' | 'pending' | 'closed';
 
+/**
+ * Which WhatsApp transport a conversation / message went through.
+ * `official` = Meta Cloud API (webhook + templates), `qr` = the
+ * WhatsApp Web session held by `services/wa-gateway` (migration 026).
+ */
+export type WhatsAppChannel = 'official' | 'qr';
+
 export interface Conversation {
   id: string;
   user_id: string;
   contact_id: string;
   status: ConversationStatus;
+  /** Defaults to 'official' on rows that predate migration 026. */
+  channel?: WhatsAppChannel;
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
@@ -215,6 +224,8 @@ export interface Message {
   template_name?: string;
   message_id?: string;
   status: MessageStatus;
+  /** Transport the message went through; 'official' when absent. */
+  channel?: WhatsAppChannel;
   created_at: string;
   reply_to_message_id?: string;
   /**
@@ -298,6 +309,19 @@ export interface WhatsAppConfig {
   subscribed_apps_at?: string;
   /** Last error from /register; cleared on success. */
   last_registration_error?: string;
+}
+
+export type WaQrSessionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected';
+
+/** One row per account — mirrors the gateway's session state (migration 026). */
+export interface WaQrSession {
+  account_id: string;
+  status: WaQrSessionStatus;
+  phone_number?: string | null;
+  display_name?: string | null;
+  connected_at?: string | null;
+  last_error?: string | null;
+  updated_at: string;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

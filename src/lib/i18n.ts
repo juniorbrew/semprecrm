@@ -513,6 +513,8 @@ function translateDynamic(value: string, language: Language): string {
       return wrap(`A imagem possui ${match[1]} MB — o limite da Meta é 5 MB.`);
     if ((match = trimmed.match(/^Upload failed: (.+)$/)))
       return wrap(`Falha no envio: ${match[1]}`);
+    if ((match = trimmed.match(/^Failed to send: (.+)$/)))
+      return wrap(`Falha ao enviar: ${match[1]}`);
     if ((match = trimmed.match(/^Email change failed: (.+)$/)))
       return wrap(`Falha ao alterar o e-mail: ${match[1]}`);
     if ((match = trimmed.match(/^Sign-out failed: (.+)$/)))

@@ -1134,4 +1134,73 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   Access: 'Acesso',
   Blocked: 'Bloqueado',
   Allowed: 'Liberado',
+
+  // WhatsApp channel chooser + QR panel (migration 026)
+  'Choose how this account talks to WhatsApp: the official Meta Business API or a number linked by QR code.':
+    'Escolha como esta conta fala com o WhatsApp: a API oficial da Meta ou um número vinculado por QR code.',
+  'How to connect': 'Como conectar',
+  'Meta Cloud API with templates, broadcasts and the 24-hour window. Recommended for scale.':
+    'API Cloud da Meta com modelos, disparos e janela de 24 horas. Recomendada para escala.',
+  Recommended: 'Recomendada',
+  'Link an existing number by scanning a QR code, like WhatsApp Web. For 1:1 support only.':
+    'Vincule um número existente lendo um QR code, como no WhatsApp Web. Só para atendimento 1:1.',
+  Unofficial: 'Não oficial',
+  'No channel included in your plan': 'Nenhum canal incluído no seu plano',
+  'Your current plan does not include a WhatsApp channel. Get in touch with the SempreCRM team to add one.':
+    'Seu plano atual não inclui um canal de WhatsApp. Fale com a equipe do SempreCRM para adicionar um.',
+  'Unofficial channel — use with care': 'Canal não oficial — use com cuidado',
+  'The WhatsApp Web protocol is reverse-engineered (Baileys library). It is not official, it violates WhatsApp’s terms and the number can be banned, especially with bulk sending. Broadcasts and templates therefore stay exclusive to the official API; the QR channel is for 1:1 support and reply automations.':
+    'O protocolo do WhatsApp Web é usado por engenharia reversa (biblioteca Baileys). Não é oficial, viola os termos do WhatsApp e o número pode ser banido, sobretudo com envio em massa. Por isso, disparos e modelos ficam exclusivos da API oficial; o canal QR serve o atendimento 1:1 e as automações de resposta.',
+  'Gateway not configured': 'Gateway não configurado',
+  'The QR channel needs the wa-gateway service. Set WA_GATEWAY_URL and WA_GATEWAY_SECRET on the server and restart the app.':
+    'O canal QR precisa do serviço wa-gateway. Defina WA_GATEWAY_URL e WA_GATEWAY_SECRET no servidor e reinicie o app.',
+  'Gateway unreachable': 'Gateway fora do ar',
+  'Could not talk to the WhatsApp gateway. Check that the wa-gateway service is running.':
+    'Não foi possível falar com o gateway do WhatsApp. Verifique se o serviço wa-gateway está em execução.',
+  'The QR channel is not part of your current plan. Get in touch with the SempreCRM team to add it.':
+    'O canal QR não faz parte do seu plano atual. Fale com a equipe do SempreCRM para adicioná-lo.',
+  'WhatsApp Web session': 'Sessão do WhatsApp Web',
+  'Scan the QR code with the phone that owns the number: WhatsApp → Linked devices → Link a device.':
+    'Leia o QR code com o celular dono do número: WhatsApp → Aparelhos conectados → Conectar um aparelho.',
+  'Connected as': 'Conectado como',
+  'Unknown name': 'Nome desconhecido',
+  'unknown number': 'número desconhecido',
+  Since: 'Desde',
+  'WhatsApp QR code': 'QR code do WhatsApp',
+  'The code refreshes automatically. Waiting for the scan…':
+    'O código é renovado automaticamente. Aguardando a leitura…',
+  'Reconnecting to WhatsApp…': 'Reconectando ao WhatsApp…',
+  'Generating QR code…': 'Gerando QR code…',
+  'No number connected. Click Connect to get a QR code.':
+    'Nenhum número conectado. Clique em Conectar para gerar um QR code.',
+  'Last error': 'Último erro',
+  Disconnect: 'Desconectar',
+  Disconnected: 'Desconectado',
+  Connecting: 'Conectando',
+  'Waiting for scan': 'Aguardando leitura',
+  Retry: 'Tentar de novo',
+  Connect: 'Conectar',
+  'Only account admins can connect or disconnect the number.':
+    'Só administradores da conta podem conectar ou desconectar o número.',
+  'How it works': 'Como funciona',
+  'What the QR channel can and cannot do.': 'O que o canal QR faz e não faz.',
+  'Receives and sends 1:1 messages (text, images, audio, video, documents).':
+    'Recebe e envia mensagens 1:1 (texto, imagens, áudio, vídeo, documentos).',
+  'Reply automations work; buttons and lists are sent as numbered text.':
+    'Automações de resposta funcionam; botões e listas vão como texto numerado.',
+  'Broadcasts and message templates stay on the official API.':
+    'Disparos e modelos de mensagem continuam na API oficial.',
+  'Keep the phone online — WhatsApp Web depends on it.':
+    'Mantenha o celular conectado — o WhatsApp Web depende dele.',
+  'Counts as one channel against your plan limit while connected.':
+    'Conta como um canal no limite do seu plano enquanto estiver conectado.',
+  'WhatsApp connected.': 'WhatsApp conectado.',
+  'WhatsApp disconnected.': 'WhatsApp desconectado.',
+  'Disconnect this WhatsApp number? You will need to scan a new QR code to reconnect.':
+    'Desconectar este número do WhatsApp? Será preciso ler um novo QR code para reconectar.',
+  'Plan limit reached': 'Limite do plano atingido',
+  'Something went wrong. Please try again.': 'Algo deu errado. Tente novamente.',
+  'Could not reach the server. Check your connection and try again.':
+    'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+  'Send a message to start the conversation': 'Envie uma mensagem para iniciar a conversa',
 };

@@ -67,3 +67,31 @@ export async function accountHasModule(
   if (ent.blocked) return false;
   return ent.modules[module];
 }
+
+/**
+ * How many channels the account currently uses against `max_channels`.
+ *
+ * Rule (migration 026): the official config row counts as one, and the
+ * QR session counts as one while it is anything but `disconnected`
+ * (a session showing a QR or reconnecting still holds the slot).
+ * Mirrors `channels_count` in `platform_list_accounts()`.
+ */
+export async function countConnectedChannels(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<number> {
+  const [official, qr] = await Promise.all([
+    db
+      .from('whatsapp_config')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId),
+    db
+      .from('wa_qr_sessions')
+      .select('account_id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+      .neq('status', 'disconnected'),
+  ]);
+  if (official.error) throw new Error(official.error.message);
+  if (qr.error) throw new Error(qr.error.message);
+  return (official.count ?? 0) + (qr.count ?? 0);
+}

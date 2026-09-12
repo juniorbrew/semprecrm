@@ -7,7 +7,7 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
-import { loadAccountEntitlements } from '@/lib/plans-server'
+import { loadAccountEntitlements, countConnectedChannels } from '@/lib/plans-server'
 import { canAddChannel } from '@/lib/plans'
 
 /**
@@ -291,19 +291,20 @@ export async function POST(request: Request) {
       )
     }
     if (!existing) {
-      const { count, error: countError } = await supabase
-        .from('whatsapp_config')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId)
-      if (countError) {
-        console.error('Error counting channels:', countError)
+      // Official config + a live QR session (migration 026) both
+      // occupy a channel slot.
+      let count = 0
+      try {
+        count = await countConnectedChannels(supabase, accountId)
+      } catch (err) {
+        console.error('Error counting channels:', err)
         return NextResponse.json(
           { error: 'Failed to check plan limits' },
           { status: 500 },
         )
       }
       const maxChannels = entitlements.limits.max_channels
-      if (!canAddChannel(count ?? 0, maxChannels)) {
+      if (!canAddChannel(count, maxChannels)) {
         return NextResponse.json(
           {
             error: `Your plan allows up to ${maxChannels} connected WhatsApp number${maxChannels === 1 ? '' : 's'}. Disconnect one or upgrade the plan.`,

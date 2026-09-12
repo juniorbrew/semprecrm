@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus } from "@/types";
+import type { Conversation, ConversationStatus, WhatsAppChannel } from "@/types";
 import type { Language } from "@/lib/i18n";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
@@ -63,6 +63,8 @@ const STRIP_COPY: Record<
     rowStatus: Record<Exclude<ConversationStatus, "open">, string>;
     unreadOnly: string;
     channel: string;
+    /** Short channel chip shown on the row (migration 026). */
+    channelChip: Record<WhatsAppChannel, string>;
     moreTags: (n: number) => string;
   }
 > = {
@@ -78,6 +80,7 @@ const STRIP_COPY: Record<
     rowStatus: { pending: "Pendente", closed: "Resolvida" },
     unreadOnly: "Só não lidas",
     channel: "WhatsApp",
+    channelChip: { official: "Oficial", qr: "QR" },
     moreTags: (n) => `+${n}`,
   },
   "en-US": {
@@ -92,6 +95,7 @@ const STRIP_COPY: Record<
     rowStatus: { pending: "Pending", closed: "Resolved" },
     unreadOnly: "Unread only",
     channel: "WhatsApp",
+    channelChip: { official: "Official", qr: "QR" },
     moreTags: (n) => `+${n}`,
   },
 };
@@ -527,6 +531,7 @@ export function ConversationList({
                 tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
                 rowStatus={copy.rowStatus}
                 channelLabel={copy.channel}
+                channelChip={copy.channelChip}
                 moreTags={copy.moreTags}
               />
             ))}
@@ -548,6 +553,7 @@ interface ConversationItemProps {
   tags: RowTag[];
   rowStatus: Record<Exclude<ConversationStatus, "open">, string>;
   channelLabel: string;
+  channelChip: Record<WhatsAppChannel, string>;
   moreTags: (n: number) => string;
 }
 
@@ -559,8 +565,10 @@ function ConversationItem({
   tags,
   rowStatus,
   channelLabel,
+  channelChip,
   moreTags,
 }: ConversationItemProps) {
+  const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Unknown contact";
   const initials = displayName.charAt(0).toUpperCase();
@@ -598,7 +606,7 @@ function ConversationItem({
         </div>
         <span
           data-no-translate
-          title={channelLabel}
+          title={`${channelLabel} · ${channelChip[channel]}`}
           className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-card"
         >
           <MessageCircle className="h-2.5 w-2.5" />
@@ -616,9 +624,21 @@ function ConversationItem({
           >
             {displayName}
           </span>
-          {/* Age only — the channel is already on the avatar badge, and
-              a "WhatsApp" label on every row of a single-channel product
-              just ate width (round-2 critic). */}
+          {/* Channel chip (QR / Oficial) — the avatar badge says
+              "WhatsApp"; this says which transport, now that there are
+              two (migration 026). Tiny so the age keeps its room. */}
+          <span
+            data-no-translate
+            className={cn(
+              "shrink-0 rounded px-1 text-[9px] font-semibold uppercase leading-[14px] tracking-wide",
+              channel === "qr"
+                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                : "bg-muted text-muted-foreground",
+            )}
+          >
+            {channelChip[channel]}
+          </span>
+          <span className="flex-1" />
           <span
             data-no-translate
             className={cn(

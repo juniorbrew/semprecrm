@@ -7,6 +7,7 @@ import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
+  WhatsAppChannel,
   Conversation,
   ContactNote,
   Message,
@@ -171,6 +172,9 @@ const THREAD_STATUS_COPY: Record<
     team: string;
     changeStatus: string;
     back: string;
+    /** Channel chip + tooltip in the header (migration 026). */
+    channelChip: Record<WhatsAppChannel, string>;
+    channelTitle: Record<WhatsAppChannel, string>;
   }
 > = {
   "pt-BR": {
@@ -189,6 +193,11 @@ const THREAD_STATUS_COPY: Record<
     team: "Equipe",
     changeStatus: "Alterar status",
     back: "Voltar para as conversas",
+    channelChip: { official: "Oficial", qr: "QR" },
+    channelTitle: {
+      official: "Canal: API oficial do WhatsApp",
+      qr: "Canal: WhatsApp via QR code (sem janela de 24 h nem modelos)",
+    },
   },
   "en-US": {
     labels: { open: "Open", pending: "Pending", closed: "Resolved" },
@@ -206,6 +215,11 @@ const THREAD_STATUS_COPY: Record<
     team: "Team",
     changeStatus: "Change status",
     back: "Back to conversations",
+    channelChip: { official: "Official", qr: "QR" },
+    channelTitle: {
+      official: "Channel: official WhatsApp API",
+      qr: "Channel: WhatsApp via QR code (no 24-hour window or templates)",
+    },
   },
 };
 
@@ -1041,6 +1055,10 @@ export function MessageThread({
 
   const displayName = contact.name || contact.phone;
   const status = conversation.status;
+  // Transport this thread lives on. The 24 h window and templates are
+  // Cloud API concepts, so both are hidden for QR conversations.
+  const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
+  const isOfficial = channel === "official";
   const isResolved = status === "closed";
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
@@ -1109,20 +1127,36 @@ export function MessageThread({
                 <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])} />
                 {statusCopy.labels[status]}
               </span>
-              {/* 24 h session window — only when the thread is >= 32rem
-                  wide; the composer banner explains an expired window. */}
-              <Badge
-                variant="outline"
-                title={sessionInfo.remaining}
-                aria-label={sessionInfo.remaining}
+              {/* Channel chip — QR vs official (migration 026). */}
+              <span
+                data-no-translate
+                title={statusCopy.channelTitle[channel]}
                 className={cn(
-                  "hidden h-4 shrink-0 gap-1 border-border px-1.5 py-0 text-[10px] tabular-nums @lg:inline-flex",
-                  sessionInfo.expired ? "text-red-400" : "text-primary"
+                  "inline-flex shrink-0 items-center rounded px-1 text-[9px] font-semibold uppercase leading-4 tracking-wide",
+                  channel === "qr"
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    : "bg-muted text-muted-foreground"
                 )}
               >
-                <Clock className="h-3 w-3" />
-                {sessionInfo.short}
-              </Badge>
+                {statusCopy.channelChip[channel]}
+              </span>
+              {/* 24 h session window — official channel only, and only
+                  when the thread is >= 32rem wide; the composer banner
+                  explains an expired window. */}
+              {isOfficial && (
+                <Badge
+                  variant="outline"
+                  title={sessionInfo.remaining}
+                  aria-label={sessionInfo.remaining}
+                  className={cn(
+                    "hidden h-4 shrink-0 gap-1 border-border px-1.5 py-0 text-[10px] tabular-nums @lg:inline-flex",
+                    sessionInfo.expired ? "text-red-400" : "text-primary"
+                  )}
+                >
+                  <Clock className="h-3 w-3" />
+                  {sessionInfo.short}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -1316,7 +1350,9 @@ export function MessageThread({
           <div className="flex flex-col items-center justify-center py-12">
             <p className="text-sm text-muted-foreground">No messages yet</p>
             <p className="text-xs text-muted-foreground">
-              Send a template to start the conversation
+              {isOfficial
+                ? "Send a template to start the conversation"
+                : "Send a message to start the conversation"}
             </p>
           </div>
         ) : (
@@ -1408,7 +1444,8 @@ export function MessageThread({
       {/* Composer */}
       <MessageComposer
         conversationId={conversation.id}
-        sessionExpired={sessionInfo.expired}
+        sessionExpired={isOfficial && sessionInfo.expired}
+        templatesEnabled={isOfficial}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onOpenTemplates={handleOpenTemplates}

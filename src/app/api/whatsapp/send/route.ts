@@ -21,6 +21,13 @@ import {
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
+import {
+  GatewayNotConfiguredError,
+  GatewayRequestError,
+  GatewayUnreachableError,
+  sendViaGateway,
+} from '@/lib/whatsapp/qr-gateway'
+import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
 
 export async function POST(request: Request) {
   try {
@@ -163,6 +170,102 @@ export async function POST(request: Request) {
         { error: 'Invalid phone number format' },
         { status: 400 }
       )
+    }
+
+    // ------------------------------------------------------------
+    // QR channel (migration 026): the conversation came in through
+    // the WhatsApp Web session, so the reply goes back through the
+    // gateway. Templates are a Cloud API feature — refuse them here
+    // rather than silently sending the rendered body.
+    // ------------------------------------------------------------
+    if (conversation.channel === 'qr') {
+      if (message_type === 'template') {
+        return NextResponse.json(
+          {
+            error:
+              'Modelos de mensagem exigem a API oficial do WhatsApp. Esta conversa está no canal QR — envie uma mensagem de texto.',
+            code: 'template_requires_official',
+          },
+          { status: 400 },
+        )
+      }
+
+      let qrMessageId: string
+      try {
+        const sent = await sendViaGateway({
+          accountId,
+          to: sanitizedPhone,
+          ...(isMediaKind
+            ? {
+                media: {
+                  url: media_url,
+                  mimetype: mimeFromUrl(message_type, media_url, filename || undefined),
+                  filename: filename || undefined,
+                  caption: message_type !== 'audio' && content_text ? content_text : undefined,
+                  ptt: message_type === 'audio' ? true : undefined,
+                },
+              }
+            : { text: content_text }),
+        })
+        qrMessageId = sent.message_id
+      } catch (err) {
+        if (err instanceof GatewayNotConfiguredError || err instanceof GatewayUnreachableError) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 503 })
+        }
+        if (err instanceof GatewayRequestError) {
+          // 409 not_connected / 422 not_on_whatsapp / 502 send_failed —
+          // the message is already the pt-BR toast the inbox shows.
+          return NextResponse.json(
+            { error: err.message, code: err.code },
+            { status: err.status === 502 ? 502 : err.status },
+          )
+        }
+        const message = err instanceof Error ? err.message : 'Erro desconhecido do gateway'
+        console.error('[whatsapp/send] gateway send failed:', message)
+        return NextResponse.json({ error: `Falha ao enviar pelo canal QR: ${message}` }, { status: 502 })
+      }
+
+      const { data: qrRecord, error: qrMsgError } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id,
+          sender_type: 'agent',
+          content_type: message_type,
+          content_text: content_text || null,
+          media_url: media_url || null,
+          message_id: qrMessageId,
+          status: 'sent',
+          channel: 'qr',
+          reply_to_message_id: reply_to_message_id || null,
+        })
+        .select()
+        .single()
+
+      if (qrMsgError) {
+        console.error('Error inserting sent message:', qrMsgError)
+        return NextResponse.json(
+          { error: `Mensagem enviada, mas falhou ao salvar no banco: ${qrMsgError.message}` },
+          { status: 500 },
+        )
+      }
+
+      await supabase
+        .from('conversations')
+        .update({
+          last_message_text: content_text || `[${message_type}]`,
+          last_message_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', conversation_id)
+
+      await pauseActiveFlowRuns(accountId, contact.id)
+
+      return NextResponse.json({
+        success: true,
+        message_id: qrRecord.id,
+        whatsapp_message_id: qrMessageId,
+        channel: 'qr',
+      })
     }
 
     // Fetch and decrypt WhatsApp config
@@ -398,36 +501,7 @@ export async function POST(request: Request) {
       })
       .eq('id', conversation_id)
 
-    // Pause any active Flow run for this contact — the agent stepping
-    // in is the strongest "yield, human is here" signal. See PR #2
-    // plan for why we pause (not end): preserves diagnostic state +
-    // lets the agent or the 24h timeout sweep cleanly resolve the
-    // run later. For accounts with no active runs the UPDATE matches
-    // zero rows — cheap and harmless.
-    try {
-      const { error: pauseErr } = await supabaseAdmin()
-        .from('flow_runs')
-        .update({
-          status: 'paused_by_agent',
-          ended_at: new Date().toISOString(),
-          end_reason: 'agent_replied',
-        })
-        .eq('account_id', accountId)
-        .eq('contact_id', contact.id)
-        .eq('status', 'active')
-      if (pauseErr) {
-        // Best-effort — log + continue. The agent's message already
-        // landed at Meta; don't fail the response over a bookkeeping
-        // miss. Worst case: a stale active run gets caught by the
-        // stale-run cron sweep within 24h.
-        console.error('[flows] pause-on-agent-send failed:', pauseErr.message)
-      }
-    } catch (err) {
-      console.error(
-        '[flows] pause-on-agent-send threw:',
-        err instanceof Error ? err.message : err,
-      )
-    }
+    await pauseActiveFlowRuns(accountId, contact.id)
 
     return NextResponse.json({
       success: true,
@@ -439,6 +513,37 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: 'Falha ao enviar mensagem' },
       { status: 500 }
+    )
+  }
+}
+
+/**
+ * Pause any active Flow run for this contact — the agent stepping in
+ * is the strongest "yield, human is here" signal. We pause (not end)
+ * to preserve diagnostic state; the agent or the 24h timeout sweep
+ * resolves the run later. For accounts with no active runs the UPDATE
+ * matches zero rows — cheap and harmless. Best-effort: the message
+ * already landed, so a bookkeeping miss is logged, never surfaced.
+ */
+async function pauseActiveFlowRuns(accountId: string, contactId: string) {
+  try {
+    const { error: pauseErr } = await supabaseAdmin()
+      .from('flow_runs')
+      .update({
+        status: 'paused_by_agent',
+        ended_at: new Date().toISOString(),
+        end_reason: 'agent_replied',
+      })
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+      .eq('status', 'active')
+    if (pauseErr) {
+      console.error('[flows] pause-on-agent-send failed:', pauseErr.message)
+    }
+  } catch (err) {
+    console.error(
+      '[flows] pause-on-agent-send threw:',
+      err instanceof Error ? err.message : err,
     )
   }
 }

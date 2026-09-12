@@ -19,5 +19,26 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      // Gateway do canal WhatsApp por QR code (Baileys). Fala só com o app
+      // via HTTP interno na 3201 — nunca exponha essa porta no nginx.
+      name: "wa-gateway",
+      cwd: "/var/www/semprecrm/services/wa-gateway",
+      script: "dist/index.js",
+      // Segredos ficam em services/wa-gateway/.env (chmod 600); o Node 20 lê
+      // o arquivo direto com --env-file, sem depender do PM2.
+      node_args: "--env-file=/var/www/semprecrm/services/wa-gateway/.env",
+      instances: 1, // obrigatório: cada sessão do WhatsApp vive em um único processo
+      exec_mode: "fork",
+      autorestart: true,
+      max_memory_restart: "512M",
+      // Credenciais das sessões (uma pasta por account_id). Fora do checkout do
+      // git para sobreviver a redeploys; está no backup.sh.
+      env: { NODE_ENV: "production", WA_DATA_DIR: "/var/lib/semprecrm/wa" },
+      out_file: "/var/log/semprecrm/wa-gateway.out.log",
+      error_file: "/var/log/semprecrm/wa-gateway.err.log",
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

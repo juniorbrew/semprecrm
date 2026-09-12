@@ -111,6 +111,12 @@ export type ComposerMode = "reply" | "note";
 interface MessageComposerProps {
   conversationId: string;
   sessionExpired: boolean;
+  /**
+   * Whether the template picker is offered (button + "/" shortcut).
+   * False for QR-channel conversations — templates are a Cloud API
+   * feature. Defaults to true.
+   */
+  templatesEnabled?: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
   onOpenTemplates: () => void;
@@ -135,6 +141,8 @@ const COMPOSER_COPY: Record<
     reply: string;
     note: string;
     replyPlaceholder: string;
+    /** QR-channel threads: same hint without the "/" shortcut. */
+    replyPlaceholderNoTemplates: string;
     notePlaceholder: string;
     expiredPlaceholder: string;
     readOnlyPlaceholder: string;
@@ -160,6 +168,7 @@ const COMPOSER_COPY: Record<
     reply: "Responder",
     note: "Nota interna",
     replyPlaceholder: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para modelos",
+    replyPlaceholderNoTemplates: "Digite uma mensagem… Shift+Enter para nova linha",
     notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
     expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
     readOnlyPlaceholder: "Somente leitura — seu perfil não pode responder",
@@ -185,6 +194,7 @@ const COMPOSER_COPY: Record<
     reply: "Reply",
     note: "Private note",
     replyPlaceholder: "Type a message… Shift+Enter for a new line. Type / for templates",
+    replyPlaceholderNoTemplates: "Type a message… Shift+Enter for a new line",
     notePlaceholder: "Write a note for your team — the customer won't see it",
     expiredPlaceholder: "24-hour window closed — send a template",
     readOnlyPlaceholder: "Read-only — your role can't reply",
@@ -232,6 +242,7 @@ const OPUS_ENCODER_PATH = "/opus/encoderWorker.min.js";
 export function MessageComposer({
   conversationId,
   sessionExpired,
+  templatesEnabled = true,
   onSend,
   onSendMedia,
   onOpenTemplates,
@@ -403,6 +414,7 @@ export function MessageComposer({
       if (
         e.key === "/" &&
         !isNote &&
+        templatesEnabled &&
         !readOnly &&
         e.currentTarget.value.length === 0 &&
         !e.ctrlKey &&
@@ -424,7 +436,7 @@ export function MessageComposer({
         }
       }
     },
-    [handleSend, isNote, readOnly, onOpenTemplates, wrapSelection]
+    [handleSend, isNote, templatesEnabled, readOnly, onOpenTemplates, wrapSelection]
   );
 
   const handleChange = useCallback(
@@ -598,7 +610,9 @@ export function MessageComposer({
       ? copy.notePlaceholder
       : sessionExpired
         ? copy.expiredPlaceholder
-        : copy.replyPlaceholder;
+        : templatesEnabled
+          ? copy.replyPlaceholder
+          : copy.replyPlaceholderNoTemplates;
 
   return (
     <div
@@ -799,20 +813,24 @@ export function MessageComposer({
                   <Icon className="h-3.5 w-3.5" />
                 </button>
               ))}
-              <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />
-              <button
-                type="button"
-                tabIndex={-1}
-                disabled={readOnly}
-                onClick={onOpenTemplates}
-                title={copy.sendTemplate}
-                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <kbd className="rounded border border-border bg-card px-1 font-mono text-[10px] leading-4 text-foreground/80">
-                  /
-                </kbd>
-                <span className="hidden sm:inline">{copy.slashHint}</span>
-              </button>
+              {templatesEnabled && (
+                <>
+                  <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    disabled={readOnly}
+                    onClick={onOpenTemplates}
+                    title={copy.sendTemplate}
+                    className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <kbd className="rounded border border-border bg-card px-1 font-mono text-[10px] leading-4 text-foreground/80">
+                      /
+                    </kbd>
+                    <span className="hidden sm:inline">{copy.slashHint}</span>
+                  </button>
+                </>
+              )}
             </div>
           )}
           <textarea
@@ -926,8 +944,9 @@ export function MessageComposer({
             </button>
 
             {/* Templates — the only WhatsApp path once the window
-                closes, so it lights up in that state. Hidden for notes. */}
-            {!isNote && (
+                closes, so it lights up in that state. Hidden for notes
+                and for QR-channel threads (no templates there). */}
+            {!isNote && templatesEnabled && (
               <GatedButton
                 variant="ghost"
                 size="sm"

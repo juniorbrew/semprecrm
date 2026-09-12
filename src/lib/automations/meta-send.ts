@@ -7,6 +7,12 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import {
+  conversationChannel,
+  engineSendViaQr,
+  loadTemplateBody,
+  renderTemplateBody,
+} from '@/lib/whatsapp/qr-engine-send'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -59,6 +65,37 @@ type SendInput =
 
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // QR channel (migration 026): the conversation lives on the WhatsApp
+  // Web session, so deliver through the gateway. Templates don't exist
+  // there — send the rendered body as plain text instead.
+  if ((await conversationChannel(db, input.conversationId)) === 'qr') {
+    if (input.kind === 'template') {
+      const body = await loadTemplateBody(db, input.accountId, input.templateName, input.language)
+      if (!body) {
+        throw new Error(
+          `template "${input.templateName}" not found locally — cannot send it as text on the QR channel`,
+        )
+      }
+      const text = renderTemplateBody(body, input.params ?? [])
+      return engineSendViaQr(db, {
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        contactId: input.contactId,
+        text,
+        contentType: 'text',
+        templateName: input.templateName,
+        preview: text,
+      })
+    }
+    return engineSendViaQr(db, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      text: input.text,
+      contentType: 'text',
+    })
+  }
 
   // Scope the contact + config lookups by account_id, not user_id.
   // The engine uses the service-role client (bypassing RLS); without
