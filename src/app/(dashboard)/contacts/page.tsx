@@ -1,7 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import {
+  findConversationByContact,
+  inboxConversationHref,
+} from '@/lib/conversations/find-by-contact';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -41,12 +46,14 @@ import {
   ChevronLeft,
   ChevronRight,
   SlidersHorizontal,
+  MessageCircle,
 } from 'lucide-react';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
+import { useLanguage } from '@/hooks/use-language';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
 
@@ -58,6 +65,8 @@ interface ContactWithTags extends Contact {
 
 export default function ContactsPage() {
   const supabase = createClient();
+  const router = useRouter();
+  const { t } = useLanguage();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -191,6 +200,22 @@ export default function ContactsPage() {
     setDetailOpen(true);
   }
 
+  /**
+   * Row shortcut to the contact's WhatsApp thread. Uses the same
+   * "newest activity wins" lookup as the detail panel and the deal
+   * drawer. A contact that never talked to us lands in the detail
+   * panel instead, where "Iniciar conversa" can create the thread.
+   */
+  async function openConversationFor(contact: Contact) {
+    const existing = await findConversationByContact(supabase, contact.id);
+    if (existing) {
+      router.push(inboxConversationHref(existing.id));
+      return;
+    }
+    toast.info(t('No conversations with this contact yet.'));
+    openDetail(contact.id);
+  }
+
   function confirmDelete(contact: Contact) {
     setDeleteTarget(contact);
     setDeleteConfirmOpen(true);
@@ -209,6 +234,11 @@ export default function ContactsPage() {
       toast.error('Failed to delete contact');
     } else {
       toast.success('Contato excluído');
+      // The detail sheet may be showing the contact we just removed.
+      if (detailContactId === deleteTarget.id) {
+        setDetailOpen(false);
+        setDetailContactId(null);
+      }
       fetchContacts();
     }
 
@@ -420,11 +450,30 @@ export default function ContactsPage() {
                     <Checkbox
                       checked={selected.has(contact.id)}
                       onCheckedChange={() => toggleSelect(contact.id)}
-                      aria-label={`Select ${contact.name || contact.phone}`}
+                      aria-label={`Select contact ${contact.name || contact.phone}`}
                     />
                   </TableCell>
                   <TableCell className="text-foreground font-medium">
-                    {contact.name || <span className="text-muted-foreground italic">Unnamed</span>}
+                    {/* Link-styled name + sub-line so the row reads as
+                        clickable; the button also gives the a11y tree a
+                        named entry point instead of a bare bold span. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDetail(contact.id);
+                      }}
+                      className="group/name block max-w-full text-left cursor-pointer"
+                    >
+                      <span className="block truncate text-foreground group-hover/name:text-primary group-hover/name:underline underline-offset-2 transition-colors">
+                        {contact.name || (
+                          <span className="text-muted-foreground italic">Unnamed</span>
+                        )}
+                      </span>
+                      <span className="block text-[11px] font-normal text-muted-foreground group-hover/name:text-primary/80">
+                        {t('View details')}
+                      </span>
+                    </button>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {contact.phone}
@@ -488,6 +537,16 @@ export default function ContactsPage() {
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
+                            openConversationFor(contact);
+                          }}
+                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
+                        >
+                          <MessageCircle className="size-4" />
+                          {t('Open conversation')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
                             openEditForm(contact);
                           }}
                           className="text-popover-foreground focus:bg-muted focus:text-foreground"
@@ -520,8 +579,7 @@ export default function ContactsPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, totalCount)} of{' '}
-            {totalCount}
+            {`Showing ${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
           </p>
           <div className="flex items-center gap-1">
             <Button
@@ -534,7 +592,7 @@ export default function ContactsPage() {
               <ChevronLeft className="size-4" />
             </Button>
             <span className="text-xs text-muted-foreground px-2">
-              Page {page + 1} of {totalPages}
+              {`Page ${page + 1} of ${totalPages}`}
             </span>
             <Button
               variant="outline"
@@ -571,6 +629,7 @@ export default function ContactsPage() {
         onOpenChange={setDetailOpen}
         contactId={detailContactId}
         onUpdated={fetchContacts}
+        onDelete={canEdit ? confirmDelete : undefined}
       />
 
       {/* Import Modal */}

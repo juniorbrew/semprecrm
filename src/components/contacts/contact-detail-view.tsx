@@ -1,11 +1,29 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { formatDistanceToNow } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useCan } from '@/hooks/use-can';
+import { useLanguage } from '@/hooks/use-language';
 import { formatCurrency } from '@/lib/currency';
+import {
+  inboxConversationHref,
+  listConversationsByContact,
+} from '@/lib/conversations/find-by-contact';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
+import type {
+  Contact,
+  Tag,
+  ContactNote,
+  CustomField,
+  Deal,
+  Conversation,
+  ConversationStatus,
+} from '@/types';
 import {
   Sheet,
   SheetContent,
@@ -18,9 +36,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Phone,
   Mail,
@@ -31,8 +47,12 @@ import {
   Plus,
   Trash2,
   Save,
-  X,
   DollarSign,
+  MessageCircle,
+  MessageSquare,
+  Pencil,
+  ArrowUpRight,
+  X,
 } from 'lucide-react';
 
 interface ContactDetailViewProps {
@@ -40,22 +60,49 @@ interface ContactDetailViewProps {
   onOpenChange: (open: boolean) => void;
   contactId: string | null;
   onUpdated: () => void;
+  /** Optional destructive action. When provided, a delete button is shown
+   *  in the header action row; the parent owns the confirmation flow. */
+  onDelete?: (contact: Contact) => void;
 }
+
+type PanelMode = 'view' | 'edit';
+
+const STATUS_DOT: Record<ConversationStatus, string> = {
+  open: 'bg-primary',
+  pending: 'bg-amber-500',
+  closed: 'bg-muted-foreground',
+};
+
+const STATUS_LABEL_KEY: Record<ConversationStatus, string> = {
+  open: 'Open',
+  pending: 'Pending',
+  closed: 'Closed',
+};
 
 export function ContactDetailView({
   open,
   onOpenChange,
   contactId,
   onUpdated,
+  onDelete,
 }: ContactDetailViewProps) {
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const router = useRouter();
+  const { t, language } = useLanguage();
+  const { accountId, defaultCurrency, user } = useAuth();
+  const canSend = useCan('send-messages');
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
+  const [mode, setMode] = useState<PanelMode>('view');
 
-  // Details tab
+  // Conversations (default tab + header primary action)
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [openingConversation, setOpeningConversation] = useState(false);
+
+  // Edit mode
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
@@ -101,6 +148,15 @@ export function ContactDetailView({
       setEditCompany(data.company ?? '');
     }
     setLoading(false);
+  }, [contactId, supabase]);
+
+  const fetchConversations = useCallback(async () => {
+    if (!contactId) return;
+    setLoadingConversations(true);
+    // Shared with the deal drawer (Pipelines) so both screens agree on
+    // which thread is "the contact's conversation": newest activity first.
+    setConversations(await listConversationsByContact(supabase, contactId));
+    setLoadingConversations(false);
   }, [contactId, supabase]);
 
   const fetchTags = useCallback(async () => {
@@ -169,12 +225,29 @@ export function ContactDetailView({
   useEffect(() => {
     if (open && contactId) {
       fetchContact();
+      fetchConversations();
       fetchTags();
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [
+    open,
+    contactId,
+    fetchContact,
+    fetchConversations,
+    fetchTags,
+    fetchNotes,
+    fetchCustomFields,
+    fetchDeals,
+  ]);
+
+  // Closing the sheet always returns it to view mode so the next contact
+  // opened never lands on a stale edit form.
+  function handleOpenChange(next: boolean) {
+    if (!next) setMode('view');
+    onOpenChange(next);
+  }
 
   async function copyPhone() {
     if (!contact) return;
@@ -183,9 +256,54 @@ export function ContactDetailView({
     setTimeout(() => setCopiedPhone(false), 2000);
   }
 
+  function goToInbox(conversationId: string) {
+    handleOpenChange(false);
+    router.push(inboxConversationHref(conversationId));
+  }
+
+  /**
+   * Primary action. Reuses the contact's most recent conversation when
+   * one exists; otherwise creates an empty open conversation (the inbox
+   * thread then offers "send a template to start the conversation") and
+   * deep-links into it via the inbox's `?c=` support.
+   */
+  async function openConversation() {
+    if (!contact) return;
+    const existing = conversations[0];
+    if (existing) {
+      goToInbox(existing.id);
+      return;
+    }
+
+    if (!canSend || !accountId || !user) {
+      toast.error(t('You do not have permission to start conversations'));
+      return;
+    }
+
+    setOpeningConversation(true);
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert({
+        user_id: user.id,
+        account_id: accountId,
+        contact_id: contact.id,
+        status: 'open',
+        unread_count: 0,
+      })
+      .select('id')
+      .single();
+
+    setOpeningConversation(false);
+    if (error || !data) {
+      toast.error(t('Failed to start conversation'));
+      return;
+    }
+    goToInbox(data.id as string);
+  }
+
   async function saveDetails() {
     if (!contactId || !editPhone.trim()) {
-      toast.error('Phone number is required');
+      toast.error(t('Phone number is required'));
       return;
     }
 
@@ -202,13 +320,24 @@ export function ContactDetailView({
       .eq('id', contactId);
 
     if (error) {
-      toast.error('Failed to update contact');
+      toast.error(t('Failed to update contact'));
     } else {
-      toast.success('Contato atualizado');
+      toast.success(t('Contact updated'));
+      setMode('view');
       fetchContact();
       onUpdated();
     }
     setSavingDetails(false);
+  }
+
+  function cancelEdit() {
+    if (contact) {
+      setEditName(contact.name ?? '');
+      setEditPhone(contact.phone);
+      setEditEmail(contact.email ?? '');
+      setEditCompany(contact.company ?? '');
+    }
+    setMode('view');
   }
 
   async function toggleTag(tagId: string) {
@@ -246,9 +375,9 @@ export function ContactDetailView({
     const {
       data: { session },
     } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user || !accountId) {
-      toast.error('Not authenticated');
+    const sessionUser = session?.user;
+    if (!sessionUser || !accountId) {
+      toast.error(t('Not authenticated'));
       setSavingNote(false);
       return;
     }
@@ -256,16 +385,16 @@ export function ContactDetailView({
     const { error } = await supabase.from('contact_notes').insert({
       contact_id: contactId,
       account_id: accountId,
-      user_id: user.id,
+      user_id: sessionUser.id,
       note_text: newNote.trim(),
     });
 
     if (error) {
-      toast.error('Failed to add note');
+      toast.error(t('Failed to add note'));
     } else {
       setNewNote('');
       fetchNotes();
-      toast.success('Note added');
+      toast.success(t('Note added'));
     }
     setSavingNote(false);
   }
@@ -277,10 +406,10 @@ export function ContactDetailView({
       .eq('id', noteId);
 
     if (error) {
-      toast.error('Failed to delete note');
+      toast.error(t('Failed to delete note'));
     } else {
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
-      toast.success('Note deleted');
+      toast.success(t('Note deleted'));
     }
   }
 
@@ -310,9 +439,9 @@ export function ContactDetailView({
         if (error) throw error;
       }
 
-      toast.success('Custom fields saved');
+      toast.success(t('Custom fields saved'));
     } catch {
-      toast.error('Failed to save custom fields');
+      toast.error(t('Failed to save custom fields'));
     }
     setSavingCustom(false);
   }
@@ -327,11 +456,22 @@ export function ContactDetailView({
       .slice(0, 2);
   }
 
+  function relativeTime(iso?: string | null) {
+    if (!iso) return '';
+    return formatDistanceToNow(new Date(iso), {
+      addSuffix: true,
+      locale: language === 'pt-BR' ? ptBR : undefined,
+    });
+  }
+
+  const hasConversation = conversations.length > 0;
+  const displayName = contact?.name || contact?.phone || '';
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
-        className="bg-popover border-border text-popover-foreground sm:max-w-lg w-full p-0"
+        className="bg-popover border-border text-popover-foreground w-full p-0 data-[side=right]:sm:max-w-md"
       >
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
@@ -339,91 +479,109 @@ export function ContactDetailView({
           </div>
         ) : (
           <div className="flex flex-col h-full">
-            {/* Header */}
-            <SheetHeader className="p-4 border-b border-border/50">
-              <div className="flex items-center gap-3">
-                <Avatar className="size-12 bg-muted border border-border">
-                  <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
+            {/* Header: identity block + primary actions */}
+            <SheetHeader className="p-4 pb-3 border-b border-border/50 gap-3">
+              <div className="flex items-start gap-3 pr-8">
+                <Avatar className="size-14 bg-muted border border-border">
+                  {contact.avatar_url && (
+                    <AvatarImage src={contact.avatar_url} alt={displayName} />
+                  )}
+                  <AvatarFallback className="bg-primary/10 text-primary text-base font-semibold">
                     {getInitials(contact.name)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <SheetTitle className="text-popover-foreground truncate">
-                    {contact.name || 'Unknown'}
+                  <SheetTitle className="text-popover-foreground text-lg leading-tight truncate">
+                    {contact.name || contact.phone}
                   </SheetTitle>
-                  <SheetDescription className="text-muted-foreground text-xs mt-0.5">
-                    Detalhes do contato
+                  <SheetDescription className="sr-only">
+                    {t('Contact details')}
                   </SheetDescription>
-                  <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                  {contact.company && (
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground truncate">
+                      <Building2 className="size-3 shrink-0" />
+                      <span className="truncate">{contact.company}</span>
+                    </p>
+                  )}
+                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                     <button
+                      type="button"
                       onClick={copyPhone}
-                      className="flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                      title={t('Copy phone')}
+                      className="flex max-w-full items-center gap-1.5 hover:text-primary transition-colors cursor-pointer"
                     >
-                      <Phone className="size-3" />
-                      {contact.phone}
+                      <Phone className="size-3 shrink-0" />
+                      <span className="font-mono truncate">{contact.phone}</span>
                       {copiedPhone ? (
-                        <Check className="size-3 text-primary" />
+                        <Check className="size-3 text-primary shrink-0" />
                       ) : (
-                        <Copy className="size-3" />
+                        <Copy className="size-3 shrink-0 opacity-70" />
                       )}
                     </button>
                     {contact.email && (
-                      <span className="flex items-center gap-1">
-                        <Mail className="size-3" />
-                        {contact.email}
-                      </span>
-                    )}
-                    {contact.company && (
-                      <span className="flex items-center gap-1">
-                        <Building2 className="size-3" />
-                        {contact.company}
+                      <span className="flex max-w-full items-center gap-1.5">
+                        <Mail className="size-3 shrink-0" />
+                        <span className="truncate">{contact.email}</span>
                       </span>
                     )}
                   </div>
                 </div>
               </div>
+
+              {mode === 'view' ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={openConversation}
+                    disabled={openingConversation || (!hasConversation && !canSend)}
+                    className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    {openingConversation ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <MessageCircle className="size-3.5" />
+                    )}
+                    {hasConversation
+                      ? t('Open conversation')
+                      : t('Start conversation')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMode('edit')}
+                    className="border-border text-foreground hover:bg-muted"
+                  >
+                    <Pencil className="size-3.5" />
+                    {t('Edit')}
+                  </Button>
+                  {onDelete && (
+                    <Button
+                      size="icon-sm"
+                      variant="outline"
+                      aria-label={t('Delete contact')}
+                      title={t('Delete contact')}
+                      onClick={() => onDelete(contact)}
+                      className="border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
+                  <Pencil className="size-3" />
+                  {t('Editing contact')}
+                </div>
+              )}
             </SheetHeader>
 
-            {/* Tabs */}
-            <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3">
-                <TabsTrigger
-                  value="details"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Detalhes
-                </TabsTrigger>
-                <TabsTrigger
-                  value="tags"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Etiquetas
-                </TabsTrigger>
-                <TabsTrigger
-                  value="notes"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Observações
-                </TabsTrigger>
-                <TabsTrigger
-                  value="custom"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Campos personalizados
-                </TabsTrigger>
-                <TabsTrigger
-                  value="deals"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Negócios
-                </TabsTrigger>
-              </TabsList>
-
-              {/* Details Tab */}
-              <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
+            {mode === 'edit' ? (
+              /* Edit mode: the same fields as before, but reached on demand
+                 instead of being the entire panel. */
+              <div className="flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Nome</Label>
+                    <Label className="text-muted-foreground text-xs">{t('Name')}</Label>
                     <Input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
@@ -432,7 +590,7 @@ export function ContactDetailView({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">
-                      Phone <span className="text-red-400">*</span>
+                      {t('Phone')} <span className="text-red-400">*</span>
                     </Label>
                     <Input
                       value={editPhone}
@@ -441,7 +599,7 @@ export function ContactDetailView({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">E-mail</Label>
+                    <Label className="text-muted-foreground text-xs">{t('Email')}</Label>
                     <Input
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
@@ -449,237 +607,365 @@ export function ContactDetailView({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Empresa</Label>
+                    <Label className="text-muted-foreground text-xs">{t('Company')}</Label>
                     <Input
                       value={editCompany}
                       onChange={(e) => setEditCompany(e.target.value)}
                       className="bg-muted border-border text-foreground h-8 text-sm"
                     />
                   </div>
-                  <Button
-                    onClick={saveDetails}
-                    disabled={savingDetails}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                    size="sm"
-                  >
-                    {savingDetails ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Save className="size-3.5" />
-                    )}
-                    Salvar alterações
-                  </Button>
-                </div>
-              </TabsContent>
-
-              {/* Tags Tab */}
-              <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-3">
-                  <p className="text-xs text-muted-foreground">
-                    Clique em uma etiqueta para adicioná-la ou removê-la deste contato.
-                  </p>
-                  {allTags.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Nenhuma etiqueta disponível. Crie etiquetas nas Configurações.
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {allTags.map((tag) => {
-                        const selected = contactTagIds.includes(tag.id);
-                        return (
-                          <button
-                            key={tag.id}
-                            onClick={() => toggleTag(tag.id)}
-                            disabled={savingTags}
-                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
-                              selected
-                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                : 'opacity-50 hover:opacity-80'
-                            }`}
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
-                          >
-                            {selected && <Check className="size-3 mr-1" />}
-                            {tag.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
-
-              {/* Notes Tab */}
-              <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
-                <div className="space-y-2 mb-3">
-                  <Textarea
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    placeholder="Write a note..."
-                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
-                  />
-                  <Button
-                    onClick={addNote}
-                    disabled={!newNote.trim() || savingNote}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                    size="sm"
-                  >
-                    {savingNote ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Plus className="size-3.5" />
-                    )}
-                    Adicionar observação
-                  </Button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto space-y-2">
-                  {loadingNotes ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : notes.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                      Ainda não há observações.
-                    </p>
-                  ) : (
-                    notes.map((note) => (
-                      <div
-                        key={note.id}
-                        className="rounded-lg bg-muted/50 border border-border/50 p-3 group"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap flex-1">
-                            {note.note_text}
-                          </p>
-                          <button
-                            onClick={() => deleteNote(note.id)}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1.5">
-                          {new Date(note.created_at).toLocaleDateString('pt-BR', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </TabsContent>
-
-              {/* Custom Fields Tab */}
-              <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingCustom ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                  </div>
-                ) : customFields.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    Nenhum campo personalizado definido. Crie-os nas Configurações.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {customFields.map((field) => (
-                      <div key={field.id} className="space-y-1.5">
-                        <Label className="text-muted-foreground text-xs capitalize">
-                          {field.field_name}
-                        </Label>
-                        <Input
-                          value={customValues[field.id] ?? ''}
-                          onChange={(e) =>
-                            setCustomValues((prev) => ({
-                              ...prev,
-                              [field.id]: e.target.value,
-                            }))
-                          }
-                          placeholder={`Enter ${field.field_name}...`}
-                          className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
-                        />
-                      </div>
-                    ))}
+                  <div className="flex items-center gap-2 pt-1">
                     <Button
-                      onClick={saveCustomFields}
-                      disabled={savingCustom}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                      onClick={saveDetails}
+                      disabled={savingDetails}
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1"
                       size="sm"
                     >
-                      {savingCustom ? (
+                      {savingDetails ? (
                         <Loader2 className="size-3.5 animate-spin" />
                       ) : (
                         <Save className="size-3.5" />
                       )}
-                      Salvar campos personalizados
+                      {t('Save changes')}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={cancelEdit}
+                      disabled={savingDetails}
+                      className="border-border text-muted-foreground hover:bg-muted"
+                    >
+                      <X className="size-3.5" />
+                      {t('Cancel')}
                     </Button>
                   </div>
-                )}
-              </TabsContent>
+                </div>
+              </div>
+            ) : (
+              <Tabs defaultValue="conversations" className="flex-1 flex flex-col min-h-0">
+                {/* Tab strip. Earlier build overflowed the sheet (five long
+                    labels in a fixed-height list). Labels are short, the
+                    list is full-width and wraps if the sheet ever gets
+                    narrower than the strip. */}
+                <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3 flex w-auto flex-wrap group-data-horizontal/tabs:h-auto">
+                  <TabsTrigger
+                    value="conversations"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Conversations')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="tags"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Tags')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="notes"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Notes')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="custom"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Fields')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="deals"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Deals')}
+                  </TabsTrigger>
+                </TabsList>
 
-              {/* Deals Tab */}
-              <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingDeals ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-primary" />
-                  </div>
-                ) : deals.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No deals yet</p>
-                ) : (
-                  <div className="space-y-2">
-                    {deals.map((deal) => (
-                      <div
-                        key={deal.id}
-                        className="rounded-lg border border-border bg-muted/50 p-3"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm font-medium text-foreground">
-                            {deal.title}
+                {/* Conversations Tab (default) */}
+                <TabsContent value="conversations" className="flex-1 overflow-y-auto px-4 py-3">
+                  <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {t('Previous conversations')}
+                  </p>
+                  {loadingConversations ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : conversations.length === 0 ? (
+                    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-8 text-center">
+                      <MessageSquare className="size-6 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
+                        {t('No conversations with this contact yet.')}
+                      </p>
+                      {canSend && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={openConversation}
+                          disabled={openingConversation}
+                          className="mt-1 border-border text-foreground hover:bg-muted"
+                        >
+                          {openingConversation ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <MessageCircle className="size-3.5" />
+                          )}
+                          {t('Start conversation')}
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {conversations.map((conv) => (
+                        <button
+                          key={conv.id}
+                          type="button"
+                          onClick={() => goToInbox(conv.id)}
+                          className="group w-full rounded-lg border border-border bg-muted/40 p-3 text-left transition-colors hover:bg-muted hover:border-primary/40 cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                              <span
+                                className={cn(
+                                  'size-2 rounded-full shrink-0',
+                                  STATUS_DOT[conv.status]
+                                )}
+                              />
+                              {t(STATUS_LABEL_KEY[conv.status])}
+                              {conv.unread_count > 0 && (
+                                <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                                  {conv.unread_count}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                              {relativeTime(conv.last_message_at ?? conv.created_at)}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 text-sm text-foreground/90 line-clamp-2 break-words">
+                            {conv.last_message_text || t('No messages yet')}
                           </p>
-                          {deal.stage && (
-                            <span
-                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                          <span className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground group-hover:text-primary transition-colors">
+                            <ArrowUpRight className="size-3" />
+                            {t('Open in inbox')}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Tags Tab */}
+                <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      {t('Click a tag to add or remove it from this contact.')}
+                    </p>
+                    {allTags.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {t('No tags available. Create tags in Settings.')}
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {allTags.map((tag) => {
+                          const selected = contactTagIds.includes(tag.id);
+                          return (
+                            <button
+                              key={tag.id}
+                              type="button"
+                              onClick={() => toggleTag(tag.id)}
+                              disabled={savingTags}
+                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
+                                selected
+                                  ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
+                                  : 'opacity-50 hover:opacity-80'
+                              }`}
                               style={{
-                                backgroundColor: `${deal.stage.color}20`,
-                                color: deal.stage.color,
+                                backgroundColor: tag.color + '20',
+                                color: tag.color,
                               }}
                             >
-                              {deal.stage.name}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <DollarSign className="size-3" />
-                            {formatCurrency(
-                              deal.value ?? 0,
-                              deal.currency || defaultCurrency,
-                            )}
-                          </span>
-                          {deal.status && deal.status !== 'open' && (
-                            <span
-                              className={
-                                deal.status === 'won'
-                                  ? 'text-primary'
-                                  : 'text-red-400'
-                              }
-                            >
-                              {deal.status}
-                            </span>
-                          )}
-                        </div>
+                              {selected && <Check className="size-3 mr-1" />}
+                              {tag.name}
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </TabsContent>
-            </Tabs>
+                </TabsContent>
+
+                {/* Notes Tab */}
+                <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
+                  <div className="space-y-2 mb-3">
+                    <Textarea
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      placeholder={t('Write a note...')}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
+                    />
+                    <Button
+                      onClick={addNote}
+                      disabled={!newNote.trim() || savingNote}
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                      size="sm"
+                    >
+                      {savingNote ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="size-3.5" />
+                      )}
+                      {t('Add note')}
+                    </Button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-2">
+                    {loadingNotes ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : notes.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        {t('No notes yet.')}
+                      </p>
+                    ) : (
+                      notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="rounded-lg bg-muted/50 border border-border/50 p-3 group"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-muted-foreground whitespace-pre-wrap flex-1">
+                              {note.note_text}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => deleteNote(note.id)}
+                              aria-label={t('Delete note')}
+                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            {new Date(note.created_at).toLocaleDateString('pt-BR', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </TabsContent>
+
+                {/* Custom Fields Tab */}
+                <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
+                  {loadingCustom ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : customFields.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      {t('No custom fields defined. Create them in Settings.')}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {customFields.map((field) => (
+                        <div key={field.id} className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs capitalize">
+                            {field.field_name}
+                          </Label>
+                          <Input
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
+                          />
+                        </div>
+                      ))}
+                      <Button
+                        onClick={saveCustomFields}
+                        disabled={savingCustom}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                        size="sm"
+                      >
+                        {savingCustom ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Save className="size-3.5" />
+                        )}
+                        {t('Save custom fields')}
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Deals Tab */}
+                <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
+                  {loadingDeals ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-primary" />
+                    </div>
+                  ) : deals.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      {t('No deals yet')}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {deals.map((deal) => (
+                        <div
+                          key={deal.id}
+                          className="rounded-lg border border-border bg-muted/50 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-foreground">
+                              {deal.title}
+                            </p>
+                            {deal.stage && (
+                              <span
+                                className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  backgroundColor: `${deal.stage.color}20`,
+                                  color: deal.stage.color,
+                                }}
+                              >
+                                {deal.stage.name}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <DollarSign className="size-3" />
+                              {formatCurrency(
+                                deal.value ?? 0,
+                                deal.currency || defaultCurrency,
+                              )}
+                            </span>
+                            {deal.status && deal.status !== 'open' && (
+                              <span
+                                className={
+                                  deal.status === 'won'
+                                    ? 'text-primary'
+                                    : 'text-red-400'
+                                }
+                              >
+                                {t(deal.status === 'won' ? 'Won' : 'Lost')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            )}
           </div>
         )}
       </SheetContent>
