@@ -3,11 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquare } from 'lucide-react'
 import type { ConversationsSeriesPoint } from '@/lib/dashboard/types'
+import {
+  directionCount,
+  longDayLabel,
+  rangeLabel,
+  shortDayLabel,
+} from '@/lib/dashboard/i18n'
+import type { Language } from '@/lib/i18n'
+import { useLanguage } from '@/hooks/use-language'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
 import { cn } from '@/lib/utils'
 
 type RangeDays = 7 | 30 | 90
+const RANGES: RangeDays[] = [7, 30, 90]
 
 interface ConversationsChartProps {
   /** Per-range data, so switching tabs never re-fetches. */
@@ -18,16 +27,20 @@ interface ConversationsChartProps {
 }
 
 // ------------------------------------------------------------
-// Layout constants. The SVG renders into a fixed viewBox and scales
-// via CSS (preserveAspectRatio default). Everything inside uses
-// viewBox coordinates so the drawing math stays simple even as the
-// container resizes.
+// Layout constants. The SVG viewBox is kept 1:1 with the wrapper's
+// pixel size (measured with a ResizeObserver) so the plot fills
+// whatever height the card has — the card is stretched to match the
+// funnel card next to it — while axis text stays crisp at 10px.
+// The defaults below only matter for the first paint before the
+// observer reports a size.
 // ------------------------------------------------------------
-const VB_W = 760
-const VB_H = 240
+const DEFAULT_W = 760
+const DEFAULT_H = 240
+const MIN_H = 240
 const PADDING = { top: 16, right: 16, bottom: 28, left: 40 }
 
 export function ConversationsChart({ series, loading, range, onRangeChange }: ConversationsChartProps) {
+  const { t, language } = useLanguage()
   const data = series[range]
 
   // Memoise the max so per-day hover math doesn't recompute it.
@@ -49,15 +62,15 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
     <section className="flex h-full flex-col rounded-xl border border-border bg-card">
       <header className="flex items-center justify-between border-b border-border px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Conversas ao longo do tempo</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Daily message volume by direction</p>
+          <h2 className="text-sm font-semibold text-foreground">{t('Conversations Over Time')}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('Daily message volume by direction')}</p>
         </div>
         <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
-          {[7, 30, 90].map((r) => (
+          {RANGES.map((r) => (
             <button
               key={r}
               type="button"
-              onClick={() => onRangeChange(r as RangeDays)}
+              onClick={() => onRangeChange(r)}
               className={cn(
                 'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                 range === r
@@ -65,29 +78,39 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {r} days
+              {rangeLabel(r, language)}
             </button>
           ))}
         </div>
       </header>
 
-      <div className="p-5">
+      {/* flex-1 + min-h-0 lets the plot take every pixel between the
+          header and the legend instead of leaving the bottom half of
+          a stretched card blank. */}
+      <div className="flex min-h-0 flex-1 flex-col p-5">
         {loading || !data ? (
-          <Skeleton className="h-[240px] w-full" />
+          <Skeleton className="h-[240px] w-full flex-1" />
         ) : data.every((p) => p.incoming === 0 && p.outgoing === 0) ? (
           <EmptyState
             icon={MessageSquare}
-            title="No message activity in this range"
-            hint="Send or receive messages to start populating this chart."
+            title={t('No message activity in this range')}
+            hint={t('Send or receive messages to start populating this chart.')}
+            className="flex-1"
           />
         ) : (
-          <LineSvg data={data} maxY={maxY} ticks={niceTicks} />
+          <LineSvg
+            data={data}
+            maxY={maxY}
+            ticks={niceTicks}
+            language={language}
+            ariaLabel={t('Conversations per day')}
+          />
         )}
       </div>
 
       <footer className="flex items-center gap-4 border-t border-border px-5 py-3 text-xs text-muted-foreground">
-        <LegendDot color="#3b82f6" label="Incoming" />
-        <LegendDot color="#7c3aed" label="Outgoing" />
+        <LegendDot color="#3b82f6" label={t('Incoming')} />
+        <LegendDot color="#7c3aed" label={t('Outgoing')} />
       </footer>
     </section>
   )
@@ -101,10 +124,14 @@ function LineSvg({
   data,
   maxY,
   ticks,
+  language,
+  ariaLabel,
 }: {
   data: ConversationsSeriesPoint[]
   maxY: number
   ticks: number[]
+  language: Language
+  ariaLabel: string
 }) {
   // Hover state: both the snapped index AND the tooltip's pixel
   // offset inside the wrapper div. They're stored together so the
@@ -112,11 +139,32 @@ function LineSvg({
   // not against a raw viewBox percentage. See the precision note on
   // the onMove handler below.
   const [hover, setHover] = useState<{ idx: number; tooltipLeftPx: number } | null>(null)
+  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const svgRef = useRef<SVGSVGElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
-  const chartW = VB_W - PADDING.left - PADDING.right
-  const chartH = VB_H - PADDING.top - PADDING.bottom
+  // Keep the viewBox equal to the wrapper's pixel box. The SVG is
+  // absolutely positioned so it never drives the wrapper's size —
+  // the flex layout does — which avoids a resize feedback loop.
+  useEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect) return
+      const w = Math.round(rect.width)
+      const h = Math.round(rect.height)
+      if (w <= 0 || h <= 0) return
+      setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
+    })
+    observer.observe(wrap)
+    return () => observer.disconnect()
+  }, [])
+
+  const W = size.w
+  const H = size.h
+  const chartW = W - PADDING.left - PADDING.right
+  const chartH = H - PADDING.top - PADDING.bottom
 
   // x step can be fractional for 90-day views; points are positioned
   // at the center of each "slot" so the first and last points don't
@@ -130,13 +178,9 @@ function LineSvg({
   const outgoingPath = data.map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i)},${yFor(p.outgoing)}`).join(' ')
 
   // Mouse-move: use the SVG's current screen-CTM to map clientX
-  // back to viewBox coordinates. The previous rect-based math
-  // assumed the viewBox filled the SVG DOM box linearly, but
-  // `preserveAspectRatio="xMidYMid meet"` (the SVG default)
-  // letterboxes the content horizontally when the container is
-  // wider than the viewBox aspect — so hover snapped hundreds of
-  // pixels off on wide layouts. CTM-inverse correctly accounts for
-  // letterboxing, scaling, and any future transform changes.
+  // back to viewBox coordinates. CTM-inverse correctly accounts for
+  // letterboxing, scaling, and any future transform changes (the
+  // viewBox is normally 1:1 with pixels, but not on the first paint).
   useEffect(() => {
     const svg = svgRef.current
     const wrap = wrapRef.current
@@ -149,7 +193,7 @@ function LineSvg({
       pt.y = e.clientY
       const local = pt.matrixTransform(ctm.inverse())
       const xVb = local.x
-      if (xVb < PADDING.left - 8 || xVb > VB_W - PADDING.right + 8) {
+      if (xVb < PADDING.left - 8 || xVb > W - PADDING.right + 8) {
         setHover(null)
         return
       }
@@ -179,7 +223,7 @@ function LineSvg({
       svg.removeEventListener('mouseleave', onLeave)
     }
     // xFor + yFor close over stepX, so stepX covers them.
-  }, [data, stepX])
+  }, [data, stepX, W])
 
   const hovered = hover !== null ? data[hover.idx] : null
   const hoverX = hover !== null ? xFor(hover.idx) : 0
@@ -189,13 +233,13 @@ function LineSvg({
   const labelStride = Math.max(1, Math.ceil(data.length / 6))
 
   return (
-    <div ref={wrapRef} className="relative w-full">
+    <div ref={wrapRef} className="relative w-full flex-1" style={{ minHeight: MIN_H }}>
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${VB_W} ${VB_H}`}
-        className="h-[240px] w-full"
+        viewBox={`0 0 ${W} ${H}`}
+        className="absolute inset-0 h-full w-full"
         role="img"
-        aria-label="Conversations per day"
+        aria-label={ariaLabel}
       >
         {/* Y-axis gridlines + labels */}
         {ticks.map((t) => {
@@ -204,7 +248,7 @@ function LineSvg({
             <g key={t}>
               <line
                 x1={PADDING.left}
-                x2={VB_W - PADDING.right}
+                x2={W - PADDING.right}
                 y1={y}
                 y2={y}
                 stroke="var(--border)"
@@ -215,7 +259,7 @@ function LineSvg({
                 y={y}
                 textAnchor="end"
                 dominantBaseline="middle"
-                className="fill-muted-foreground text-[10px]"
+                className="fill-muted-foreground text-[11px]"
               >
                 {t}
               </text>
@@ -229,11 +273,11 @@ function LineSvg({
             <text
               key={p.day}
               x={xFor(i)}
-              y={VB_H - 8}
+              y={H - 8}
               textAnchor="middle"
-              className="fill-muted-foreground text-[10px]"
+              className="fill-muted-foreground text-[11px]"
             >
-              {shortDayLabel(p.day)}
+              {shortDayLabel(p.day, language)}
             </text>
           ) : null,
         )}
@@ -283,15 +327,15 @@ function LineSvg({
           className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] shadow-lg"
           style={{ left: `${hover.tooltipLeftPx}px` }}
         >
-          <div className="font-medium text-popover-foreground">{longDayLabel(hovered.day)}</div>
+          <div className="font-medium text-popover-foreground">{longDayLabel(hovered.day, language)}</div>
           <div className="mt-1 flex flex-col gap-0.5">
-            <span className="flex items-center gap-1.5 text-blue-300">
+            <span className="flex items-center gap-1.5 text-blue-500 dark:text-blue-300">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
-              {hovered.incoming} incoming
+              {directionCount(hovered.incoming, 'incoming', language)}
             </span>
             <span className="flex items-center gap-1.5 text-primary">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
-              {hovered.outgoing} outgoing
+              {directionCount(hovered.outgoing, 'outgoing', language)}
             </span>
           </div>
         </div>
@@ -307,20 +351,6 @@ function LegendDot({ color, label }: { color: string; label: string }) {
       {label}
     </span>
   )
-}
-
-function shortDayLabel(key: string): string {
-  // key is YYYY-MM-DD; return "Apr 17"-style. Using Date with an
-  // appended time avoids timezone-shift surprises across midnight.
-  const [y, m, d] = key.split('-').map(Number)
-  const date = new Date(y, m - 1, d)
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-function longDayLabel(key: string): string {
-  const [y, m, d] = key.split('-').map(Number)
-  const date = new Date(y, m - 1, d)
-  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 /**

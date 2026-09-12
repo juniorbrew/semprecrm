@@ -41,11 +41,13 @@ export function MetricCard({ title, value, icon: Icon, delta, subtitle }: Metric
 }
 
 function DeltaRow({ sign, label }: { sign: number; label: string }) {
+  // Positive = green, negative = red, flat = muted — so a glance at the
+  // KPI row tells the direction without reading the arrow.
   const tone =
     sign > 0
-      ? 'text-primary'
+      ? 'text-emerald-600 dark:text-emerald-400'
       : sign < 0
-      ? 'text-red-400'
+      ? 'text-red-500 dark:text-red-400'
       : 'text-muted-foreground'
   const Arrow = sign > 0 ? ArrowUp : sign < 0 ? ArrowDown : Minus
   return (
