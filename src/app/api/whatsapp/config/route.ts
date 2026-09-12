@@ -7,6 +7,8 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
+import { loadAccountEntitlements } from '@/lib/plans-server'
+import { canAddChannel } from '@/lib/plans'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -277,6 +279,40 @@ export async function POST(request: Request) {
       .select('id, registered_at, phone_number_id')
       .eq('account_id', accountId)
       .maybeSingle()
+
+    // Plan gate (migration 025). Saving the official API config needs
+    // the `channel_official` module, and a *new* channel must fit under
+    // `max_channels` (re-saving an existing row is not a new channel).
+    const entitlements = await loadAccountEntitlements(supabase, accountId)
+    if (!entitlements || entitlements.blocked || !entitlements.modules.channel_official) {
+      return NextResponse.json(
+        { error: 'Module not included in your plan', code: 'module_not_included' },
+        { status: 403 },
+      )
+    }
+    if (!existing) {
+      const { count, error: countError } = await supabase
+        .from('whatsapp_config')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', accountId)
+      if (countError) {
+        console.error('Error counting channels:', countError)
+        return NextResponse.json(
+          { error: 'Failed to check plan limits' },
+          { status: 500 },
+        )
+      }
+      const maxChannels = entitlements.limits.max_channels
+      if (!canAddChannel(count ?? 0, maxChannels)) {
+        return NextResponse.json(
+          {
+            error: `Your plan allows up to ${maxChannels} connected WhatsApp number${maxChannels === 1 ? '' : 's'}. Disconnect one or upgrade the plan.`,
+            code: 'plan_limit_reached',
+          },
+          { status: 403 },
+        )
+      }
+    }
 
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&

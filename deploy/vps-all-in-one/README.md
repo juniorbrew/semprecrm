@@ -54,7 +54,7 @@ Abra `https://api.SEU.DOMINIO/` no navegador: é o Studio, protegido pelo `DASHB
 
 ### 5. Migrations do SempreCRM
 
-As 24 migrations em `supabase/migrations/` criam as tabelas do CRM. Aplique direto no Postgres da VPS:
+As 25 migrations em `supabase/migrations/` criam as tabelas do CRM. Aplique direto no Postgres da VPS:
 
 ```bash
 cd /var/www/semprecrm
@@ -63,6 +63,19 @@ npx supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0
 
 A porta 5432 do container só é acessível de dentro da VPS. Repita este comando a cada deploy que trouxer
 migration nova (o `deploy.sh` não faz isso sozinho, de propósito).
+
+#### Primeiro admin da plataforma (`/platform`)
+
+O painel master em `/platform` (contas, planos, módulos) só abre para usuários listados em
+`platform_admins` (migration 025). Crie sua conta normalmente pelo app e depois promova o usuário
+direto no Postgres, uma única vez:
+
+```bash
+docker exec -it supabase-db psql -U postgres -d postgres   -c "insert into platform_admins (user_id) select id from auth.users where email = 'voce@empresa.com';"
+```
+
+O item "Plataforma" passa a aparecer no menu do usuário e `/platform` responde (para os demais a rota
+devolve 404). Para revogar: `delete from platform_admins where user_id = '<uuid>'`.
 
 ### 6. App
 

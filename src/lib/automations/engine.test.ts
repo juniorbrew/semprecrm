@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const h = vi.hoisted(() => ({
   state: {
     owned: null as { id: string } | null,
+    account: { plan: "trial", plan_status: "trial", plan_expires_at: null, module_overrides: {}, limit_overrides: {} } as Record<string, unknown> | null,
     ownedCustomField: null as { id: string } | null,
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
@@ -42,6 +43,12 @@ vi.mock("./admin-client", () => {
         return { data: null, error: null };
       }
       return { data: null, error: null };
+    }
+    if (table === "accounts") {
+      // Plan gate (migration 025) — default to an unexpired trial so
+      // every existing scenario keeps running; a test can flip
+      // `state.account` to exercise the "module off" path.
+      return { data: state.account, error: null };
     }
     if (table === "automations") return { data: state.automations, error: null };
     if (table === "automation_logs") {
@@ -101,6 +108,13 @@ const ACCOUNT = "acct-1";
 
 beforeEach(() => {
   h.state.owned = null;
+  h.state.account = {
+    plan: "trial",
+    plan_status: "trial",
+    plan_expires_at: null,
+    module_overrides: {},
+    limit_overrides: {},
+  };
   h.state.ownedCustomField = null;
   h.state.automations = [];
   h.state.steps = [];
@@ -160,6 +174,63 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
     const filters = h.state.updateCalls[0].filters;
     expect(filters).toContainEqual(["eq", "id", "c1"]);
     expect(filters).toContainEqual(["eq", "account_id", ACCOUNT]);
+  });
+});
+
+describe("runAutomationsForTrigger — plan gate (migration 025)", () => {
+  it("runs nothing when the account's plan lacks the automations module", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.account = { plan: "basico", plan_status: "active" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.fromCalls).toContain("accounts");
+    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.updateCalls).toHaveLength(0);
+  });
+
+  it("runs nothing when the account is suspended, even with the module on", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.account = { plan: "empresa", plan_status: "suspended" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.updateCalls).toHaveLength(0);
+  });
+
+  it("runs when a per-account override switches the module on", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.account = {
+      plan: "basico",
+      plan_status: "active",
+      module_overrides: { automations: true },
+    };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.updateCalls).toHaveLength(1);
   });
 });
 

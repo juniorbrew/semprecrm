@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { accountHasModule } from '@/lib/plans-server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
@@ -92,6 +93,19 @@ export async function POST(request: Request) {
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
+        { status: 403 },
+      )
+    }
+
+    // Plan gate (migration 025): the `broadcasts` module must be on
+    // and the account not blocked. The UI hides the module already;
+    // this is the enforcement for direct API callers.
+    if (!(await accountHasModule(supabase, accountId, 'broadcasts'))) {
+      return NextResponse.json(
+        {
+          error: 'Module not included in your plan',
+          code: 'module_not_included',
+        },
         { status: 403 },
       )
     }

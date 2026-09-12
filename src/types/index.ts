@@ -1,4 +1,5 @@
 import type { AccountRole } from "@/lib/auth/roles";
+import type { LimitKey, OptionalModule, Plan, PlanStatus } from "@/lib/plans";
 
 export interface Profile {
   id: string;
@@ -47,8 +48,40 @@ export interface Account {
   name: string;
   /** auth.users.id of the immutable owner. */
   owner_user_id: string;
+  /** Default deal currency (ISO-4217). Migration 021. */
+  default_currency?: string;
+  // ---- Plan / platform fields (025_plans_and_platform_admin.sql) ----
+  /** Catalogue key — see `PLAN_CATALOG` in `@/lib/plans`. */
+  plan: Plan;
+  plan_status: PlanStatus;
+  /** ISO timestamp; null = no expiry. Trial accounts get now()+14d at signup. */
+  plan_expires_at: string | null;
+  /** Per-module override, e.g. `{ flows: true, broadcasts: false }`. */
+  module_overrides: Partial<Record<OptionalModule, boolean>>;
+  /** Per-limit override, e.g. `{ max_users: 5 }`; null = unlimited. */
+  limit_overrides: Partial<Record<LimitKey, number | null>>;
+  /** Platform-admin notes. Never shown to the customer. */
+  platform_notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * One row of `platform_list_accounts()` — an `Account` plus the
+ * owner's identity and the counts the /platform table shows.
+ */
+export interface PlatformAccountRow extends Account {
+  owner_email: string | null;
+  owner_name: string | null;
+  members_count: number;
+  channels_count: number;
+  pending_invites_count: number;
+}
+
+/** `user_id` listed in `platform_admins` = platform (master) admin. */
+export interface PlatformAdmin {
+  user_id: string;
+  created_at: string;
 }
 
 /**

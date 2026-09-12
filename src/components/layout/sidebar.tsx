@@ -4,8 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
+import type { Module } from "@/lib/plans";
 import {
   Crown,
   GitBranch,
@@ -15,6 +16,7 @@ import {
   Radio,
   Settings,
   Shield,
+  ShieldCheck,
   User,
   UserCog,
   Users,
@@ -84,16 +86,22 @@ interface NavItem {
    * Purely informational — doesn't affect routing or access.
    */
   beta?: boolean;
+  /**
+   * Plan module this entry belongs to (see `src/lib/plans.ts`). The
+   * row is hidden when the account's entitlements have the module
+   * off. `inbox` / `contacts` are always on, so those rows never hide.
+   */
+  module: Module;
 }
 
 const navItems: NavItem[] = [
-  { href: "/dashboard", label: "Painel", icon: LayoutDashboard },
-  { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare },
-  { href: "/contacts", label: "Contatos", icon: Users },
-  { href: "/pipelines", label: "Funis", icon: GitBranch },
-  { href: "/broadcasts", label: "Disparos", icon: Radio },
-  { href: "/automations", label: "Automações", icon: Zap },
-  { href: "/flows", label: "Fluxos", icon: Workflow, beta: true },
+  { href: "/dashboard", label: "Painel", icon: LayoutDashboard, module: "dashboard" },
+  { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare, module: "inbox" },
+  { href: "/contacts", label: "Contatos", icon: Users, module: "contacts" },
+  { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines" },
+  { href: "/broadcasts", label: "Disparos", icon: Radio, module: "broadcasts" },
+  { href: "/automations", label: "Automações", icon: Zap, module: "automations" },
+  { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows" },
 ];
 
 const bottomNavItems = [
@@ -108,8 +116,20 @@ interface SidebarProps {
 
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { profile, profileLoading, account, accountRole, signOut, isPlatformAdmin } =
+    useAuth();
+  const { ready: entitlementsReady, modules } = useEntitlements();
   const totalUnread = useTotalUnread();
+  // Hide rows for modules the plan (or a platform override) turned
+  // off. Until the entitlements settle we show everything — a row
+  // that appears late is less jarring than the whole menu reflowing
+  // after a disabled module briefly showed up and vanished.
+  const visibleNavItems = navItems.filter(
+    (item) => !entitlementsReady || modules[item.module],
+  );
+  // The logo link should never point at a hidden module.
+  const homeHref =
+    entitlementsReady && !modules.dashboard ? "/inbox" : "/dashboard";
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -178,7 +198,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Logo row. On mobile we put a close button here; on desktop the
             close button is hidden since the sidebar is always-visible. */}
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
+          <Link href={homeHref} className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <MessageSquare className="h-4 w-4" />
             </div>
@@ -199,7 +219,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/dashboard" && pathname.startsWith(item.href));
@@ -360,6 +380,20 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 <Settings className="size-4" />
                 Settings
               </DropdownMenuItem>
+              {isPlatformAdmin ? (
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/platform"
+                      onClick={onClose}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <ShieldCheck className="size-4" />
+                  Platform
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuSeparator className="bg-border" />
               <DropdownMenuItem
                 onClick={signOut}

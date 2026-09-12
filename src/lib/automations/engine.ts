@@ -15,6 +15,7 @@ import type {
   AssignConversationStepConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
+import { accountHasModule } from '@/lib/plans-server'
 import { engineSendText, engineSendTemplate } from './meta-send'
 
 // ------------------------------------------------------------
@@ -82,6 +83,13 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
       }
     }
 
+    // Plan gate (migration 025): an account without the `automations`
+    // module (or a blocked account) runs nothing, even if active rows
+    // exist from before the plan changed.
+    if (!(await accountHasModule(db, input.accountId, 'automations'))) {
+      return
+    }
+
     const { data: automations, error } = await db
       .from('automations')
       .select('*')
@@ -137,6 +145,13 @@ export async function resumePendingExecution(pending: {
 
   if (error || !automation) {
     console.error('[automations] resume: missing automation', pending.automation_id, error)
+    await markPending(pending.id, 'failed')
+    return
+  }
+
+  // Plan gate — same rule as dispatch. A wait step parked before the
+  // module was switched off must not wake up and keep sending.
+  if (!(await accountHasModule(db, (automation as Automation).account_id, 'automations'))) {
     await markPending(pending.id, 'failed')
     return
   }

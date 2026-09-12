@@ -4,8 +4,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronRight, Loader2 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth, useEntitlements } from '@/hooks/use-auth';
+import { PLAN_LABELS, PLAN_STATUS_LABELS } from '@/lib/plans';
 import { useTheme } from '@/hooks/use-theme';
+import { useLanguage } from '@/hooks/use-language';
 import { THEMES } from '@/lib/themes';
 import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -38,6 +40,8 @@ export function SettingsOverview({
   const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
     useAuth();
   const { mode, theme } = useTheme();
+  const entitlements = useEntitlements();
+  const { t } = useLanguage();
 
   const [counts, setCounts] = useState<OverviewCounts | null>(null);
   const [countsLoading, setCountsLoading] = useState(true);
@@ -214,6 +218,11 @@ export function SettingsOverview({
       section: 'appearance',
       loading: false,
       subtitle: `${cap(mode)} mode · ${themeName} accent`,
+    },
+    {
+      section: 'plan',
+      loading: !entitlements.ready,
+      subtitle: `${t(PLAN_LABELS[entitlements.plan])} · ${t(PLAN_STATUS_LABELS[entitlements.status])}`,
     },
   ];
 

@@ -1027,4 +1027,111 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Close conversation': 'Encerrar conversa',
   Messages: 'Mensagens',
   'Flow control': 'Controle de fluxo',
+
+  // Plans, modules and the platform admin (migration 025)
+  Plan: 'Plano',
+  Trial: 'Teste',
+  Basic: 'Básico',
+  Pro: 'Pro',
+  Enterprise: 'Empresa',
+  'Past due': 'Pagamento pendente',
+  Canceled: 'Cancelado',
+  Suspended: 'Suspenso',
+  'Trial expired': 'Teste expirado',
+  'Official WhatsApp API': 'API oficial do WhatsApp',
+  'WhatsApp via QR code': 'WhatsApp via QR code',
+  'Max users': 'Máx. de usuários',
+  'Max channels': 'Máx. de canais',
+  Modules: 'Módulos',
+  Limits: 'Limites',
+  Unlimited: 'Ilimitado',
+  'No expiry': 'Sem validade',
+  'Valid until': 'Válido até',
+  'Trial ends': 'Teste termina em',
+  day: 'dia',
+  days: 'dias',
+  'Module not included in your plan': 'Módulo não incluído no seu plano',
+  Loading: 'Carregando',
+  // Blocked screen
+  'Your trial has ended': 'Seu período de teste terminou',
+  'The 14-day trial for this account is over. Choose a plan to keep using SempreCRM — your data is safe and will be right here when you come back.':
+    'Os 14 dias de teste desta conta acabaram. Escolha um plano para continuar usando o SempreCRM — seus dados estão seguros e estarão aqui quando você voltar.',
+  'Payment past due': 'Pagamento em atraso',
+  'We could not confirm the latest payment for this account. Settle the outstanding invoice to restore access.':
+    'Não conseguimos confirmar o último pagamento desta conta. Quite a fatura pendente para restaurar o acesso.',
+  'Subscription canceled': 'Assinatura cancelada',
+  "This account's subscription was canceled. Reactivate it to get back in — nothing has been deleted.":
+    'A assinatura desta conta foi cancelada. Reative para voltar a usar — nada foi apagado.',
+  'Account suspended': 'Conta suspensa',
+  'This account was suspended by the platform team. Get in touch with support to find out why and how to restore access.':
+    'Esta conta foi suspensa pela equipe da plataforma. Fale com o suporte para entender o motivo e como restaurar o acesso.',
+  'Ask the account owner to review the plan.':
+    'Peça ao proprietário da conta para revisar o plano.',
+  'Support: ': 'Suporte: ',
+  'View plan': 'Ver plano',
+  // Settings → Plan panel
+  'What your account includes today. To change the plan or add modules, get in touch with the SempreCRM team.':
+    'O que sua conta inclui hoje. Para trocar de plano ou adicionar módulos, fale com a equipe do SempreCRM.',
+  'Current plan': 'Plano atual',
+  'Plan, status and validity for this account.':
+    'Plano, status e validade desta conta.',
+  'Access to the app is currently blocked. Contact support to restore it.':
+    'O acesso ao sistema está bloqueado no momento. Fale com o suporte para restaurá-lo.',
+  'Inbox and Contacts are always included.':
+    'Caixa de entrada e Contatos estão sempre incluídos.',
+  // Platform admin
+  Platform: 'Plataforma',
+  'Accounts, plans and modules': 'Contas, planos e módulos',
+  'Back to app': 'Voltar ao app',
+  Accounts: 'Contas',
+  account: 'conta',
+  accounts: 'contas',
+  shown: 'exibidas',
+  'Search by name or e-mail': 'Buscar por nome ou e-mail',
+  'Search accounts': 'Buscar contas',
+  'Filter by status': 'Filtrar por status',
+  'All statuses': 'Todos os status',
+  Channels: 'Canais',
+  'No accounts match the current filters.':
+    'Nenhuma conta corresponde aos filtros atuais.',
+  'All accounts': 'Todas as contas',
+  member: 'membro',
+  members: 'membros',
+  channel: 'canal',
+  channels: 'canais',
+  Reactivate: 'Reativar',
+  Suspend: 'Suspender',
+  'Account updated': 'Conta atualizada',
+  'Account reactivated': 'Conta reativada',
+  'Failed to save': 'Falha ao salvar',
+  'Custom limits must be a number of 0 or more.':
+    'Limites personalizados devem ser um número maior ou igual a 0.',
+  'The plan sets the default modules and limits; overrides below win over it.':
+    'O plano define os módulos e limites padrão; as sobrescritas abaixo têm prioridade.',
+  'Only a trial is blocked by the expiry date. Paid plans are blocked by status (past due, canceled, suspended).':
+    'Só o teste é bloqueado pela data de validade. Planos pagos são bloqueados pelo status (pagamento pendente, cancelado, suspenso).',
+  'Inbox and Contacts are always on. For the rest, "Inherit" follows the plan.':
+    'Caixa de entrada e Contatos estão sempre ligados. Para os demais, "Herdar" segue o plano.',
+  On: 'Ligado',
+  Off: 'Desligado',
+  Override: 'Sobrescrita',
+  override: 'sobrescrita',
+  Inherit: 'Herdar',
+  'Force on': 'Forçar ligado',
+  'Force off': 'Forçar desligado',
+  'Seats count active members plus pending invites. Channels are connected WhatsApp numbers.':
+    'Usuários contam membros ativos mais convites pendentes. Canais são números de WhatsApp conectados.',
+  'custom value': 'valor personalizado',
+  Effective: 'Efetivo',
+  'Platform notes': 'Notas da plataforma',
+  'Internal only — the customer never sees this.':
+    'Uso interno — o cliente nunca vê isto.',
+  'Payment references, contact history, special deals…':
+    'Referências de pagamento, histórico de contato, condições especiais…',
+  'Customer will see': 'O cliente verá',
+  'Resolved from the form above, before saving.':
+    'Calculado a partir do formulário acima, antes de salvar.',
+  Access: 'Acesso',
+  Blocked: 'Bloqueado',
+  Allowed: 'Liberado',
 };

@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { usePathname, useRouter } from "next/navigation";
+import { AuthProvider, useAuth, useEntitlements } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { BlockedScreen } from "@/components/plans/blocked-screen";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -13,6 +14,8 @@ import { Header } from "@/components/layout/header";
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const { ready: entitlementsReady, blocked } = useEntitlements();
 
   // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
   // always visible and this stays at `false` (ignored by the component).
@@ -37,6 +40,14 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) return null;
+
+  // Plan block (migration 025): past_due / canceled / suspended, or an
+  // expired trial. Replaces the whole shell so nothing in the app is
+  // reachable — except /settings, where the owner reviews the plan,
+  // and sign-out (a button on the blocked screen itself).
+  if (entitlementsReady && blocked && !pathname.startsWith("/settings")) {
+    return <BlockedScreen reason={blocked.reason} />;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

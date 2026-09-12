@@ -51,6 +51,22 @@ npx supabase db push        # aplica as migrations pendentes, inclusive 024_conv
 Confira no painel do Supabase que `conversation_events` existe e que Realtime está ligado para ela
 (a migration já adiciona a tabela à publicação `supabase_realtime`).
 
+### 3.1 Primeiro admin da plataforma (`/platform`)
+
+O painel master em `/platform` (contas, planos, módulos) só abre para usuários listados em
+`platform_admins`. Não existe senha em variável de ambiente: promova um usuário já cadastrado
+pelo SQL Editor do Supabase (ou `psql`), uma única vez:
+
+```sql
+-- pegue o id em Authentication → Users, ou:
+select id from auth.users where email = 'voce@empresa.com';
+
+insert into platform_admins (user_id) values ('<uuid-do-usuario>');
+```
+
+Depois disso o item "Plataforma" aparece no menu do usuário e `/platform` passa a responder
+(para qualquer outro usuário a rota devolve 404). Para revogar: `delete from platform_admins where user_id = '<uuid>'`.
+
 ## 4. Primeira subida
 
 ```bash

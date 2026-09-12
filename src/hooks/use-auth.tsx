@@ -19,6 +19,11 @@ import {
   isAccountRole,
   type AccountRole,
 } from "@/lib/auth/roles";
+import {
+  resolveEntitlements,
+  type Entitlements,
+  type PlanAccountFields,
+} from "@/lib/plans";
 
 interface Profile {
   id: string;
@@ -36,13 +41,25 @@ interface Profile {
   account_role: AccountRole | null;
 }
 
-interface AccountSummary {
+interface AccountSummary extends PlanAccountFields {
   id: string;
   name: string;
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
+  /** Plan fields (migration 025). Optional so forks on a pre-025
+   *  schema still resolve — `resolveEntitlements` treats missing
+   *  values as an unexpired trial. */
+  plan?: string | null;
+  plan_status?: string | null;
+  plan_expires_at?: string | null;
+  module_overrides?: Record<string, unknown> | null;
+  limit_overrides?: Record<string, unknown> | null;
 }
+
+/** Columns the auth provider selects off `accounts`. */
+const ACCOUNT_SELECT =
+  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides";
 
 interface AuthContextValue {
   user: User | null;
@@ -101,6 +118,19 @@ interface AuthContextValue {
   canEditSettings: boolean;
   /** True if the caller can send messages and edit operational data (agent+). */
   canSendMessages: boolean;
+
+  // ----------------------------------------------------------
+  // Plans / platform (migration 025)
+  // ----------------------------------------------------------
+
+  /** Resolved plan entitlements for the current account. While the
+   *  profile is loading this is the permissive trial default — gate
+   *  on `profileLoading` before hiding anything. */
+  entitlements: Entitlements;
+  /** True when the caller's user id is listed in `platform_admins`.
+   *  Drives the "Platform" menu item only; /platform re-checks
+   *  server-side. */
+  isPlatformAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -114,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -136,10 +167,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // missing account collapses to null rather than a half-
           // populated row (shouldn't happen post-017 NOT NULL, but
           // belt-and-braces against forks running older schemas).
-          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, account:accounts!inner(id, name, default_currency)",
+          `id, full_name, email, avatar_url, role, beta_features, account_id, account_role, account:accounts!inner(${ACCOUNT_SELECT})`,
         )
         .eq("user_id", userId)
         .maybeSingle();
+
+      // Platform-admin flag. `platform_admins` is RLS-restricted to
+      // the caller's own row, so this is a cheap "is it me" probe.
+      // A failure (e.g. a fork without migration 025) reads as
+      // "not an admin".
+      const adminProbe = supabase
+        .from("platform_admins")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle()
+        .then(
+          ({ data: adminRow }) => !!adminRow,
+          () => false,
+        );
 
       if (error) {
         console.error("[AuthProvider] fetchProfile error:", {
@@ -158,11 +203,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // form before reading.
         const accountRaw = Array.isArray(data.account)
           ? data.account[0] ?? null
-          : (data.account as {
-              id: string;
-              name: string;
-              default_currency: string | null;
-            } | null);
+          : (data.account as
+              | (Partial<AccountSummary> & {
+                  id: string;
+                  name: string;
+                  default_currency: string | null;
+                })
+              | null);
         // Narrow default_currency defensively: forks running pre-021
         // schemas won't have the column, so a missing/null value reads
         // as the safe USD fallback rather than crashing the picker.
@@ -171,6 +218,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               id: accountRaw.id,
               name: accountRaw.name,
               default_currency: accountRaw.default_currency ?? DEFAULT_CURRENCY,
+              plan: accountRaw.plan ?? null,
+              plan_status: accountRaw.plan_status ?? null,
+              plan_expires_at: accountRaw.plan_expires_at ?? null,
+              module_overrides: accountRaw.module_overrides ?? null,
+              limit_overrides: accountRaw.limit_overrides ?? null,
             }
           : null;
 
@@ -199,6 +251,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setAccount(accountRow);
       }
+      setIsPlatformAdmin(await adminProbe);
     } catch (err) {
       console.error("[AuthProvider] fetchProfile threw:", err);
     } finally {
@@ -265,6 +318,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setProfile(null);
         setAccount(null);
+        setIsPlatformAdmin(false);
         setProfileLoading(false);
       }
 
@@ -284,6 +338,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setIsPlatformAdmin(false);
     window.location.href = "/login";
   }, []);
 
@@ -311,6 +366,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [profile?.account_role, profile?.account_id]);
 
+  // Entitlements are derived from the account row. Memoised on the
+  // row identity so every consumer of `useEntitlements()` sees a
+  // stable object between renders.
+  const entitlements = useMemo(() => resolveEntitlements(account), [account]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -322,6 +382,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         account,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        entitlements,
+        isPlatformAdmin,
         ...derived,
       }}
     >
@@ -361,7 +423,23 @@ export function useAuth(): AuthContextValue {
       canManageMembers: false,
       canEditSettings: false,
       canSendMessages: false,
+      entitlements: resolveEntitlements(null),
+      isPlatformAdmin: false,
     };
   }
   return ctx;
+}
+
+/**
+ * useEntitlements — the resolved plan for the current account
+ * (modules on/off, limits, blocked state). Sourced from the account
+ * row the AuthProvider already loaded; no extra round trip.
+ *
+ * `ready` is false until the profile fetch settles. Gate any
+ * hide/redirect on it — before that the value is the permissive
+ * trial default and would otherwise flash the wrong UI.
+ */
+export function useEntitlements(): Entitlements & { ready: boolean } {
+  const { entitlements, profileLoading, account } = useAuth();
+  return { ...entitlements, ready: !profileLoading && account !== null };
 }
