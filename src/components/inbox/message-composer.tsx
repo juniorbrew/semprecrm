@@ -18,6 +18,14 @@ import {
   Square,
   X,
   Loader2,
+  Lock,
+  MessageSquareReply,
+  SmilePlus,
+  Clock,
+  Bold,
+  Italic,
+  Strikethrough,
+  Code,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
@@ -27,7 +35,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useCan } from "@/hooks/use-can";
+import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -90,15 +105,118 @@ interface MediaDraft {
   caption: string;
 }
 
+/** What the composer produces: a WhatsApp reply or a team-only note. */
+export type ComposerMode = "reply" | "note";
+
 interface MessageComposerProps {
   conversationId: string;
   sessionExpired: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
   onOpenTemplates: () => void;
+  /**
+   * Internal note submit. Notes never touch the WhatsApp API — the parent
+   * stores them on the contact and renders them inline in the thread.
+   * The "Nota interna" tab only renders when this is provided.
+   */
+  onSendNote?: (text: string) => Promise<void> | void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
 }
+
+/**
+ * Composer copy is language-keyed (not routed through the DOM catalogue)
+ * because several strings interpolate or are mode-dependent; the elements
+ * are marked `data-no-translate` so the translator leaves them alone.
+ */
+const COMPOSER_COPY: Record<
+  Language,
+  {
+    reply: string;
+    note: string;
+    replyPlaceholder: string;
+    notePlaceholder: string;
+    expiredPlaceholder: string;
+    readOnlyPlaceholder: string;
+    expiredLine: string;
+    templates: string;
+    sendTemplate: string;
+    addNote: string;
+    send: string;
+    emoji: string;
+    attach: string;
+    noteHint: string;
+    replyHint: string;
+    attachNotInNote: string;
+    readOnlyTitle: string;
+    bold: string;
+    italic: string;
+    strike: string;
+    mono: string;
+    slashHint: string;
+  }
+> = {
+  "pt-BR": {
+    reply: "Responder",
+    note: "Nota interna",
+    replyPlaceholder: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para modelos",
+    notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
+    expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
+    readOnlyPlaceholder: "Somente leitura — seu perfil não pode responder",
+    expiredLine:
+      "Janela de 24 h encerrada: o WhatsApp só aceita modelos aprovados até o cliente responder de novo.",
+    templates: "Modelos",
+    sendTemplate: "Enviar modelo",
+    addNote: "Adicionar nota",
+    send: "Enviar",
+    emoji: "Emoji",
+    attach: "Anexar mídia",
+    noteHint: "Visível só para a equipe · nunca vai para o WhatsApp",
+    replyHint: "Enter envia · Shift+Enter quebra linha",
+    attachNotInNote: "Anexos só em respostas",
+    readOnlyTitle: "Somente leitura — seu perfil não pode enviar mensagens",
+    bold: "Negrito (Ctrl+B)",
+    italic: "Itálico (Ctrl+I)",
+    strike: "Tachado",
+    mono: "Monoespaçado",
+    slashHint: "para modelos",
+  },
+  "en-US": {
+    reply: "Reply",
+    note: "Private note",
+    replyPlaceholder: "Type a message… Shift+Enter for a new line. Type / for templates",
+    notePlaceholder: "Write a note for your team — the customer won't see it",
+    expiredPlaceholder: "24-hour window closed — send a template",
+    readOnlyPlaceholder: "Read-only — your role can't reply",
+    expiredLine:
+      "24-hour window closed: WhatsApp only accepts approved templates until the customer replies again.",
+    templates: "Templates",
+    sendTemplate: "Send template",
+    addNote: "Add note",
+    send: "Send",
+    emoji: "Emoji",
+    attach: "Attach media",
+    noteHint: "Visible to your team only · never sent to WhatsApp",
+    replyHint: "Enter sends · Shift+Enter for a new line",
+    attachNotInNote: "Attachments only on replies",
+    readOnlyTitle: "Read-only — your role can't send messages",
+    bold: "Bold (Ctrl+B)",
+    italic: "Italic (Ctrl+I)",
+    strike: "Strikethrough",
+    mono: "Monospace",
+    slashHint: "for templates",
+  },
+};
+
+// Small curated grid instead of a full emoji library (keeps the bundle
+// flat; the reaction picker takes the same approach). Grouped loosely:
+// faces, gestures, objects/business, symbols.
+const COMPOSER_EMOJIS = [
+  "😀", "😄", "😂", "🙂", "😉", "😍", "🤔", "😅", "😎", "🙏",
+  "👍", "👏", "🤝", "👋", "✅", "❌", "⚠️", "⭐", "🔥", "🎉",
+  "📦", "🚚", "💳", "💰", "📅", "⏰", "📍", "📞", "📎", "💬",
+  "❤️", "💙", "💚", "✨", "🙌", "😢", "😮", "🤷", "👀", "🥳",
+];
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -117,12 +235,24 @@ export function MessageComposer({
   onSend,
   onSendMedia,
   onOpenTemplates,
+  onSendNote,
   replyTo,
   onClearReply,
 }: MessageComposerProps) {
+  const { language } = useLanguage();
+  const copy = COMPOSER_COPY[language] ?? COMPOSER_COPY["pt-BR"];
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Reply vs internal note. Reset when the thread changes so a half-typed
+  // note for contact A can't be posted as a WhatsApp reply to contact B.
+  const [mode, setMode] = useState<ComposerMode>("reply");
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  useEffect(() => {
+    setMode("reply");
+    setText("");
+  }, [conversationId]);
+  const isNote = mode === "note" && !!onSendNote;
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -191,11 +321,17 @@ export function MessageComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending || sessionExpired) return;
+    if (!trimmed || sending) return;
+    // Notes bypass the 24h window entirely — they never reach WhatsApp.
+    if (!isNote && sessionExpired) return;
 
     setSending(true);
     try {
-      onSend(trimmed, replyTo?.id);
+      if (isNote) {
+        await onSendNote?.(trimmed);
+      } else {
+        onSend(trimmed, replyTo?.id);
+      }
       setText("");
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
@@ -203,16 +339,92 @@ export function MessageComposer({
     } finally {
       setSending(false);
     }
-  }, [text, sending, sessionExpired, onSend, replyTo?.id]);
+  }, [text, sending, sessionExpired, isNote, onSendNote, onSend, replyTo?.id]);
+
+  // Drop an emoji at the caret (or append) and keep focus in the box.
+  const insertEmoji = useCallback(
+    (emoji: string) => {
+      const el = textareaRef.current;
+      if (!el) {
+        setText((t) => t + emoji);
+        return;
+      }
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? start;
+      const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+      setText(next);
+      setEmojiOpen(false);
+      requestAnimationFrame(() => {
+        el.focus();
+        const caret = start + emoji.length;
+        el.setSelectionRange(caret, caret);
+        adjustHeight();
+      });
+    },
+    [adjustHeight],
+  );
+
+  // Wrap the selection in WhatsApp markdown (*bold*, _italic_, ~strike~,
+  // ```mono```). With nothing selected the markers are inserted and the
+  // caret lands between them, so the agent can just keep typing.
+  const wrapSelection = useCallback(
+    (marker: string) => {
+      const el = textareaRef.current;
+      if (!el || el.disabled) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? start;
+      const selected = el.value.slice(start, end);
+      const next =
+        el.value.slice(0, start) + marker + selected + marker + el.value.slice(end);
+      setText(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        if (selected) {
+          el.setSelectionRange(start, end + marker.length * 2);
+        } else {
+          const caret = start + marker.length;
+          el.setSelectionRange(caret, caret);
+        }
+        adjustHeight();
+      });
+    },
+    [adjustHeight],
+  );
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
+        return;
+      }
+      // "/" on an empty reply opens the template picker (canned
+      // responses), Chatwoot-style. Notes have no templates.
+      if (
+        e.key === "/" &&
+        !isNote &&
+        !readOnly &&
+        e.currentTarget.value.length === 0 &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        onOpenTemplates();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !isNote) {
+        const key = e.key.toLowerCase();
+        if (key === "b") {
+          e.preventDefault();
+          wrapSelection("*");
+        } else if (key === "i") {
+          e.preventDefault();
+          wrapSelection("_");
+        }
       }
     },
-    [handleSend]
+    [handleSend, isNote, readOnly, onOpenTemplates, wrapSelection]
   );
 
   const handleChange = useCallback(
@@ -377,9 +589,25 @@ export function MessageComposer({
 
   // ---- Render --------------------------------------------------------
 
+  // Free-form WhatsApp text is gated by the 24h window; notes are not.
+  const textDisabled = readOnly || (sessionExpired && !isNote);
+  const sendLabel = isNote ? copy.addNote : copy.send;
+  const placeholder = readOnly
+    ? copy.readOnlyPlaceholder
+    : isNote
+      ? copy.notePlaceholder
+      : sessionExpired
+        ? copy.expiredPlaceholder
+        : copy.replyPlaceholder;
+
   return (
-    <div className="border-t border-border bg-card p-3">
-      {replyTo && (
+    <div
+      className={cn(
+        "border-t border-border bg-card p-3 transition-colors",
+        isNote && "bg-amber-500/[0.04]",
+      )}
+    >
+      {replyTo && !isNote && (
         <div className="mb-2">
           <ReplyQuote
             authorLabel={replyTo.authorLabel}
@@ -388,19 +616,76 @@ export function MessageComposer({
           />
         </div>
       )}
-      {sessionExpired && (
-        <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
-          <p className="text-xs text-amber-400">
-            24-hour session expired. Use a template to re-engage.
+
+      {/* Mode switch — Responder | Nota interna. Notes are the team
+          layer: stored on the contact, rendered as amber bubbles in the
+          thread, never sent to WhatsApp. */}
+      {onSendNote && (
+        <div
+          className="mb-2 flex items-center justify-between gap-3"
+          data-no-translate
+        >
+          <div
+            role="tablist"
+            aria-label={`${copy.reply} / ${copy.note}`}
+            className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!isNote}
+              onClick={() => setMode("reply")}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
+                !isNote
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <MessageSquareReply className="h-3.5 w-3.5" />
+              {copy.reply}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isNote}
+              onClick={() => setMode("note")}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
+                isNote
+                  ? "bg-amber-500/20 text-amber-600 shadow-sm dark:text-amber-400"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Lock className="h-3.5 w-3.5" />
+              {copy.note}
+            </button>
+          </div>
+          <p className="hidden min-w-0 truncate text-[10px] text-muted-foreground sm:block">
+            {isNote ? copy.noteHint : copy.replyHint}
+          </p>
+        </div>
+      )}
+
+      {/* Expired 24h window — one line of explanation; the template
+          path stays open (Meta accepts approved templates any time). */}
+      {sessionExpired && !isNote && !readOnly && (
+        <div
+          data-no-translate
+          className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5"
+        >
+          <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <p className="min-w-0 flex-1 text-xs leading-snug text-amber-600 dark:text-amber-400">
+            {copy.expiredLine}
           </p>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs text-amber-400 hover:text-amber-300"
+            className="h-7 shrink-0 gap-1 px-2 text-xs text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
             onClick={onOpenTemplates}
           >
-            <LayoutTemplate className="mr-1 h-3 w-3" />
-            Modelos
+            <LayoutTemplate className="h-3.5 w-3.5" />
+            {copy.sendTemplate}
           </Button>
         </div>
       )}
@@ -471,102 +756,225 @@ export function MessageComposer({
           </Button>
         </div>
       ) : (
-        <div className="flex items-end gap-2">
-          {/* Attach menu — photo / video / document / voice. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              disabled={inputsDisabled || busy}
-              title={
-                readOnly
-                  ? "Read-only — your role can't send messages"
-                  : inputsDisabled
-                    ? undefined
-                    : "Anexar mídia"
-              }
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        // Workbench: textarea on top, toolbar row underneath. The
+        // toolbar stays visible in every state so the composer never
+        // collapses into a bare disabled input.
+        <div
+          className={cn(
+            "rounded-xl border bg-muted transition-colors focus-within:border-primary/50",
+            isNote
+              ? "border-dashed border-amber-500/50 bg-amber-500/10 focus-within:border-amber-500/80"
+              : "border-border",
+            textDisabled && "opacity-70",
+          )}
+        >
+          {/* Formatting strip — reply mode only. WhatsApp renders these
+              markers natively, so what the agent types is what the
+              customer sees. The "/" hint mirrors the placeholder for
+              when there is already text in the box. */}
+          {!isNote && (
+            <div
+              data-no-translate
+              className="flex items-center gap-0.5 border-b border-border/60 px-1.5 py-1"
             >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Paperclip className="h-4 w-4" />
-              )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="border-border bg-popover">
-              <DropdownMenuItem onClick={() => imageInputRef.current?.click()}>
-                <ImageIcon className="mr-2 h-4 w-4" />
-                Foto
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => videoInputRef.current?.click()}>
-                <Video className="mr-2 h-4 w-4" />
-                Vídeo
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
-                <FileText className="mr-2 h-4 w-4" />
-                Documento
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => void startRecording()}>
-                <Mic className="mr-2 h-4 w-4" />
-                Mensagem de voz
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <GatedButton
-            variant="ghost"
-            size="sm"
-            canAct={!readOnly}
-            gateReason="send messages"
-            title={readOnly ? undefined : "Send template"}
-            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-            onClick={onOpenTemplates}
-          >
-            <LayoutTemplate className="h-4 w-4" />
-          </GatedButton>
-
+              {(
+                [
+                  { icon: Bold, label: copy.bold, marker: "*" },
+                  { icon: Italic, label: copy.italic, marker: "_" },
+                  { icon: Strikethrough, label: copy.strike, marker: "~" },
+                  { icon: Code, label: copy.mono, marker: "```" },
+                ] as const
+              ).map(({ icon: Icon, label, marker }) => (
+                <button
+                  key={marker}
+                  type="button"
+                  tabIndex={-1}
+                  disabled={textDisabled}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => wrapSelection(marker)}
+                  aria-label={label}
+                  title={label}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              ))}
+              <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />
+              <button
+                type="button"
+                tabIndex={-1}
+                disabled={readOnly}
+                onClick={onOpenTemplates}
+                title={copy.sendTemplate}
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <kbd className="rounded border border-border bg-card px-1 font-mono text-[10px] leading-4 text-foreground/80">
+                  /
+                </kbd>
+                <span className="hidden sm:inline">{copy.slashHint}</span>
+              </button>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={
-              readOnly
-                ? "Read-only — viewers can browse but not reply"
-                : sessionExpired
-                  ? "Session expired - use a template"
-                  : "Type a message... (Shift+Enter for new line)"
-            }
-            disabled={sessionExpired || readOnly}
+            placeholder={placeholder}
+            disabled={textDisabled}
             rows={1}
-            // Textarea keeps its own inline title — the GatedButton
-            // wrapping pattern doesn't apply to non-button inputs.
-            // The placeholder text also surfaces the read-only state.
-            title={readOnly ? "Read-only — your role can't send messages" : undefined}
+            data-no-translate
+            aria-label={isNote ? copy.note : copy.reply}
+            title={readOnly ? copy.readOnlyTitle : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
-              (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
+              // text-base below sm: iOS Safari zooms the page on focus for
+              // inputs under 16 px (mobile critic r0).
+              "block w-full resize-none bg-transparent px-3.5 pb-1 pt-2.5 text-base text-foreground placeholder-muted-foreground outline-none sm:text-sm",
+              textDisabled && "cursor-not-allowed",
             )}
           />
 
-          <GatedButton
-            size="sm"
-            canAct={!readOnly}
-            gateReason="send messages"
-            disabled={!text.trim() || sessionExpired || sending}
-            onClick={handleSend}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" />
-          </GatedButton>
-        </div>
-      )}
+          <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
+            {/* Emoji — works for replies and notes alike. */}
+            <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+              <PopoverTrigger
+                disabled={textDisabled}
+                aria-label={copy.emoji}
+                title={copy.emoji}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <SmilePlus className="h-4 w-4" />
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                side="top"
+                className="w-auto border-border bg-popover p-2"
+              >
+                <div
+                  className="grid grid-cols-10 gap-0.5"
+                  role="listbox"
+                  aria-label={copy.emoji}
+                >
+                  {COMPOSER_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      onClick={() => insertEmoji(emoji)}
+                      className="flex h-7 w-7 items-center justify-center rounded text-base leading-none transition-colors hover:bg-muted"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
 
-      {/* Hint sits outside the flex row so its height doesn't push
-          `items-end` buttons below the textarea. Indented to line up
-          under the textarea left edge. */}
-      {!draft && !recording && (
-        <p className="mt-1 pl-[5.5rem] text-[10px] text-muted-foreground">
-          Digite &apos;/&apos; para respostas rápidas
-        </p>
+            {/* Attach menu — photo / video / document / voice. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={inputsDisabled || busy || isNote}
+                aria-label={copy.attach}
+                title={
+                  readOnly
+                    ? copy.readOnlyTitle
+                    : isNote
+                      ? copy.attachNotInNote
+                      : sessionExpired
+                        ? copy.expiredPlaceholder
+                        : copy.attach
+                }
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="h-4 w-4" />
+                )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="border-border bg-popover">
+                <DropdownMenuItem onClick={() => imageInputRef.current?.click()}>
+                  <ImageIcon className="mr-2 h-4 w-4" />
+                  Foto
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => videoInputRef.current?.click()}>
+                  <Video className="mr-2 h-4 w-4" />
+                  Vídeo
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  Documento
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void startRecording()}>
+                  <Mic className="mr-2 h-4 w-4" />
+                  Mensagem de voz
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Voice note — one tap from the toolbar. */}
+            <button
+              type="button"
+              disabled={inputsDisabled || busy || isNote}
+              onClick={() => void startRecording()}
+              aria-label="Mensagem de voz"
+              title={isNote ? copy.attachNotInNote : "Mensagem de voz"}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+
+            {/* Templates — the only WhatsApp path once the window
+                closes, so it lights up in that state. Hidden for notes. */}
+            {!isNote && (
+              <GatedButton
+                variant="ghost"
+                size="sm"
+                canAct={!readOnly}
+                gateReason="send messages"
+                title={readOnly ? undefined : copy.sendTemplate}
+                data-no-translate
+                className={cn(
+                  "h-8 gap-1.5 px-2 text-xs hover:bg-card hover:text-foreground",
+                  sessionExpired ? "text-primary" : "text-muted-foreground",
+                )}
+                onClick={onOpenTemplates}
+              >
+                <LayoutTemplate className="h-4 w-4" />
+                <span className="hidden sm:inline">{copy.templates}</span>
+              </GatedButton>
+            )}
+
+            <span className="flex-1" />
+
+            <GatedButton
+              size="sm"
+              canAct={!readOnly}
+              gateReason="send messages"
+              disabled={!text.trim() || textDisabled || sending}
+              onClick={handleSend}
+              data-no-translate
+              aria-label={sendLabel}
+              title={sendLabel}
+              className={cn(
+                "h-8 shrink-0 gap-1.5 px-3 text-xs font-medium disabled:opacity-40",
+                isNote
+                  ? "bg-amber-500 text-white hover:bg-amber-500/90"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+            >
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isNote ? (
+                <Lock className="h-4 w-4" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">{sendLabel}</span>
+            </GatedButton>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,63 +1,246 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type {
+  Contact,
+  ContactCustomValue,
+  Conversation,
+  CustomField,
+  Deal,
+  ContactNote,
+  Tag,
+} from "@/types";
 import {
   Phone,
   Mail,
   Copy,
   Check,
-  User,
+  Building2,
   Tag as TagIcon,
   DollarSign,
   StickyNote,
   Plus,
+  ListChecks,
+  History,
+  Lock,
+  MessageCircle,
+  Loader2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { format } from "date-fns";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { formatCurrency } from "@/lib/currency";
+import { listConversationsByContact } from "@/lib/conversations/find-by-contact";
+import { insertConversationEvent } from "@/lib/conversations/events";
+import { onContactNotesChanged } from "@/lib/conversations/notes";
+import { toast } from "sonner";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  /** Active thread — label changes are logged as pills against it. */
+  conversationId?: string | null;
+  /** Jump to another conversation with this contact (previous threads). */
+  onOpenConversation?: (conversation: Conversation) => void;
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
-  const { accountId } = useAuth();
+/**
+ * Panel copy is language-keyed (interpolated / gendered forms) and the
+ * container is `data-no-translate`, so the DOM translator leaves it be.
+ */
+const PANEL_COPY: Record<
+  Language,
+  {
+    empty: string;
+    copyPhone: string;
+    copied: string;
+    tags: string;
+    noTags: string;
+    addTag: string;
+    noTagsToPick: string;
+    customFields: string;
+    noCustomFields: string;
+    emptyValue: string;
+    deals: string;
+    noDeals: string;
+    previous: string;
+    current: string;
+    noPrevious: string;
+    notes: string;
+    noNotes: string;
+    notesHint: string;
+    status: Record<Conversation["status"], string>;
+    tagAdded: (name: string) => string;
+    tagRemoved: (name: string) => string;
+    tagFailed: string;
+    moreNotes: (n: number) => string;
+  }
+> = {
+  "pt-BR": {
+    empty: "Os detalhes do contato aparecem aqui",
+    copyPhone: "Copiar telefone",
+    copied: "Copiado",
+    tags: "Etiquetas",
+    noTags: "Sem etiquetas",
+    addTag: "Adicionar etiqueta",
+    noTagsToPick: "Nenhuma etiqueta criada. Crie em Configurações › Campos e etiquetas.",
+    customFields: "Campos personalizados",
+    noCustomFields: "Nenhum campo personalizado definido",
+    emptyValue: "—",
+    deals: "Negócios vinculados",
+    noDeals: "Nenhum negócio vinculado",
+    previous: "Conversas anteriores",
+    current: "Atual",
+    noPrevious: "Primeira conversa com este contato",
+    notes: "Notas da equipe",
+    noNotes: "Nenhuma nota ainda",
+    notesHint: "Use a aba Nota interna no compositor",
+    status: { open: "Aberta", pending: "Pendente", closed: "Resolvida" },
+    tagAdded: (name) => `Etiqueta ${name} adicionada`,
+    tagRemoved: (name) => `Etiqueta ${name} removida`,
+    tagFailed: "Não foi possível atualizar a etiqueta",
+    moreNotes: (n) => `+${n} nota${n === 1 ? "" : "s"} na conversa`,
+  },
+  "en-US": {
+    empty: "Contact details will appear here",
+    copyPhone: "Copy phone",
+    copied: "Copied",
+    tags: "Labels",
+    noTags: "No labels",
+    addTag: "Add label",
+    noTagsToPick: "No labels yet. Create them in Settings › Fields & tags.",
+    customFields: "Custom fields",
+    noCustomFields: "No custom fields defined",
+    emptyValue: "—",
+    deals: "Linked deals",
+    noDeals: "No linked deals",
+    previous: "Previous conversations",
+    current: "Current",
+    noPrevious: "First conversation with this contact",
+    notes: "Team notes",
+    noNotes: "No notes yet",
+    notesHint: "Use the Private note tab in the composer",
+    status: { open: "Open", pending: "Pending", closed: "Resolved" },
+    tagAdded: (name) => `Label ${name} added`,
+    tagRemoved: (name) => `Label ${name} removed`,
+    tagFailed: "Could not update the label",
+    moreNotes: (n) => `+${n} note${n === 1 ? "" : "s"} in the thread`,
+  },
+};
+
+const STATUS_DOT: Record<Conversation["status"], string> = {
+  open: "bg-primary",
+  pending: "bg-amber-500",
+  closed: "bg-muted-foreground",
+};
+
+/** Notes shown in the panel; the full list lives in the thread. */
+const MAX_PANEL_NOTES = 3;
+
+function formatShortDate(iso: string | undefined, language: Language): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(language, { day: "2-digit", month: "short" });
+}
+
+function formatDateTime(iso: string, language: Language): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(language, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function SectionHeader({
+  icon: Icon,
+  label,
+  count,
+  action,
+}: {
+  icon: typeof TagIcon;
+  label: string;
+  count?: number;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 px-1">
+      <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <Icon className="h-3 w-3" />
+        <span>{label}</span>
+        {typeof count === "number" && count > 0 && (
+          <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        )}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+export function ContactSidebar({
+  contact,
+  conversationId = null,
+  onOpenConversation,
+}: ContactSidebarProps) {
+  const { user, profile, accountId, defaultCurrency } = useAuth();
+  const { language } = useLanguage();
+  const copy = PANEL_COPY[language] ?? PANEL_COPY["pt-BR"];
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
-  const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
-  const [newNote, setNewNote] = useState("");
-  const [addingNote, setAddingNote] = useState(false);
+  const [contactTags, setContactTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [customValues, setCustomValues] = useState<Record<string, string>>({});
+  const [previous, setPrevious] = useState<Conversation[]>([]);
+  const [tagBusy, setTagBusy] = useState<string | null>(null);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+
+  const contactId = contact?.id ?? null;
 
   const fetchContactData = useCallback(async () => {
-    if (!contact) return;
-
+    if (!contactId) return;
     const supabase = createClient();
 
-    // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
-      supabase
-        .from("deals")
-        .select("*, stage:pipeline_stages(*)")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_notes")
-        .select("*")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_tags")
-        .select("id, tag_id, tags(*)")
-        .eq("contact_id", contact.id),
-    ]);
+    const [dealsRes, notesRes, tagsRes, allTagsRes, fieldsRes, valuesRes, convs] =
+      await Promise.all([
+        supabase
+          .from("deals")
+          .select("*, stage:pipeline_stages(*)")
+          .eq("contact_id", contactId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("contact_notes")
+          .select("*")
+          .eq("contact_id", contactId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("contact_tags")
+          .select("id, tag_id, tags(*)")
+          .eq("contact_id", contactId),
+        supabase.from("tags").select("*").order("name"),
+        supabase.from("custom_fields").select("*").order("field_name"),
+        supabase
+          .from("contact_custom_values")
+          .select("*")
+          .eq("contact_id", contactId),
+        listConversationsByContact(supabase, contactId),
+      ]);
 
-    if (dealsRes.data) setDeals(dealsRes.data);
-    if (notesRes.data) setNotes(notesRes.data);
+    if (dealsRes.data) setDeals(dealsRes.data as Deal[]);
+    if (notesRes.data) setNotes(notesRes.data as ContactNote[]);
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
@@ -65,16 +248,41 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           ...(ct.tags as Tag),
           contact_tag_id: ct.id as string,
         }));
-      setTags(mapped);
+      setContactTags(mapped);
     }
-  }, [contact]);
+    if (allTagsRes.data) setAllTags(allTagsRes.data as Tag[]);
+    if (fieldsRes.data) setCustomFields(fieldsRes.data as CustomField[]);
+    if (valuesRes.data) {
+      const map: Record<string, string> = {};
+      for (const v of valuesRes.data as ContactCustomValue[]) {
+        map[v.custom_field_id] = v.value ?? "";
+      }
+      setCustomValues(map);
+    }
+    setPrevious(convs);
+  }, [contactId]);
 
-  // Load on contact change. setContactData/setTags run inside async
+  // Load on contact change; all setState calls happen inside the async
   // Supabase callbacks, not synchronously in the effect body.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchContactData();
+    void fetchContactData();
   }, [fetchContactData]);
+
+  // Notes added from the composer's "Nota interna" tab show up here too.
+  useEffect(() => {
+    if (!contactId) return;
+    return onContactNotesChanged(contactId, () => {
+      const supabase = createClient();
+      supabase
+        .from("contact_notes")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false })
+        .then(({ data }) => {
+          if (data) setNotes(data as ContactNote[]);
+        });
+    });
+  }, [contactId]);
 
   const handleCopyPhone = useCallback(async () => {
     if (!contact?.phone) return;
@@ -82,58 +290,114 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     // Dep is the whole `contact` object (not `contact?.phone`) so the
-    // React Compiler's inference agrees with the manual dep list —
-    // fixes the `preserve-manual-memoization` lint error.
+    // React Compiler's inference agrees with the manual dep list.
   }, [contact]);
 
-  const handleAddNote = useCallback(async () => {
-    if (!contact || !newNote.trim()) return;
-    if (!accountId) return;
-    setAddingNote(true);
+  // Toggle a label on the contact and log it to the shared event log so
+  // the active thread (this tab and every teammate's) shows the pill
+  // "Etiqueta VIP adicionada por Ana".
+  const toggleTag = useCallback(
+    async (tag: Tag) => {
+      if (!contactId || tagBusy) return;
+      setTagBusy(tag.id);
+      const supabase = createClient();
+      const existing = contactTags.find((t) => t.id === tag.id);
+      const actor = profile?.full_name || user?.email || undefined;
+      const logLabelEvent = (event_type: "label_added" | "label_removed") => {
+        if (!conversationId || !accountId) return;
+        void insertConversationEvent(supabase, {
+          account_id: accountId,
+          conversation_id: conversationId,
+          actor_user_id: user?.id ?? null,
+          event_type,
+          payload: { actor_name: actor, tag_id: tag.id, tag_name: tag.name },
+        });
+      };
+      try {
+        if (existing) {
+          const { error } = await supabase
+            .from("contact_tags")
+            .delete()
+            .eq("id", existing.contact_tag_id);
+          if (error) throw error;
+          setContactTags((prev) => prev.filter((t) => t.id !== tag.id));
+          logLabelEvent("label_removed");
+          toast.success(copy.tagRemoved(tag.name));
+        } else {
+          const { data, error } = await supabase
+            .from("contact_tags")
+            .insert({ contact_id: contactId, tag_id: tag.id })
+            .select("id")
+            .single();
+          if (error || !data) throw error ?? new Error("insert failed");
+          setContactTags((prev) => [
+            ...prev,
+            { ...tag, contact_tag_id: data.id as string },
+          ]);
+          logLabelEvent("label_added");
+          toast.success(copy.tagAdded(tag.name));
+        }
+      } catch (err) {
+        console.error("Failed to toggle tag:", err);
+        toast.error(copy.tagFailed);
+      } finally {
+        setTagBusy(null);
+      }
+    },
+    [
+      contactId,
+      tagBusy,
+      contactTags,
+      conversationId,
+      accountId,
+      profile?.full_name,
+      user?.email,
+      user?.id,
+      copy,
+    ],
+  );
 
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-
-    const { data, error } = await supabase
-      .from("contact_notes")
-      .insert({
-        contact_id: contact.id,
-        account_id: accountId,
-        user_id: user?.id,
-        note_text: newNote.trim(),
-      })
-      .select()
-      .single();
-
-    if (!error && data) {
-      setNotes((prev) => [data, ...prev]);
-      setNewNote("");
-    }
-    setAddingNote(false);
-  }, [contact, newNote, accountId]);
+  const contactTagIds = useMemo(
+    () => new Set(contactTags.map((t) => t.id)),
+    [contactTags],
+  );
 
   if (!contact) {
     return (
-      <div className="flex h-full w-70 items-center justify-center border-l border-border bg-card">
-        <p className="text-sm text-muted-foreground">Select a conversation</p>
+      <div
+        data-no-translate
+        className="flex h-full w-70 items-center justify-center border-l border-border bg-card"
+      >
+        <p className="px-4 text-center text-sm text-muted-foreground">{copy.empty}</p>
       </div>
     );
   }
 
   const displayName = contact.name || contact.phone;
   const initials = displayName.charAt(0).toUpperCase();
+  const otherConversations = previous.filter((c) => c.id !== conversationId);
+  const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
+  const hiddenNotes = notes.length - panelNotes.length;
 
   return (
-    <div className="flex h-full w-70 flex-col border-l border-border bg-card">
-      <ScrollArea className="flex-1">
+    <div
+      data-no-translate
+      className="flex h-full min-h-0 w-70 flex-col overflow-hidden border-l border-border bg-card"
+    >
+      {/* `min-h-0` is load-bearing: a flex child defaults to
+          min-height:auto, so without it the ScrollArea grew to the
+          panel's full content height (~795 px inside a 711 px column),
+          overflowed the column and was clipped by main's overflow-hidden
+          with scrollTop pinned at 0 — the Team notes section was cut off
+          and unreachable at 1440x800. With it the viewport is the column
+          height and the panel scrolls on its own. */}
+      <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
-          {/* Contact Info */}
+          {/* Identity */}
           <div className="flex flex-col items-center text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
               {contact.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={contact.avatar_url}
                   alt={displayName}
@@ -143,22 +407,27 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 initials
               )}
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-foreground">
-              {displayName}
-            </h3>
+            <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
             {contact.company && (
-              <p className="text-xs text-muted-foreground">{contact.company}</p>
+              <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <Building2 className="h-3 w-3" />
+                {contact.company}
+              </p>
             )}
           </div>
 
-          {/* Phone */}
-          <div className="mt-4 space-y-2">
+          {/* Reach */}
+          <div className="mt-4 space-y-1">
             <button
+              type="button"
               onClick={handleCopyPhone}
+              title={copied ? copy.copied : copy.copyPhone}
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
             >
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{contact.phone}</span>
+              <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1 truncate text-left tabular-nums text-foreground">
+                {contact.phone}
+              </span>
               {copied ? (
                 <Check className="h-3 w-3 text-primary" />
               ) : (
@@ -168,70 +437,156 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
             {contact.email && (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <span className="truncate">{contact.email}</span>
+                <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 break-all" title={contact.email}>
+                  {contact.email}
+                </span>
               </div>
             )}
           </div>
 
-          {/* Divider */}
           <div className="my-4 border-t border-border" />
 
-          {/* Tags */}
+          {/* Labels — toggle from the account's tag set */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <TagIcon className="h-3 w-3" />
-              Etiquetas
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {tags.length === 0 ? (
-                <p className="px-1 text-xs text-muted-foreground">No tags</p>
-              ) : (
-                tags.map((tag) => (
-                  <span
-                    key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                    style={{
-                      backgroundColor: `${tag.color}20`,
-                      color: tag.color,
-                    }}
+            <SectionHeader
+              icon={TagIcon}
+              label={copy.tags}
+              count={contactTags.length}
+              action={
+                <Popover open={tagPickerOpen} onOpenChange={setTagPickerOpen}>
+                  <PopoverTrigger
+                    aria-label={copy.addTag}
+                    title={copy.addTag}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
+                    <Plus className="h-3.5 w-3.5" />
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    className="w-56 border-border bg-popover p-1.5"
+                  >
+                    {allTags.length === 0 ? (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                        {copy.noTagsToPick}
+                      </p>
+                    ) : (
+                      <ul className="max-h-56 overflow-y-auto">
+                        {allTags.map((tag) => {
+                          const selected = contactTagIds.has(tag.id);
+                          const busy = tagBusy === tag.id;
+                          return (
+                            <li key={tag.id}>
+                              <button
+                                type="button"
+                                disabled={!!tagBusy}
+                                onClick={() => void toggleTag(tag)}
+                                aria-pressed={selected}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-popover-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                              >
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: tag.color }}
+                                />
+                                <span className="flex-1 truncate">{tag.name}</span>
+                                {busy ? (
+                                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                ) : selected ? (
+                                  <Check className="h-3 w-3 text-primary" />
+                                ) : null}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              }
+            />
+            <div className="mt-2 flex flex-wrap gap-1 px-1">
+              {contactTags.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{copy.noTags}</p>
+              ) : (
+                contactTags.map((tag) => (
+                  <button
+                    key={tag.contact_tag_id}
+                    type="button"
+                    onClick={() => void toggleTag(tag)}
+                    disabled={!!tagBusy}
+                    title={copy.tagRemoved(tag.name)}
+                    className="group/tag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-60"
+                    style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                  >
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: tag.color }}
+                    />
                     {tag.name}
-                  </span>
+                  </button>
                 ))
               )}
             </div>
           </div>
 
-          {/* Divider */}
           <div className="my-4 border-t border-border" />
 
-          {/* Active Deals */}
+          {/* Custom fields — read-only view of the contact's attributes */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <DollarSign className="h-3 w-3" />
-              Active Deals
+            <SectionHeader icon={ListChecks} label={copy.customFields} />
+            <div className="mt-2 px-1">
+              {customFields.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
+              ) : (
+                <dl className="divide-y divide-border/60 rounded-lg border border-border/60">
+                  {customFields.map((field) => {
+                    const value = customValues[field.id]?.trim();
+                    return (
+                      <div
+                        key={field.id}
+                        className="flex items-baseline justify-between gap-3 px-2.5 py-1.5"
+                      >
+                        <dt className="min-w-0 truncate text-[11px] text-muted-foreground">
+                          {field.field_name}
+                        </dt>
+                        <dd
+                          className={cn(
+                            "min-w-0 truncate text-right text-xs",
+                            value ? "text-foreground" : "text-muted-foreground/60",
+                          )}
+                          title={value || undefined}
+                        >
+                          {value || copy.emptyValue}
+                        </dd>
+                      </div>
+                    );
+                  })}
+                </dl>
+              )}
             </div>
-            <div className="mt-2 space-y-2">
+          </div>
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Linked deals */}
+          <div>
+            <SectionHeader icon={DollarSign} label={copy.deals} count={deals.length} />
+            <div className="mt-2 space-y-2 px-1">
               {deals.length === 0 ? (
-                <p className="px-1 text-xs text-muted-foreground">No deals</p>
+                <p className="text-xs text-muted-foreground">{copy.noDeals}</p>
               ) : (
                 deals.map((deal) => (
-                  <div
-                    key={deal.id}
-                    className="rounded-lg bg-muted px-3 py-2"
-                  >
-                    <p className="text-sm font-medium text-foreground">
+                  <div key={deal.id} className="rounded-lg bg-muted px-3 py-2">
+                    <p className="truncate text-sm font-medium text-foreground">
                       {deal.title}
                     </p>
-                    <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>
-                        {deal.currency ?? "$"}
-                        {deal.value.toLocaleString()}
+                    <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span className="tabular-nums">
+                        {formatCurrency(deal.value, deal.currency ?? defaultCurrency)}
                       </span>
                       {deal.stage && (
                         <span
-                          className="rounded-full px-1.5 py-0.5 text-[10px]"
+                          className="truncate rounded-full px-1.5 py-0.5 text-[10px]"
                           style={{
                             backgroundColor: `${deal.stage.color}20`,
                             color: deal.stage.color,
@@ -247,49 +602,90 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
             </div>
           </div>
 
-          {/* Divider */}
           <div className="my-4 border-t border-border" />
 
-          {/* Notes */}
+          {/* Previous conversations with this contact */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <StickyNote className="h-3 w-3" />
-              Observações
-            </div>
-            <div className="mt-2">
-              <div className="flex gap-2">
-                <textarea
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Adicione uma observação..."
-                  rows={2}
-                  className="flex-1 resize-none rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
-                />
-                <Button
-                  size="sm"
-                  className="h-auto bg-primary px-2 hover:bg-primary/90"
-                  onClick={handleAddNote}
-                  disabled={!newNote.trim() || addingNote}
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-              </div>
-
-              <div className="mt-2 space-y-2">
-                {notes.map((note) => (
-                  <div
-                    key={note.id}
-                    className="rounded-lg bg-muted px-3 py-2"
+            <SectionHeader
+              icon={History}
+              label={copy.previous}
+              count={otherConversations.length}
+            />
+            <div className="mt-2 space-y-1 px-1">
+              {otherConversations.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{copy.noPrevious}</p>
+              ) : (
+                otherConversations.map((conv) => (
+                  <button
+                    key={conv.id}
+                    type="button"
+                    onClick={() =>
+                      onOpenConversation?.({ ...conv, contact: conv.contact ?? contact })
+                    }
+                    disabled={!onOpenConversation}
+                    className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted disabled:cursor-default"
                   >
-                    <p className="whitespace-pre-wrap text-xs text-muted-foreground">
-                      {note.note_text}
+                    <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <span
+                            className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[conv.status])}
+                          />
+                          {copy.status[conv.status]}
+                        </span>
+                        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                          {formatShortDate(conv.last_message_at ?? conv.created_at, language)}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-foreground">
+                        {conv.last_message_text || copy.emptyValue}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Team notes — the latest few; the full history sits in the
+              thread as amber bubbles, where new ones are written. */}
+          <div>
+            <SectionHeader icon={StickyNote} label={copy.notes} count={notes.length} />
+            <div className="mt-2 space-y-2 px-1">
+              {panelNotes.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border px-3 py-2">
+                  <p className="text-xs text-muted-foreground">{copy.noNotes}</p>
+                  <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground/80">
+                    <Lock className="h-3 w-3" />
+                    {copy.notesHint}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {panelNotes.map((note) => (
+                    <div
+                      key={note.id}
+                      className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2"
+                    >
+                      <p className="line-clamp-3 whitespace-pre-wrap text-xs text-foreground">
+                        {note.note_text}
+                      </p>
+                      <p className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <Lock className="h-2.5 w-2.5" />
+                        {formatDateTime(note.created_at, language)}
+                      </p>
+                    </div>
+                  ))}
+                  {hiddenNotes > 0 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      {copy.moreNotes(hiddenNotes)}
                     </p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      {format(new Date(note.created_at), "MMM d, yyyy HH:mm")}
-                    </p>
-                  </div>
-                ))}
-              </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

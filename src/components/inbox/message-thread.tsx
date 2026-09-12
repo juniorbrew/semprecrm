@@ -3,9 +3,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
   Conversation,
+  ContactNote,
   Message,
   MessageReaction,
   Contact,
@@ -18,13 +21,15 @@ import {
   ChevronDown,
   UserPlus,
   Check,
+  CheckCheck,
+  RotateCcw,
   Clock,
   ArrowLeft,
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
 } from "lucide-react";
-import { format, isToday, isYesterday, differenceInHours } from "date-fns";
+import { isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -33,7 +38,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
 import {
@@ -44,6 +48,22 @@ import {
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
 import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
+import { InternalNoteBubble } from "./internal-note-bubble";
+import { SystemEventPill } from "./system-event-pill";
+import { useConversationEvents } from "@/hooks/use-conversation-events";
+import {
+  deriveBaselineEvents,
+  eventFromRecord,
+  isVisibleEvent,
+} from "@/lib/conversations/events";
+import {
+  notifyContactNotesChanged,
+  onContactNotesChanged,
+} from "@/lib/conversations/notes";
+import {
+  buildThreadTimeline,
+  groupTimelineByDay,
+} from "@/lib/conversations/timeline";
 import { toast } from "sonner";
 
 interface ReplyDraft {
@@ -112,28 +132,82 @@ function formatDateSeparator(dateStr: string): string {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(date);
 }
 
-function groupMessagesByDate(messages: Message[]) {
-  const groups: { date: string; messages: Message[] }[] = [];
-  let currentDate = "";
+const STATUS_ORDER: ConversationStatus[] = ["open", "pending", "closed"];
 
-  for (const msg of messages) {
-    const day = format(new Date(msg.created_at), "yyyy-MM-dd");
-    if (day !== currentDate) {
-      currentDate = day;
-      groups.push({ date: msg.created_at, messages: [msg] });
-    } else {
-      groups[groups.length - 1].messages.push(msg);
-    }
+const STATUS_COLOR: Record<ConversationStatus, string> = {
+  open: "text-primary",
+  pending: "text-amber-400",
+  closed: "text-muted-foreground",
+};
+
+const STATUS_DOT: Record<ConversationStatus, string> = {
+  open: "bg-primary",
+  pending: "bg-amber-500",
+  closed: "bg-muted-foreground",
+};
+
+/**
+ * Header copy lives in a language-keyed table (like the list's triage
+ * strip) rather than the DOM catalogue: the pt-BR forms are feminine
+ * ("Aberta", "Resolvida" — a *conversa*) and must match the chips the
+ * conversation list renders for the same status. Marked
+ * `data-no-translate` so the DOM translator leaves them alone.
+ */
+const THREAD_STATUS_COPY: Record<
+  Language,
+  {
+    labels: Record<ConversationStatus, string>;
+    resolve: string;
+    reopen: string;
+    resolvedToast: string;
+    reopenedToast: string;
+    noteLabel: string;
+    noteHint: string;
+    noteDelete: string;
+    noteAdded: string;
+    noteFailed: string;
+    noteDeleted: string;
+    you: string;
+    team: string;
+    changeStatus: string;
+    back: string;
   }
-
-  return groups;
-}
-
-const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string }[] = [
-  { label: "Aberto", value: "open", color: "text-primary" },
-  { label: "Pendente", value: "pending", color: "text-amber-400" },
-  { label: "Fechado", value: "closed", color: "text-muted-foreground" },
-];
+> = {
+  "pt-BR": {
+    labels: { open: "Aberta", pending: "Pendente", closed: "Resolvida" },
+    resolve: "Resolver",
+    reopen: "Reabrir",
+    resolvedToast: "Conversa resolvida",
+    reopenedToast: "Conversa reaberta",
+    noteLabel: "Nota interna",
+    noteHint: "Visível só para a equipe — o cliente não recebe esta nota",
+    noteDelete: "Excluir nota",
+    noteAdded: "Nota interna adicionada",
+    noteFailed: "Não foi possível salvar a nota",
+    noteDeleted: "Nota excluída",
+    you: "Você",
+    team: "Equipe",
+    changeStatus: "Alterar status",
+    back: "Voltar para as conversas",
+  },
+  "en-US": {
+    labels: { open: "Open", pending: "Pending", closed: "Resolved" },
+    resolve: "Resolve",
+    reopen: "Reopen",
+    resolvedToast: "Conversation resolved",
+    reopenedToast: "Conversation reopened",
+    noteLabel: "Private note",
+    noteHint: "Visible to your team only — the customer never gets this",
+    noteDelete: "Delete note",
+    noteAdded: "Private note added",
+    noteFailed: "Could not save the note",
+    noteDeleted: "Note deleted",
+    you: "You",
+    team: "Team",
+    changeStatus: "Change status",
+    back: "Back to conversations",
+  },
+};
 
 /**
  * WhatsApp-style doodle background applied to the chat area (both the
@@ -162,8 +236,20 @@ export function MessageThread({
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
-  const { user } = useAuth();
+  const { user, accountId } = useAuth();
+  const { language } = useLanguage();
+  const statusCopy = THREAD_STATUS_COPY[language] ?? THREAD_STATUS_COPY["pt-BR"];
   const [loading, setLoading] = useState(false);
+  // Team-only notes for this contact, interleaved in the stream as amber
+  // bubbles. Stored in `contact_notes` (account-scoped, shared with the
+  // whole team via RLS) — they never go anywhere near the WhatsApp API.
+  const [notes, setNotes] = useState<ContactNote[]>([]);
+  // Who-did-what log (assign / status / label / note), server-backed and
+  // realtime — see lib/conversations/events + hooks/use-conversation-events.
+  const { events: eventRecords, logEvent } = useConversationEvents(
+    conversation?.id,
+    resyncToken,
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -217,29 +303,37 @@ export function MessageThread({
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
-    if (!messages.length) return { expired: false, remaining: "" };
+    if (!messages.length) return { expired: false, remaining: "", short: "" };
 
     // Find last customer message
     const lastCustomerMsg = [...messages]
       .reverse()
       .find((m) => m.sender_type === "customer");
 
-    if (!lastCustomerMsg) return { expired: true, remaining: "No customer messages" };
+    if (!lastCustomerMsg)
+      return {
+        expired: true,
+        remaining: "No customer messages",
+        short: "Expired",
+      };
 
     const hoursSince = differenceInHours(new Date(), new Date(lastCustomerMsg.created_at));
     const expired = hoursSince >= 24;
 
     if (expired) {
-      return { expired: true, remaining: "Expired" };
+      return { expired: true, remaining: "Expired", short: "Expired" };
     }
 
     const hoursLeft = 24 - hoursSince;
-    const remaining =
+    // `short` is what the header badge shows ("17h"); `remaining` is the
+    // full sentence ("17h remaining") used as its tooltip, so the phone
+    // line next to it doesn't get squeezed at 1440.
+    const short =
       hoursLeft >= 1
-        ? `${Math.floor(hoursLeft)}h remaining`
-        : `${Math.floor(hoursLeft * 60)}m remaining`;
+        ? `${Math.floor(hoursLeft)}h`
+        : `${Math.floor(hoursLeft * 60)}m`;
 
-    return { expired, remaining };
+    return { expired, remaining: `${short} remaining`, short };
   }, [messages]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
@@ -325,6 +419,40 @@ export function MessageThread({
       cancelled = true;
     };
   }, [conversationId, resyncToken]);
+
+  // Notes fetch — keyed on the contact (notes are per-contact, so they
+  // also surface in a later conversation with the same person). Refires
+  // on resyncToken like the other fetches; `contact_notes` isn't in the
+  // realtime publication, so teammates' notes land on the next resync.
+  const contactId = contact?.id;
+  useEffect(() => {
+    if (!contactId) {
+      setNotes([]);
+      return;
+    }
+    const supabase = createClient();
+    let cancelled = false;
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("contact_notes")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: true });
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed to fetch notes:", error);
+        return;
+      }
+      setNotes((data as ContactNote[]) ?? []);
+    };
+    void load();
+    // The contact panel can add/remove notes too — stay in sync.
+    const unsubscribe = onContactNotesChanged(contactId, () => void load());
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [contactId, resyncToken]);
 
   // Reactions realtime subscription per conversation. Subscribing here
   // (not at the page level) keeps the channel scoped to the visible
@@ -426,13 +554,13 @@ export function MessageThread({
       });
   }, [conversationId, hasUnread]);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new messages, notes or event pills
   useEffect(() => {
     if (scrollRef.current) {
       const el = scrollRef.current;
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, notes, eventRecords]);
 
   const handleSend = useCallback(
     async (text: string, replyToId?: string) => {
@@ -561,15 +689,95 @@ export function MessageThread({
     async (status: ConversationStatus) => {
       if (!conversation) return;
 
+      if (conversation.status === status) return;
+
       const supabase = createClient();
-      await supabase
+      const { error } = await supabase
         .from("conversations")
         .update({ status })
         .eq("id", conversation.id);
 
+      if (error) {
+        console.error("Failed to update status:", error);
+        toast.error("Failed to update status");
+        return;
+      }
+
       onStatusChange(conversation.id, status);
+      void logEvent({
+        event_type: "status_changed",
+        payload: { status, previous_status: conversation.status },
+      });
     },
-    [conversation, onStatusChange]
+    [conversation, onStatusChange, logEvent]
+  );
+
+  // Resolve ⇄ Reopen from the header's primary button. Pending counts
+  // as "still open" for this toggle, so the button always resolves
+  // unless the thread is already closed.
+  const handleResolveToggle = useCallback(async () => {
+    if (!conversation) return;
+    const next: ConversationStatus =
+      conversation.status === "closed" ? "open" : "closed";
+    await handleStatusChange(next);
+    toast.success(
+      next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast
+    );
+  }, [conversation, handleStatusChange, statusCopy]);
+
+  // ---- Internal notes ----------------------------------------------
+
+  const handleSendNote = useCallback(
+    async (text: string) => {
+      if (!contact || !accountId || !user?.id) {
+        toast.error(statusCopy.noteFailed);
+        return;
+      }
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("contact_notes")
+        .insert({
+          contact_id: contact.id,
+          account_id: accountId,
+          user_id: user.id,
+          note_text: text,
+        })
+        .select()
+        .single();
+      if (error || !data) {
+        console.error("Failed to add note:", error);
+        toast.error(statusCopy.noteFailed);
+        return;
+      }
+      setNotes((prev) => [...prev, data as ContactNote]);
+      notifyContactNotesChanged(contact.id);
+      toast.success(statusCopy.noteAdded);
+      // Audit-log only: the amber bubble itself is the visible trace.
+      void logEvent({
+        event_type: "note_added",
+        payload: { note_id: (data as ContactNote).id },
+      });
+    },
+    [contact, accountId, user?.id, statusCopy, logEvent],
+  );
+
+  const handleDeleteNote = useCallback(
+    async (noteId: string) => {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("contact_notes")
+        .delete()
+        .eq("id", noteId);
+      if (error) {
+        console.error("Failed to delete note:", error);
+        toast.error(statusCopy.noteFailed);
+        return;
+      }
+      setNotes((prev) => prev.filter((n) => n.id !== noteId));
+      if (contact) notifyContactNotesChanged(contact.id);
+      toast.success(statusCopy.noteDeleted);
+    },
+    [statusCopy, contact],
   );
 
   const handleOpenTemplates = useCallback(() => {
@@ -770,9 +978,47 @@ export function MessageThread({
       }
 
       onAssignChange(conversation.id, agentId);
+      if (agentId) {
+        const assignee = profiles.find((p) => p.user_id === agentId);
+        void logEvent({
+          event_type: "assigned",
+          payload: {
+            assignee_user_id: agentId,
+            assignee_name: assignee?.full_name ?? undefined,
+            self_assigned: agentId === user?.id,
+          },
+        });
+      } else {
+        void logEvent({ event_type: "unassigned", payload: {} });
+      }
     },
-    [conversation, onAssignChange],
+    [conversation, onAssignChange, profiles, logEvent, user?.id],
   );
+
+  // Name lookup shared by the baseline pills and note headers.
+  const nameForUser = useCallback(
+    (userId: string | undefined): string | undefined => {
+      if (!userId) return undefined;
+      if (userId === user?.id) return statusCopy.you;
+      return profiles.find((p) => p.user_id === userId)?.full_name || undefined;
+    },
+    [profiles, user?.id, statusCopy.you],
+  );
+
+  // Messages + notes + events in one stream, bucketed by day. Baseline
+  // pills describe the row's *current* assignee / status for threads
+  // that predate the events table, so an old thread still says who owns
+  // it. Live profile names win over the snapshot stored in the row.
+  const timelineGroups = useMemo(() => {
+    if (!conversation) return [];
+    const profileName = (id: string) =>
+      profiles.find((p) => p.user_id === id)?.full_name || undefined;
+    const logged = eventRecords.map((r) => eventFromRecord(r, profileName));
+    const baseline = deriveBaselineEvents(conversation, logged, profileName);
+    const visible = [...logged, ...baseline].filter(isVisibleEvent);
+    return groupTimelineByDay(buildThreadTimeline(messages, notes, visible));
+  }, [conversation, messages, notes, eventRecords, profiles]);
+  const timelineNow = Date.now();
 
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
@@ -794,10 +1040,8 @@ export function MessageThread({
   }
 
   const displayName = contact.name || contact.phone;
-  const messageGroups = groupMessagesByDate(messages);
-  const currentStatus = STATUS_OPTIONS.find(
-    (s) => s.value === conversation.status
-  );
+  const status = conversation.status;
+  const isResolved = status === "closed";
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
@@ -813,19 +1057,26 @@ export function MessageThread({
     // clipped and the hover toolbar overlaps the Tags panel. Letting the
     // root shrink lets the bubbles' break-words / max-w caps apply.
     // Issue #257.
-    <div className={cn("flex min-w-0 flex-1 flex-col", DOODLE_BG_CLASSES)}>
+    // `@container` lets the header size its button labels by the thread's
+    // own width (not the viewport): with the contact panel open at 1280
+    // the thread is ~440 px and the labels must yield to the name/phone.
+    <div className={cn("@container flex min-w-0 flex-1 flex-col", DOODLE_BG_CLASSES)}>
       {/* Header — solid card surface sits on top of the doodle so the
-          name/avatar/dropdowns stay legible. */}
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-3 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          name/avatar/dropdowns stay legible. One filled control only
+          (Resolver / Reabrir, a split button whose chevron opens the full
+          status picker); assignee, refresh and the panel toggle are
+          ghost buttons so the primary action is unmistakable. */}
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           {/* Back-to-list button — mobile only. Hidden on lg+ where the
               conversation list is always visible next to the thread. */}
           {onBack && (
             <button
               type="button"
               onClick={onBack}
-              aria-label="Back to conversations"
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+              aria-label={statusCopy.back}
+              title={statusCopy.back}
+              className="-ml-1 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
@@ -833,110 +1084,70 @@ export function MessageThread({
           <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
             {displayName.charAt(0).toUpperCase()}
           </div>
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
-            <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold leading-5 text-foreground">
+              {displayName}
+            </h2>
+            <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+              {/* Phone truncates on phones; the status + window badges
+                  are the parts that must stay visible. */}
+              <p
+                data-no-translate
+                className="min-w-0 truncate tabular-nums"
+                title={contact.phone}
+              >
+                {contact.phone}
+              </p>
+              {/* Status — read-only badge; changed via the split button. */}
+              <span
+                data-no-translate
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 text-[10px] font-medium leading-4",
+                  STATUS_COLOR[status]
+                )}
+              >
+                <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])} />
+                {statusCopy.labels[status]}
+              </span>
+              {/* 24 h session window — only when the thread is >= 32rem
+                  wide; the composer banner explains an expired window. */}
+              <Badge
+                variant="outline"
+                title={sessionInfo.remaining}
+                aria-label={sessionInfo.remaining}
+                className={cn(
+                  "hidden h-4 shrink-0 gap-1 border-border px-1.5 py-0 text-[10px] tabular-nums @lg:inline-flex",
+                  sessionInfo.expired ? "text-red-400" : "text-primary"
+                )}
+              >
+                <Clock className="h-3 w-3" />
+                {sessionInfo.short}
+              </Badge>
+            </div>
           </div>
-          {/* Session timer badge — hidden on the narrowest phones so
-              the name + back arrow keep their room. */}
-          <Badge
-            variant="outline"
-            className={cn(
-              "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
-            )}
-          >
-            <Clock className="h-3 w-3" />
-            {sessionInfo.remaining}
-          </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Contact-panel toggle — desktop only. The contact sidebar
-              eats a chunk of horizontal width that crowds the thread on
-              smaller laptops; this lets agents reclaim it when they just
-              want to read and reply. Hidden on mobile, where the sidebar
-              never renders as a permanent panel anyway. Issue #258. */}
-          {onToggleContactPanel && (
-            <button
-              type="button"
-              onClick={onToggleContactPanel}
-              aria-label={
-                contactPanelOpen ? "Hide contact panel" : "Show contact panel"
-              }
-              aria-pressed={contactPanelOpen}
-              title={contactPanelOpen ? "Hide contact" : "Show contact"}
-              className={cn(
-                "hidden h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
-                contactPanelOpen ? "text-primary" : "text-muted-foreground",
-              )}
-            >
-              {contactPanelOpen ? (
-                <PanelRightClose className="h-4 w-4" />
-              ) : (
-                <PanelRightOpen className="h-4 w-4" />
-              )}
-            </button>
-          )}
-
-          {/* Manual refresh — forces a refetch of the messages + the
-              conversation list (the parent bumps its resyncToken). Useful
-              when realtime missed an event or the agent just wants to be
-              sure nothing's stale. Only rendered when the parent wires
-              up `onRefresh`. */}
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={handleRefreshClick}
-              disabled={isRefreshing}
-              aria-label="Refresh conversation"
-              title="Refresh"
-              className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60",
-              )}
-            >
-              <RefreshCw
-                className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
-              />
-            </button>
-          )}
-
-          {/* Status dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  currentStatus?.color ?? "text-muted-foreground"
-                )}>
-                {currentStatus?.label ?? "Status"}
-                <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="border-border bg-popover"
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <DropdownMenuItem
-                  key={opt.value}
-                  onClick={() => handleStatusChange(opt.value)}
-                  className={cn("text-sm", opt.color)}
-                >
-                  {opt.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Assign dropdown */}
+        <div className="flex shrink-0 items-center gap-1">
+          {/* Assignee — ghost chip. Name shows once the thread is >= 36rem
+              wide; below that the icon + tooltip carry it. */}
           <DropdownMenu>
             <DropdownMenuTrigger
+              aria-label={assignLabel}
+              title={assignLabel}
               className={cn(
-                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                assignedAgentId ? "text-primary" : "text-muted-foreground"
+                "inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-muted hover:text-foreground",
+                assignedAgentId ? "text-foreground" : "text-muted-foreground"
               )}
             >
-              <UserPlus className="h-3 w-3" />
-              <span className="hidden sm:inline">{assignLabel}</span>
-              <ChevronDown className="h-3 w-3" />
+              {assignedAgentId ? (
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
+                  {(currentAssignee?.full_name ?? "?").charAt(0).toUpperCase()}
+                </span>
+              ) : (
+                <UserPlus className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden max-w-28 truncate @xl:inline">{assignLabel}</span>
+              <ChevronDown className="hidden h-3 w-3 text-muted-foreground @xl:inline" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
@@ -960,7 +1171,9 @@ export function MessageThread({
                     >
                       <span className="flex-1">
                         {p.full_name}
-                        {p.user_id === user?.id ? " (me)" : ""}
+                        {p.user_id === user?.id && (
+                          <span className="text-muted-foreground"> (me)</span>
+                        )}
                       </span>
                       {isSelected && <Check className="ml-2 h-3 w-3" />}
                     </DropdownMenuItem>
@@ -980,6 +1193,116 @@ export function MessageThread({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Resolve / Reopen split button — THE queue action. Main part
+              flips open ⇄ resolved; the chevron opens the full lifecycle
+              picker (open / pending / resolved). Copy comes from
+              THREAD_STATUS_COPY so it matches the list chips. */}
+          <div
+            data-no-translate
+            className={cn(
+              "ml-1 inline-flex h-8 items-stretch overflow-hidden rounded-md text-xs font-medium",
+              isResolved
+                ? "border border-border bg-card text-foreground"
+                : "bg-primary text-primary-foreground shadow-sm"
+            )}
+          >
+            <button
+              type="button"
+              onClick={handleResolveToggle}
+              aria-label={isResolved ? statusCopy.reopen : statusCopy.resolve}
+              title={isResolved ? statusCopy.reopen : statusCopy.resolve}
+              className={cn(
+                "inline-flex items-center gap-1.5 pl-2.5 pr-2 transition-colors @md:pr-2.5",
+                isResolved ? "hover:bg-muted" : "hover:bg-primary/90"
+              )}
+            >
+              {isResolved ? (
+                <RotateCcw className="h-3.5 w-3.5" />
+              ) : (
+                <CheckCheck className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden @md:inline">
+                {isResolved ? statusCopy.reopen : statusCopy.resolve}
+              </span>
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={statusCopy.changeStatus}
+                title={statusCopy.changeStatus}
+                className={cn(
+                  "inline-flex w-6 items-center justify-center border-l transition-colors",
+                  isResolved
+                    ? "border-border hover:bg-muted"
+                    : "border-primary-foreground/20 hover:bg-primary/90"
+                )}
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                data-no-translate
+                className="min-w-36 border-border bg-popover"
+              >
+                {STATUS_ORDER.map((value) => (
+                  <DropdownMenuItem
+                    key={value}
+                    onClick={() => handleStatusChange(value)}
+                    className={cn(
+                      "gap-2 text-sm",
+                      status === value ? "text-primary" : "text-popover-foreground"
+                    )}
+                  >
+                    <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[value])} />
+                    <span className="flex-1">{statusCopy.labels[value]}</span>
+                    {status === value && <Check className="h-3 w-3" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Utilities — ghost icon buttons, visually a step below the
+              actions. Hidden on phones where the header is at its
+              tightest. */}
+          <span className="mx-1 hidden h-5 w-px bg-border @md:block" aria-hidden="true" />
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={handleRefreshClick}
+              disabled={isRefreshing}
+              aria-label="Refresh conversation"
+              title="Refresh"
+              className="hidden h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60 @md:inline-flex"
+            >
+              <RefreshCw
+                className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
+              />
+            </button>
+          )}
+          {/* Contact-panel toggle — desktop only (the panel is xl-only,
+              issue #258). */}
+          {onToggleContactPanel && (
+            <button
+              type="button"
+              onClick={onToggleContactPanel}
+              aria-label={
+                contactPanelOpen ? "Hide contact panel" : "Show contact panel"
+              }
+              aria-pressed={contactPanelOpen}
+              title={contactPanelOpen ? "Hide contact" : "Show contact"}
+              className={cn(
+                "hidden h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground xl:inline-flex",
+                contactPanelOpen ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {contactPanelOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -989,7 +1312,7 @@ export function MessageThread({
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
-        ) : messages.length === 0 ? (
+        ) : timelineGroups.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
             <p className="text-sm text-muted-foreground">No messages yet</p>
             <p className="text-xs text-muted-foreground">
@@ -998,7 +1321,7 @@ export function MessageThread({
           </div>
         ) : (
           <div className="space-y-4">
-            {messageGroups.map((group) => (
+            {timelineGroups.map((group) => (
               <div key={group.date}>
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
@@ -1006,9 +1329,35 @@ export function MessageThread({
                     {formatDateSeparator(group.date)}
                   </span>
                 </div>
-                {/* Messages */}
+                {/* Messages, notes and system pills, interleaved */}
                 <div className="space-y-2">
-                  {group.messages.map((msg) => {
+                  {group.items.map((item) => {
+                    if (item.kind === "event") {
+                      return (
+                        <SystemEventPill
+                          key={item.id}
+                          event={item.event}
+                          language={language}
+                          now={timelineNow}
+                        />
+                      );
+                    }
+                    if (item.kind === "note") {
+                      const note = item.note;
+                      const mine = note.user_id === user?.id;
+                      return (
+                        <InternalNoteBubble
+                          key={item.id}
+                          note={note}
+                          authorName={nameForUser(note.user_id) ?? statusCopy.team}
+                          label={statusCopy.noteLabel}
+                          hint={statusCopy.noteHint}
+                          deleteLabel={statusCopy.noteDelete}
+                          onDelete={mine ? () => void handleDeleteNote(note.id) : undefined}
+                        />
+                      );
+                    }
+                    const msg = item.message;
                     const parent = msg.reply_to_message_id
                       ? messagesById.get(msg.reply_to_message_id)
                       : null;
@@ -1032,7 +1381,7 @@ export function MessageThread({
                     };
                     return (
                       <MessageActions
-                        key={msg.id}
+                        key={item.id}
                         message={msg}
                         onReply={() => handleStartReply(msg)}
                         onReact={(emoji) => {
@@ -1063,6 +1412,7 @@ export function MessageThread({
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onOpenTemplates={handleOpenTemplates}
+        onSendNote={handleSendNote}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
       />

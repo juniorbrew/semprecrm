@@ -3,12 +3,16 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
+import type {
+  Conversation,
+  Message,
+  Contact,
+  ConversationStatus,
+} from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
-import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -561,9 +565,15 @@ export default function InboxPage() {
         {/* Left panel: Conversation list.
             Hidden on mobile when a conversation is selected so the
             thread can occupy the full width. Always visible on lg+. */}
+        {/* `min-w-0` + `w-full` are load-bearing on phones: as the only
+            visible pane the wrapper is `flex-1` with `min-width:auto`, so
+            it sized itself to the list's min-content (the longest nowrap
+            preview, ~530 px) and the tab strip + filters were pushed past
+            the 375 px viewport and clipped by the parent's overflow-hidden.
+            On lg+ the list is a fixed 320 px column again. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
+            "flex h-full w-full min-w-0 flex-1 lg:w-auto lg:flex-none",
             hasActiveConv ? "hidden lg:flex" : "flex",
           )}
         >
@@ -609,13 +619,20 @@ export default function InboxPage() {
           />
         </div>
 
-        {/* Right panel: Contact sidebar — desktop only, and only when the
-            agent hasn't collapsed it via the thread-header toggle (#258).
-            On mobile it's always hidden (the `lg:block` below), so the
-            toggle — which is itself desktop-only — never affects it. */}
+        {/* Right panel: Contact sidebar — wide desktop only (xl+), and only
+            when the agent hasn't collapsed it via the thread-header toggle
+            (#258). Between lg and xl (1024–1279 px) the nav (240) + list
+            (320) + panel (280) would leave the thread just ~184 px, so the
+            panel stays hidden there and the thread keeps the room; the
+            toggle in the thread header is xl-only to match. On mobile it's
+            always hidden. */}
         {contactPanelOpen && (
-          <div className="hidden lg:block">
-            <ContactSidebar contact={activeContact} />
+          <div className="hidden min-h-0 xl:flex">
+            <ContactSidebar
+              contact={activeContact}
+              conversationId={activeConversation?.id ?? null}
+              onOpenConversation={handleSelectConversation}
+            />
           </div>
         )}
       </div>
