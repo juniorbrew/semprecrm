@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
     // services/wa-gateway is its own package (own tsconfig, deps and
     // lint); linting it with the Next.js config produces false errors.
     "services/**",
+    // PM2 process files are CommonJS by design (PM2 loads them with require()).
+    "deploy/**/*.cjs",
   ]),
 ]);
 
