@@ -52,6 +52,9 @@ import { CustomFieldValue } from "./custom-field-value";
 import { TeamNoteComposer } from "./team-note-composer";
 import { toast } from "sonner";
 
+// Same preset palette as Settings › Tags; picked round-robin for inline creation.
+const TAG_PALETTE = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4", "#f97316", "#ec4899"];
+
 interface ContactSidebarProps {
   contact: Contact | null;
   /** Active thread — label changes are logged as pills against it. */
@@ -74,6 +77,9 @@ const PANEL_COPY: Record<
     noTags: string;
     addTag: string;
     noTagsToPick: string;
+    newTagPlaceholder: string;
+    createTag: string;
+    tagCreateFailed: string;
     customFields: string;
     noCustomFields: string;
     emptyValue: string;
@@ -99,7 +105,10 @@ const PANEL_COPY: Record<
     tags: "Etiquetas",
     noTags: "Sem etiquetas",
     addTag: "Adicionar etiqueta",
-    noTagsToPick: "Nenhuma etiqueta criada. Crie em Configurações › Campos e etiquetas.",
+    noTagsToPick: "Nenhuma etiqueta criada ainda. Digite um nome abaixo para criar a primeira.",
+    newTagPlaceholder: "Nova etiqueta…",
+    createTag: "Criar",
+    tagCreateFailed: "Não foi possível criar a etiqueta",
     customFields: "Campos personalizados",
     noCustomFields: "Nenhum campo personalizado definido",
     emptyValue: "—",
@@ -124,7 +133,10 @@ const PANEL_COPY: Record<
     tags: "Labels",
     noTags: "No labels",
     addTag: "Add label",
-    noTagsToPick: "No labels yet. Create them in Settings › Fields & tags.",
+    noTagsToPick: "No labels yet. Type a name below to create the first one.",
+    newTagPlaceholder: "New label…",
+    createTag: "Create",
+    tagCreateFailed: "Could not create the label",
     customFields: "Custom fields",
     noCustomFields: "No custom fields defined",
     emptyValue: "—",
@@ -250,6 +262,8 @@ export function ContactSidebar({
   const [previous, setPrevious] = useState<Conversation[]>([]);
   const [tagBusy, setTagBusy] = useState<string | null>(null);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [creatingTag, setCreatingTag] = useState(false);
   const [newFieldOpen, setNewFieldOpen] = useState(false);
   const [noteComposerOpen, setNoteComposerOpen] = useState(false);
   // "Novo negócio": the first pipeline + its stages, loaded on demand when
@@ -409,6 +423,39 @@ export function ContactSidebar({
       copy,
     ],
   );
+
+  /** Create a tag inline (same palette as Settings › Tags) and attach it. */
+  const createAndAttachTag = useCallback(async () => {
+    const name = newTagName.trim();
+    if (!name || creatingTag || !accountId || !user?.id) return;
+    const duplicate = allTags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (duplicate) {
+      setNewTagName("");
+      if (!contactTags.some((t) => t.id === duplicate.id)) void toggleTag(duplicate);
+      return;
+    }
+    setCreatingTag(true);
+    const supabase = createClient();
+    const color = TAG_PALETTE[allTags.length % TAG_PALETTE.length];
+    try {
+      const { data, error } = await supabase
+        .from("tags")
+        .insert({ user_id: user.id, account_id: accountId, name, color })
+        .select("*")
+        .single();
+      if (error || !data) throw error ?? new Error("insert failed");
+      const tag = data as Tag;
+      setAllTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewTagName("");
+      await toggleTag(tag);
+    } catch (err) {
+      console.error("Failed to create tag:", err);
+      toast.error(copy.tagCreateFailed);
+    } finally {
+      setCreatingTag(false);
+    }
+  }, [newTagName, creatingTag, accountId, user?.id, allTags, contactTags, toggleTag, copy.tagCreateFailed]);
+
 
   const contactTagIds = useMemo(
     () => new Set(contactTags.map((tag) => tag.id)),
@@ -642,6 +689,30 @@ export function ContactSidebar({
                         })}
                       </ul>
                     )}
+                    <form
+                      className="mt-1 flex items-center gap-1 border-t border-border pt-1.5"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void createAndAttachTag();
+                      }}
+                    >
+                      <input
+                        value={newTagName}
+                        onChange={(e) => setNewTagName(e.target.value)}
+                        placeholder={copy.newTagPlaceholder}
+                        maxLength={40}
+                        disabled={creatingTag}
+                        aria-label={copy.newTagPlaceholder}
+                        className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <button
+                        type="submit"
+                        disabled={creatingTag || !newTagName.trim()}
+                        className="inline-flex h-7 shrink-0 items-center rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                      >
+                        {creatingTag ? <Loader2 className="h-3 w-3 animate-spin" /> : copy.createTag}
+                      </button>
+                    </form>
                   </PopoverContent>
                 </Popover>
               }
