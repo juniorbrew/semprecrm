@@ -46,6 +46,12 @@ interface Session {
   stopping: boolean;
   /** evita duas `startSocket` concorrentes para a mesma conta */
   starting: boolean;
+  /** maior status já repassado ao app por message_id (recibos só andam para frente) */
+  ackRank: Map<string, number>;
+  /** jid discado → jid resolvido via onWhatsApp (evita consultar a cada envio) */
+  jidCache: Map<string, string>;
+  /** `send()` aguardando a sessão voltar a `connected` */
+  connectWaiters: Array<() => void>;
 }
 
 export interface SessionManagerOptions {
@@ -56,9 +62,16 @@ export interface SessionManagerOptions {
   /** injeção para testes */
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
+  /** quanto `send()` espera a sessão reconectar antes de responder 409 (padrão 15 s) */
+  sendWaitMs?: number;
 }
 
 const PN_SUFFIX = "@s.whatsapp.net";
+/** quantos message_ids lembramos por sessão para deduplicar recibos */
+const ACK_RANK_MAX = 2000;
+
+/** ordem dos acks: só repassamos ao app quando o novo status é maior que o último. */
+const ACK_RANK: Record<AckStatus, number> = { sent: 1, delivered: 2, read: 3 };
 
 /** proto.WebMessageInfo.Status → ack do app. `null` = sem ack relevante. */
 export function ackFromStatus(status: number | null | undefined): AckStatus | null {
@@ -106,17 +119,47 @@ function isNotOnWhatsAppError(err: unknown): boolean {
   return code === 404 || /not.?on.?whatsapp|no.?jid|item-not-found|recipient/.test(msg);
 }
 
+/** Erro do Baileys típico de socket que caiu no meio do envio. */
+function looksLikeConnectionError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err).toLowerCase();
+  const code = (err as { output?: { statusCode?: number } })?.output?.statusCode;
+  const connectionCodes: number[] = [
+    DisconnectReason.connectionClosed,
+    DisconnectReason.connectionLost,
+    DisconnectReason.timedOut,
+  ];
+  return (
+    (typeof code === "number" && connectionCodes.includes(code)) ||
+    /connection (was )?(closed|lost|terminated)|reading 'attrs'|socket|ws is not open|query cancelled/.test(msg)
+  );
+}
+
+function newSession(accountId: string): Session {
+  return {
+    accountId,
+    status: "disconnected",
+    reconnectAttempts: 0,
+    stopping: false,
+    starting: false,
+    ackRank: new Map(),
+    jidCache: new Map(),
+    connectWaiters: [],
+  };
+}
+
 export class SessionManager {
   private readonly sessions = new Map<string, Session>();
   private readonly log: Logger;
   private readonly reconnectBaseMs: number;
   private readonly reconnectMaxMs: number;
+  private readonly sendWaitMs: number;
   private versionPromise?: Promise<WAVersion | undefined>;
 
   constructor(private readonly opts: SessionManagerOptions) {
     this.log = opts.logger.child({ module: "session-manager" });
     this.reconnectBaseMs = opts.reconnectBaseMs ?? 2000;
     this.reconnectMaxMs = opts.reconnectMaxMs ?? 60_000;
+    this.sendWaitMs = opts.sendWaitMs ?? 15_000;
   }
 
   // ---------- API pública ----------
@@ -142,7 +185,7 @@ export class SessionManager {
     if (s?.sock && s.status !== "disconnected") return this.getStatus(accountId);
     if (s?.starting) return this.getStatus(accountId);
     if (!s) {
-      s = { accountId, status: "disconnected", reconnectAttempts: 0, stopping: false, starting: false };
+      s = newSession(accountId);
       this.sessions.set(accountId, s);
     }
     s.stopping = false;
@@ -187,39 +230,105 @@ export class SessionManager {
     return { status: "disconnected" };
   }
 
+  /**
+   * Envia texto/mídia. Se a sessão está reconectando (`connecting`/`qr` com
+   * socket, ou `disconnected` com reconexão agendada), espera até
+   * `sendWaitMs` pela volta antes de responder 409. Se o socket cair no meio
+   * do `sendMessage`, espera a reconexão e tenta mais uma vez — sempre com o
+   * socket ATUAL da sessão, nunca com uma referência capturada antes.
+   */
   async send(accountId: string, req: SendRequest): Promise<SendResponse> {
     const s = this.sessions.get(accountId);
-    if (!s?.sock || s.status !== "connected") {
+    if (!s) {
       throw new GatewayError("sessão não conectada", "not_connected", 409);
     }
     if (!req.text && !req.media) {
       throw new GatewayError("informe text ou media", "invalid_request", 400);
     }
-    const sock = s.sock;
-    const jid = toJid(req.to);
+    const dialed = toJid(req.to);
     const content = buildContent(req);
+    // jid já resolvido num envio anterior (número cujo jid difere do discado)
+    let jid = s.jidCache.get(dialed) ?? dialed;
 
+    let sock = await this.waitForConnected(s);
     let result: WAMessage | undefined;
     try {
       result = await sock.sendMessage(jid, content);
     } catch (err) {
-      if (!isNotOnWhatsAppError(err)) {
+      if (isNotOnWhatsAppError(err)) {
+        // só aqui consultamos o servidor: o envio direto ao jid discado falhou
+        const resolved = await this.resolveJid(s.sock ?? sock, dialed);
+        if (!resolved) {
+          throw new GatewayError(`número não está no WhatsApp: ${req.to}`, "not_on_whatsapp", 422);
+        }
+        s.jidCache.set(dialed, resolved);
+        jid = resolved;
+        try {
+          result = await (s.sock ?? sock).sendMessage(jid, content);
+        } catch (err2) {
+          throw new GatewayError(`falha ao enviar: ${(err2 as Error).message}`, "send_failed", 502);
+        }
+      } else if (s.sock !== sock || s.status !== "connected" || looksLikeConnectionError(err)) {
+        // o socket caiu (ou está caindo) durante o envio: espera reconectar e tenta uma vez
+        this.log.warn(
+          { accountId, jid, err: (err as Error).message, status: s.status },
+          "sendMessage falhou durante reconexão; tentando de novo após reconectar",
+        );
+        sock = await this.waitForConnected(s);
+        try {
+          result = await sock.sendMessage(jid, content);
+        } catch (err2) {
+          this.log.error({ accountId, jid, err: (err2 as Error).message }, "sendMessage falhou na segunda tentativa");
+          throw new GatewayError(`falha ao enviar: ${(err2 as Error).message}`, "send_failed", 502);
+        }
+      } else {
         this.log.error({ accountId, jid, err: (err as Error).message }, "sendMessage falhou");
         throw new GatewayError(`falha ao enviar: ${(err as Error).message}`, "send_failed", 502);
-      }
-      const resolved = await this.resolveJid(sock, jid);
-      if (!resolved) {
-        throw new GatewayError(`número não está no WhatsApp: ${req.to}`, "not_on_whatsapp", 422);
-      }
-      try {
-        result = await sock.sendMessage(resolved, content);
-      } catch (err2) {
-        throw new GatewayError(`falha ao enviar: ${(err2 as Error).message}`, "send_failed", 502);
       }
     }
     const id = result?.key?.id;
     if (!id) throw new GatewayError("WhatsApp não devolveu id da mensagem", "send_failed", 502);
     return { message_id: id };
+  }
+
+  /**
+   * Devolve o socket atual quando a sessão está `connected`. Se está no meio
+   * de uma (re)conexão, espera até `sendWaitMs`. Se não há reconexão em
+   * andamento nem agendada (logout, loggedOut, nunca conectou), responde 409
+   * na hora.
+   */
+  private async waitForConnected(s: Session): Promise<WASocket> {
+    if (s.status === "connected" && s.sock) return s.sock;
+    // "qr" nunca é uma reconexão: o usuário ainda precisa escanear
+    const reconnecting =
+      !s.stopping &&
+      s.status !== "qr" &&
+      (s.starting || !!s.reconnectTimer || (!!s.sock && s.status !== "disconnected"));
+    if (!reconnecting) {
+      throw new GatewayError("sessão não conectada", "not_connected", 409);
+    }
+    this.log.info(
+      { accountId: s.accountId, status: s.status, waitMs: this.sendWaitMs },
+      "aguardando reconexão para enviar",
+    );
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        const idx = s.connectWaiters.indexOf(finish);
+        if (idx >= 0) s.connectWaiters.splice(idx, 1);
+        resolve();
+      };
+      const timer = setTimeout(finish, this.sendWaitMs);
+      timer.unref?.();
+      s.connectWaiters.push(finish);
+    });
+    if (s.status !== "connected" || !s.sock) {
+      throw new GatewayError("sessão não conectada", "not_connected", 409);
+    }
+    return s.sock;
   }
 
   /** Retoma, na subida do processo, todas as contas com credenciais em disco. */
@@ -297,6 +406,13 @@ export class SessionManager {
     s.status = status;
     Object.assign(s, patch);
     if (status !== "qr") s.qr = undefined;
+    if (status === "connected") this.wakeWaiters(s);
+  }
+
+  /** Libera quem espera em `waitForConnected` (conectou, ou desistimos: vai dar 409). */
+  private wakeWaiters(s: Session): void {
+    const waiters = s.connectWaiters.splice(0);
+    for (const w of waiters) w();
   }
 
   /** Enfileira o evento de status. Não bloqueia: a fila do app-client faz retry sozinha. */
@@ -409,11 +525,13 @@ export class SessionManager {
         });
         this.emitStatus(s);
         this.sessions.delete(s.accountId);
+        this.wakeWaiters(s);
         return;
       }
 
       if (s.stopping) {
         this.setStatus(s, "disconnected", { lastError: undefined });
+        this.wakeWaiters(s);
         return;
       }
 
@@ -477,13 +595,43 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Recibos das nossas mensagens. O Baileys (7.0.0-rc14, `handleReceipt` em
+   * Socket/messages-recv) emite `messages.update` para conversas 1:1 com
+   * `{ key: { remoteJid, id, fromMe: true }, update: { status, messageTimestamp } }`,
+   * onde `status` é `proto.WebMessageInfo.Status` (2 SERVER_ACK, 3 DELIVERY_ACK,
+   * 4 READ, 5 PLAYED). `message-receipt.update` só sai para grupos/status, que
+   * ignoramos. Os recibos NÃO chegam em ordem: o `type="sender"` do nosso
+   * próprio celular (→ SERVER_ACK) costuma chegar depois do de entrega, então só
+   * repassamos ao app quando o status anda para frente.
+   */
   private async onMessagesUpdate(s: Session, updates: WAMessageUpdate[]): Promise<void> {
     for (const { key, update } of updates) {
+      this.log.debug({ accountId: s.accountId, key, update }, "messages.update recebido");
       if (!key.fromMe || !key.id) continue;
       const ack = ackFromStatus(update.status);
       if (!ack) continue;
+      if (!this.advanceAck(s, key.id, ack)) {
+        this.log.debug({ accountId: s.accountId, id: key.id, ack }, "recibo ignorado (não avança o status)");
+        continue;
+      }
       await this.opts.appClient.sendAck({ account_id: s.accountId, message_id: key.id, status: ack });
     }
+  }
+
+  /** `true` se `ack` é maior que o último repassado para esse id (e registra). */
+  private advanceAck(s: Session, id: string, ack: AckStatus): boolean {
+    const rank = ACK_RANK[ack];
+    const prev = s.ackRank.get(id) ?? 0;
+    if (rank <= prev) return false;
+    if (prev) s.ackRank.delete(id); // reinsere no fim (Map preserva ordem de inserção)
+    s.ackRank.set(id, rank);
+    while (s.ackRank.size > ACK_RANK_MAX) {
+      const oldest = s.ackRank.keys().next().value;
+      if (oldest === undefined) break;
+      s.ackRank.delete(oldest);
+    }
+    return true;
   }
 
   private async resolveJid(sock: WASocket, jid: string): Promise<string | undefined> {

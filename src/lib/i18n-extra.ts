@@ -417,6 +417,8 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Failed to hydrate conversation:': 'Falha ao carregar a conversa:',
   'WhatsApp® is not connected. Go to Settings to connect your account.':
     'O WhatsApp® não está conectado. Acesse Configurações para conectar sua conta.',
+  'WhatsApp via QR code is disconnected. Reconnect in Settings.':
+    'WhatsApp via QR code desconectado. Reconecte em Configurações.',
   'Failed to seed pipeline:': 'Falha ao preparar o funil:',
   'Welcome to the team': 'Bem-vindo à equipe',
   'Could not sign out. Try refreshing the page.':

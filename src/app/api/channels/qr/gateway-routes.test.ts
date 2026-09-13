@@ -25,6 +25,7 @@ vi.mock('@/lib/flows/admin-client', () => ({
         upsert: (p: unknown) => ((rec.op = 'upsert'), (rec.payload = p), h.writes.push(rec), b),
         select: () => b,
         eq: (k: string, v: unknown) => (filters.push([k, v]), b),
+        in: (k: string, v: unknown) => (filters.push([k, v]), b),
         maybeSingle: () => Promise.resolve({ data: rec.payload, error: null }),
         then: (onF: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(onF),
       }
@@ -160,7 +161,27 @@ describe('POST /ack', () => {
     expect(h.writes[0].filters).toEqual([
       ['message_id', 'ABCD'],
       ['channel', 'qr'],
+      ['status', ['sending', 'sent', 'delivered']],
     ])
+  })
+
+  it('only moves status forward: a late "sent" cannot overwrite delivered/read', async () => {
+    // Real QR-channel ordering: the contact's delivery receipt arrives,
+    // then the `sender` receipt from our own phone (→ sent). The update
+    // must be restricted to rows still below the incoming status.
+    const res = await ack(
+      req('ack', { account_id: 'acct-1', message_id: 'ABCD', status: 'sent' }),
+    )
+    expect(res.status).toBe(200)
+    expect(h.writes[0].filters).toContainEqual(['status', ['sending']])
+
+    h.writes.length = 0
+    await ack(req('ack', { account_id: 'acct-1', message_id: 'ABCD', status: 'delivered' }))
+    expect(h.writes[0].filters).toContainEqual(['status', ['sending', 'sent']])
+
+    h.writes.length = 0
+    await ack(req('ack', { account_id: 'acct-1', message_id: 'ABCD', status: 'failed' }))
+    expect(h.writes[0].filters).toContainEqual(['status', ['sending', 'sent']])
   })
 
   it('rejects unknown statuses', async () => {

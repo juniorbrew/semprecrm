@@ -45,6 +45,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
     loggedOut: 401,
     badSession: 500,
     restartRequired: 515,
+    timedOut: 408,
   },
   downloadMediaMessage: vi.fn(),
 }));
@@ -63,7 +64,7 @@ async function until(pred: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-function makeManager(dataDir: string) {
+function makeManager(dataDir: string, extra: { sendWaitMs?: number } = {}) {
   const appClient = {
     sendInbound: vi.fn(async () => true),
     sendStatus: vi.fn(async () => true),
@@ -79,6 +80,8 @@ function makeManager(dataDir: string) {
     logger,
     reconnectBaseMs: 5,
     reconnectMaxMs: 20,
+    sendWaitMs: 300,
+    ...extra,
   });
   return { manager, appClient, mediaStore };
 }
@@ -333,6 +336,37 @@ describe("SessionManager — mensagens", () => {
     ]);
   });
 
+  it("recibos fora de ordem: SERVER_ACK depois de DELIVERY_ACK não volta o status", async () => {
+    // Cenário real (Baileys 7 rc14): o recibo de entrega do contato chega e,
+    // logo depois, o recibo type="sender" do nosso próprio celular (→ status 2).
+    const { appClient, sock } = await connected();
+    const key = { remoteJid: "126809077219420@lid", fromMe: true, id: "3EB0B4591546A5E6D285BB" };
+    sock.emit("messages.update", [{ key, update: { status: 3, messageTimestamp: 1789261316 } }]);
+    sock.emit("messages.update", [{ key, update: { status: 2, messageTimestamp: 1789261316 } }]);
+    sock.emit("messages.update", [{ key, update: { status: 3, messageTimestamp: 1789261320 } }]); // duplicado
+    sock.emit("messages.update", [{ key, update: { status: 4, messageTimestamp: 1789261330 } }]);
+    sock.emit("messages.update", [{ key, update: { status: 5, messageTimestamp: 1789261331 } }]); // PLAYED = read de novo
+    await until(() => appClient.sendAck.mock.calls.length === 2);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(appClient.sendAck.mock.calls.map((c) => c[0])).toEqual([
+      { account_id: ACCOUNT, message_id: "3EB0B4591546A5E6D285BB", status: "delivered" },
+      { account_id: ACCOUNT, message_id: "3EB0B4591546A5E6D285BB", status: "read" },
+    ]);
+  });
+
+  it("dedupe de recibos é por message_id (outra mensagem começa do zero)", async () => {
+    const { appClient, sock } = await connected();
+    sock.emit("messages.update", [
+      { key: { remoteJid: "1@lid", fromMe: true, id: "A" }, update: { status: 4 } },
+      { key: { remoteJid: "1@lid", fromMe: true, id: "B" }, update: { status: 2 } },
+    ]);
+    await until(() => appClient.sendAck.mock.calls.length === 2);
+    expect(appClient.sendAck.mock.calls.map((c) => (c[0] as { message_id: string; status: string }).status)).toEqual([
+      "read",
+      "sent",
+    ]);
+  });
+
   it("ackFromStatus mapeia o enum do proto", () => {
     expect(ackFromStatus(2)).toBe("sent");
     expect(ackFromStatus(3)).toBe("delivered");
@@ -414,5 +448,160 @@ describe("SessionManager — envio", () => {
     sock.sendMessage.mockRejectedValueOnce(new Error("timeout"));
     await expect(manager.send(ACCOUNT, { to: "5511988887777", text: "oi" })).rejects.toBeInstanceOf(GatewayError);
     expect(() => toJid("12")).toThrow(GatewayError);
+  });
+
+  it("jid resolvido via onWhatsApp fica em cache: o próximo envio não consulta de novo", async () => {
+    const { manager, sock } = await connected();
+    sock.sendMessage.mockRejectedValueOnce(new Boom("not-on-whatsapp", { statusCode: 404 }));
+    sock.onWhatsApp.mockResolvedValueOnce([{ jid: "551188887777@s.whatsapp.net", exists: true }]);
+    await manager.send(ACCOUNT, { to: "5511988887777", text: "oi" });
+    expect(sock.onWhatsApp).toHaveBeenCalledTimes(1);
+
+    await manager.send(ACCOUNT, { to: "5511988887777", text: "de novo" });
+    expect(sock.onWhatsApp).toHaveBeenCalledTimes(1);
+    expect(sock.sendMessage).toHaveBeenLastCalledWith("551188887777@s.whatsapp.net", { text: "de novo" });
+    // envio normal nunca chama onWhatsApp antes do sendMessage
+    await manager.send(ACCOUNT, { to: "5511977776666", text: "x" });
+    expect(sock.onWhatsApp).toHaveBeenCalledTimes(1);
+    expect(sock.sendMessage).toHaveBeenLastCalledWith("5511977776666@s.whatsapp.net", { text: "x" });
+  });
+
+  async function dropConnection(sock: InstanceType<typeof mocks.FakeSock>) {
+    sock.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: { error: new Boom("Connection was lost", { statusCode: 408 }), date: new Date() },
+    });
+    await until(() => mocks.makeWASocket.mock.calls.length === 2);
+    return mocks.sockets[1];
+  }
+
+  it("send durante reconexão espera a sessão voltar e usa o socket NOVO", async () => {
+    const { manager, sock } = await connected();
+    const sock2 = await dropConnection(sock);
+    expect(manager.getStatus(ACCOUNT).status).toBe("connecting");
+
+    const pending = manager.send(ACCOUNT, { to: "5511988887777", text: "oi" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sock.sendMessage).not.toHaveBeenCalled();
+    expect(sock2.sendMessage).not.toHaveBeenCalled();
+
+    sock2.user = { id: "5511999999999@s.whatsapp.net" };
+    sock2.sendMessage.mockResolvedValueOnce({ key: { id: "SENT2", fromMe: true } });
+    sock2.emit("connection.update", { connection: "open" });
+    await expect(pending).resolves.toEqual({ message_id: "SENT2" });
+    expect(sock.sendMessage).not.toHaveBeenCalled();
+    expect(sock2.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", { text: "oi" });
+  });
+
+  it("send enquanto a reconexão está só agendada (disconnected + timer) também espera", async () => {
+    const { manager, sock } = await connected();
+    sock.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: { error: new Boom("Connection was lost", { statusCode: 408 }), date: new Date() },
+    });
+    // logo após o close: status disconnected, reconexão agendada (5 ms)
+    expect(manager.getStatus(ACCOUNT).status).toBe("disconnected");
+    const pending = manager.send(ACCOUNT, { to: "5511988887777", text: "oi" });
+    await until(() => mocks.makeWASocket.mock.calls.length === 2);
+    const sock2 = mocks.sockets[1];
+    sock2.user = { id: "5511999999999@s.whatsapp.net" };
+    sock2.emit("connection.update", { connection: "open" });
+    await expect(pending).resolves.toEqual({ message_id: "SENT1" });
+    expect(sock2.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("send: sendMessage falha porque o socket caiu → tenta UMA vez após reconectar", async () => {
+    const { manager, sock } = await connected();
+    sock.sendMessage.mockImplementationOnce(async () => {
+      // o socket morre no meio do envio (o que o Baileys devolve nesse caso)
+      sock.emit("connection.update", {
+        connection: "close",
+        lastDisconnect: { error: new Boom("Connection was lost", { statusCode: 408 }), date: new Date() },
+      });
+      throw new TypeError("Cannot read properties of undefined (reading 'attrs')");
+    });
+    const pending = manager.send(ACCOUNT, { to: "5511988887777", media: { url: "https://x/a.jpg", mimetype: "image/jpeg" } });
+    await until(() => mocks.makeWASocket.mock.calls.length === 2);
+    const sock2 = mocks.sockets[1];
+    sock2.user = { id: "5511999999999@s.whatsapp.net" };
+    sock2.sendMessage.mockResolvedValueOnce({ key: { id: "RETRY1", fromMe: true } });
+    sock2.emit("connection.update", { connection: "open" });
+    await expect(pending).resolves.toEqual({ message_id: "RETRY1" });
+    expect(sock.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sock2.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sock2.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", {
+      image: { url: "https://x/a.jpg" },
+      mimetype: "image/jpeg",
+    });
+  });
+
+  it("send: se a segunda tentativa também falha → 502 (não tenta uma terceira)", async () => {
+    const { manager, sock } = await connected();
+    sock.sendMessage.mockImplementationOnce(async () => {
+      sock.emit("connection.update", {
+        connection: "close",
+        lastDisconnect: { error: new Boom("Connection was lost", { statusCode: 408 }), date: new Date() },
+      });
+      throw new Error("Connection Closed");
+    });
+    const pending = manager.send(ACCOUNT, { to: "5511988887777", text: "oi" });
+    await until(() => mocks.makeWASocket.mock.calls.length === 2);
+    const sock2 = mocks.sockets[1];
+    sock2.sendMessage.mockRejectedValueOnce(new Error("still broken"));
+    sock2.emit("connection.update", { connection: "open" });
+    await expect(pending).rejects.toMatchObject({ code: "send_failed", httpStatus: 502 });
+    expect(sock2.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("send: reconexão não volta dentro de sendWaitMs → 409 not_connected", async () => {
+    const ctx = makeManager(dataDir, { sendWaitMs: 40 });
+    await ctx.manager.connect(ACCOUNT);
+    const sock = mocks.sockets[0];
+    sock.user = { id: "5511999999999@s.whatsapp.net" };
+    sock.emit("connection.update", { connection: "open" });
+    await until(() => ctx.manager.getStatus(ACCOUNT).status === "connected");
+    await dropConnection(sock);
+    const started = Date.now();
+    await expect(ctx.manager.send(ACCOUNT, { to: "5511988887777", text: "oi" })).rejects.toMatchObject({
+      code: "not_connected",
+      httpStatus: 409,
+    });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(35);
+  });
+
+  it("send após loggedOut (sem reconexão pendente) → 409 imediato", async () => {
+    const { manager, sock } = await connected();
+    sock.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: { error: new Boom("logged out", { statusCode: 401 }), date: new Date() },
+    });
+    await until(() => manager.listAccountIds().length === 0);
+    const started = Date.now();
+    await expect(manager.send(ACCOUNT, { to: "5511988887777", text: "oi" })).rejects.toMatchObject({
+      code: "not_connected",
+      httpStatus: 409,
+    });
+    expect(Date.now() - started).toBeLessThan(100);
+  });
+
+  it("send com sessão em status qr (nunca pareou) → 409 imediato, sem esperar", async () => {
+    const { manager } = makeManager(dataDir);
+    await manager.connect(ACCOUNT);
+    mocks.sockets[0].emit("connection.update", { qr: "1@abc,def" });
+    await until(() => manager.getStatus(ACCOUNT).status === "qr");
+    const started = Date.now();
+    await expect(manager.send(ACCOUNT, { to: "5511988887777", text: "oi" })).rejects.toMatchObject({
+      code: "not_connected",
+      httpStatus: 409,
+    });
+    expect(Date.now() - started).toBeLessThan(100);
+  });
+
+  it("send em sessão parada por logout não espera", async () => {
+    const { manager } = await connected();
+    await manager.logout(ACCOUNT);
+    await expect(manager.send(ACCOUNT, { to: "5511988887777", text: "oi" })).rejects.toMatchObject({
+      code: "not_connected",
+    });
   });
 });

@@ -49,6 +49,20 @@ backoff exponencial (erros 5xx/rede); 4xx são descartados com log.
 Erros: `401` sem secret; `400 invalid_request`; `409 not_connected`;
 `422 not_on_whatsapp`; `502 send_failed`.
 
+`send` durante uma reconexão (queda de rede, reinício) não devolve 409 na hora:
+espera até 15 s a sessão voltar a `connected` e, se o socket cair no meio do
+`sendMessage`, tenta mais uma vez no socket novo. Só responde 409 quando não há
+reconexão em andamento (logout, `qr` ainda não escaneado). O jid resolvido via
+`onWhatsApp` (só consultado quando o envio direto falha com "not on WhatsApp")
+fica em cache por sessão.
+
+Recibos: o Baileys emite `messages.update` com `update.status` do enum
+`WebMessageInfo.Status` (2 SERVER_ACK → `sent`, 3 DELIVERY_ACK → `delivered`,
+4 READ / 5 PLAYED → `read`). Eles **não chegam em ordem** — o recibo `type="sender"`
+do próprio celular (→ `sent`) costuma chegar depois do de entrega —, então o
+gateway só repassa ao app quando o status avança, e `/api/channels/qr/ack` no app
+também só move para frente (`sending → sent → delivered → read`).
+
 | Evento (app)                        | Corpo |
 | ----------------------------------- | ----- |
 | `POST /api/channels/qr/inbound`     | `{ account_id, message_id, from, push_name, timestamp, type, text?, media?: { url, mimetype, filename? }, quoted_message_id? }` — `timestamp` em segundos Unix (como no webhook da Meta); `type` ∈ text, image, audio, video, document, sticker, location (localização vira `text` com "nome (lat,lng)") |

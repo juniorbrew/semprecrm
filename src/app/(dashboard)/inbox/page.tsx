@@ -15,6 +15,10 @@ import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  whatsappConnectionBanner,
+  type WhatsAppBanner,
+} from "@/lib/whatsapp/connection-banner";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -35,9 +39,14 @@ export default function InboxPage() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
-    null
-  );
+  /**
+   * `undefined` while loading, `null` when at least one WhatsApp channel
+   * (official Cloud API or QR-code session) is connected, otherwise the
+   * banner to show. See `whatsappConnectionBanner`.
+   */
+  const [whatsappBanner, setWhatsappBanner] = useState<
+    WhatsAppBanner | null | undefined
+  >(undefined);
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -183,17 +192,34 @@ export default function InboxPage() {
         .maybeSingle();
       const accountId = profile?.account_id as string | undefined;
       if (!accountId) {
-        setWhatsappConnected(false);
+        setWhatsappBanner(
+          whatsappConnectionBanner({ officialStatus: null, qrStatus: null })
+        );
         return;
       }
 
-      const { data } = await supabase
-        .from("whatsapp_config")
-        .select("status")
-        .eq("account_id", accountId)
-        .maybeSingle();
+      // Two channels can carry the account's WhatsApp: the official
+      // Cloud API (whatsapp_config) and the QR-code session
+      // (wa_qr_sessions). Either one being connected clears the banner.
+      const [{ data: official }, { data: qr }] = await Promise.all([
+        supabase
+          .from("whatsapp_config")
+          .select("status")
+          .eq("account_id", accountId)
+          .maybeSingle(),
+        supabase
+          .from("wa_qr_sessions")
+          .select("status")
+          .eq("account_id", accountId)
+          .maybeSingle(),
+      ]);
 
-      setWhatsappConnected(data?.status === "connected");
+      setWhatsappBanner(
+        whatsappConnectionBanner({
+          officialStatus: official?.status ?? null,
+          qrStatus: qr?.status ?? null,
+        })
+      );
     };
 
     checkConnection();
@@ -552,12 +578,13 @@ export default function InboxPage() {
     <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
-      {whatsappConnected === false && (
-        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
+      {whatsappBanner && (
+        <div
+          className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2"
+          data-banner={whatsappBanner.kind}
+        >
           <WifiOff className="h-4 w-4 text-amber-400" />
-          <p className="text-xs text-amber-400">
-            WhatsApp® is not connected. Go to Settings to connect your account.
-          </p>
+          <p className="text-xs text-amber-400">{whatsappBanner.message}</p>
         </div>
       )}
 
