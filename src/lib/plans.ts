@@ -35,11 +35,13 @@ export const MODULES = [
   'contacts',
   'dashboard',
   'pipelines',
+  'tasks',
   'broadcasts',
   'automations',
   'flows',
   'channel_official',
   'channel_qr',
+  'lead_capture',
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -47,11 +49,13 @@ export type Module = (typeof MODULES)[number];
 export const OPTIONAL_MODULES = [
   'dashboard',
   'pipelines',
+  'tasks',
   'broadcasts',
   'automations',
   'flows',
   'channel_official',
   'channel_qr',
+  'lead_capture',
 ] as const satisfies readonly Module[];
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
@@ -78,8 +82,10 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  * | plan    | módulos                          | max_users | max_channels |
  * |---------|----------------------------------|-----------|--------------|
  * | trial   | todos                            | 2         | 1            |
- * | basico  | dashboard, pipelines, channel_qr | 3         | 1            |
+ * | basico  | dashboard, pipelines, tasks, channel_qr | 3   | 1            |
  * | pro     | todos menos flows                | 10        | 2            |
+ * (`lead_capture` — webhook lead capture, migration 029 — is in every
+ *  plan except basico.)
  * | empresa | todos                            | null      | 5            |
  */
 export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
@@ -88,7 +94,7 @@ export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
     limits: { max_users: 2, max_channels: 1 },
   },
   basico: {
-    modules: ['dashboard', 'pipelines', 'channel_qr'],
+    modules: ['dashboard', 'pipelines', 'tasks', 'channel_qr'],
     limits: { max_users: 3, max_channels: 1 },
   },
   pro: {
@@ -122,11 +128,13 @@ export const MODULE_LABELS: Record<Module, string> = {
   contacts: 'Contacts',
   dashboard: 'Dashboard',
   pipelines: 'Pipelines',
+  tasks: 'Tasks',
   broadcasts: 'Broadcasts',
   automations: 'Automations',
   flows: 'Flows',
   channel_official: 'Official WhatsApp API',
   channel_qr: 'WhatsApp via QR code',
+  lead_capture: 'Lead capture (webhook)',
 };
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {

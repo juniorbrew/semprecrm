@@ -23,6 +23,8 @@ import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { parseAccountPreferences } from '@/lib/account-preferences'
+import { isOptOutMessage, normalizeOptOutText } from '@/lib/whatsapp/opt-out'
 import type { WhatsAppChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
@@ -79,6 +81,8 @@ export interface IngestResult {
   contactId?: string
   conversationId?: string
   contactCreated?: boolean
+  /** True when this message was a stop word and the contact was opted out. */
+  optedOut?: boolean
 }
 
 // ------------------------------------------------------------
@@ -254,6 +258,74 @@ export function toIsoTimestamp(value: InboundMessageInput['timestamp']): string 
 }
 
 /**
+ * The account's opt-out stop words (accounts.preferences, migration
+ * 030). Defaults apply when the column is missing or malformed.
+ */
+export async function loadOptOutKeywords(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<string[]> {
+  try {
+    const { data, error } = await db
+      .from('accounts')
+      .select('preferences')
+      .eq('id', accountId)
+      .maybeSingle()
+    if (error) return parseAccountPreferences(null).opt_out_keywords
+    return parseAccountPreferences(data?.preferences).opt_out_keywords
+  } catch {
+    return parseAccountPreferences(null).opt_out_keywords
+  }
+}
+
+/**
+ * Opt-out (spec §5): when the whole message is one of the account's stop
+ * words, stamp `contacts.opted_out_at` and log a `contact_opted_out`
+ * pill on the conversation. A contact that is already opted out is left
+ * as is (no duplicate pill). Returns whether the message was an opt-out.
+ * Best-effort — never breaks the main flow.
+ */
+async function applyOptOutIfAny(
+  db: SupabaseClient,
+  accountId: string,
+  contact: Row,
+  conversationId: string,
+  text: string | null,
+): Promise<boolean> {
+  if (!text) return false
+  try {
+    const keywords = await loadOptOutKeywords(db, accountId)
+    if (!isOptOutMessage(text, keywords)) return false
+    if (contact.opted_out_at) return true
+
+    const now = new Date().toISOString()
+    const { error: updErr } = await db
+      .from('contacts')
+      .update({ opted_out_at: now, updated_at: now })
+      .eq('id', contact.id)
+      .eq('account_id', accountId)
+    if (updErr) {
+      console.error('[inbound] opt-out update failed:', updErr)
+      return true
+    }
+    contact.opted_out_at = now
+
+    const { error: evErr } = await db.from('conversation_events').insert({
+      account_id: accountId,
+      conversation_id: conversationId,
+      actor_user_id: null,
+      event_type: 'contact_opted_out',
+      payload: { keyword: normalizeOptOutText(text), source: 'inbound_message' },
+    })
+    if (evErr) console.error('[inbound] opt-out event insert failed:', evErr)
+    return true
+  } catch (err) {
+    console.error('[inbound] applyOptOutIfAny failed:', err)
+    return false
+  }
+}
+
+/**
  * If the sender is on a still-unreplied broadcast_recipients row, flip
  * it to `replied` so the parent broadcast's reply count advances.
  * Best-effort — never breaks the main flow.
@@ -417,6 +489,16 @@ export async function ingestInboundMessage(
 
   await flagBroadcastReplyIfAny(db, accountId, contact.id)
 
+  // "PARAR" / "SAIR" — mark the contact and tell the automations so
+  // send steps are skipped for this message.
+  const optedOut = await applyOptOutIfAny(
+    db,
+    accountId,
+    contact,
+    conversation.id,
+    contentText,
+  )
+
   // Flow runner first — when it consumes the message, the content-level
   // automation triggers are suppressed (the customer is navigating a
   // bot menu, not sending a trigger word). Relationship-level triggers
@@ -464,6 +546,7 @@ export async function ingestInboundMessage(
       context: {
         message_text: inboundText,
         conversation_id: conversation.id,
+        ...(optedOut ? { vars: { opted_out: true } } : {}),
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
@@ -473,5 +556,6 @@ export async function ingestInboundMessage(
     contactId: contact.id,
     conversationId: conversation.id,
     contactCreated: contactOutcome.wasCreated,
+    optedOut,
   }
 }

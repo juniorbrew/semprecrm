@@ -47,6 +47,7 @@ import {
   ChevronRight,
   SlidersHorizontal,
   MessageCircle,
+  Ban,
 } from 'lucide-react';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
@@ -75,6 +76,8 @@ export default function ContactsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  // "Descadastrados" — only contacts with opted_out_at set (migration 030).
+  const [optedOutOnly, setOptedOutOnly] = useState(false);
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -124,6 +127,9 @@ export default function ContactsPage() {
       const term = `%${search.trim()}%`;
       query = query.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
     }
+    if (optedOutOnly) {
+      query = query.not('opted_out_at', 'is', null);
+    }
 
     const { data, count, error } = await query;
 
@@ -163,7 +169,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap]);
+  }, [supabase, page, search, tagsMap, optedOutOnly]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -338,20 +344,38 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            // Reset pagination when the query changes — the result
-            // set shrinks/grows, page N may no longer be valid.
+      {/* Search + filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative max-w-sm flex-1 min-w-56">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              // Reset pagination when the query changes — the result
+              // set shrinks/grows, page N may no longer be valid.
+              setPage(0);
+            }}
+            placeholder="Search by name, phone, or email..."
+            className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+        <button
+          type="button"
+          aria-pressed={optedOutOnly}
+          onClick={() => {
+            setOptedOutOnly((v) => !v);
             setPage(0);
           }}
-          placeholder="Search by name, phone, or email..."
-          className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground"
-        />
+          className={
+            optedOutOnly
+              ? 'inline-flex h-9 items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/10 px-3 text-xs font-medium text-red-600 dark:text-red-400'
+              : 'inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+          }
+        >
+          <Ban className="size-3.5" aria-hidden />
+          {t('Opted-out contacts')}
+        </button>
       </div>
 
       {/* Bulk action bar */}
@@ -423,9 +447,13 @@ export default function ContactsPage() {
                   <div className="flex flex-col items-center gap-2">
                     <Users className="size-8 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
-                      {search ? 'No contacts match your search.' : 'No contacts yet.'}
+                      {optedOutOnly
+                        ? t('No opted-out contacts.')
+                        : search
+                          ? 'No contacts match your search.'
+                          : 'No contacts yet.'}
                     </p>
-                    {!search && (
+                    {!search && !optedOutOnly && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -465,9 +493,18 @@ export default function ContactsPage() {
                       }}
                       className="group/name block max-w-full text-left cursor-pointer"
                     >
-                      <span className="block truncate text-foreground group-hover/name:text-primary group-hover/name:underline underline-offset-2 transition-colors">
+                      <span className="flex items-center gap-1.5 truncate text-foreground group-hover/name:text-primary group-hover/name:underline underline-offset-2 transition-colors">
                         {contact.name || (
                           <span className="text-muted-foreground italic">Unnamed</span>
+                        )}
+                        {contact.opted_out_at && (
+                          <span
+                            title={t('Asked to stop receiving messages')}
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-medium leading-4 text-red-600 no-underline dark:text-red-400"
+                          >
+                            <Ban className="size-2.5" aria-hidden />
+                            {t('Opted out')}
+                          </span>
                         )}
                       </span>
                       <span className="block text-[11px] font-normal text-muted-foreground group-hover/name:text-primary/80">

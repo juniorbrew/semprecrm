@@ -24,6 +24,8 @@ import {
   type Entitlements,
   type PlanAccountFields,
 } from "@/lib/plans";
+import { parseAccountPreferences } from "@/lib/account-preferences";
+import type { AccountPreferences } from "@/types";
 
 interface Profile {
   id: string;
@@ -55,11 +57,14 @@ interface AccountSummary extends PlanAccountFields {
   plan_expires_at?: string | null;
   module_overrides?: Record<string, unknown> | null;
   limit_overrides?: Record<string, unknown> | null;
+  /** Raw `accounts.preferences` jsonb (migration 030). Read the parsed
+   *  `preferences` off the auth context instead of indexing this. */
+  preferences?: Record<string, unknown> | null;
 }
 
 /** Columns the auth provider selects off `accounts`. */
 const ACCOUNT_SELECT =
-  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides";
+  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences";
 
 interface AuthContextValue {
   user: User | null;
@@ -131,6 +136,16 @@ interface AuthContextValue {
    *  Drives the "Platform" menu item only; /platform re-checks
    *  server-side. */
   isPlatformAdmin: boolean;
+
+  // ----------------------------------------------------------
+  // Account preferences (migration 030)
+  // ----------------------------------------------------------
+
+  /** Parsed `accounts.preferences` with defaults filled in (SLA, cooling
+   *  hours, opt-out words). Defaults while loading. */
+  preferences: AccountPreferences;
+  /** Re-read the account row after Settings → Atendimento saves. */
+  refreshAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -223,6 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               plan_expires_at: accountRaw.plan_expires_at ?? null,
               module_overrides: accountRaw.module_overrides ?? null,
               limit_overrides: accountRaw.limit_overrides ?? null,
+              preferences: accountRaw.preferences ?? null,
             }
           : null;
 
@@ -371,6 +387,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // stable object between renders.
   const entitlements = useMemo(() => resolveEntitlements(account), [account]);
 
+  // Preferences follow the same rule — parsed once per account row so
+  // the radar / opt-out consumers get a stable object.
+  const preferences = useMemo(
+    () => parseAccountPreferences(account?.preferences),
+    [account],
+  );
+
+  // Cheaper than refreshProfile when only the account row changed
+  // (Settings → Atendimento): one select, no profile / admin probe.
+  const refreshAccount = useCallback(async () => {
+    if (!account?.id) return;
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("accounts")
+      .select(ACCOUNT_SELECT)
+      .eq("id", account.id)
+      .maybeSingle();
+    if (error || !data) return;
+    const row = data as unknown as Partial<AccountSummary> & { id: string; name: string };
+    setAccount((prev) =>
+      prev
+        ? {
+            ...prev,
+            name: row.name ?? prev.name,
+            default_currency: row.default_currency ?? prev.default_currency,
+            plan: row.plan ?? prev.plan,
+            plan_status: row.plan_status ?? prev.plan_status,
+            plan_expires_at: row.plan_expires_at ?? prev.plan_expires_at,
+            module_overrides: row.module_overrides ?? prev.module_overrides,
+            limit_overrides: row.limit_overrides ?? prev.limit_overrides,
+            preferences: row.preferences ?? null,
+          }
+        : prev,
+    );
+  }, [account?.id]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -384,6 +436,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         entitlements,
         isPlatformAdmin,
+        preferences,
+        refreshAccount,
         ...derived,
       }}
     >
@@ -425,6 +479,8 @@ export function useAuth(): AuthContextValue {
       canSendMessages: false,
       entitlements: resolveEntitlements(null),
       isPlatformAdmin: false,
+      preferences: parseAccountPreferences(null),
+      refreshAccount: async () => {},
     };
   }
   return ctx;

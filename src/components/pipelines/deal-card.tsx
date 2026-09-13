@@ -81,12 +81,29 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
           </span>
         )}
         {deal.status === "lost" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+          <span
+            title={
+              deal.loss_reason?.name
+                ? `${t("Loss reason")}: ${deal.loss_reason.name}`
+                : undefined
+            }
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400"
+          >
             <X className="h-3 w-3" />
             {t("Lost")}
           </span>
         )}
       </div>
+
+      {/* Why it was lost — one quiet line so the board explains itself. */}
+      {deal.status === "lost" && deal.loss_reason?.name && (
+        <p className="mt-1 truncate text-[11px] text-red-500/90 dark:text-red-400/90">
+          {deal.loss_reason.name}
+          {deal.lost_note?.trim() && (
+            <span className="text-muted-foreground"> · {deal.lost_note.trim()}</span>
+          )}
+        </p>
+      )}
 
       {/* Contact row */}
       <div className="mt-2 flex items-center gap-2">

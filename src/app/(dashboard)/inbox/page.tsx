@@ -496,9 +496,15 @@ export default function InboxPage() {
       // Reflect the selection in the URL so a refresh lands the user
       // back in the same thread, and so copy-paste links work. Use
       // replace() to avoid polluting browser history with every click.
-      router.replace(`/inbox?c=${conv.id}`, { scroll: false });
+      // Keep the Radar filter (?radar=) the agent arrived with, so the
+      // list stays on "Aguardando" while they work through it.
+      const radar = searchParams.get("radar");
+      router.replace(
+        `/inbox?c=${conv.id}${radar ? `&radar=${encodeURIComponent(radar)}` : ""}`,
+        { scroll: false },
+      );
     },
-    [activeConversation?.id, router]
+    [activeConversation?.id, router, searchParams]
   );
 
   // Mobile "back" — deselect the conversation so the list pane comes
@@ -511,8 +517,11 @@ export default function InboxPage() {
     // Clearing the ref lets the deep-link auto-selector fire again if
     // the user later visits /inbox?c=<same-id> — desirable UX.
     autoSelectedForDeepLinkRef.current = null;
-    router.replace("/inbox", { scroll: false });
-  }, [router]);
+    const radar = searchParams.get("radar");
+    router.replace(radar ? `/inbox?radar=${encodeURIComponent(radar)}` : "/inbox", {
+      scroll: false,
+    });
+  }, [router, searchParams]);
 
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {

@@ -1,7 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import type { Conversation, Deal, DealStatus, PipelineStage } from "@/types";
+import type { Task } from "@/lib/tasks";
+import {
+  LinkedTaskRows,
+  TaskDrawer,
+  TaskQuickCreate,
+  useLinkedTasks,
+} from "@/components/tasks";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { formatCurrency } from "@/lib/currency";
@@ -14,12 +22,16 @@ import {
   type CloseDateTone,
 } from "@/lib/pipelines/deal-dates";
 import { useLanguage } from "@/hooks/use-language";
+import { useEntitlements } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   CalendarClock,
   Check,
   Loader2,
+  MessageSquareX,
+  Plus,
   MessageSquare,
   Pencil,
   Phone,
@@ -75,6 +87,15 @@ export function DealDetails({
   onAdvance,
 }: DealDetailsProps) {
   const { t, language } = useLanguage();
+  // Tasks section — hidden when the plan has no Tasks module; the "+"
+  // needs agent+ (tasks RLS).
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const tasksEnabled = !entitlementsReady || modules.tasks;
+  const canWriteTasks = useCan("send-messages");
+  const linkedTasks = useLinkedTasks({ dealId: deal.id, enabled: tasksEnabled });
+  const [taskAddOpen, setTaskAddOpen] = useState(false);
+  const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
 
   const sorted = [...stages].sort((a, b) => a.position - b.position);
   const stageIndex = sorted.findIndex((s) => s.id === deal.stage_id);
@@ -130,12 +151,19 @@ export function DealDetails({
       tone: "muted",
     });
   }
+  const lossReasonName =
+    status === "lost" ? deal.loss_reason?.name ?? null : null;
+  const lostNote = status === "lost" ? deal.lost_note?.trim() || null : null;
   if (!isOpen) {
     timeline.push({
       key: status,
       label: status === "won" ? t("Marked as won") : t("Marked as lost"),
       at: deal.updated_at ?? null,
       tone: status,
+      detail:
+        status === "lost"
+          ? `${t("Loss reason")}: ${lossReasonName ?? t("No reason")}`
+          : undefined,
     });
   }
 
@@ -164,6 +192,12 @@ export function DealDetails({
             <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-600 dark:text-red-400">
               <X className="h-3 w-3" />
               {t("Lost")}
+              {lossReasonName && (
+                <>
+                  <span className="opacity-60">·</span>
+                  <span className="max-w-[160px] truncate font-medium">{lossReasonName}</span>
+                </>
+              )}
             </span>
           )}
           {isOpen && (
@@ -326,6 +360,33 @@ export function DealDetails({
 
       {/* Body */}
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
+        {/* Loss reason — only while the deal is lost; reopening clears it. */}
+        {status === "lost" && (
+          <section>
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {t("Loss reason")}
+            </h3>
+            <div className="flex gap-2 rounded-xl border border-red-500/30 bg-red-500/5 p-3">
+              <MessageSquareX className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
+              <div className="min-w-0 flex-1">
+                <p
+                  className={cn(
+                    "text-sm font-medium",
+                    lossReasonName ? "text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {lossReasonName ?? t("No reason")}
+                </p>
+                {lostNote && (
+                  <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                    {lostNote}
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Contact */}
         <section>
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -449,6 +510,65 @@ export function DealDetails({
             </span>
           </div>
         </section>
+
+        {/* Tasks — open tasks of this deal; checkbox completes, "+"
+            reveals the inline creator prefilled with deal + contact. */}
+        {tasksEnabled && (
+          <section>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {t("Tasks")}
+                {linkedTasks.tasks.length > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums">
+                    {linkedTasks.tasks.length}
+                  </span>
+                )}
+              </h3>
+              {canWriteTasks && (
+                <button
+                  type="button"
+                  aria-label={t("Add task")}
+                  title={t("Add task")}
+                  onClick={() => setTaskAddOpen((open) => !open)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="space-y-2">
+              {taskAddOpen && (
+                <TaskQuickCreate
+                  defaults={{
+                    deal_id: deal.id,
+                    contact_id: deal.contact_id ?? undefined,
+                  }}
+                  statuses={linkedTasks.statuses}
+                  onCreated={linkedTasks.add}
+                  onCancel={() => setTaskAddOpen(false)}
+                />
+              )}
+              <LinkedTaskRows
+                tasks={linkedTasks.tasks}
+                readOnly={!canWriteTasks}
+                emptyLabel={linkedTasks.loading ? t("Loading...") : t("No open tasks")}
+                onComplete={(task) => void linkedTasks.complete(task)}
+                onOpen={(task) => {
+                  setTaskDrawerTask(task);
+                  setTaskDrawerOpen(true);
+                }}
+              />
+            </div>
+            <TaskDrawer
+              open={taskDrawerOpen}
+              onOpenChange={setTaskDrawerOpen}
+              task={taskDrawerTask}
+              statuses={linkedTasks.statuses}
+              onUpdated={linkedTasks.patch}
+              onDeleted={linkedTasks.remove}
+            />
+          </section>
+        )}
 
         {/* Notes */}
         <section>

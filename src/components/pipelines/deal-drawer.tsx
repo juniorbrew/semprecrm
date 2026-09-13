@@ -18,8 +18,10 @@ import {
   findConversationById,
 } from "@/lib/conversations/find-by-contact";
 import { movedToLabel } from "@/lib/pipelines/deal-dates";
+import { dealStatusPatch } from "@/lib/pipelines/loss-reasons";
 import { DealDetails } from "./deal-details";
 import { DealFormBody } from "./deal-form";
+import { LostDealDialog, type LostDealInput } from "./lost-deal-dialog";
 
 interface DealDrawerProps {
   open: boolean;
@@ -60,6 +62,7 @@ export function DealDrawer({
   const [busy, setBusy] = useState<Busy>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [conversationLoading, setConversationLoading] = useState(false);
+  const [lostDialogOpen, setLostDialogOpen] = useState(false);
 
   const dealId = deal?.id ?? null;
   const contactId = deal?.contact_id ?? null;
@@ -93,26 +96,49 @@ export function DealDrawer({
     };
   }, [open, dealId, contactId, linkedConversationId, supabase]);
 
+  /**
+   * Won / reopen save immediately (and clear any loss reason). Lost
+   * opens the reason dialog first; `handleLost` does the write.
+   */
   async function handleStatus(status: DealStatus) {
     if (!deal) return;
-    setBusy(status);
-    const { error } = await supabase
-      .from("deals")
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq("id", deal.id);
-    setBusy(null);
-    if (error) {
-      toast.error(t("Failed to update deal status"));
+    if (status === "lost") {
+      setLostDialogOpen(true);
       return;
     }
-    toast.success(
-      status === "won"
-        ? t("Marked as won")
-        : status === "lost"
-          ? t("Marked as lost")
-          : t("Deal reopened"),
-    );
+    setBusy(status);
+    const ok = await saveStatus(status);
+    setBusy(null);
+    if (!ok) return;
+    toast.success(status === "won" ? t("Marked as won") : t("Deal reopened"));
     await onChanged();
+  }
+
+  async function handleLost(input: LostDealInput) {
+    if (!deal) return;
+    setBusy("lost");
+    const ok = await saveStatus("lost", input);
+    setBusy(null);
+    if (!ok) return;
+    setLostDialogOpen(false);
+    toast.success(t("Marked as lost"));
+    await onChanged();
+  }
+
+  async function saveStatus(status: DealStatus, lost?: LostDealInput): Promise<boolean> {
+    if (!deal) return false;
+    const { error } = await supabase
+      .from("deals")
+      .update({
+        ...dealStatusPatch(status, lost ? { reasonId: lost.reasonId, note: lost.note } : undefined),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", deal.id);
+    if (error) {
+      toast.error(t("Failed to update deal status"));
+      return false;
+    }
+    return true;
   }
 
   async function handleAdvance(stage: PipelineStage) {
@@ -181,6 +207,13 @@ export function DealDrawer({
           </div>
         )}
       </SheetContent>
+
+      <LostDealDialog
+        open={lostDialogOpen}
+        onOpenChange={setLostDialogOpen}
+        deal={deal}
+        onConfirm={handleLost}
+      />
     </Sheet>
   );
 }

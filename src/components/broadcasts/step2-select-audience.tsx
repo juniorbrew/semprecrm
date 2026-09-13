@@ -92,6 +92,8 @@ export function Step2SelectAudience({
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  /** Contacts dropped from the estimate because they opted out (migration 030). */
+  const [excludedOptedOut, setExcludedOptedOut] = useState(0);
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -135,6 +137,7 @@ export function Step2SelectAudience({
 
       // Base query — produces the superset before exclude is applied.
       let baseIds: Set<string> | null = null; // null means "all contacts"
+      setExcludedOptedOut(0);
 
       if (audience.type === 'all') {
         // Handled below — full-table count adjusted by excludes.
@@ -186,10 +189,18 @@ export function Step2SelectAudience({
         excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
       }
 
+      // Opted-out contacts never receive broadcasts (migration 030) —
+      // drop them from the estimate and tell the user how many.
+      const { data: optedOutRows } = await supabase
+        .from('contacts')
+        .select('id')
+        .not('opted_out_at', 'is', null);
+      const optedOutIds = new Set((optedOutRows ?? []).map((r) => r.id as string));
+
       if (baseIds) {
-        const effective = [...baseIds].filter(
-          (id) => !excludeSet?.has(id),
-        );
+        const afterTags = [...baseIds].filter((id) => !excludeSet?.has(id));
+        const effective = afterTags.filter((id) => !optedOutIds.has(id));
+        setExcludedOptedOut(afterTags.length - effective.length);
         setEstimatedCount(effective.length);
       } else {
         // "All contacts" — fetch the total, then subtract exclude set if any.
@@ -197,7 +208,12 @@ export function Step2SelectAudience({
           .from('contacts')
           .select('*', { count: 'exact', head: true });
         const total = count ?? 0;
-        setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
+        // Opted-out contacts that are also tag-excluded must not be
+        // subtracted twice.
+        const optedOutNotTagExcluded = [...optedOutIds].filter((id) => !excludeSet?.has(id)).length;
+        setExcludedOptedOut(optedOutNotTagExcluded);
+        const afterTags = excludeSet ? Math.max(0, total - excludeSet.size) : total;
+        setEstimatedCount(Math.max(0, afterTags - optedOutNotTagExcluded));
       }
     } finally {
       setLoadingCount(false);
@@ -453,6 +469,12 @@ export function Step2SelectAudience({
               {estimatedCount.toLocaleString(language)}
             </span>
             <span className="text-xs text-muted-foreground">{t('estimated recipients')}</span>
+            {excludedOptedOut > 0 && (
+              <span className="text-xs text-muted-foreground">
+                · {excludedOptedOut}{' '}
+                {t(excludedOptedOut === 1 ? 'opted-out contact excluded' : 'opted-out contacts excluded')}
+              </span>
+            )}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">

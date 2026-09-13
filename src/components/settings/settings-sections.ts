@@ -1,4 +1,5 @@
 import {
+  CheckSquare,
   Coins,
   CreditCard,
   FileText,
@@ -7,8 +8,11 @@ import {
   PlugZap,
   Shield,
   Tags,
+  Timer,
   User,
   UsersRound,
+  Webhook,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -29,6 +33,10 @@ export const SETTINGS_SECTIONS = [
   'templates',
   'fields',
   'deals',
+  'tasks',
+  'quick_replies',
+  'inbox',
+  'integrations',
   'members',
   'plan',
 ] as const;
@@ -43,6 +51,8 @@ export interface SectionMeta {
   label: string;
   icon: LucideIcon;
   group: 'top' | 'account' | 'workspace';
+  /** Hidden from the rail / overview for non-admins (admin+ only). */
+  adminOnly?: boolean;
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
@@ -54,6 +64,10 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   templates: { id: 'templates', label: 'Modelos', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Campos e etiquetas', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Negócios e moeda', icon: Coins, group: 'workspace' },
+  tasks: { id: 'tasks', label: 'Tarefas', icon: CheckSquare, group: 'workspace' },
+  quick_replies: { id: 'quick_replies', label: 'Respostas rápidas', icon: Zap, group: 'workspace' },
+  inbox: { id: 'inbox', label: 'Atendimento', icon: Timer, group: 'workspace', adminOnly: true },
+  integrations: { id: 'integrations', label: 'Integrações', icon: Webhook, group: 'workspace', adminOnly: true },
   members: { id: 'members', label: 'Membros da equipe', icon: UsersRound, group: 'workspace' },
   plan: { id: 'plan', label: 'Plano', icon: CreditCard, group: 'workspace' },
 };

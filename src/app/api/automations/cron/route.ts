@@ -2,12 +2,17 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
+import { scanInactiveConversations } from '@/lib/automations/inactivity'
+
+/** Retention for the lead-capture webhook log (spec §2). */
+const LEAD_SOURCE_EVENTS_RETENTION_DAYS = 90
 
 /**
- * Drain due `automation_pending_executions` rows. Meant to be hit
- * on a schedule (Vercel Cron / external pinger) — requires a shared
- * secret via the `x-cron-secret` header to match
- * `AUTOMATION_CRON_SECRET`.
+ * Drain due `automation_pending_executions` rows, then run the
+ * `conversation_inactive` follow-up scan and the housekeeping below.
+ * Meant to be hit on a schedule (scripts/cron-tick.mjs, Vercel Cron,
+ * any external pinger) — requires a shared secret via the
+ * `x-cron-secret` header to match `AUTOMATION_CRON_SECRET`.
  *
  * The claim step (status = 'running') serves as a simple lock so
  * overlapping invocations don't double-process rows. Best-effort
@@ -34,10 +39,9 @@ export async function GET(request: Request) {
     .limit(50)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!due || due.length === 0) return NextResponse.json({ processed: 0 })
 
   let processed = 0
-  for (const row of due) {
+  for (const row of due ?? []) {
     const { data: claim } = await admin
       .from('automation_pending_executions')
       .update({ status: 'running' })
@@ -64,5 +68,43 @@ export async function GET(request: Request) {
     processed++
   }
 
-  return NextResponse.json({ processed })
+  // Follow-up scan (migration 030). Runs after the pending drain so a
+  // wait step that just resumed is not immediately re-nudged.
+  const inactivity = await scanInactiveConversations(admin, new Date())
+
+  // Housekeeping: lead_source_events older than 90 days (spec §2). The
+  // table comes with migration 029; a schema without it just skips.
+  let leadEventsPurged: number | null = null
+  try {
+    const cutoff = new Date(
+      Date.now() - LEAD_SOURCE_EVENTS_RETENTION_DAYS * 86_400_000,
+    ).toISOString()
+    const { error: purgeErr, count } = await admin
+      .from('lead_source_events')
+      .delete({ count: 'exact' })
+      .lt('created_at', cutoff)
+    if (purgeErr) {
+      // 42P01 = undefined_table (PostgREST reports PGRST205 when the
+      // relation is missing from its schema cache). Anything else is
+      // logged; never fails the tick.
+      if (!/42P01|PGRST205|does not exist|schema cache/i.test(`${purgeErr.code} ${purgeErr.message}`)) {
+        console.error('[cron] lead_source_events purge failed:', purgeErr.message)
+      }
+    } else {
+      leadEventsPurged = count ?? 0
+    }
+  } catch (err) {
+    console.error('[cron] lead_source_events purge threw:', err)
+  }
+
+  return NextResponse.json({
+    processed,
+    inactivity: {
+      automations: inactivity.automations,
+      fired: inactivity.fired,
+      skipped: inactivity.skipped,
+      errors: inactivity.errors.length,
+    },
+    lead_events_purged: leadEventsPurged,
+  })
 }

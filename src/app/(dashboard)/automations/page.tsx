@@ -16,6 +16,7 @@ import {
   Users,
   PhoneCall,
   Loader2,
+  Snowflake,
 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
@@ -53,6 +54,7 @@ const TEMPLATE_ORDER: TemplateSlug[] = [
   'out_of_office',
   'lead_qualifier',
   'follow_up_reminder',
+  'revive_cold_conversation',
 ];
 
 const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
@@ -60,6 +62,7 @@ const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
   out_of_office: Clock,
   lead_qualifier: Users,
   follow_up_reminder: PhoneCall,
+  revive_cold_conversation: Snowflake,
 };
 
 export default function AutomationsPage() {
@@ -201,7 +204,7 @@ export default function AutomationsPage() {
               ? 'Modelos para começar'
               : 'Quick-start templates'}
           </h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             {TEMPLATE_ORDER.map((slug) => {
               const template = localizeAutomationTemplate(
                 AUTOMATION_TEMPLATES[slug],

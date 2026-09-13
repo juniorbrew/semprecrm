@@ -29,6 +29,7 @@ import {
   GitBranch,
   Webhook,
   CircleSlash,
+  CheckSquare,
   Zap,
   Loader2,
   ArrowDown,
@@ -63,6 +64,7 @@ import type {
 } from "@/types"
 import { createClient } from "@/lib/supabase/client"
 import { useLanguage } from "@/hooks/use-language"
+import { LeadSourceSelect } from "@/components/automations/lead-source-select"
 import type { Language } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
@@ -117,13 +119,14 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   condition: { label: "Condition (If/Else)", icon: GitBranch, border: "border-amber-500/40", tile: "bg-amber-500/10 text-amber-500" },
   send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-border", tile: ACTION_TILE },
   close_conversation: { label: "Close conversation", icon: CircleSlash, border: "border-border", tile: ACTION_TILE },
+  create_task: { label: "Create task", icon: CheckSquare, border: "border-border", tile: ACTION_TILE },
 }
 
 /** Grouped menu for the "add action" pickers. */
 const STEP_GROUPS: { label: string; types: AutomationStepType[] }[] = [
   { label: "Messages", types: ["send_message", "send_template"] },
   { label: "Contact", types: ["add_tag", "remove_tag", "update_contact_field", "create_deal"] },
-  { label: "Conversation", types: ["assign_conversation", "close_conversation"] },
+  { label: "Conversation", types: ["assign_conversation", "close_conversation", "create_task"] },
   { label: "Flow control", types: ["wait", "condition", "send_webhook"] },
 ]
 
@@ -139,6 +142,16 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   { value: "conversation_assigned", label: "Conversation Assigned", hint: "When assigned to an agent" },
   { value: "tag_added", label: "Tag Added", hint: "When a tag is added to a contact" },
   { value: "time_based", label: "Time-Based", hint: "On a recurring schedule" },
+  {
+    value: "lead_captured",
+    label: "Lead Captured",
+    hint: "When a lead arrives through a webhook source (Settings → Integrations)",
+  },
+  {
+    value: "conversation_inactive",
+    label: "Conversation Inactive",
+    hint: "When a conversation has had no message for a number of hours (checked every minute by the scheduler)",
+  },
 ]
 
 function cid(): string {
@@ -173,6 +186,8 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
       return { url: "", headers: {}, body_template: "" }
     case "close_conversation":
       return {}
+    case "create_task":
+      return { title: "", description: "", priority: "normal", assignee_user_id: "", due_in_hours: 24 }
     default:
       return {}
   }
@@ -726,6 +741,19 @@ function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language
       return String(c.url ?? "") || (pt ? "Sem URL" : "No URL")
     case "close_conversation":
       return pt ? "Marca a conversa como encerrada" : "Marks the conversation as closed"
+    case "create_task": {
+      const title = String(c.title ?? "").trim()
+      const hours = Number(c.due_in_hours)
+      const due =
+        c.due_in_hours !== "" && c.due_in_hours != null && Number.isFinite(hours) && hours > 0
+          ? pt
+            ? `prazo em ${hours} h`
+            : `due in ${hours} h`
+          : ""
+      return [title ? `“${excerpt(title)}”` : pt ? "Sem título ainda" : "No title yet", due]
+        .filter(Boolean)
+        .join(" · ")
+    }
     default:
       return ""
   }
@@ -759,9 +787,34 @@ function triggerSummary(
     }
     case "time_based":
       return cfg.schedule ? `${pt ? "Agenda" : "Schedule"}: ${String(cfg.schedule)}` : pt ? "Defina o horário" : "Set a schedule"
+    case "lead_captured":
+      return cfg.source_id ? (pt ? "Somente uma fonte" : "One source only") : pt ? "Qualquer fonte" : "Any source"
+    case "conversation_inactive": {
+      const hours = Number(cfg.hours)
+      const hoursLabel = Number.isFinite(hours) && hours > 0 ? formatHours(hours, pt) : pt ? "defina as horas" : "set the hours"
+      const from =
+        cfg.last_from === "customer"
+          ? pt ? "cliente" : "customer"
+          : cfg.last_from === "any"
+            ? pt ? "qualquer lado" : "either side"
+            : pt ? "atendente" : "agent"
+      return pt
+        ? `Sem resposta há ${hoursLabel} · última do ${from}`
+        : `No reply for ${hoursLabel} · last from ${from}`
+    }
     default:
       return ""
   }
+}
+
+/** "24 h", "0.05 h (3 min)" — keeps decimals readable in the summary. */
+function formatHours(hours: number, pt: boolean): string {
+  if (hours < 1) {
+    const min = Math.round(hours * 60)
+    return pt ? `${min} min` : `${min} min`
+  }
+  const rounded = Number.isInteger(hours) ? String(hours) : hours.toFixed(2).replace(/0+$/, "")
+  return `${rounded} h`
 }
 
 // ------------------------------------------------------------
@@ -1710,6 +1763,14 @@ function TriggerEditor({
           />
         </FieldBlock>
       )}
+      {type === "lead_captured" && (
+        <FieldBlock label={t("Lead source")}>
+          <LeadSourceSelect
+            value={(config.source_id as string) ?? ""}
+            onChange={(v) => onConfigChange(v ? { ...config, source_id: v } : { ...config, source_id: undefined })}
+          />
+        </FieldBlock>
+      )}
       {type === "time_based" && (
         <FieldBlock label={t("Schedule")}>
           <Input
@@ -1720,6 +1781,128 @@ function TriggerEditor({
           />
         </FieldBlock>
       )}
+      {type === "conversation_inactive" && (
+        <ConversationInactiveConfig key={type} config={config} onChange={onConfigChange} />
+      )}
+    </>
+  )
+}
+
+const INACTIVE_STATUSES: ("open" | "pending")[] = ["open", "pending"]
+
+/**
+ * `conversation_inactive` inspector: hours (decimal, 0.05–720), whose
+ * message was the last one, and which statuses count. Missing keys are
+ * filled with the template defaults on first render so the summary card
+ * and the validator see a complete config right away.
+ */
+function ConversationInactiveConfig({
+  config,
+  onChange,
+}: {
+  config: Record<string, unknown>
+  onChange: (c: Record<string, unknown>) => void
+}) {
+  const { t } = useLanguage()
+  const hours = config.hours
+  const lastFrom = (config.last_from as string) ?? "agent"
+  const statuses = Array.isArray(config.statuses)
+    ? (config.statuses as string[])
+    : [...INACTIVE_STATUSES]
+
+  // Seed defaults once so an automation created from scratch is valid
+  // without touching every field.
+  useEffect(() => {
+    if (config.hours === undefined || config.last_from === undefined || !Array.isArray(config.statuses)) {
+      onChange({
+        ...config,
+        hours: config.hours ?? 24,
+        last_from: config.last_from ?? "agent",
+        statuses: Array.isArray(config.statuses) ? config.statuses : [...INACTIVE_STATUSES],
+      })
+    }
+    // Only on mount / type switch (the component is keyed by trigger type).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const [hoursDraft, setHoursDraft] = useState(hours === undefined ? "24" : String(hours))
+
+  function commitHours() {
+    const n = Number(hoursDraft.replace(",", "."))
+    if (Number.isFinite(n) && n > 0) {
+      onChange({ ...config, hours: n })
+      setHoursDraft(String(n))
+    } else {
+      setHoursDraft(hours === undefined ? "24" : String(hours))
+    }
+  }
+
+  function toggleStatus(s: "open" | "pending") {
+    const next = statuses.includes(s) ? statuses.filter((x) => x !== s) : [...statuses, s]
+    onChange({ ...config, statuses: next })
+  }
+
+  return (
+    <>
+      <FieldBlock label={t("Hours without a message")}>
+        <Input
+          type="number"
+          inputMode="decimal"
+          min={0.05}
+          max={720}
+          step={0.05}
+          value={hoursDraft}
+          onChange={(e) => setHoursDraft(e.target.value)}
+          onBlur={commitHours}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commitHours()
+            }
+          }}
+          className="bg-muted text-foreground"
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {t("Decimals allowed — 0.05 is 3 minutes, 24 is one day, 720 is the maximum (30 days).")}
+        </p>
+      </FieldBlock>
+      <FieldBlock label={t("Last message was from")}>
+        <select
+          value={lastFrom}
+          onChange={(e) => onChange({ ...config, last_from: e.target.value })}
+          className={SELECT_CLASS}
+        >
+          <option value="agent">{t("The agent (customer went quiet)")}</option>
+          <option value="customer">{t("The customer (nobody replied)")}</option>
+          <option value="any">{t("Either side")}</option>
+        </select>
+      </FieldBlock>
+      <FieldBlock label={t("Conversation status")}>
+        <div className="flex flex-wrap gap-2">
+          {INACTIVE_STATUSES.map((s) => {
+            const on = statuses.includes(s)
+            return (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggleStatus(s)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                  on
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(s === "open" ? "Open" : "Pending")}
+              </button>
+            )
+          })}
+        </div>
+        {statuses.length === 0 && (
+          <p className="mt-1 text-[11px] text-destructive">{t("Pick at least one status.")}</p>
+        )}
+      </FieldBlock>
     </>
   )
 }
@@ -1963,6 +2146,66 @@ function StepEditor({
         <p className="text-xs text-muted-foreground">
           {t('Sets the conversation status to "closed". No configuration needed.')}
         </p>
+      )
+    case "create_task":
+      return (
+        <>
+          <FieldBlock label={t("Task title")}>
+            <Input
+              value={(cfg.title as string) ?? ""}
+              onChange={(e) => set({ title: e.target.value })}
+              placeholder={t("Follow up with {{ contact.name }}")}
+              className="bg-muted text-foreground"
+              autoFocus
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("Variables: {{ contact.name }}, {{ contact.phone }}, {{ message.text }}, {{ vars.x }}")}
+            </p>
+          </FieldBlock>
+          <FieldBlock label={t("Description (optional)")}>
+            <Textarea
+              value={(cfg.description as string) ?? ""}
+              onChange={(e) => set({ description: e.target.value })}
+              className="min-h-20 bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <div className="grid grid-cols-2 gap-2">
+            <FieldBlock label={t("Priority")}>
+              <select
+                value={(cfg.priority as string) ?? "normal"}
+                onChange={(e) => set({ priority: e.target.value })}
+                className={SELECT_CLASS}
+              >
+                <option value="low">{t("Low")}</option>
+                <option value="normal">{t("Normal")}</option>
+                <option value="high">{t("High")}</option>
+                <option value="urgent">{t("Urgent")}</option>
+              </select>
+            </FieldBlock>
+            <FieldBlock label={t("Due in (hours)")}>
+              <Input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.due_in_hours === "" || cfg.due_in_hours == null ? "" : Number(cfg.due_in_hours)}
+                onChange={(e) =>
+                  set({ due_in_hours: e.target.value === "" ? "" : Math.max(0, Number(e.target.value)) })
+                }
+                placeholder={t("No due date")}
+                className="bg-muted text-foreground"
+              />
+            </FieldBlock>
+          </div>
+          <FieldBlock label={t("Assignee")}>
+            <AgentSelect
+              value={(cfg.assignee_user_id as string) ?? ""}
+              onChange={(v) => set({ assignee_user_id: v })}
+            />
+          </FieldBlock>
+          <p className="text-[11px] text-muted-foreground">
+            {t("The task is linked to the contact and conversation that fired the automation and lands on the default open status.")}
+          </p>
+        </>
       )
     default:
       return null

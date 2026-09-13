@@ -135,6 +135,30 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
     case 'close_conversation':
       // No config required.
       break
+    case 'create_task':
+      if (!nonEmpty(c.title)) {
+        issues.push({ path: `${path}.title`, message: 'task title is required' })
+      }
+      if (
+        c.priority !== undefined &&
+        c.priority !== '' &&
+        !['low', 'normal', 'high', 'urgent'].includes(String(c.priority))
+      ) {
+        issues.push({
+          path: `${path}.priority`,
+          message: 'task priority must be low, normal, high or urgent',
+        })
+      }
+      if (c.due_in_hours !== undefined && c.due_in_hours !== null && c.due_in_hours !== '') {
+        const n = Number(c.due_in_hours)
+        if (!Number.isFinite(n) || n < 0) {
+          issues.push({
+            path: `${path}.due_in_hours`,
+            message: 'due in hours must be a number of hours (0 or more)',
+          })
+        }
+      }
+      break
     default:
       issues.push({ path, message: `unknown step type: ${step.step_type}` })
   }
@@ -168,10 +192,55 @@ export function validateTriggerForActivation(
     if (!nonEmpty(cfg.tag_id)) {
       issues.push({ path: 'trigger.tag_id', message: 'tag is required' })
     }
+  } else if (triggerType === 'lead_captured') {
+    // source_id is optional ("any source"); when present it must be a uuid.
+    if (cfg.source_id !== undefined && cfg.source_id !== null && cfg.source_id !== '') {
+      if (typeof cfg.source_id !== 'string' || !UUID_RE.test(cfg.source_id)) {
+        issues.push({ path: 'trigger.source_id', message: 'source must be a valid id' })
+      }
+    }
+  } else if (triggerType === 'conversation_inactive') {
+    // Mirrors parseInactiveConfig in inactivity.ts: decimal hours in
+    // 0.05–720, a known last_from, at least one open/pending status.
+    const hours = typeof cfg.hours === 'string' ? Number(cfg.hours) : cfg.hours
+    if (
+      typeof hours !== 'number' ||
+      !Number.isFinite(hours) ||
+      hours < INACTIVE_HOURS_MIN ||
+      hours > INACTIVE_HOURS_MAX
+    ) {
+      issues.push({
+        path: 'trigger.hours',
+        message: `hours must be a number between ${INACTIVE_HOURS_MIN} and ${INACTIVE_HOURS_MAX}`,
+      })
+    }
+    if (!['agent', 'customer', 'any'].includes(String(cfg.last_from))) {
+      issues.push({
+        path: 'trigger.last_from',
+        message: 'last_from must be "agent", "customer" or "any"',
+      })
+    }
+    const statuses = cfg.statuses
+    if (
+      !Array.isArray(statuses) ||
+      statuses.length === 0 ||
+      statuses.some((s) => s !== 'open' && s !== 'pending')
+    ) {
+      issues.push({
+        path: 'trigger.statuses',
+        message: 'statuses must list at least one of "open", "pending"',
+      })
+    }
   }
 
   return issues
 }
+
+/** Bounds for `conversation_inactive.hours` (0.05 h = 3 min, 720 h = 30 d). */
+export const INACTIVE_HOURS_MIN = 0.05
+export const INACTIVE_HOURS_MAX = 720
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function nonEmpty(v: unknown): boolean {
   return typeof v === 'string' && v.trim().length > 0

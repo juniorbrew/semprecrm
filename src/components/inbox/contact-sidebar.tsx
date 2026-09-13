@@ -30,11 +30,13 @@ import {
   StickyNote,
   Plus,
   ListChecks,
+  CheckSquare,
   History,
   Lock,
   MessageCircle,
   Loader2,
   ExternalLink,
+  Ban,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -47,6 +49,13 @@ import { listConversationsByContact } from "@/lib/conversations/find-by-contact"
 import { insertConversationEvent } from "@/lib/conversations/events";
 import { addContactNote, onContactNotesChanged } from "@/lib/conversations/notes";
 import { DealForm } from "@/components/pipelines/deal-form";
+import {
+  LinkedTaskRows,
+  TaskDrawer,
+  TaskQuickCreate,
+  useLinkedTasks,
+} from "@/components/tasks";
+import type { Task } from "@/lib/tasks";
 import { NewCustomFieldDialog } from "./new-custom-field-dialog";
 import { CustomFieldValue } from "./custom-field-value";
 import { TeamNoteComposer } from "./team-note-composer";
@@ -96,6 +105,12 @@ const PANEL_COPY: Record<
     tagRemoved: (name: string) => string;
     tagFailed: string;
     moreNotes: (n: number) => string;
+    /** Opt-out badge + admin "Reativar" (migration 030). */
+    optedOut: string;
+    optedOutHint: (when: string) => string;
+    reactivate: string;
+    reactivated: string;
+    reactivateFailed: string;
   }
 > = {
   "pt-BR": {
@@ -125,6 +140,12 @@ const PANEL_COPY: Record<
     tagRemoved: (name) => `Etiqueta ${name} removida`,
     tagFailed: "Não foi possível atualizar a etiqueta",
     moreNotes: (n) => `+${n} nota${n === 1 ? "" : "s"} na conversa`,
+    optedOut: "Descadastrado",
+    optedOutHint: (when) =>
+      `Pediu para não receber mensagens em ${when}. Automações e disparos não enviam para este contato.`,
+    reactivate: "Reativar",
+    reactivated: "Contato reativado",
+    reactivateFailed: "Não foi possível reativar o contato",
   },
   "en-US": {
     empty: "Contact details will appear here",
@@ -153,6 +174,12 @@ const PANEL_COPY: Record<
     tagRemoved: (name) => `Label ${name} removed`,
     tagFailed: "Could not update the label",
     moreNotes: (n) => `+${n} note${n === 1 ? "" : "s"} in the thread`,
+    optedOut: "Opted out",
+    optedOutHint: (when) =>
+      `Asked to stop receiving messages on ${when}. Automations and broadcasts skip this contact.`,
+    reactivate: "Reactivate",
+    reactivated: "Contact reactivated",
+    reactivateFailed: "Could not reactivate the contact",
   },
 };
 
@@ -250,9 +277,48 @@ export function ContactSidebar({
   // deals and notes. Viewers see everything read-only.
   const canDefineFields = useCan("edit-settings");
   const canWrite = useCan("send-messages");
+  // Reverting an opt-out is an admin+ action (spec §5).
+  const canReactivate = useCan("edit-settings");
   const { ready: entitlementsReady, modules } = useEntitlements();
   const pipelinesEnabled = !entitlementsReady || modules.pipelines;
+  const tasksEnabled = !entitlementsReady || modules.tasks;
   const [copied, setCopied] = useState(false);
+  // Opt-out state mirrors `contact.opted_out_at` but is kept locally so
+  // "Reativar" reflects at once, before the parent refetches the contact.
+  const [optedOutAt, setOptedOutAt] = useState<string | null>(contact?.opted_out_at ?? null);
+  const [reactivating, setReactivating] = useState(false);
+  useEffect(() => {
+    setOptedOutAt(contact?.opted_out_at ?? null);
+  }, [contact?.id, contact?.opted_out_at]);
+
+  const handleReactivate = useCallback(async () => {
+    if (!contact?.id || !accountId || !user?.id || reactivating) return;
+    setReactivating(true);
+    const supabase = createClient();
+    try {
+      const { error } = await supabase
+        .from("contacts")
+        .update({ opted_out_at: null, updated_at: new Date().toISOString() })
+        .eq("id", contact.id);
+      if (error) throw error;
+      setOptedOutAt(null);
+      if (conversationId) {
+        await insertConversationEvent(supabase, {
+          account_id: accountId,
+          conversation_id: conversationId,
+          actor_user_id: user.id,
+          event_type: "contact_opted_in",
+          payload: { actor_name: profile?.full_name ?? undefined },
+        });
+      }
+      toast.success(copy.reactivated);
+    } catch (err) {
+      console.error("Failed to reactivate contact:", err);
+      toast.error(copy.reactivateFailed);
+    } finally {
+      setReactivating(false);
+    }
+  }, [contact?.id, accountId, user?.id, reactivating, conversationId, profile?.full_name, copy]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [contactTags, setContactTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
@@ -274,8 +340,14 @@ export function ContactSidebar({
   } | null>(null);
   const [dealFormOpen, setDealFormOpen] = useState(false);
   const [dealTargetLoading, setDealTargetLoading] = useState(false);
+  // Tasks: open ones for this contact, "+" reveals the inline quick
+  // create (title + due) linked to the contact and the active thread.
+  const [taskAddOpen, setTaskAddOpen] = useState(false);
+  const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
 
   const contactId = contact?.id ?? null;
+  const linkedTasks = useLinkedTasks({ contactId, enabled: tasksEnabled });
 
   const fetchContactData = useCallback(async () => {
     if (!contactId) return;
@@ -597,6 +669,27 @@ export function ContactSidebar({
               )}
             </div>
             <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
+            {optedOutAt && (
+              <div
+                className="mt-1.5 flex flex-col items-center gap-1"
+                title={copy.optedOutHint(new Date(optedOutAt).toLocaleDateString(language))}
+              >
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                  <Ban className="h-3 w-3" aria-hidden />
+                  {copy.optedOut}
+                </span>
+                {canReactivate && (
+                  <button
+                    type="button"
+                    onClick={handleReactivate}
+                    disabled={reactivating}
+                    className="text-[11px] font-medium text-primary underline-offset-2 hover:underline disabled:opacity-60"
+                  >
+                    {reactivating ? <Loader2 className="inline h-3 w-3 animate-spin" /> : copy.reactivate}
+                  </button>
+                )}
+              </div>
+            )}
             {contact.company && (
               <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <Building2 className="h-3 w-3" />
@@ -853,6 +946,64 @@ export function ContactSidebar({
               />
             )}
           </div>
+
+          {tasksEnabled && (
+            <>
+              <div className="my-4 border-t border-border" />
+
+              {/* Tasks — open tasks linked to this contact; the checkbox
+                  completes (default done status), "+" reveals the inline
+                  title + due creator linked to the contact and thread. */}
+              <div>
+                <SectionHeader
+                  icon={CheckSquare}
+                  label={t("Tasks")}
+                  count={linkedTasks.tasks.length}
+                  action={
+                    canWrite ? (
+                      <SectionAddButton
+                        label={t("Add task")}
+                        onClick={() => setTaskAddOpen((open) => !open)}
+                      />
+                    ) : undefined
+                  }
+                />
+                <div className="mt-2 space-y-2 px-1">
+                  {taskAddOpen && (
+                    <TaskQuickCreate
+                      defaults={{
+                        contact_id: contact.id,
+                        conversation_id: conversationId ?? undefined,
+                      }}
+                      statuses={linkedTasks.statuses}
+                      onCreated={linkedTasks.add}
+                      onCancel={() => setTaskAddOpen(false)}
+                    />
+                  )}
+                  <LinkedTaskRows
+                    tasks={linkedTasks.tasks}
+                    readOnly={!canWrite}
+                    emptyLabel={
+                      linkedTasks.loading ? t("Loading...") : t("No open tasks")
+                    }
+                    onComplete={(task) => void linkedTasks.complete(task)}
+                    onOpen={(task) => {
+                      setTaskDrawerTask(task);
+                      setTaskDrawerOpen(true);
+                    }}
+                  />
+                </div>
+                <TaskDrawer
+                  open={taskDrawerOpen}
+                  onOpenChange={setTaskDrawerOpen}
+                  task={taskDrawerTask}
+                  statuses={linkedTasks.statuses}
+                  onUpdated={linkedTasks.patch}
+                  onDeleted={linkedTasks.remove}
+                />
+              </div>
+            </>
+          )}
 
           <div className="my-4 border-t border-border" />
 

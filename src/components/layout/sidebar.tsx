@@ -6,8 +6,10 @@ import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
+import { useOverdueTasks } from "@/hooks/use-overdue-tasks";
 import type { Module } from "@/lib/plans";
 import {
+  CheckSquare,
   Crown,
   GitBranch,
   LayoutDashboard,
@@ -99,6 +101,7 @@ const navItems: NavItem[] = [
   { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare, module: "inbox" },
   { href: "/contacts", label: "Contatos", icon: Users, module: "contacts" },
   { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines" },
+  { href: "/tasks", label: "Tarefas", icon: CheckSquare, module: "tasks" },
   { href: "/broadcasts", label: "Disparos", icon: Radio, module: "broadcasts" },
   { href: "/automations", label: "Automações", icon: Zap, module: "automations" },
   { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows" },
@@ -120,6 +123,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     useAuth();
   const { ready: entitlementsReady, modules } = useEntitlements();
   const totalUnread = useTotalUnread();
+  // Red count on Tarefas: my open tasks past their due date (realtime).
+  const overdueTasks = useOverdueTasks(!entitlementsReady || modules.tasks);
   // Hide rows for modules the plan (or a platform override) turned
   // off. Until the entitlements settle we show everything — a row
   // that appears late is less jarring than the whole menu reflowing
@@ -226,6 +231,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
               const showUnreadDot =
                 item.href === "/inbox" && totalUnread > 0 && !isActive;
+              const showOverdueBadge = item.href === "/tasks" && overdueTasks > 0;
 
               return (
                 <li key={item.href}>
@@ -247,6 +253,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                         className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
                       >
                         Beta
+                      </span>
+                    )}
+                    {showOverdueBadge && (
+                      <span
+                        aria-label={`${overdueTasks} ${overdueTasks === 1 ? "tarefa atrasada" : "tarefas atrasadas"}`}
+                        title={`${overdueTasks} ${overdueTasks === 1 ? "tarefa atrasada" : "tarefas atrasadas"}`}
+                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400"
+                      >
+                        {overdueTasks > 99 ? "99+" : overdueTasks}
                       </span>
                     )}
                     {showUnreadDot && (

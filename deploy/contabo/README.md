@@ -35,7 +35,7 @@ Preencha no `.env.production` (os nomes vêm de `.env.local.example`):
 | `ENCRYPTION_KEY` | 64 hex, gere com `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`; não reutilize a de dev |
 | `META_APP_SECRET` (e `META_APP_ID` se usar template com imagem) | Meta for Developers → App Settings → Basic |
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.seudominio.com.br` |
-| `AUTOMATION_CRON_SECRET` | só se usar etapas "Aguardar" nas automações |
+| `AUTOMATION_CRON_SECRET` | obrigatório para o agendador `semprecrm-cron` (etapas "Aguardar", gatilhos por horário e "Conversa sem resposta há X horas", timeouts dos flows); gere com `openssl rand -hex 32` |
 
 Não defina `WHATSAPP_TEMPLATES_DRY_RUN` em produção.
 
@@ -111,6 +111,21 @@ sob o PM2 e conversa com o app por loopback. Passos:
 Detalhes do serviço (variáveis, rotas internas, logs, limitações do protocolo) em
 `services/wa-gateway/README.md`. Lembre o aviso da tela: o canal não é oficial e o número pode ser banido;
 disparos e modelos continuam só na API oficial.
+
+## 6.2 Agendador interno (`semprecrm-cron`)
+
+As etapas "Aguardar", os gatilhos por horário, o gatilho "Conversa sem resposta há X horas" e os
+timeouts dos flows só andam quando alguém chama `GET /api/automations/cron` e `GET /api/flows/cron`.
+O terceiro app do `ecosystem.config.cjs`, `semprecrm-cron`, faz isso: `scripts/cron-tick.mjs` (Node
+puro, sem dependências) chama os dois endpoints a cada minuto por loopback com o header `x-cron-secret`.
+
+- Precisa de `AUTOMATION_CRON_SECRET` no `.env.production` (o mesmo arquivo que o app lê).
+- `APP_URL` já vem do `ecosystem.config.cjs` (`http://127.0.0.1:3000`); ajuste se mudar a porta do Next.
+- `CRON_INTERVAL_MS` (padrão 60000) controla a frequência. Não rode duas instâncias.
+- Logs: `pm2 logs semprecrm-cron` ou `/var/log/semprecrm/cron.*.log` — uma linha por chamada
+  (`GET /api/automations/cron 200 85ms processed=0 inactive_fired=2`).
+- Se preferir um cron externo (Vercel Cron, UptimeRobot, crontab com `curl -H "x-cron-secret: …"`),
+  remova o app `semprecrm-cron` do arquivo antes do `pm2 start`.
 
 ## 7. Redeploys
 

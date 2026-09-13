@@ -5,8 +5,10 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useMemo,
   KeyboardEvent,
 } from "react";
+import Link from "next/link";
 import {
   Send,
   LayoutTemplate,
@@ -26,6 +28,7 @@ import {
   Italic,
   Strikethrough,
   Code,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
@@ -40,8 +43,19 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
+import { createClient } from "@/lib/supabase/client";
+import {
+  findSlashToken,
+  listQuickReplies,
+  matchQuickReplies,
+  renderQuickReply,
+  replaceSlashToken,
+  type SlashToken,
+} from "@/lib/quick-replies";
+import type { QuickReply } from "@/types";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -117,6 +131,11 @@ interface MessageComposerProps {
    * feature. Defaults to true.
    */
   templatesEnabled?: boolean;
+  /**
+   * Contact display name — fills `{{contato.nome}}` /
+   * `{{contato.primeiro_nome}}` when a quick reply is inserted.
+   */
+  contactName?: string | null;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
   onOpenTemplates: () => void;
@@ -162,13 +181,18 @@ const COMPOSER_COPY: Record<
     strike: string;
     mono: string;
     slashHint: string;
+    quickReplies: string;
+    quickRepliesEmpty: string;
+    quickRepliesNoMatch: string;
+    quickRepliesManage: string;
+    quickRepliesKeys: string;
   }
 > = {
   "pt-BR": {
     reply: "Responder",
     note: "Nota interna",
-    replyPlaceholder: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para modelos",
-    replyPlaceholderNoTemplates: "Digite uma mensagem… Shift+Enter para nova linha",
+    replyPlaceholder: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para respostas rápidas",
+    replyPlaceholderNoTemplates: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para respostas rápidas",
     notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
     expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
     readOnlyPlaceholder: "Somente leitura — seu perfil não pode responder",
@@ -188,13 +212,18 @@ const COMPOSER_COPY: Record<
     italic: "Itálico (Ctrl+I)",
     strike: "Tachado",
     mono: "Monoespaçado",
-    slashHint: "para modelos",
+    slashHint: "respostas rápidas",
+    quickReplies: "Respostas rápidas",
+    quickRepliesEmpty: "Nenhuma resposta rápida ainda.",
+    quickRepliesNoMatch: "Nenhuma resposta rápida corresponde.",
+    quickRepliesManage: "Gerenciar em Configurações",
+    quickRepliesKeys: "↑↓ navegar · Enter inserir · Esc fechar",
   },
   "en-US": {
     reply: "Reply",
     note: "Private note",
-    replyPlaceholder: "Type a message… Shift+Enter for a new line. Type / for templates",
-    replyPlaceholderNoTemplates: "Type a message… Shift+Enter for a new line",
+    replyPlaceholder: "Type a message… Shift+Enter for a new line. Type / for quick replies",
+    replyPlaceholderNoTemplates: "Type a message… Shift+Enter for a new line. Type / for quick replies",
     notePlaceholder: "Write a note for your team — the customer won't see it",
     expiredPlaceholder: "24-hour window closed — send a template",
     readOnlyPlaceholder: "Read-only — your role can't reply",
@@ -214,7 +243,12 @@ const COMPOSER_COPY: Record<
     italic: "Italic (Ctrl+I)",
     strike: "Strikethrough",
     mono: "Monospace",
-    slashHint: "for templates",
+    slashHint: "quick replies",
+    quickReplies: "Quick replies",
+    quickRepliesEmpty: "No quick replies yet.",
+    quickRepliesNoMatch: "No quick reply matches.",
+    quickRepliesManage: "Manage in Settings",
+    quickRepliesKeys: "↑↓ navigate · Enter insert · Esc close",
   },
 };
 
@@ -243,6 +277,7 @@ export function MessageComposer({
   conversationId,
   sessionExpired,
   templatesEnabled = true,
+  contactName,
   onSend,
   onSendMedia,
   onOpenTemplates,
@@ -262,8 +297,69 @@ export function MessageComposer({
   useEffect(() => {
     setMode("reply");
     setText("");
+    setQuickOpen(false);
   }, [conversationId]);
   const isNote = mode === "note" && !!onSendNote;
+
+  // ---- Quick replies ("/atalho") -------------------------------------
+  // The account's library is loaded once per account and refreshed each
+  // time the popover opens, so a reply created in Settings a moment ago
+  // shows up without a page reload.
+  const supabase = useMemo(() => createClient(), []);
+  const { accountId, profile, account } = useAuth();
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const [quickOpen, setQuickOpen] = useState(false);
+  // The "/termo" being typed, or null when opened from the ⚡ button.
+  const [quickToken, setQuickToken] = useState<SlashToken | null>(null);
+  const [quickQuery, setQuickQuery] = useState("");
+  const [quickIndex, setQuickIndex] = useState(0);
+
+  const loadQuickReplies = useCallback(async () => {
+    if (!accountId) return;
+    try {
+      setQuickReplies(await listQuickReplies(supabase, accountId));
+    } catch (err) {
+      console.error(err);
+    }
+  }, [accountId, supabase]);
+
+  useEffect(() => {
+    void loadQuickReplies();
+  }, [loadQuickReplies]);
+
+  useEffect(() => {
+    if (quickOpen) void loadQuickReplies();
+  }, [quickOpen, loadQuickReplies]);
+
+  const quickMatches = useMemo(
+    () => (quickOpen ? matchQuickReplies(quickReplies, quickQuery) : []),
+    [quickOpen, quickReplies, quickQuery],
+  );
+
+  // Keep the highlighted row inside the (possibly shorter) result list.
+  useEffect(() => {
+    setQuickIndex((i) => Math.min(i, Math.max(0, quickMatches.length - 1)));
+  }, [quickMatches.length]);
+
+  const closeQuick = useCallback(() => {
+    setQuickOpen(false);
+    setQuickToken(null);
+    setQuickQuery("");
+    setQuickIndex(0);
+  }, []);
+
+  // ⚡ button: same list, no "/" token — the body is inserted at the caret.
+  const toggleQuickFromButton = useCallback(() => {
+    if (quickOpen) {
+      closeQuick();
+      return;
+    }
+    setQuickToken(null);
+    setQuickQuery("");
+    setQuickIndex(0);
+    setQuickOpen(true);
+    textareaRef.current?.focus();
+  }, [quickOpen, closeQuick]);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -375,6 +471,46 @@ export function MessageComposer({
     [adjustHeight],
   );
 
+  // Drop a rendered quick reply into the box — replacing the "/termo"
+  // token when there is one, otherwise at the caret (⚡ button path).
+  const insertQuickReply = useCallback(
+    (reply: QuickReply) => {
+      const rendered = renderQuickReply(reply.body, {
+        contactName,
+        agentName: profile?.full_name,
+        companyName: account?.name,
+      });
+      const el = textareaRef.current;
+      const current = el?.value ?? text;
+      let next: string;
+      let caret: number;
+      if (quickToken) {
+        ({ text: next, caret } = replaceSlashToken(current, quickToken, rendered));
+      } else {
+        const start = el?.selectionStart ?? current.length;
+        const end = el?.selectionEnd ?? start;
+        const before = current.slice(0, start);
+        const after = current.slice(end);
+        // Pad so the body never glues onto surrounding text.
+        const value =
+          (before && !/\s$/.test(before) ? " " : "") +
+          rendered +
+          (after && !/^\s/.test(after) ? " " : "");
+        next = before + value + after;
+        caret = before.length + value.length;
+      }
+      setText(next);
+      closeQuick();
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(caret, caret);
+        adjustHeight();
+      });
+    },
+    [contactName, profile?.full_name, account?.name, text, quickToken, closeQuick, adjustHeight],
+  );
+
   // Wrap the selection in WhatsApp markdown (*bold*, _italic_, ~strike~,
   // ```mono```). With nothing selected the markers are inserted and the
   // caret lands between them, so the agent can just keep typing.
@@ -404,25 +540,39 @@ export function MessageComposer({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      // Quick-reply popover owns ↑/↓/Enter/Tab/Esc while it has results;
+      // with the popover closed, Enter still sends as before.
+      if (quickOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeQuick();
+          return;
+        }
+        if (quickMatches.length > 0) {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setQuickIndex((i) => (i + 1) % quickMatches.length);
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setQuickIndex((i) => (i - 1 + quickMatches.length) % quickMatches.length);
+            return;
+          }
+          if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+            e.preventDefault();
+            const pick = quickMatches[Math.min(quickIndex, quickMatches.length - 1)];
+            if (pick) insertQuickReply(pick);
+            return;
+          }
+        } else if (e.key === "Enter" && !e.shiftKey) {
+          // Nothing to pick — fall through to send, closing the hint.
+          closeQuick();
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
-        return;
-      }
-      // "/" on an empty reply opens the template picker (canned
-      // responses), Chatwoot-style. Notes have no templates.
-      if (
-        e.key === "/" &&
-        !isNote &&
-        templatesEnabled &&
-        !readOnly &&
-        e.currentTarget.value.length === 0 &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey
-      ) {
-        e.preventDefault();
-        onOpenTemplates();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !isNote) {
@@ -436,15 +586,38 @@ export function MessageComposer({
         }
       }
     },
-    [handleSend, isNote, templatesEnabled, readOnly, onOpenTemplates, wrapSelection]
+    [
+      quickOpen,
+      quickMatches,
+      quickIndex,
+      closeQuick,
+      insertQuickReply,
+      handleSend,
+      isNote,
+      wrapSelection,
+    ]
   );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setText(e.target.value);
+      const value = e.target.value;
+      setText(value);
       adjustHeight();
+      // "/" at the start or after whitespace opens the quick-reply list,
+      // filtered live by whatever follows it. Leaving the token closes it.
+      const token = readOnly
+        ? null
+        : findSlashToken(value, e.target.selectionStart ?? value.length);
+      if (token) {
+        setQuickToken(token);
+        setQuickQuery(token.term);
+        setQuickIndex(0);
+        setQuickOpen(true);
+      } else if (quickOpen) {
+        closeQuick();
+      }
     },
-    [adjustHeight]
+    [adjustHeight, readOnly, quickOpen, closeQuick]
   );
 
   // Upload a captured file to chat-media and stage it as a draft.
@@ -775,13 +948,27 @@ export function MessageComposer({
         // collapses into a bare disabled input.
         <div
           className={cn(
-            "rounded-xl border bg-muted transition-colors focus-within:border-primary/50",
+            "relative rounded-xl border bg-muted transition-colors focus-within:border-primary/50",
             isNote
               ? "border-dashed border-amber-500/50 bg-amber-500/10 focus-within:border-amber-500/80"
               : "border-border",
             textDisabled && "opacity-70",
           )}
         >
+          {/* Quick-reply popover — anchored above the box, inline (no
+              portal) so the textarea keeps focus while the agent types
+              "/termo" and arrows through the list. */}
+          {quickOpen && !textDisabled && (
+            <QuickReplyPopover
+              matches={quickMatches}
+              total={quickReplies.length}
+              activeIndex={quickIndex}
+              copy={copy}
+              onHover={setQuickIndex}
+              onPick={insertQuickReply}
+              onClose={closeQuick}
+            />
+          )}
           {/* Formatting strip — reply mode only. WhatsApp renders these
               markers natively, so what the agent types is what the
               customer sees. The "/" hint mirrors the placeholder for
@@ -813,24 +1000,21 @@ export function MessageComposer({
                   <Icon className="h-3.5 w-3.5" />
                 </button>
               ))}
-              {templatesEnabled && (
-                <>
-                  <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    disabled={readOnly}
-                    onClick={onOpenTemplates}
-                    title={copy.sendTemplate}
-                    className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <kbd className="rounded border border-border bg-card px-1 font-mono text-[10px] leading-4 text-foreground/80">
-                      /
-                    </kbd>
-                    <span className="hidden sm:inline">{copy.slashHint}</span>
-                  </button>
-                </>
-              )}
+              <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />
+              <button
+                type="button"
+                tabIndex={-1}
+                disabled={textDisabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={toggleQuickFromButton}
+                title={copy.quickReplies}
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <kbd className="rounded border border-border bg-card px-1 font-mono text-[10px] leading-4 text-foreground/80">
+                  /
+                </kbd>
+                <span className="hidden sm:inline">{copy.slashHint}</span>
+              </button>
             </div>
           )}
           <textarea
@@ -888,6 +1072,25 @@ export function MessageComposer({
                 </div>
               </PopoverContent>
             </Popover>
+
+            {/* Quick replies — same list as "/", for agents who don't
+                know the shortcut. Works for replies and notes alike. */}
+            <button
+              type="button"
+              disabled={textDisabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleQuickFromButton}
+              aria-label={copy.quickReplies}
+              aria-expanded={quickOpen}
+              title={copy.quickReplies}
+              data-no-translate
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+                quickOpen && "bg-card text-primary",
+              )}
+            >
+              <Zap className="h-4 w-4" />
+            </button>
 
             {/* Attach menu — photo / video / document / voice. */}
             <DropdownMenu>
@@ -995,6 +1198,110 @@ export function MessageComposer({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Inline "/atalho" list. Module-scope (like MediaDraftPreview) so it
+ * isn't remounted on every composer render. Mouse-down is swallowed so
+ * clicking a row never blurs the textarea.
+ */
+function QuickReplyPopover({
+  matches,
+  total,
+  activeIndex,
+  copy,
+  onHover,
+  onPick,
+  onClose,
+}: {
+  matches: QuickReply[];
+  total: number;
+  activeIndex: number;
+  copy: (typeof COMPOSER_COPY)[Language];
+  onHover: (index: number) => void;
+  onPick: (reply: QuickReply) => void;
+  onClose: () => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Keep the highlighted row in view while arrowing through the list.
+  useEffect(() => {
+    const el = listRef.current?.children[activeIndex] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
+  return (
+    <div
+      data-no-translate
+      onMouseDown={(e) => e.preventDefault()}
+      className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 duration-100"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-1.5">
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <Zap className="h-3.5 w-3.5 text-primary" />
+          {copy.quickReplies}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Esc"
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {matches.length === 0 ? (
+        <div className="px-3 py-3 text-xs text-muted-foreground">
+          <p>{total === 0 ? copy.quickRepliesEmpty : copy.quickRepliesNoMatch}</p>
+          <Link
+            href="/settings?tab=quick_replies"
+            className="mt-1 inline-block text-primary hover:underline"
+          >
+            {copy.quickRepliesManage} →
+          </Link>
+        </div>
+      ) : (
+        <div
+          ref={listRef}
+          role="listbox"
+          aria-label={copy.quickReplies}
+          className="max-h-64 overflow-y-auto py-1"
+        >
+          {matches.map((reply, i) => (
+            <button
+              key={reply.id}
+              type="button"
+              role="option"
+              aria-selected={i === activeIndex}
+              onMouseEnter={() => onHover(i)}
+              onClick={() => onPick(reply)}
+              className={cn(
+                "flex w-full items-start gap-3 px-3 py-1.5 text-left transition-colors",
+                i === activeIndex ? "bg-primary/10" : "hover:bg-muted",
+              )}
+            >
+              <code className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                /{reply.shortcut}
+              </code>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-foreground">
+                  {reply.title}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {reply.body.replace(/\s+/g, " ")}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="border-t border-border/60 px-3 py-1 text-[10px] text-muted-foreground">
+        {copy.quickRepliesKeys}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Deal, PipelineStage } from "@/types";
 import {
   DollarSign,
@@ -10,6 +10,7 @@ import {
   Trophy,
   XCircle,
   Info,
+  ChevronDown,
 } from "lucide-react";
 import {
   Tooltip,
@@ -18,7 +19,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
+import { useLanguage } from "@/hooks/use-language";
 import { formatCurrency } from "@/lib/currency";
+import { aggregateLossReasons } from "@/lib/pipelines/loss-reasons";
+import { cn } from "@/lib/utils";
 
 interface PipelineAnalyticsProps {
   stages: PipelineStage[];
@@ -130,8 +134,113 @@ export function PipelineAnalytics({ stages, deals }: PipelineAnalyticsProps) {
           value={String(stats.lostThisMonth)}
           tooltip="Deals marked as Lost since the first day of the current month."
         />
+        <LossReasonsBlock deals={deals} currency={defaultCurrency} />
       </div>
     </TooltipProvider>
+  );
+}
+
+type LossMetric = "count" | "value";
+
+/**
+ * "Motivos de perda" — every lost deal of the displayed pipeline grouped
+ * by reason, as horizontal bars. The bar length follows the selected
+ * metric (count or value); both numbers are always printed so the two
+ * readings never need a second click. Hidden while nothing is lost.
+ */
+function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string }) {
+  const { t, language } = useLanguage();
+  const [metric, setMetric] = useState<LossMetric>("count");
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Reasons ride the join on each deal (`loss_reason`), so no extra
+  // query: the aggregation falls back to that name per deal.
+  const buckets = useMemo(
+    () => aggregateLossReasons(deals, [], language),
+    [deals, language],
+  );
+  if (buckets.length === 0) return null;
+
+  const totalCount = buckets.reduce((sum, b) => sum + b.count, 0);
+  const totalValue = buckets.reduce((sum, b) => sum + b.value, 0);
+  const max = Math.max(...buckets.map((b) => (metric === "count" ? b.count : b.value)), 0);
+
+  return (
+    <div className="col-span-2 rounded-lg bg-muted/50 p-3 sm:col-span-3 xl:col-span-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed((c) => !c)}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+        >
+          <XCircle className="h-4 w-4 text-red-400" />
+          <span>{t("Loss reasons")}</span>
+          <ChevronDown
+            className={cn("h-3 w-3 transition-transform", collapsed && "-rotate-90")}
+          />
+        </button>
+        <span className="text-[11px] text-muted-foreground">
+          {totalCount} {totalCount === 1 ? t("lost deal") : t("lost deals")}
+          <span className="mx-1">·</span>
+          {formatCurrency(totalValue, currency)}
+        </span>
+        {!collapsed && (
+          <div
+            role="radiogroup"
+            aria-label={t("Bar length")}
+            className="ml-auto inline-flex rounded-md border border-border bg-card p-0.5 text-[11px]"
+          >
+            {(["count", "value"] as LossMetric[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={metric === m}
+                onClick={() => setMetric(m)}
+                className={cn(
+                  "rounded px-2 py-0.5 transition-colors",
+                  metric === m
+                    ? "bg-muted font-semibold text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m === "count" ? t("Count") : t("Value")}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!collapsed && (
+        <ul className="mt-3 space-y-2">
+          {buckets.map((b) => {
+            const measure = metric === "count" ? b.count : b.value;
+            const pct = max > 0 ? Math.max(2, Math.round((measure / max) * 100)) : 0;
+            const share = totalCount > 0 ? Math.round((b.count / totalCount) * 100) : 0;
+            return (
+              <li key={b.key} className="grid grid-cols-[minmax(0,160px)_1fr_auto] items-center gap-3 text-xs">
+                <span className="truncate font-medium text-foreground" title={b.reason}>
+                  {b.reason}
+                </span>
+                <div className="h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+                  <div
+                    className="h-full rounded-full bg-red-500/70 transition-[width] duration-300"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="whitespace-nowrap tabular-nums text-muted-foreground">
+                  <span className="font-semibold text-foreground">{b.count}</span>
+                  <span className="ml-1 text-[10px]">({share}%)</span>
+                  <span className="mx-1">·</span>
+                  {formatCurrency(b.value, currency)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 

@@ -81,6 +81,20 @@ describe("AutomationBuilder (server render)", () => {
     expect(html).toContain('data-step-cid="c_')
   })
 
+  it("renders the create_task action with its title + due summary", () => {
+    const html = render({
+      steps: [
+        step("create_task", { title: "Retornar para {{ contact.name }}", priority: "high", due_in_hours: 24 }),
+        step("create_task", { title: "", due_in_hours: "" }),
+      ],
+    })
+    expect(html).toContain("Criar tarefa")
+    expect(html).toContain("Retornar para {{ contact.name }}")
+    expect(html).toContain("prazo em 24 h")
+    expect(html).toContain("Sem título ainda")
+    expect(html).toContain("Ação 2")
+  })
+
   it("lifts a leading if-only condition into the Conditions group with AND connectors", () => {
     const html = render({
       steps: [

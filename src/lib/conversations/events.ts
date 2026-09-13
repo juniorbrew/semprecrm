@@ -48,6 +48,8 @@ export interface ConversationEvent {
   tag_name?: string
   /** `note_added`: the `contact_notes` row. */
   note_id?: string
+  /** `contact_opted_out`: the normalised stop word the customer sent. */
+  keyword?: string
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -106,6 +108,7 @@ export function eventFromRecord(
     tag_id: payload.tag_id,
     tag_name: payload.tag_name,
     note_id: payload.note_id,
+    keyword: payload.keyword,
   }
 }
 
@@ -301,6 +304,20 @@ export function formatConversationEvent(
     }
     case 'note_added':
       return ''
+    case 'contact_opted_out': {
+      const word = event.keyword ? ` (“${event.keyword}”)` : ''
+      return pt
+        ? `Contato pediu para não receber mensagens${word}`
+        : `Contact asked to stop receiving messages${word}`
+    }
+    case 'contact_opted_in':
+      return actor
+        ? pt
+          ? `${actor} reativou o contato`
+          : `${actor} reactivated the contact`
+        : pt
+          ? 'Contato reativado'
+          : 'Contact reactivated'
     default:
       return ''
   }

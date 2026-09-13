@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
     messages: [] as Record<string, unknown>[],
     recipients: [] as Record<string, unknown>[],
     accountOwner: 'owner-1' as string | null,
+    accountPreferences: null as Record<string, unknown> | null,
+    events: [] as Record<string, unknown>[],
     contactInsertError: null as { code?: string; message: string } | null,
     updates: [] as { table: string; payload: Record<string, unknown> }[],
   },
@@ -83,7 +85,9 @@ function makeDb() {
     function resolve() {
       if (table === 'accounts') {
         return {
-          data: h.state.accountOwner ? { owner_user_id: h.state.accountOwner } : null,
+          data: h.state.accountOwner
+            ? { owner_user_id: h.state.accountOwner, preferences: h.state.accountPreferences }
+            : null,
           error: null,
         }
       }
@@ -95,6 +99,7 @@ function makeDb() {
         if (table === 'contacts') h.state.contacts.push(row)
         if (table === 'conversations') h.state.conversations.push(row)
         if (table === 'messages') h.state.messages.push(row)
+        if (table === 'conversation_events') h.state.events.push(row)
         return { data: row, error: null }
       }
       if (ops.type === 'update') {
@@ -157,6 +162,8 @@ beforeEach(() => {
   h.state.messages = []
   h.state.recipients = []
   h.state.accountOwner = 'owner-1'
+  h.state.accountPreferences = null
+  h.state.events = []
   h.state.contactInsertError = null
   h.state.updates = []
   h.flows.consumed = false
@@ -328,6 +335,91 @@ describe('ingestInboundMessage', () => {
     expect(res.ok).toBe(true)
     expect(res.contactId).toBe('c-raced')
     expect(res.contactCreated).toBe(false)
+  })
+})
+
+describe('ingestInboundMessage — opt-out', () => {
+  it('marks the contact opted out, logs the pill and flags the automation context on "PARAR"', async () => {
+    const db = makeDb()
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
+    h.state.conversations.push({
+      id: 'conv-1',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      unread_count: 0,
+      channel: 'qr',
+    })
+    h.state.messages.push({
+      id: 'm-0',
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+      message_id: 'old',
+    })
+
+    const res = await ingestInboundMessage({ ...BASE, text: ' PARAR!! ' }, db)
+
+    expect(res.ok).toBe(true)
+    expect(res.optedOut).toBe(true)
+    expect(h.state.contacts[0].opted_out_at).toEqual(expect.any(String))
+    expect(h.state.events).toHaveLength(1)
+    expect(h.state.events[0]).toMatchObject({
+      account_id: 'acct-1',
+      conversation_id: 'conv-1',
+      actor_user_id: null,
+      event_type: 'contact_opted_out',
+      payload: { keyword: 'parar' },
+    })
+    // The message itself is still stored.
+    expect(h.state.messages.filter((m) => m.message_id === 'wamid-1')).toHaveLength(1)
+    // Every automation dispatched for this message carries vars.opted_out.
+    expect(h.automationCalls.length).toBeGreaterThan(0)
+    for (const call of h.automationCalls) {
+      expect((call.context as { vars?: Record<string, unknown> }).vars).toEqual({ opted_out: true })
+    }
+  })
+
+  it('uses the account keyword list and ignores sentences that merely contain a word', async () => {
+    const db = makeDb()
+    h.state.accountPreferences = { opt_out_keywords: ['chega'] }
+
+    const a = await ingestInboundMessage({ ...BASE, text: 'parar' }, db)
+    expect(a.optedOut).toBe(false)
+    expect(h.state.events).toHaveLength(0)
+
+    const b = await ingestInboundMessage({ ...BASE, messageId: 'wamid-2', text: 'Chega.' }, db)
+    expect(b.optedOut).toBe(true)
+    expect(h.state.events).toHaveLength(1)
+
+    const c = await ingestInboundMessage(
+      { ...BASE, messageId: 'wamid-3', text: 'quero parar de receber' },
+      db,
+    )
+    expect(c.optedOut).toBe(false)
+  })
+
+  it('does not log a second pill for a contact that is already opted out', async () => {
+    const db = makeDb()
+    h.state.contacts.push({
+      id: 'c-1',
+      account_id: 'acct-1',
+      phone: '5511999990000',
+      name: 'Maria',
+      opted_out_at: '2026-01-01T00:00:00.000Z',
+    })
+    const res = await ingestInboundMessage({ ...BASE, text: 'sair' }, db)
+    expect(res.optedOut).toBe(true)
+    expect(h.state.events).toHaveLength(0)
+    expect(h.state.contacts[0].opted_out_at).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('leaves normal messages alone', async () => {
+    const db = makeDb()
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.optedOut).toBe(false)
+    expect(h.state.events).toHaveLength(0)
+    for (const call of h.automationCalls) {
+      expect((call.context as { vars?: unknown }).vars).toBeUndefined()
+    }
   })
 })
 

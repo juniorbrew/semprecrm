@@ -1,6 +1,15 @@
 "use client";
 
-import { CheckCheck, RotateCcw, Tag as TagIcon, UserMinus, UserPlus, Clock } from "lucide-react";
+import {
+  Ban,
+  BellRing,
+  CheckCheck,
+  RotateCcw,
+  Tag as TagIcon,
+  UserMinus,
+  UserPlus,
+  Clock,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Language } from "@/lib/i18n";
 import {
@@ -30,6 +39,10 @@ function EventIcon({ event }: { event: ConversationEvent }) {
     case "label_added":
     case "label_removed":
       return <TagIcon className={cls} />;
+    case "contact_opted_out":
+      return <Ban className={cn(cls, "text-red-500")} />;
+    case "contact_opted_in":
+      return <BellRing className={cn(cls, "text-emerald-500")} />;
     default:
       return null;
   }

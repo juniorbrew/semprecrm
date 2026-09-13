@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, useEntitlements } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { TaskDrawer } from "@/components/tasks";
 import type {
   WhatsAppChannel,
   Conversation,
@@ -29,6 +31,8 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  MoreVertical,
+  CheckSquare,
 } from "lucide-react";
 import { isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -252,9 +256,15 @@ export function MessageThread({
   onToggleContactPanel,
 }: MessageThreadProps) {
   const { user, profile, accountId } = useAuth();
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const statusCopy = THREAD_STATUS_COPY[language] ?? THREAD_STATUS_COPY["pt-BR"];
   const [loading, setLoading] = useState(false);
+  // "Criar tarefa" in the header's overflow menu — opens the shared task
+  // drawer in create mode, prefilled with this contact + conversation.
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const tasksEnabled = !entitlementsReady || modules.tasks;
+  const canCreateTask = useCan("send-messages") && tasksEnabled;
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   // Team-only notes for this contact, interleaved in the stream as amber
   // bubbles. Stored in `contact_notes` (account-scoped, shared with the
   // whole team via RLS) — they never go anywhere near the WhatsApp API.
@@ -1309,6 +1319,31 @@ export function MessageThread({
               />
             </button>
           )}
+          {/* Overflow — actions that are not queue operations. Currently
+              "Criar tarefa" (Tasks module, agent+). */}
+          {canCreateTask && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={t("More actions")}
+                title={t("More actions")}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-44 border-border bg-popover"
+              >
+                <DropdownMenuItem
+                  onClick={() => setTaskDrawerOpen(true)}
+                  className="gap-2 text-sm text-popover-foreground"
+                >
+                  <CheckSquare className="h-4 w-4" />
+                  {t("Create task")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {/* Contact-panel toggle — desktop only (the panel is xl-only,
               issue #258). */}
           {onToggleContactPanel && (
@@ -1334,6 +1369,19 @@ export function MessageThread({
           )}
         </div>
       </div>
+
+      {canCreateTask && (
+        <TaskDrawer
+          open={taskDrawerOpen}
+          onOpenChange={setTaskDrawerOpen}
+          task={null}
+          defaults={{
+            contact_id: contact.id,
+            conversation_id: conversation.id,
+            title: `${t("Service")}: ${displayName}`,
+          }}
+        />
+      )}
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
@@ -1441,6 +1489,7 @@ export function MessageThread({
         conversationId={conversation.id}
         sessionExpired={isOfficial && sessionInfo.expired}
         templatesEnabled={isOfficial}
+        contactName={contact?.name ?? conversation.contact?.name ?? null}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onOpenTemplates={handleOpenTemplates}

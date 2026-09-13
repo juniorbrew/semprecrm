@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/use-auth'
+import { useAuth, useEntitlements } from '@/hooks/use-auth'
 import { useLanguage } from '@/hooks/use-language'
 import { formatCurrency } from '@/lib/currency'
 import {
@@ -36,6 +36,8 @@ import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
+import { TasksToday } from '@/components/dashboard/tasks-today'
+import { RadarCard } from '@/components/dashboard/radar-card'
 import { cn } from '@/lib/utils'
 
 type RangeDays = 7 | 30 | 90
@@ -43,6 +45,8 @@ type RangeDays = 7 | 30 | 90
 export default function DashboardPage() {
   const { defaultCurrency } = useAuth()
   const { t, language } = useLanguage()
+  const { ready: entitlementsReady, modules } = useEntitlements()
+  const tasksEnabled = !entitlementsReady || modules.tasks
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
 
@@ -75,6 +79,9 @@ export default function DashboardPage() {
   // handler flips it back on.
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(true)
+  // The tasks card owns its fetch (it is realtime-driven); the refresh
+  // button just bumps this so it re-reads with everything else.
+  const [tasksRefreshToken, setTasksRefreshToken] = useState(0)
 
   const loadAll = useCallback((seriesRange: RangeDays) => {
     const db = createClient()
@@ -126,6 +133,7 @@ export default function DashboardPage() {
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true)
+    setTasksRefreshToken((n) => n + 1)
     loadAll(range)
   }, [loadAll, range])
 
@@ -258,6 +266,20 @@ export default function DashboardPage() {
             currency={defaultCurrency}
           />
         </div>
+      </div>
+
+      {/* Radar + today's tasks: the two "act now" cards side by side.
+          Radar reads the same classifier as the inbox chips, so its
+          counters deep-link into a matching filtered inbox. */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="h-full">
+          <RadarCard refreshToken={tasksRefreshToken} />
+        </div>
+        {tasksEnabled && (
+          <div className="h-full">
+            <TasksToday refreshToken={tasksRefreshToken} />
+          </div>
+        )}
       </div>
 
       {/* Response time */}

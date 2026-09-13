@@ -37,8 +37,15 @@ export function SettingsOverview({
 }: {
   onSelect: (section: SettingsSection) => void;
 }) {
-  const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
-    useAuth();
+  const {
+    user,
+    profile,
+    accountId,
+    accountRole,
+    defaultCurrency,
+    canManageMembers,
+    preferences,
+  } = useAuth();
   const { mode, theme } = useTheme();
   const entitlements = useEntitlements();
   const { t } = useLanguage();
@@ -204,6 +211,30 @@ export function SettingsOverview({
       loading: false,
       subtitle: `${defaultCurrency} — ${currencyLabel}`,
     },
+    {
+      section: 'tasks',
+      loading: false,
+      subtitle: t('Task statuses for the board'),
+    },
+    {
+      section: 'quick_replies',
+      loading: false,
+      subtitle: t('Canned responses for the inbox'),
+    },
+    ...(canManageMembers
+      ? [
+          {
+            section: 'inbox' as const,
+            loading: false,
+            subtitle: `${t('SLA')} ${preferences.inbox_sla_minutes} min · ${t('cooling')} ${preferences.cooling_hours} h`,
+          },
+          {
+            section: 'integrations' as const,
+            loading: false,
+            subtitle: t('Lead capture by webhook'),
+          },
+        ]
+      : []),
     {
       section: 'fields',
       loading: countsLoading,

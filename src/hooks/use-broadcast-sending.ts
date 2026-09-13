@@ -195,6 +195,11 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       contacts = contacts.filter((c) => !excludedIds.has(c.id));
     }
 
+    // Opt-out (migration 030): contacts who asked to stop never make it
+    // into broadcast_recipients. The API route re-checks by phone as a
+    // second line of defence.
+    contacts = contacts.filter((c) => !c.opted_out_at);
+
     return contacts;
   }
 

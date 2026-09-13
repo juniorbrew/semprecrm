@@ -62,8 +62,27 @@ export interface Account {
   limit_overrides: Partial<Record<LimitKey, number | null>>;
   /** Platform-admin notes. Never shown to the customer. */
   platform_notes: string | null;
+  /**
+   * Free-form per-account settings (migration 030). Read through
+   * `parseAccountPreferences` in `@/lib/account-preferences`, which
+   * fills defaults — never index this raw.
+   */
+  preferences?: Partial<AccountPreferences> | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Typed keys of `accounts.preferences`. Defaults live in
+ * `@/lib/account-preferences` (`DEFAULT_ACCOUNT_PREFERENCES`).
+ */
+export interface AccountPreferences {
+  /** Minutes a customer may wait for a reply before the Radar flags it. */
+  inbox_sla_minutes: number;
+  /** Hours since the last agent message before a conversation is "cooling". */
+  cooling_hours: number;
+  /** Whole-message stop words (compared accent- and case-insensitively). */
+  opt_out_keywords: string[];
 }
 
 /**
@@ -131,6 +150,12 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  /**
+   * Set when the customer asked to stop receiving messages ("PARAR")
+   * — migration 030. Automations skip send steps and broadcasts drop
+   * the contact while this is set; admin+ can clear it ("Reativar").
+   */
+  opted_out_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -194,6 +219,13 @@ export interface Conversation {
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
+  /**
+   * Kept by the `messages` AFTER INSERT trigger (migration 030): the
+   * newest customer message / newest agent-or-bot message. Drive the
+   * Radar (waiting / cooling) and the `conversation_inactive` trigger.
+   */
+  last_customer_message_at?: string | null;
+  last_agent_message_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
@@ -256,7 +288,10 @@ export type ConversationEventType =
   | 'status_changed'
   | 'label_added'
   | 'label_removed'
-  | 'note_added';
+  | 'note_added'
+  /** Contact opt-out (migration 030): customer sent a stop word / admin reactivated. */
+  | 'contact_opted_out'
+  | 'contact_opted_in';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -277,6 +312,8 @@ export interface ConversationEventPayload {
   tag_name?: string;
   /** `note_added` */
   note_id?: string;
+  /** `contact_opted_out` — the normalised stop word that triggered it. */
+  keyword?: string;
 }
 
 /** Row of `conversation_events` (migration 024). */
@@ -390,6 +427,17 @@ export interface PipelineStage {
 
 export type DealStatus = 'open' | 'won' | 'lost';
 
+/** A reason a deal can be lost for — per account, ordered, activatable
+ *  (migration 031). Seeded with five defaults on signup. */
+export interface DealLossReason {
+  id: string;
+  account_id: string;
+  name: string;
+  position: number;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface Deal {
   id: string;
   user_id: string;
@@ -408,11 +456,15 @@ export interface Deal {
   notes?: string;
   expected_close_date?: string;
   status?: DealStatus;
+  /** Why the deal was lost (migration 031). Cleared on reopen / won. */
+  loss_reason_id?: string | null;
+  lost_note?: string | null;
   created_at: string;
   updated_at?: string;
   contact?: Contact;
   stage?: PipelineStage;
   assignee?: Profile;
+  loss_reason?: Pick<DealLossReason, 'id' | 'name'> | null;
 }
 
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
@@ -473,7 +525,10 @@ export type AutomationTriggerType =
   | 'new_contact_created'
   | 'conversation_assigned'
   | 'tag_added'
-  | 'time_based';
+  | 'time_based'
+  | 'lead_captured'
+  /** Conversation silent for N hours (migration 030) — fired by the cron scan. */
+  | 'conversation_inactive';
 
 export type AutomationStepType =
   | 'send_message'
@@ -486,7 +541,8 @@ export type AutomationStepType =
   | 'wait'
   | 'condition'
   | 'send_webhook'
-  | 'close_conversation';
+  | 'close_conversation'
+  | 'create_task';
 
 export type AutomationLogStatus = 'success' | 'partial' | 'failed';
 
@@ -506,11 +562,29 @@ export interface TimeBasedTriggerConfig {
   timezone?: string;
 }
 
+/** `lead_captured` (migration 029): fire for every source, or only one. */
+export interface LeadCapturedTriggerConfig {
+  source_id?: string;
+}
+
+/**
+ * `conversation_inactive` (migration 030): fire once per silence when a
+ * conversation in one of `statuses` has had no message for `hours`
+ * (decimal allowed, 0.05–720) and the last message came from `last_from`.
+ */
+export interface ConversationInactiveTriggerConfig {
+  hours: number;
+  last_from: 'agent' | 'customer' | 'any';
+  statuses: ('open' | 'pending')[];
+}
+
 export type AutomationTriggerConfig =
   | Record<string, never>
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
+  | LeadCapturedTriggerConfig
+  | ConversationInactiveTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {
@@ -557,6 +631,23 @@ export interface WaitStepConfig {
   unit: 'minutes' | 'hours' | 'days';
 }
 
+/**
+ * `create_task` — inserts a row in `tasks` (migration 027) linked to
+ * the triggering contact + conversation, on the account's default open
+ * status. `title` / `description` accept `{{ contact.name }}`,
+ * `{{ contact.phone }}`, `{{ message.text }}` and `{{ vars.* }}`.
+ */
+export interface CreateTaskStepConfig {
+  title: string;
+  description?: string;
+  /** Defaults to 'normal'. */
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  /** Account member to assign; unassigned when empty. */
+  assignee_user_id?: string;
+  /** Due date = run time + this many hours; no due date when empty. */
+  due_in_hours?: number;
+}
+
 export type ConditionSubject =
   | 'contact_field'
   | 'tag_presence'
@@ -587,6 +678,7 @@ export type AutomationStepConfig =
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig
+  | CreateTaskStepConfig
   | Record<string, never>
   | Record<string, unknown>;
 
@@ -639,4 +731,76 @@ export interface AutomationLog {
   error_message?: string | null;
   created_at: string;
   contact?: Contact;
+}
+
+// ============================================================
+// Quick replies (migration 028) — per-account canned responses
+// inserted from the inbox composer via "/atalho". `body` may hold
+// {{contato.nome}}, {{contato.primeiro_nome}}, {{atendente.nome}},
+// {{empresa}} — resolved by src/lib/quick-replies/render.ts.
+// ============================================================
+export interface QuickReply {
+  id: string;
+  account_id: string;
+  /** Lower-case, no spaces, unique per account (^[a-z0-9_-]{1,30}$). */
+  shortcut: string;
+  title: string;
+  body: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================================
+// Lead capture by webhook (migration 029) — one public endpoint per
+// source (`/api/v1/webhooks/in/<token>`) that turns a payload into
+// contact + deal + tags. Logic in src/lib/lead-capture/.
+// ============================================================
+
+/**
+ * Which payload key feeds each CRM field. Missing keys fall back to
+ * the defaults (`name`, `phone`, `email`, `company`). Values may be
+ * dotted paths (`lead.telefone`). `custom` maps custom_field_id →
+ * payload key.
+ */
+export interface LeadSourceFieldMap {
+  name?: string;
+  phone?: string;
+  email?: string;
+  company?: string;
+  custom?: Record<string, string>;
+}
+
+export interface LeadSource {
+  id: string;
+  account_id: string;
+  name: string;
+  /** 32 random bytes, hex — generated server-side. Admin-only on the client. */
+  token: string;
+  is_active: boolean;
+  pipeline_id: string | null;
+  stage_id: string | null;
+  tag_ids: string[];
+  assignee_user_id: string | null;
+  field_map: LeadSourceFieldMap;
+  received_count: number;
+  last_received_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type LeadSourceEventStatus = 'ok' | 'duplicate' | 'error';
+
+export interface LeadSourceEvent {
+  id: string;
+  account_id: string;
+  source_id: string;
+  status: LeadSourceEventStatus;
+  error: string | null;
+  contact_id: string | null;
+  deal_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+  contact?: Pick<Contact, 'id' | 'name' | 'phone'> | null;
 }

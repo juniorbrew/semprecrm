@@ -1,13 +1,32 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, WhatsAppChannel } from "@/types";
 import type { Language } from "@/lib/i18n";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
-import { Search, ChevronDown, Check, MessageCircle, MailOpen } from "lucide-react";
+import {
+  classifyConversation,
+  countRadar,
+  formatWaitingAge,
+  isRadarKey,
+  matchesRadar,
+  RADAR_KEYS,
+  type RadarKey,
+} from "@/lib/radar/classify";
+import {
+  Search,
+  ChevronDown,
+  Check,
+  MessageCircle,
+  MailOpen,
+  Clock,
+  UserX,
+  Snowflake,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -66,6 +85,11 @@ const STRIP_COPY: Record<
     /** Short channel chip shown on the row (migration 026). */
     channelChip: Record<WhatsAppChannel, string>;
     moreTags: (n: number) => string;
+    /** Radar chips (spec §3) above the queue tabs. */
+    radar: string;
+    radarChips: Record<RadarKey, string>;
+    radarClear: string;
+    waitingTitle: string;
   }
 > = {
   "pt-BR": {
@@ -82,6 +106,10 @@ const STRIP_COPY: Record<
     channel: "WhatsApp",
     channelChip: { official: "Oficial", qr: "QR" },
     moreTags: (n) => `+${n}`,
+    radar: "Radar",
+    radarChips: { waiting: "Aguardando", unassigned: "Sem responsável", cooling: "Esfriando" },
+    radarClear: "Limpar filtro do radar",
+    waitingTitle: "Cliente aguardando resposta além do SLA",
   },
   "en-US": {
     title: "Conversations",
@@ -97,7 +125,24 @@ const STRIP_COPY: Record<
     channel: "WhatsApp",
     channelChip: { official: "Official", qr: "QR" },
     moreTags: (n) => `+${n}`,
+    radar: "Radar",
+    radarChips: { waiting: "Waiting", unassigned: "Unassigned", cooling: "Cooling" },
+    radarClear: "Clear radar filter",
+    waitingTitle: "Customer waiting past the SLA",
   },
+};
+
+const RADAR_ICON: Record<RadarKey, typeof Clock> = {
+  waiting: Clock,
+  unassigned: UserX,
+  cooling: Snowflake,
+};
+
+/** Active-chip colours per bucket — same hues as the dashboard Radar card. */
+const RADAR_ACTIVE: Record<RadarKey, string> = {
+  waiting: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400",
+  unassigned: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  cooling: "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400",
 };
 
 const STATUS_DOT: Record<StatusFilter, string> = {
@@ -158,10 +203,27 @@ export function ConversationList({
   onConversationsLoaded,
   resyncToken = 0,
 }: ConversationListProps) {
-  const { user } = useAuth();
+  const { user, preferences } = useAuth();
   const { language } = useLanguage();
   const copy = STRIP_COPY[language] ?? STRIP_COPY["pt-BR"];
   const userId = user?.id ?? null;
+
+  // Radar filter lives in the URL (?radar=waiting|unassigned|cooling) so
+  // the dashboard card can deep-link into it and a reload keeps it.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const radarParam = searchParams.get("radar");
+  const radar: RadarKey | null = isRadarKey(radarParam) ? radarParam : null;
+  const setRadar = useCallback(
+    (next: RadarKey | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next) params.set("radar", next);
+      else params.delete("radar");
+      const qs = params.toString();
+      router.replace(qs ? `/inbox?${qs}` : "/inbox", { scroll: false });
+    },
+    [router, searchParams],
+  );
 
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<TriageTab>("all");
@@ -331,14 +393,29 @@ export function ConversationList({
   // unassigned / total" — exactly what a team lead scans for.
   const pool = useMemo(() => {
     let result = conversations;
-    if (statusFilter !== "all") {
+    if (radar) {
+      // A radar bucket replaces the status chip: the bucket definition
+      // already fixes the status (never closed; "unassigned" is open
+      // only), and this keeps the list in step with the chip / dashboard
+      // counts when someone deep-links from the card.
+      result = result.filter((c) => matchesRadar(c, radar, preferences, now));
+    } else if (statusFilter !== "all") {
       result = result.filter((c) => c.status === statusFilter);
     }
     if (unreadOnly) {
       result = result.filter((c) => c.unread_count > 0);
     }
     return result;
-  }, [conversations, statusFilter, unreadOnly]);
+  }, [conversations, statusFilter, unreadOnly, radar, preferences, now]);
+
+  // Radar counts are taken over every conversation the list knows — the
+  // same population the dashboard card counts — regardless of the
+  // status / unread / queue filters, so both surfaces show identical
+  // numbers.
+  const radarCounts = useMemo(
+    () => countRadar(conversations, preferences, now),
+    [conversations, preferences, now],
+  );
 
   const counts = useMemo<Record<TriageTab, number>>(() => {
     let mine = 0;
@@ -462,6 +539,53 @@ export function ConversationList({
           </div>
         </div>
 
+        {/* Radar chips (spec §3): waiting past SLA · open without owner ·
+            cooling after our last message. Bound to ?radar=; clicking the
+            active chip clears it. */}
+        <div
+          role="group"
+          aria-label={copy.radar}
+          className="mt-2 flex items-center gap-1.5 overflow-x-auto px-3 [scrollbar-width:none]"
+          data-no-translate
+        >
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {copy.radar}
+          </span>
+          {RADAR_KEYS.map((key) => {
+            const active = radar === key;
+            const count = radarCounts[key];
+            const Icon = RADAR_ICON[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={active}
+                title={active ? copy.radarClear : copy.radarChips[key]}
+                onClick={() => setRadar(active ? null : key)}
+                className={cn(
+                  "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] font-medium whitespace-nowrap transition-colors",
+                  active
+                    ? RADAR_ACTIVE[key]
+                    : count > 0
+                      ? "border-border bg-muted/60 text-foreground hover:bg-muted"
+                      : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Icon className="h-3 w-3" aria-hidden />
+                {copy.radarChips[key]}
+                <span
+                  className={cn(
+                    "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums leading-none",
+                    active ? "bg-background/70" : "bg-background/60 text-muted-foreground",
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Queue tabs with live counts */}
         <div
           role="tablist"
@@ -533,6 +657,8 @@ export function ConversationList({
                 channelLabel={copy.channel}
                 channelChip={copy.channelChip}
                 moreTags={copy.moreTags}
+                waitingLabel={waitingLabelFor(conv, preferences, now, language)}
+                waitingTitle={copy.waitingTitle}
               />
             ))}
           </div>
@@ -545,6 +671,18 @@ export function ConversationList({
 const EMPTY_TAGS: RowTag[] = [];
 const MAX_ROW_TAGS = 2;
 
+/** "há 12 min" when the customer is waiting past the SLA, else null. */
+function waitingLabelFor(
+  conv: Conversation,
+  preferences: { inbox_sla_minutes: number; cooling_hours: number },
+  now: number,
+  language: Language,
+): string | null {
+  const c = classifyConversation(conv, preferences, now);
+  if (!c.waiting || !c.waitingSince) return null;
+  return formatWaitingAge(c.waitingSince, now, language);
+}
+
 interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
@@ -555,6 +693,9 @@ interface ConversationItemProps {
   channelLabel: string;
   channelChip: Record<WhatsAppChannel, string>;
   moreTags: (n: number) => string;
+  /** Set when the customer is waiting past the SLA ("há 12 min"). */
+  waitingLabel: string | null;
+  waitingTitle: string;
 }
 
 function ConversationItem({
@@ -567,6 +708,8 @@ function ConversationItem({
   channelLabel,
   channelChip,
   moreTags,
+  waitingLabel,
+  waitingTitle,
 }: ConversationItemProps) {
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
@@ -659,6 +802,15 @@ function ConversationItem({
             {conversation.last_message_text || "No messages yet"}
           </p>
           <div data-no-translate className="flex shrink-0 items-center gap-1.5">
+            {waitingLabel && (
+              <span
+                title={waitingTitle}
+                className="inline-flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-semibold leading-4 text-red-600 dark:text-red-400"
+              >
+                <Clock className="h-3 w-3" aria-hidden />
+                {waitingLabel}
+              </span>
+            )}
             {status !== "open" && (
               <span
                 className={cn(

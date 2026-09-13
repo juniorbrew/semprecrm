@@ -89,9 +89,14 @@ No `/var/www/semprecrm/.env.production`:
 | `ENCRYPTION_KEY` | `ENCRYPTION_KEY_DO_APP` gerado |
 | `META_APP_SECRET`, `META_APP_ID` | do app na Meta |
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.SEU.DOMINIO` |
+| `AUTOMATION_CRON_SECRET` | `openssl rand -hex 32` — usado pelo agendador `semprecrm-cron` (ver 6.2 do guia Contabo) |
 
 Depois siga os passos 4 a 7 do `deploy/contabo/README.md` (build, PM2, Nginx do app, Certbot, webhook
-da Meta). Crie o primeiro usuário em `https://crm.SEU.DOMINIO/signup`. Com `ENABLE_EMAIL_AUTOCONFIRM=true`
+da Meta). O `pm2 start deploy/contabo/ecosystem.config.cjs` sobe também o `semprecrm-cron`
+(`scripts/cron-tick.mjs`), o agendador interno que a cada minuto chama `/api/automations/cron` e
+`/api/flows/cron` — é ele que faz andar as etapas "Aguardar", os gatilhos por horário e o gatilho
+"Conversa sem resposta há X horas". Não é preciso configurar nada no crontab para isso; só o
+`AUTOMATION_CRON_SECRET` acima. Crie o primeiro usuário em `https://crm.SEU.DOMINIO/signup`. Com `ENABLE_EMAIL_AUTOCONFIRM=true`
 o cadastro entra sem confirmar e-mail; depois de configurar `SMTP_*` no `/opt/supabase/.env` você pode
 voltar para `false` e desligar `DISABLE_SIGNUP` para bloquear cadastros abertos (convites continuam
 funcionando pelo app).
