@@ -6,6 +6,10 @@ import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 import type { CustomField } from '@/types';
 import {
+  createCustomField,
+  isDuplicateFieldName,
+} from '@/lib/contacts/custom-fields';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -87,10 +91,7 @@ export function CustomFieldsPanel() {
 
   /** Case-insensitive name clash within the loaded list. */
   function isDuplicate(name: string, exceptId?: string): boolean {
-    const lower = name.toLowerCase();
-    return fields.some(
-      (f) => f.id !== exceptId && f.field_name.toLowerCase() === lower
-    );
+    return isDuplicateFieldName(fields, name, exceptId);
   }
 
   async function handleCreate() {
@@ -106,18 +107,18 @@ export function CustomFieldsPanel() {
     }
 
     setCreating(true);
-    const { error } = await supabase.from('custom_fields').insert({
-      field_name: name,
-      field_type: 'text',
-      user_id: user.id,
-      account_id: accountId,
-    });
-    setCreating(false);
-
-    if (error) {
+    try {
+      await createCustomField(supabase, {
+        name,
+        userId: user.id,
+        accountId,
+      });
+    } catch {
+      setCreating(false);
       toast.error('Could not create field. You may not have permission.');
       return;
     }
+    setCreating(false);
     toast.success(`Created "${name}".`);
     setNewName('');
     await fetchFields();

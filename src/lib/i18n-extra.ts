@@ -1205,4 +1205,27 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Could not reach the server. Check your connection and try again.':
     'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
   'Send a message to start the conversation': 'Envie uma mensagem para iniciar a conversa',
+  // Inbox contact panel — inline add (custom fields, deals, team notes)
+  'New field': 'Novo campo',
+  'Custom fields appear on every contact in this account.':
+    'Campos personalizados aparecem em todos os contatos desta conta.',
+  'Field name': 'Nome do campo',
+  'e.g. ZIP code, lead source': 'ex.: CEP, origem do lead',
+  'A field with this name already exists.': 'Já existe um campo com este nome.',
+  Text: 'Texto',
+  'Create field': 'Criar campo',
+  'Field created': 'Campo criado',
+  'Add custom field': 'Adicionar campo personalizado',
+  'Could not save the field value': 'Não foi possível salvar o valor do campo',
+  'Click to edit': 'Clique para editar',
+  'Create a pipeline first in Pipelines.': 'Crie um funil primeiro em Funis.',
+  'Could not load pipelines': 'Não foi possível carregar os funis',
+  'Open in Pipelines': 'Abrir em Funis',
+  'Add team note': 'Adicionar nota da equipe',
+  'Write a note for the team…': 'Escreva uma nota para a equipe…',
+  'Team note': 'Nota da equipe',
+  'Team only': 'Só para a equipe',
+  'Ctrl+Enter to save': 'Ctrl+Enter para salvar',
+  'Private note added': 'Nota interna adicionada',
+  'Could not save the note': 'Não foi possível salvar a nota',
 };

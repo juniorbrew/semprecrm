@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, useEntitlements } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -13,6 +15,8 @@ import type {
   CustomField,
   Deal,
   ContactNote,
+  Pipeline,
+  PipelineStage,
   Tag,
 } from "@/types";
 import {
@@ -30,6 +34,7 @@ import {
   Lock,
   MessageCircle,
   Loader2,
+  ExternalLink,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -40,7 +45,11 @@ import {
 import { formatCurrency } from "@/lib/currency";
 import { listConversationsByContact } from "@/lib/conversations/find-by-contact";
 import { insertConversationEvent } from "@/lib/conversations/events";
-import { onContactNotesChanged } from "@/lib/conversations/notes";
+import { addContactNote, onContactNotesChanged } from "@/lib/conversations/notes";
+import { DealForm } from "@/components/pipelines/deal-form";
+import { NewCustomFieldDialog } from "./new-custom-field-dialog";
+import { CustomFieldValue } from "./custom-field-value";
+import { TeamNoteComposer } from "./team-note-composer";
 import { toast } from "sonner";
 
 interface ContactSidebarProps {
@@ -162,6 +171,34 @@ function formatDateTime(iso: string, language: Language): string {
   });
 }
 
+/** The small "+" at the right of a section header (Etiquetas style). */
+function SectionAddButton({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+    >
+      {disabled ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Plus className="h-3.5 w-3.5" />
+      )}
+    </button>
+  );
+}
+
 function SectionHeader({
   icon: Icon,
   label,
@@ -195,8 +232,14 @@ export function ContactSidebar({
   onOpenConversation,
 }: ContactSidebarProps) {
   const { user, profile, accountId, defaultCurrency } = useAuth();
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const copy = PANEL_COPY[language] ?? PANEL_COPY["pt-BR"];
+  // Admin+ can define fields (custom_fields RLS); agent+ can write values,
+  // deals and notes. Viewers see everything read-only.
+  const canDefineFields = useCan("edit-settings");
+  const canWrite = useCan("send-messages");
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const pipelinesEnabled = !entitlementsReady || modules.pipelines;
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -207,6 +250,16 @@ export function ContactSidebar({
   const [previous, setPrevious] = useState<Conversation[]>([]);
   const [tagBusy, setTagBusy] = useState<string | null>(null);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [newFieldOpen, setNewFieldOpen] = useState(false);
+  const [noteComposerOpen, setNoteComposerOpen] = useState(false);
+  // "Novo negócio": the first pipeline + its stages, loaded on demand when
+  // the + is clicked so the panel's initial fetch stays lean.
+  const [dealTarget, setDealTarget] = useState<{
+    pipeline: Pipeline;
+    stages: PipelineStage[];
+  } | null>(null);
+  const [dealFormOpen, setDealFormOpen] = useState(false);
+  const [dealTargetLoading, setDealTargetLoading] = useState(false);
 
   const contactId = contact?.id ?? null;
 
@@ -358,9 +411,98 @@ export function ContactSidebar({
   );
 
   const contactTagIds = useMemo(
-    () => new Set(contactTags.map((t) => t.id)),
+    () => new Set(contactTags.map((tag) => tag.id)),
     [contactTags],
   );
+
+  const refreshDeals = useCallback(async () => {
+    if (!contactId) return;
+    const { data } = await createClient()
+      .from("deals")
+      .select("*, stage:pipeline_stages(*)")
+      .eq("contact_id", contactId)
+      .order("created_at", { ascending: false });
+    if (data) setDeals(data as Deal[]);
+  }, [contactId]);
+
+  // Resolve the first pipeline (by creation) and its stages, then open the
+  // shared deal sheet prefilled with this contact and the first stage.
+  const openNewDeal = useCallback(async () => {
+    if (dealTargetLoading) return;
+    if (dealTarget) {
+      setDealFormOpen(true);
+      return;
+    }
+    setDealTargetLoading(true);
+    const supabase = createClient();
+    try {
+      const { data: pipelines, error } = await supabase
+        .from("pipelines")
+        .select("*")
+        .order("created_at")
+        .limit(1);
+      if (error) throw error;
+      const pipeline = (pipelines as Pipeline[] | null)?.[0];
+      if (!pipeline) {
+        toast.error(t("Create a pipeline first in Pipelines."));
+        return;
+      }
+      const { data: stages, error: stagesError } = await supabase
+        .from("pipeline_stages")
+        .select("*")
+        .eq("pipeline_id", pipeline.id)
+        .order("position");
+      if (stagesError) throw stagesError;
+      setDealTarget({ pipeline, stages: (stages as PipelineStage[] | null) ?? [] });
+      setDealFormOpen(true);
+    } catch (err) {
+      console.error("Failed to load pipelines:", err);
+      toast.error(t("Could not load pipelines"));
+    } finally {
+      setDealTargetLoading(false);
+    }
+  }, [dealTarget, dealTargetLoading, t]);
+
+  // Same write path as the composer's "Nota interna" tab (insert +
+  // cross-component notify + `note_added` audit event on this thread).
+  const submitTeamNote = useCallback(
+    async (text: string) => {
+      if (!contactId || !accountId || !user?.id) {
+        toast.error(t("Could not save the note"));
+        throw new Error("missing contact/account/user");
+      }
+      try {
+        const note = await addContactNote(createClient(), {
+          contactId,
+          accountId,
+          userId: user.id,
+          text,
+          conversationId,
+          actorName: profile?.full_name || user.email || undefined,
+        });
+        setNotes((prev) => [note, ...prev]);
+        setNoteComposerOpen(false);
+        toast.success(t("Private note added"));
+      } catch (err) {
+        console.error("Failed to add note:", err);
+        toast.error(t("Could not save the note"));
+        throw err;
+      }
+    },
+    [contactId, accountId, user, conversationId, profile?.full_name, t],
+  );
+
+  const handleFieldCreated = useCallback((field: CustomField) => {
+    setCustomFields((prev) =>
+      [...prev.filter((f) => f.id !== field.id), field].sort((a, b) =>
+        a.field_name.localeCompare(b.field_name),
+      ),
+    );
+  }, []);
+
+  const handleValueSaved = useCallback((fieldId: string, value: string) => {
+    setCustomValues((prev) => ({ ...prev, [fieldId]: value }));
+  }, []);
 
   if (!contact) {
     return (
@@ -531,54 +673,82 @@ export function ContactSidebar({
 
           <div className="my-4 border-t border-border" />
 
-          {/* Custom fields — read-only view of the contact's attributes */}
+          {/* Custom fields — every account definition, this contact's
+              value editable inline; "+" defines a new field (admin+). */}
           <div>
-            <SectionHeader icon={ListChecks} label={copy.customFields} />
+            <SectionHeader
+              icon={ListChecks}
+              label={copy.customFields}
+              count={customFields.length}
+              action={
+                canDefineFields ? (
+                  <SectionAddButton
+                    label={t("Add custom field")}
+                    onClick={() => setNewFieldOpen(true)}
+                  />
+                ) : undefined
+              }
+            />
             <div className="mt-2 px-1">
               {customFields.length === 0 ? (
                 <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
               ) : (
                 <dl className="divide-y divide-border/60 rounded-lg border border-border/60">
-                  {customFields.map((field) => {
-                    const value = customValues[field.id]?.trim();
-                    return (
-                      <div
-                        key={field.id}
-                        className="flex items-baseline justify-between gap-3 px-2.5 py-1.5"
-                      >
-                        <dt className="min-w-0 truncate text-[11px] text-muted-foreground">
-                          {field.field_name}
-                        </dt>
-                        <dd
-                          className={cn(
-                            "min-w-0 truncate text-right text-xs",
-                            value ? "text-foreground" : "text-muted-foreground/60",
-                          )}
-                          title={value || undefined}
-                        >
-                          {value || copy.emptyValue}
-                        </dd>
-                      </div>
-                    );
-                  })}
+                  {customFields.map((field) => (
+                    <CustomFieldValue
+                      key={field.id}
+                      contactId={contact.id}
+                      field={field}
+                      value={customValues[field.id] ?? ""}
+                      onSaved={handleValueSaved}
+                      emptyLabel={copy.emptyValue}
+                      disabled={!canWrite}
+                    />
+                  ))}
                 </dl>
               )}
             </div>
+            <NewCustomFieldDialog
+              open={newFieldOpen}
+              onOpenChange={setNewFieldOpen}
+              existing={customFields}
+              onCreated={handleFieldCreated}
+            />
           </div>
 
           <div className="my-4 border-t border-border" />
 
-          {/* Linked deals */}
+          {/* Linked deals — "+" opens the shared deal sheet prefilled
+              with this contact; hidden when the plan has no Pipelines. */}
           <div>
-            <SectionHeader icon={DollarSign} label={copy.deals} count={deals.length} />
+            <SectionHeader
+              icon={DollarSign}
+              label={copy.deals}
+              count={deals.length}
+              action={
+                pipelinesEnabled && canWrite ? (
+                  <SectionAddButton
+                    label={t("Add Deal")}
+                    onClick={() => void openNewDeal()}
+                    disabled={dealTargetLoading}
+                  />
+                ) : undefined
+              }
+            />
             <div className="mt-2 space-y-2 px-1">
               {deals.length === 0 ? (
                 <p className="text-xs text-muted-foreground">{copy.noDeals}</p>
               ) : (
                 deals.map((deal) => (
-                  <div key={deal.id} className="rounded-lg bg-muted px-3 py-2">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {deal.title}
+                  <Link
+                    key={deal.id}
+                    href="/pipelines"
+                    title={t("Open in Pipelines")}
+                    className="group/deal block rounded-lg bg-muted px-3 py-2 transition-colors hover:bg-muted/70"
+                  >
+                    <p className="flex items-center gap-1 text-sm font-medium text-foreground">
+                      <span className="min-w-0 flex-1 truncate">{deal.title}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/deal:opacity-100" />
                     </p>
                     <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                       <span className="tabular-nums">
@@ -596,10 +766,21 @@ export function ContactSidebar({
                         </span>
                       )}
                     </div>
-                  </div>
+                  </Link>
                 ))
               )}
             </div>
+            {dealTarget && (
+              <DealForm
+                open={dealFormOpen}
+                onOpenChange={setDealFormOpen}
+                pipelineId={dealTarget.pipeline.id}
+                stages={dealTarget.stages}
+                defaultStageId={dealTarget.stages[0]?.id}
+                defaultContactId={contact.id}
+                onSaved={() => void refreshDeals()}
+              />
+            )}
           </div>
 
           <div className="my-4 border-t border-border" />
@@ -651,10 +832,29 @@ export function ContactSidebar({
           <div className="my-4 border-t border-border" />
 
           {/* Team notes — the latest few; the full history sits in the
-              thread as amber bubbles, where new ones are written. */}
+              thread as amber bubbles. "+" reveals an inline note box that
+              writes through the same path as the composer's Nota interna. */}
           <div>
-            <SectionHeader icon={StickyNote} label={copy.notes} count={notes.length} />
+            <SectionHeader
+              icon={StickyNote}
+              label={copy.notes}
+              count={notes.length}
+              action={
+                canWrite ? (
+                  <SectionAddButton
+                    label={t("Add team note")}
+                    onClick={() => setNoteComposerOpen((open) => !open)}
+                  />
+                ) : undefined
+              }
+            />
             <div className="mt-2 space-y-2 px-1">
+              {noteComposerOpen && (
+                <TeamNoteComposer
+                  onSubmit={submitTeamNote}
+                  onCancel={() => setNoteComposerOpen(false)}
+                />
+              )}
               {panelNotes.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border px-3 py-2">
                   <p className="text-xs text-muted-foreground">{copy.noNotes}</p>

@@ -58,6 +58,7 @@ import {
   isVisibleEvent,
 } from "@/lib/conversations/events";
 import {
+  addContactNote,
   notifyContactNotesChanged,
   onContactNotesChanged,
 } from "@/lib/conversations/notes";
@@ -250,7 +251,7 @@ export function MessageThread({
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
-  const { user, accountId } = useAuth();
+  const { user, profile, accountId } = useAuth();
   const { language } = useLanguage();
   const statusCopy = THREAD_STATUS_COPY[language] ?? THREAD_STATUS_COPY["pt-BR"];
   const [loading, setLoading] = useState(false);
@@ -747,32 +748,26 @@ export function MessageThread({
         toast.error(statusCopy.noteFailed);
         return;
       }
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("contact_notes")
-        .insert({
-          contact_id: contact.id,
-          account_id: accountId,
-          user_id: user.id,
-          note_text: text,
-        })
-        .select()
-        .single();
-      if (error || !data) {
+      try {
+        // Shared with the contact panel's inline note (lib/conversations/
+        // notes): insert + cross-component notify + `note_added` audit
+        // event, so both entry points behave identically.
+        const note = await addContactNote(createClient(), {
+          contactId: contact.id,
+          accountId,
+          userId: user.id,
+          text,
+          conversationId: conversation?.id ?? null,
+          actorName: profile?.full_name || user.email || undefined,
+        });
+        setNotes((prev) => [...prev, note]);
+        toast.success(statusCopy.noteAdded);
+      } catch (error) {
         console.error("Failed to add note:", error);
         toast.error(statusCopy.noteFailed);
-        return;
       }
-      setNotes((prev) => [...prev, data as ContactNote]);
-      notifyContactNotesChanged(contact.id);
-      toast.success(statusCopy.noteAdded);
-      // Audit-log only: the amber bubble itself is the visible trace.
-      void logEvent({
-        event_type: "note_added",
-        payload: { note_id: (data as ContactNote).id },
-      });
     },
-    [contact, accountId, user?.id, statusCopy, logEvent],
+    [contact, accountId, user, profile?.full_name, conversation?.id, statusCopy],
   );
 
   const handleDeleteNote = useCallback(

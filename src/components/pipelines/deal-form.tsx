@@ -28,6 +28,8 @@ interface DealFormBodyProps {
   pipelineId: string;
   stages: PipelineStage[];
   defaultStageId?: string;
+  /** Preselected contact for a new deal (e.g. opened from the inbox panel). */
+  defaultContactId?: string;
   /** Called after a successful save or delete so the board can refetch. */
   onSaved: () => void;
   /** Cancel/back. In the drawer this returns to the read view. */
@@ -48,6 +50,7 @@ export function DealFormBody({
   pipelineId,
   stages,
   defaultStageId,
+  defaultContactId,
   onSaved,
   onCancel,
   onDeleted,
@@ -64,7 +67,9 @@ export function DealFormBody({
   );
   // contact_id is nullable when the contact has been deleted
   // (migration 004: ON DELETE SET NULL). "" means "no selection".
-  const [contactId, setContactId] = useState(deal?.contact_id ?? "");
+  const [contactId, setContactId] = useState(
+    deal?.contact_id ?? defaultContactId ?? "",
+  );
   const [stageId, setStageId] = useState(
     deal?.stage_id ?? (defaultStageId || stages[0]?.id || ""),
   );
@@ -374,6 +379,7 @@ interface DealFormProps {
   pipelineId: string;
   stages: PipelineStage[];
   defaultStageId?: string;
+  defaultContactId?: string;
   onSaved: () => void;
 }
 
@@ -389,6 +395,7 @@ export function DealForm({
   pipelineId,
   stages,
   defaultStageId,
+  defaultContactId,
   onSaved,
 }: DealFormProps) {
   const { t } = useLanguage();
@@ -408,11 +415,12 @@ export function DealForm({
               opens instead of syncing props into state in an effect. */}
           {open && (
             <DealFormBody
-              key={deal?.id ?? `new-${defaultStageId ?? ""}`}
+              key={deal?.id ?? `new-${defaultStageId ?? ""}-${defaultContactId ?? ""}`}
               deal={deal}
               pipelineId={pipelineId}
               stages={stages}
               defaultStageId={defaultStageId}
+              defaultContactId={defaultContactId}
               onSaved={() => {
                 onOpenChange(false);
                 onSaved();
