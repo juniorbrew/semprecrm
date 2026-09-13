@@ -10,6 +10,8 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { LEAD_SOURCE_COLUMNS } from '@/lib/lead-capture'
 import { generateLeadSourceToken } from '@/lib/lead-capture/token'
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -34,6 +36,14 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Failed to rotate token' }, { status: 500 })
     }
     if (!data) return NextResponse.json({ error: 'Lead source not found' }, { status: 404 })
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.LEAD_SOURCE_TOKEN_ROTATED,
+      entityType: 'lead_source',
+      entityId: id,
+      metadata: { name: (data as { name?: string }).name ?? null },
+    })
     return NextResponse.json({ source: data })
   } catch (err) {
     return toErrorResponse(err)

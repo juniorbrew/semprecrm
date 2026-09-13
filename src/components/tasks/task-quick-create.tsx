@@ -5,6 +5,7 @@ import { CalendarClock, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
+import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import {
@@ -84,6 +85,9 @@ export function TaskQuickCreate({
         },
       );
       toast.success(t("Task created"));
+      if (created.assignee_user_id) {
+        notifyPushEvent({ kind: "task_assigned", task_id: created.id });
+      }
       onCreated?.(created);
       setTitle("");
       setDue("");

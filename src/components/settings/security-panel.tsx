@@ -1,5 +1,6 @@
 'use client';
 
+import { MfaCard, MfaRequiredNotice } from './mfa-card';
 import { PasswordForm } from './password-form';
 import { SessionsCard } from './sessions-card';
 import { SettingsPanelHead } from './settings-panel-head';
@@ -15,7 +16,9 @@ export function SecurityPanel() {
         title="Login e segurança"
         description="Change your password and sign out of your devices. These keep your account safe."
       />
+      <MfaRequiredNotice />
       <div className="space-y-4">
+        <MfaCard />
         <PasswordForm />
         <SessionsCard />
       </div>

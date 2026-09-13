@@ -27,6 +27,8 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { AUDIT_ACTIONS } from "@/lib/audit";
+import { audit } from "@/lib/audit-server";
 
 function rpcErrorToResponse(err: PostgrestError): NextResponse {
   if (err.code === "42501") {
@@ -86,6 +88,15 @@ export async function POST(request: Request) {
     });
 
     if (error) return rpcErrorToResponse(error);
+
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.ACCOUNT_OWNERSHIP_TRANSFERRED,
+      entityType: "account",
+      entityId: ctx.accountId,
+      metadata: { from_user_id: ctx.userId, to_user_id: newOwnerUserId },
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

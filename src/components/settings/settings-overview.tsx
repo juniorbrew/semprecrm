@@ -233,6 +233,18 @@ export function SettingsOverview({
             loading: false,
             subtitle: t('Lead capture by webhook'),
           },
+          {
+            section: 'audit' as const,
+            loading: false,
+            subtitle: t('Who changed what, and when'),
+          },
+          {
+            section: 'branding' as const,
+            loading: false,
+            subtitle: entitlements.modules.white_label
+              ? t('Your name, logo and colour')
+              : t('Not included in your plan'),
+          },
         ]
       : []),
     {
@@ -249,6 +261,11 @@ export function SettingsOverview({
       section: 'appearance',
       loading: false,
       subtitle: `${cap(mode)} mode · ${themeName} accent`,
+    },
+    {
+      section: 'notifications',
+      loading: false,
+      subtitle: t('Browser push notifications'),
     },
     {
       section: 'plan',

@@ -38,6 +38,35 @@ docker compose up -d
 docker compose ps        # todos "healthy" em 1 a 2 minutos
 ```
 
+#### Verificação em duas etapas (MFA TOTP)
+
+O app usa o MFA nativo do Supabase Auth (Configurações → Login e segurança → "Verificação em duas
+etapas"; o proprietário pode exigir para admins em Membros). No Supabase local isso é o
+`[auth.mfa.totp]` do `supabase/config.toml`; no self-hosted o GoTrue lê as variáveis
+`GOTRUE_MFA_TOTP_ENROLL_ENABLED` e `GOTRUE_MFA_TOTP_VERIFY_ENABLED`, que o `docker-compose.yml` oficial
+não repassa por padrão. Adicione ao `/opt/supabase/.env`:
+
+```bash
+cat >> /opt/supabase/.env <<'EOF'
+
+# MFA TOTP (SempreCRM: verificação em duas etapas)
+MFA_TOTP_ENROLL_ENABLED=true
+MFA_TOTP_VERIFY_ENABLED=true
+EOF
+```
+
+e, no serviço `auth` do `/opt/supabase/docker-compose.yml`, dentro de `environment:`:
+
+```yaml
+      GOTRUE_MFA_TOTP_ENROLL_ENABLED: ${MFA_TOTP_ENROLL_ENABLED}
+      GOTRUE_MFA_TOTP_VERIFY_ENABLED: ${MFA_TOTP_VERIFY_ENABLED}
+```
+
+Depois `docker compose up -d auth`. Para desligar novamente sem quebrar quem já ativou, mantenha
+`VERIFY_ENABLED=true` e coloque só `ENROLL_ENABLED=false` (o login continua pedindo o código de quem já
+tem fator; ninguém novo consegue ativar). Não existem códigos de recuperação: quem perder o celular
+precisa que um administrador remova o fator pelo Studio (tabela `auth.mfa_factors`).
+
 ### 4. HTTPS para a API
 
 ```bash
@@ -90,6 +119,7 @@ No `/var/www/semprecrm/.env.production`:
 | `META_APP_SECRET`, `META_APP_ID` | do app na Meta |
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.SEU.DOMINIO` |
 | `AUTOMATION_CRON_SECRET` | `openssl rand -hex 32` — usado pelo agendador `semprecrm-cron` (ver 6.2 do guia Contabo) |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | `node scripts/gen-vapid.mjs` — notificações push no navegador (gere uma vez; trocar as chaves invalida as assinaturas) |
 
 Depois siga os passos 4 a 7 do `deploy/contabo/README.md` (build, PM2, Nginx do app, Certbot, webhook
 da Meta). O `pm2 start deploy/contabo/ecosystem.config.cjs` sobe também o `semprecrm-cron`

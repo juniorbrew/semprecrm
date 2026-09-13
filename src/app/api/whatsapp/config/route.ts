@@ -9,6 +9,8 @@ import {
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { loadAccountEntitlements, countConnectedChannels } from '@/lib/plans-server'
 import { canAddChannel } from '@/lib/plans'
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -438,6 +440,20 @@ export async function POST(request: Request) {
       }
     }
 
+    await audit({
+      accountId,
+      actorUserId: user.id,
+      action: AUDIT_ACTIONS.WHATSAPP_OFFICIAL_SAVED,
+      entityType: 'whatsapp_config',
+      entityId: phone_number_id,
+      metadata: {
+        phone_number_id,
+        waba_id: waba_id || null,
+        registered: registeredAt != null && !registrationError,
+        replaced_existing: !!existing,
+      },
+    })
+
     if (registrationError) {
       // Save succeeded but the number isn't actually live. Return
       // 200 with a structured error so the UI can show the specific
@@ -496,10 +512,11 @@ export async function DELETE() {
       )
     }
 
-    const { error: deleteError } = await supabase
+    const { data: removedRows, error: deleteError } = await supabase
       .from('whatsapp_config')
       .delete()
       .eq('account_id', accountId)
+      .select('phone_number_id')
 
     if (deleteError) {
       console.error('Error deleting whatsapp_config:', deleteError)
@@ -507,6 +524,17 @@ export async function DELETE() {
         { error: 'Failed to delete configuration' },
         { status: 500 }
       )
+    }
+
+    if (removedRows && removedRows.length > 0) {
+      await audit({
+        accountId,
+        actorUserId: user.id,
+        action: AUDIT_ACTIONS.WHATSAPP_OFFICIAL_REMOVED,
+        entityType: 'whatsapp_config',
+        entityId: (removedRows[0] as { phone_number_id?: string }).phone_number_id ?? null,
+        metadata: {},
+      })
     }
 
     return NextResponse.json({ success: true })

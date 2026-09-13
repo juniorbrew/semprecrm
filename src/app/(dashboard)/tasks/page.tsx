@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckSquare, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -172,6 +172,20 @@ export default function TasksPage() {
     setDrawerDefaults(undefined);
     setDrawerOpen(true);
   }
+
+  // `?task=<id>` (push notification click) opens that task once the
+  // list has loaded. Applied a single time so closing the drawer sticks.
+  const deepLinkTaskId = searchParams.get("task");
+  const deepLinkAppliedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkTaskId || loading) return;
+    if (deepLinkAppliedRef.current === deepLinkTaskId) return;
+    if (!tasks.some((x) => x.id === deepLinkTaskId)) return;
+    deepLinkAppliedRef.current = deepLinkTaskId;
+    setDrawerTaskId(deepLinkTaskId);
+    setDrawerDefaults(undefined);
+    setDrawerOpen(true);
+  }, [deepLinkTaskId, loading, tasks]);
 
   function openCreate(statusId?: string) {
     setDrawerTaskId(null);

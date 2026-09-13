@@ -38,6 +38,8 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { AUDIT_ACTIONS } from "@/lib/audit";
+import { audit } from "@/lib/audit-server";
 
 // Resolve the base URL we publish invite links under.
 //
@@ -280,6 +282,15 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
+
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.MEMBER_INVITED,
+      entityType: "invitation",
+      entityId: data.id,
+      metadata: { role, label, expires_at: data.expires_at },
+    });
 
     return NextResponse.json(
       {

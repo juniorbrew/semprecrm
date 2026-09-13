@@ -3,9 +3,15 @@ import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { scanInactiveConversations } from '@/lib/automations/inactivity'
+import { AUDIT_RETENTION_DAYS } from '@/lib/audit'
+import { notifyTasksDueSoon } from '@/lib/push/notify'
+import { isPushConfigured } from '@/lib/push/send'
 
 /** Retention for the lead-capture webhook log (spec §2). */
 const LEAD_SOURCE_EVENTS_RETENTION_DAYS = 90
+
+/** Matches "relation does not exist" from PostgREST / Postgres. */
+const RELATION_MISSING_RE = /42P01|PGRST205|does not exist|schema cache/i
 
 /**
  * Drain due `automation_pending_executions` rows, then run the
@@ -97,8 +103,39 @@ export async function GET(request: Request) {
     console.error('[cron] lead_source_events purge threw:', err)
   }
 
+  // Housekeeping: audit_log older than 365 days (round 2 spec §3).
+  let auditPurged: number | null = null
+  try {
+    const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 86_400_000).toISOString()
+    const { error: purgeErr, count } = await admin
+      .from('audit_log')
+      .delete({ count: 'exact' })
+      .lt('created_at', cutoff)
+    if (purgeErr) {
+      if (!RELATION_MISSING_RE.test(`${purgeErr.code} ${purgeErr.message}`)) {
+        console.error('[cron] audit_log purge failed:', purgeErr.message)
+      }
+    } else {
+      auditPurged = count ?? 0
+    }
+  } catch (err) {
+    console.error('[cron] audit_log purge threw:', err)
+  }
+
+  // Browser push (round 2 spec §5c): tasks due within 15 minutes, once
+  // each (`tasks.reminded_at`). Skipped entirely without VAPID keys.
+  let tasksDue: { scanned: number; notified: number } | null = null
+  if (isPushConfigured()) {
+    try {
+      tasksDue = await notifyTasksDueSoon(admin, new Date())
+    } catch (err) {
+      console.error('[cron] task due-soon push threw:', err)
+    }
+  }
+
   return NextResponse.json({
     processed,
+    tasks_due: tasksDue,
     inactivity: {
       automations: inactivity.automations,
       fired: inactivity.fired,
@@ -106,5 +143,6 @@ export async function GET(request: Request) {
       errors: inactivity.errors.length,
     },
     lead_events_purged: leadEventsPurged,
+    audit_purged: auditPurged,
   })
 }

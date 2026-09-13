@@ -42,6 +42,7 @@ export const MODULES = [
   'channel_official',
   'channel_qr',
   'lead_capture',
+  'white_label',
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -56,6 +57,7 @@ export const OPTIONAL_MODULES = [
   'channel_official',
   'channel_qr',
   'lead_capture',
+  'white_label',
 ] as const satisfies readonly Module[];
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
@@ -84,8 +86,9 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  * | trial   | todos                            | 2         | 1            |
  * | basico  | dashboard, pipelines, tasks, channel_qr | 3   | 1            |
  * | pro     | todos menos flows                | 10        | 2            |
- * (`lead_capture` — webhook lead capture, migration 029 — is in every
- *  plan except basico.)
+ * (`lead_capture` — webhook lead capture, migration 029 — and
+ *  `white_label` — own branding, migration 037 — are in every plan
+ *  except basico.)
  * | empresa | todos                            | null      | 5            |
  */
 export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
@@ -135,6 +138,7 @@ export const MODULE_LABELS: Record<Module, string> = {
   channel_official: 'Official WhatsApp API',
   channel_qr: 'WhatsApp via QR code',
   lead_capture: 'Lead capture (webhook)',
+  white_label: 'White-label branding',
 };
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {

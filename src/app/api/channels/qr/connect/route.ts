@@ -4,6 +4,8 @@ import { requireRole, requireModule, PlanLimitError } from '@/lib/auth/account'
 import { canAddChannel } from '@/lib/plans'
 import { countConnectedChannels } from '@/lib/plans-server'
 import { connectSession, getSessionState } from '@/lib/whatsapp/qr-gateway'
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
 import {
   patchFromGatewayState,
   qrErrorResponse,
@@ -56,6 +58,18 @@ export async function POST() {
         ctx.accountId,
         patchFromGatewayState(state),
       )
+      await audit({
+        accountId: ctx.accountId,
+        actorUserId: ctx.userId,
+        action: AUDIT_ACTIONS.WHATSAPP_QR_CONNECTED,
+        entityType: 'wa_qr_session',
+        entityId: ctx.accountId,
+        metadata: {
+          status: state.status,
+          resumed: holdsSlot,
+          phone_number: session?.phone_number ?? null,
+        },
+      })
       return NextResponse.json({
         session: { ...(session ?? { account_id: ctx.accountId }), ...state },
       })

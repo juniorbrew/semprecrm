@@ -20,6 +20,11 @@ const h = vi.hoisted(() => ({
   },
   flows: { consumed: false },
   automationCalls: [] as Record<string, unknown>[],
+  // Availability features (spec round 2 §2)
+  roundRobinPick: null as string | null,
+  roundRobinCalls: 0,
+  sendCalls: [] as Record<string, unknown>[],
+  sendError: null as Error | null,
 }))
 
 vi.mock('@/lib/automations/engine', () => ({
@@ -39,6 +44,21 @@ vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => {
     throw new Error('test must inject db')
   },
+}))
+
+vi.mock('@/lib/assignment/round-robin', () => ({
+  pickRoundRobinAssignee: vi.fn(async () => {
+    h.roundRobinCalls += 1
+    return h.roundRobinPick
+  }),
+}))
+
+vi.mock('@/lib/automations/meta-send', () => ({
+  engineSendText: vi.fn(async (args: Record<string, unknown>) => {
+    h.sendCalls.push(args)
+    if (h.sendError) throw h.sendError
+    return { whatsapp_message_id: 'bot-1' }
+  }),
 }))
 
 vi.mock('@/lib/contacts/dedupe', () => ({
@@ -168,7 +188,12 @@ beforeEach(() => {
   h.state.updates = []
   h.flows.consumed = false
   h.automationCalls = []
+  h.roundRobinPick = null
+  h.roundRobinCalls = 0
+  h.sendCalls = []
+  h.sendError = null
   idSeq = 0
+  vi.useRealTimers()
 })
 
 describe('ingestInboundMessage', () => {
@@ -420,6 +445,164 @@ describe('ingestInboundMessage — opt-out', () => {
     for (const call of h.automationCalls) {
       expect((call.context as { vars?: unknown }).vars).toBeUndefined()
     }
+  })
+})
+
+describe('ingestInboundMessage — auto-assign (round-robin)', () => {
+  it('does nothing when auto_assign_enabled is off', async () => {
+    const db = makeDb()
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.autoAssignedTo).toBeUndefined()
+    expect(h.roundRobinCalls).toBe(0)
+  })
+
+  it('assigns the first customer message of an ownerless conversation and logs the pill', async () => {
+    const db = makeDb()
+    h.state.accountPreferences = { auto_assign_enabled: true }
+    h.roundRobinPick = 'agent-7'
+
+    const res = await ingestInboundMessage(BASE, db)
+
+    expect(res.autoAssignedTo).toBe('agent-7')
+    expect(h.state.conversations[0].assigned_agent_id).toBe('agent-7')
+    expect(h.state.events).toHaveLength(1)
+    expect(h.state.events[0]).toMatchObject({
+      event_type: 'assigned',
+      actor_user_id: null,
+      payload: { assignee_user_id: 'agent-7', source: 'auto_assign' },
+    })
+    expect(h.automationCalls.map((c) => c.triggerType)).toContain('conversation_assigned')
+  })
+
+  it('leaves the conversation alone when it already has an owner or is not the first message', async () => {
+    const db = makeDb()
+    h.state.accountPreferences = { auto_assign_enabled: true }
+    h.roundRobinPick = 'agent-7'
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
+    h.state.conversations.push({
+      id: 'conv-1',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      assigned_agent_id: 'agent-1',
+      channel: 'qr',
+    })
+
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.autoAssignedTo).toBeUndefined()
+    expect(h.roundRobinCalls).toBe(0)
+    expect(h.state.conversations[0].assigned_agent_id).toBe('agent-1')
+
+    // Second customer message on an ownerless conversation: not the first → untouched.
+    h.state.conversations[0].assigned_agent_id = null
+    const res2 = await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, db)
+    expect(res2.autoAssignedTo).toBeUndefined()
+    expect(h.roundRobinCalls).toBe(0)
+  })
+
+  it('stays unassigned when nobody is available', async () => {
+    const db = makeDb()
+    h.state.accountPreferences = { auto_assign_enabled: true }
+    h.roundRobinPick = null
+
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.autoAssignedTo).toBeUndefined()
+    expect(h.roundRobinCalls).toBe(1)
+    expect(h.state.conversations[0].assigned_agent_id).toBeUndefined()
+    expect(h.state.events).toHaveLength(0)
+  })
+})
+
+describe('ingestInboundMessage — out-of-hours reply', () => {
+  // Saturday 2026-09-12 14:00Z = 11:00 in São Paulo → closed (default hours).
+  const SATURDAY = new Date('2026-09-12T14:00:00Z')
+  // Monday 2026-09-14 14:00Z = 11:00 in São Paulo → open.
+  const MONDAY = new Date('2026-09-14T14:00:00Z')
+
+  it('is silent when the feature is off', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.outOfHoursReply).toBeUndefined()
+    expect(h.sendCalls).toHaveLength(0)
+  })
+
+  it('sends the message through the conversation channel and stamps the conversation', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = {
+      out_of_hours_enabled: true,
+      out_of_hours_message: 'Voltamos segunda!',
+    }
+
+    const res = await ingestInboundMessage(BASE, db)
+
+    expect(res.outOfHoursReply).toBe('sent')
+    expect(h.sendCalls).toHaveLength(1)
+    expect(h.sendCalls[0]).toMatchObject({
+      accountId: 'acct-1',
+      userId: 'owner-1',
+      conversationId: h.state.conversations[0].id,
+      text: 'Voltamos segunda!',
+    })
+    expect(h.state.conversations[0].out_of_hours_replied_at).toBe(SATURDAY.toISOString())
+  })
+
+  it('does not reply during business hours', async () => {
+    vi.useFakeTimers({ now: MONDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true }
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.outOfHoursReply).toBeUndefined()
+    expect(h.sendCalls).toHaveLength(0)
+  })
+
+  it('replies at most once per local day', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true }
+
+    await ingestInboundMessage(BASE, db)
+    const res2 = await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, db)
+    expect(res2.outOfHoursReply).toBeUndefined()
+    expect(h.sendCalls).toHaveLength(1)
+
+    // Next local day (Sunday, still closed) → replies again.
+    vi.setSystemTime(new Date('2026-09-13T14:00:00Z'))
+    const res3 = await ingestInboundMessage({ ...BASE, messageId: 'wamid-3' }, db)
+    expect(res3.outOfHoursReply).toBe('sent')
+    expect(h.sendCalls).toHaveLength(2)
+  })
+
+  it('records skipped (and still stamps) when Meta refuses the send outside the 24 h window', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true }
+    h.sendError = new Error('Meta API error 131047: Re-engagement message')
+
+    const res = await ingestInboundMessage({ ...BASE, channel: 'official' }, db)
+    expect(res.outOfHoursReply).toBe('skipped')
+    expect(h.state.conversations[0].out_of_hours_replied_at).toBe(SATURDAY.toISOString())
+  })
+
+  it('reports failed and leaves the stamp empty on other send errors', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true }
+    h.sendError = new Error('gateway unreachable')
+
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.outOfHoursReply).toBe('failed')
+    expect(h.state.conversations[0].out_of_hours_replied_at).toBeUndefined()
+  })
+
+  it('does not auto-reply to an opt-out message', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true }
+    const res = await ingestInboundMessage({ ...BASE, text: 'PARAR' }, db)
+    expect(res.optedOut).toBe(true)
+    expect(res.outOfHoursReply).toBeUndefined()
+    expect(h.sendCalls).toHaveLength(0)
   })
 })
 

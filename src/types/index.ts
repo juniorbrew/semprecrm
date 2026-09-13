@@ -36,6 +36,13 @@ export interface Profile {
    * `@/lib/auth/roles` rather than comparing this string directly.
    */
   account_role?: AccountRole;
+  /** "Disponível / Ausente" (migration 033). Defaults to 'available'. */
+  availability?: Availability;
+  /**
+   * Push toggles per event kind (migration 036). Read through
+   * `parseNotificationPrefs` in `@/lib/push/prefs` — a missing key is ON.
+   */
+  notification_prefs?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -68,6 +75,11 @@ export interface Account {
    * fills defaults — never index this raw.
    */
   preferences?: Partial<AccountPreferences> | null;
+  /**
+   * White-label branding (migration 037): `{ app_name, logo_url,
+   * primary_color }`. Read through `parseBranding` in `@/lib/branding`.
+   */
+  branding?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -83,7 +95,29 @@ export interface AccountPreferences {
   cooling_hours: number;
   /** Whole-message stop words (compared accent- and case-insensitively). */
   opt_out_keywords: string[];
+  /** Business hours per weekday (migration 033). See `@/lib/business-hours`. */
+  business_hours: BusinessHours;
+  /** Send `out_of_hours_message` when a customer writes outside business hours. */
+  out_of_hours_enabled: boolean;
+  out_of_hours_message: string;
+  /** Round-robin the first customer message of an unassigned conversation. */
+  auto_assign_enabled: boolean;
+  /** Owners/admins must have a verified TOTP factor (round 2 spec, section 7). */
+  require_mfa_admins: boolean;
 }
+
+/** `"HH:MM"` 24h local time. */
+export type BusinessHoursRange = { start: string; end: string };
+export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+export interface BusinessHours {
+  /** IANA timezone, e.g. "America/Sao_Paulo". */
+  timezone: string;
+  /** Up to two ranges per day; an empty array means closed that day. */
+  days: Record<Weekday, BusinessHoursRange[]>;
+}
+
+/** `profiles.availability` (migration 033). */
+export type Availability = 'available' | 'away';
 
 /**
  * One row of `platform_list_accounts()` — an `Account` plus the
@@ -117,6 +151,8 @@ export interface AccountMember {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  /** Migration 033 — absent on older payloads (treat as 'available'). */
+  availability?: Availability;
 }
 
 /**
@@ -156,9 +192,20 @@ export interface Contact {
    * the contact while this is set; admin+ can clear it ("Reativar").
    */
   opted_out_at?: string | null;
+  /** LGPD consent (migration 035). `consent_updated_at` is stamped by a trigger. */
+  consent_status?: ConsentStatus;
+  consent_updated_at?: string | null;
+  /**
+   * Set by POST /api/contacts/[id]/anonymize (migration 035). Personal
+   * data is gone; the UI shows a badge and blocks editing / sending.
+   */
+  anonymized_at?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** `contacts.consent_status` (migration 035). */
+export type ConsentStatus = 'unknown' | 'granted' | 'revoked';
 
 export interface Tag {
   id: string;

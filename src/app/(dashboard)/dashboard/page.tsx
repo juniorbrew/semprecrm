@@ -38,6 +38,7 @@ import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
 import { TasksToday } from '@/components/dashboard/tasks-today'
 import { RadarCard } from '@/components/dashboard/radar-card'
+import { TeamMetrics } from '@/components/dashboard/team-metrics'
 import { cn } from '@/lib/utils'
 
 type RangeDays = 7 | 30 | 90
@@ -284,6 +285,9 @@ export default function DashboardPage() {
 
       {/* Response time */}
       <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
+
+      {/* Team — per-member numbers (admin+ sees everyone, agents their own row). */}
+      <TeamMetrics refreshToken={tasksRefreshToken} />
 
       {/* Activity feed */}
       <ActivityFeed items={activity} loading={activityLoading} />

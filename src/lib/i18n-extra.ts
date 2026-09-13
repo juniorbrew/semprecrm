@@ -1583,4 +1583,284 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'No opted-out contacts.': 'Nenhum contato descadastrado.',
   'opted-out contact excluded': 'contato descadastrado excluído',
   'opted-out contacts excluded': 'contatos descadastrados excluídos',
+  // Round 2 §1 — Team metrics (dashboard "Equipe")
+  Team: 'Equipe',
+  'Per-member activity in the period': 'Atividade por membro no período',
+  'Your activity in the period': 'Sua atividade no período',
+  Period: 'Período',
+  Handled: 'Atendidas',
+  Resolved: 'Resolvidas',
+  '1st response': '1ª resposta',
+  'Tasks done': 'Tarefas concluídas',
+  'Open now': 'Abertas agora',
+  'Conversations with at least one reply from the member in the period':
+    'Conversas com pelo menos uma resposta do membro no período',
+  'Conversations the member marked as resolved in the period':
+    'Conversas que o membro marcou como resolvidas no período',
+  'Average (median) time until the first reply, over conversations the member answered first':
+    'Tempo médio (mediana) até a primeira resposta, nas conversas em que o membro respondeu primeiro',
+  'Tasks assigned to the member completed in the period':
+    'Tarefas atribuídas ao membro concluídas no período',
+  'Conversations currently open and assigned to the member':
+    'Conversas abertas agora atribuídas ao membro',
+  median: 'mediana',
+  you: 'você',
+  'No first response yet': 'Ainda sem primeira resposta',
+  'No team activity yet': 'Ainda sem atividade da equipe',
+  'Replies, resolutions and completed tasks will show up here per member.':
+    'Respostas, resoluções e tarefas concluídas aparecem aqui por membro.',
+  // Round 2 §2 — Availability, business hours, round-robin
+  Availability: 'Disponibilidade',
+  Available: 'Disponível',
+  Away: 'Ausente',
+  'You are now available': 'Você está disponível',
+  'You are now away': 'Você está ausente',
+  'Failed to update availability': 'Falha ao atualizar a disponibilidade',
+  'Business hours': 'Horário de atendimento',
+  'When your team is available. Up to two ranges per day (for a lunch break); a day with no range is closed. Used by the out-of-hours reply below.':
+    'Quando sua equipe está disponível. Até duas faixas por dia (para o almoço); um dia sem faixa fica fechado. Usado pela mensagem fora do horário abaixo.',
+  Timezone: 'Fuso horário',
+  Monday: 'Segunda-feira',
+  Tuesday: 'Terça-feira',
+  Wednesday: 'Quarta-feira',
+  Thursday: 'Quinta-feira',
+  Friday: 'Sexta-feira',
+  Saturday: 'Sábado',
+  Sunday: 'Domingo',
+  start: 'início',
+  end: 'fim',
+  'Add range': 'Adicionar faixa',
+  'Remove range': 'Remover faixa',
+  'Out-of-hours reply': 'Mensagem fora do horário',
+  'When a customer writes outside business hours, send this message automatically — once per conversation per day, through the same channel. On the official channel it is skipped when the 24-hour window is closed.':
+    'Quando um cliente escreve fora do horário de atendimento, envia esta mensagem automaticamente — uma vez por conversa por dia, pelo mesmo canal. No canal oficial ela é pulada quando a janela de 24 horas está fechada.',
+  Message: 'Mensagem',
+  'Enter a message to send outside business hours.':
+    'Informe a mensagem a enviar fora do horário de atendimento.',
+  'Automatic distribution': 'Distribuição automática',
+  'Round-robin: when a new conversation gets its first customer message and has no owner, assign it to the available member with the fewest open conversations. Members marked as away are skipped; with nobody available the conversation stays in the Radar.':
+    'Rodízio: quando uma conversa recebe a primeira mensagem do cliente e não tem responsável, atribui ao membro disponível com menos conversas abertas. Membros ausentes são pulados; sem ninguém disponível a conversa fica no Radar.',
+  'Response-time limits behind the Radar, business hours, automatic distribution and the words a customer can send to stop receiving messages.':
+    'Limites de tempo de resposta do Radar, horário de atendimento, distribuição automática e as palavras que um cliente pode enviar para parar de receber mensagens.',
+  // Audit log (round 2 spec §3)
+  'Audit log': 'Auditoria',
+  'Who changed what, and when': 'Quem alterou o quê, e quando',
+  'Only admins can view the audit log.': 'Somente administradores podem ver a auditoria.',
+  'Sensitive actions in this workspace — members, channels, contacts, plan — with who did them and when. Entries are kept for 365 days.':
+    'Ações sensíveis neste espaço de trabalho — membros, canais, contatos, plano — com quem fez e quando. Os registros são mantidos por 365 dias.',
+  'All actions': 'Todas as ações',
+  'All members': 'Todos os membros',
+  'Last 7 days': 'Últimos 7 dias',
+  'Last 30 days': 'Últimos 30 dias',
+  'Last 90 days': 'Últimos 90 dias',
+  'All time': 'Todo o período',
+  'Clear filters': 'Limpar filtros',
+  'No entries match these filters.': 'Nenhum registro corresponde a esses filtros.',
+  'Nothing recorded yet. Sensitive actions will show up here.':
+    'Nada registrado ainda. As ações sensíveis vão aparecer aqui.',
+  'Who': 'Quem',
+  'Action': 'Ação',
+  'Entity': 'Entidade',
+  'Details': 'Detalhes',
+  'System': 'Sistema',
+  'Load more': 'Carregar mais',
+  'items': 'itens',
+  'Account': 'Conta',
+  'Invitation': 'Convite',
+  'Official WhatsApp': 'WhatsApp oficial',
+  'WhatsApp QR': 'WhatsApp QR',
+  'Contact': 'Contato',
+  'Automation': 'Automação',
+  'Preferences': 'Preferências',
+  'Branding': 'Marca',
+  'Two-step verification': 'Verificação em duas etapas',
+  // LGPD (round 2 spec §4)
+  'Privacy': 'Privacidade',
+  'Consent': 'Consentimento',
+  'Not recorded': 'Não registrado',
+  'Consent granted': 'Consentimento concedido',
+  'Consent revoked': 'Consentimento revogado',
+  'Consent updated': 'Consentimento atualizado',
+  'Could not update consent': 'Não foi possível atualizar o consentimento',
+  'Updated on': 'Atualizado em',
+  'Export data': 'Exportar dados',
+  'Contact data exported': 'Dados do contato exportados',
+  'Could not export contact data': 'Não foi possível exportar os dados do contato',
+  'Anonymize': 'Anonimizar',
+  'Anonymized': 'Anonimizado',
+  'Anonymize contact?': 'Anonimizar contato?',
+  'This permanently removes name, phone, email, company, custom fields, notes, message contents and media. Conversations, deals and tasks stay for statistics. This cannot be undone.':
+    'Isso remove permanentemente nome, telefone, e-mail, empresa, campos personalizados, notas, conteúdo das mensagens e mídias. Conversas, negócios e tarefas ficam para estatísticas. Não é possível desfazer.',
+  'Type the contact name to confirm': 'Digite o nome do contato para confirmar',
+  'Contact anonymized': 'Contato anonimizado',
+  'Could not anonymize the contact': 'Não foi possível anonimizar o contato',
+  'Personal data removed (LGPD)': 'Dados pessoais removidos (LGPD)',
+  'Personal data was removed on': 'Os dados pessoais foram removidos em',
+  'Editing and messaging are blocked for this contact.':
+    'Edição e envio de mensagens estão bloqueados para este contato.',
+  'Anonymized contacts cannot be edited': 'Contatos anonimizados não podem ser editados',
+  'Record the consent this contact gave, export everything the workspace holds about them, or remove their personal data for good.':
+    'Registre o consentimento dado por este contato, exporte tudo que o espaço de trabalho tem sobre ele ou remova seus dados pessoais em definitivo.',
+  // MFA (round 2 spec, section 7)
+  'Enter the 6-digit code from your authenticator app':
+    'Digite o código de 6 dígitos do seu aplicativo autenticador',
+  'Verification code': 'Código de verificação',
+  'Verifying…': 'Verificando…',
+  'Invalid code. Check the time on your phone and try again.':
+    'Código inválido. Confira a hora do seu celular e tente de novo.',
+  'Could not start the verification': 'Não foi possível iniciar a verificação',
+  'No authenticator is linked to this account. Sign out and sign in again.':
+    'Nenhum aplicativo autenticador está vinculado a esta conta. Saia e entre novamente.',
+  'Sign in with another account': 'Entrar com outra conta',
+  'Enabled': 'Ativada',
+  'Besides your password, sign-in asks for a 6-digit code from an authenticator app (Google Authenticator, Authy, 1Password…).':
+    'Além da senha, o login pede um código de 6 dígitos de um aplicativo autenticador (Google Authenticator, Authy, 1Password…).',
+  'Not enabled. Anyone with your password can sign in.':
+    'Não ativada. Qualquer pessoa com a sua senha consegue entrar.',
+  'Enable two-step verification': 'Ativar verificação em duas etapas',
+  'Could not start two-step verification': 'Não foi possível iniciar a verificação em duas etapas',
+  'Open your authenticator app and scan the QR code (or type the key).':
+    'Abra o aplicativo autenticador e escaneie o QR code (ou digite a chave).',
+  'Enter the 6-digit code the app shows to confirm.':
+    'Digite o código de 6 dígitos que o aplicativo mostra para confirmar.',
+  'QR code for the authenticator app': 'QR code para o aplicativo autenticador',
+  'Setup key': 'Chave de configuração',
+  'Copy setup key': 'Copiar chave de configuração',
+  'There are no recovery codes': 'Não existem códigos de recuperação',
+  'If you lose the phone with the authenticator app you will not be able to sign in. Keep the app backed up (or save the setup key somewhere safe) before continuing.':
+    'Se você perder o celular com o aplicativo autenticador, não conseguirá entrar. Mantenha o backup do aplicativo (ou guarde a chave de configuração em local seguro) antes de continuar.',
+  'Confirm and enable': 'Confirmar e ativar',
+  'Two-step verification enabled': 'Verificação em duas etapas ativada',
+  'Two-step verification disabled': 'Verificação em duas etapas desativada',
+  'Your account asks for a code from the authenticator app at every sign-in.':
+    'Sua conta pede um código do aplicativo autenticador em todo login.',
+  'Enabled on': 'Ativada em',
+  'Disable': 'Desativar',
+  'Without the phone that has the authenticator app you cannot sign in. If you change phones, disable and enable two-step verification again first.':
+    'Sem o celular com o aplicativo autenticador você não consegue entrar. Se trocar de celular, desative e ative a verificação em duas etapas novamente antes.',
+  'Disable two-step verification?': 'Desativar a verificação em duas etapas?',
+  'Confirm your password. Sign-in will only ask for the password afterwards.':
+    'Confirme sua senha. Depois disso, o login pedirá apenas a senha.',
+  'Cannot verify the password without a current email':
+    'Não é possível verificar a senha sem um e-mail atual',
+  'Two-step verification required': 'Verificação em duas etapas obrigatória',
+  'This account requires two-step verification for administrators. Enable it to continue using the app.':
+    'Esta conta exige verificação em duas etapas para administradores. Ative-a para continuar usando o sistema.',
+  'This account requires two-step verification for administrators. Enable it below to continue using the app.':
+    'Esta conta exige verificação em duas etapas para administradores. Ative-a abaixo para continuar usando o sistema.',
+  'Security policy': 'Política de segurança',
+  'Require two-step verification for administrators': 'Exigir duas etapas para admins',
+  'Owners and admins without an authenticator app are sent to Login e segurança until they enable it. Agents and viewers are not affected.':
+    'Proprietários e admins sem aplicativo autenticador são levados para Login e segurança até ativá-lo. Atendentes e visualizadores não são afetados.',
+  'You have not enabled two-step verification yet — this applies to you too.':
+    'Você ainda não ativou a verificação em duas etapas — isso vale para você também.',
+  'Could not save the setting': 'Não foi possível salvar a configuração',
+  'Could not reach the server': 'Não foi possível acessar o servidor',
+  'Two-step verification is now required for administrators':
+    'Verificação em duas etapas agora é obrigatória para administradores',
+  'Two-step verification is no longer required for administrators':
+    'Verificação em duas etapas não é mais obrigatória para administradores',
+  // Push notifications (round 2 spec §5)
+  'Notifications': 'Notificações',
+  'Browser push notifications': 'Notificações push no navegador',
+  'Get a browser notification when a customer writes, a conversation or task is assigned to you, or a task is about to be due — even with the tab closed.':
+    'Receba uma notificação do navegador quando um cliente escrever, uma conversa ou tarefa for atribuída a você ou uma tarefa estiver para vencer — mesmo com a aba fechada.',
+  'This browser': 'Este navegador',
+  'Notifications are on in this browser.': 'As notificações estão ativas neste navegador.',
+  'Notifications are blocked for this site. Allow them in the browser settings, then try again.':
+    'As notificações estão bloqueadas para este site. Permita nas configurações do navegador e tente de novo.',
+  'This browser does not support push notifications.':
+    'Este navegador não suporta notificações push.',
+  'Turn on notifications here — the browser will ask for permission.':
+    'Ative as notificações aqui — o navegador vai pedir permissão.',
+  'Enable in this browser': 'Ativar neste navegador',
+  'Turn off here': 'Desativar aqui',
+  'Notifications enabled in this browser': 'Notificações ativadas neste navegador',
+  'Notifications disabled in this browser': 'Notificações desativadas neste navegador',
+  'Permission denied — allow notifications for this site in your browser settings.':
+    'Permissão negada — permita notificações para este site nas configurações do navegador.',
+  'Could not enable notifications': 'Não foi possível ativar as notificações',
+  'Push is not configured on this server.': 'O push não está configurado neste servidor.',
+  'Ask the administrator to set the VAPID keys (see .env.local.example).':
+    'Peça ao administrador para definir as chaves VAPID (veja .env.local.example).',
+  'Devices': 'Dispositivos',
+  'Every browser where you turned notifications on. Remove one to stop sending there.':
+    'Todos os navegadores em que você ativou as notificações. Remova um para parar de enviar para ele.',
+  'No devices yet.': 'Nenhum dispositivo ainda.',
+  'this browser': 'este navegador',
+  'Added on': 'Adicionado em',
+  'last notified': 'última notificação',
+  'Remove device': 'Remover dispositivo',
+  'Device removed': 'Dispositivo removido',
+  'Could not remove the device': 'Não foi possível remover o dispositivo',
+  'Unknown browser': 'Navegador desconhecido',
+  'What to notify': 'O que notificar',
+  'Applies to all your devices. You are never notified about a conversation you have open on screen.':
+    'Vale para todos os seus dispositivos. Você nunca é notificado sobre uma conversa que está aberta na tela.',
+  'Could not save the preference': 'Não foi possível salvar a preferência',
+  'New customer message': 'Nova mensagem de cliente',
+  'When a conversation assigned to you (or unassigned) receives a message and you are not looking at it.':
+    'Quando uma conversa atribuída a você (ou sem responsável) recebe uma mensagem e você não está olhando para ela.',
+  'Task assigned to me': 'Tarefa atribuída a mim',
+  'When someone assigns you a task.': 'Quando alguém atribui uma tarefa a você.',
+  'Task due soon': 'Tarefa vencendo em breve',
+  'Fifteen minutes before one of your tasks is due.':
+    'Quinze minutos antes de uma das suas tarefas vencer.',
+  'Conversation assigned to me': 'Conversa atribuída a mim',
+  'When a conversation is handed to you.': 'Quando uma conversa é passada para você.',
+  'New message': 'Nova mensagem',
+  'Task assigned to you': 'Tarefa atribuída a você',
+  'Task due in': 'Tarefa vence em',
+  'Task due now': 'Tarefa vence agora',
+  'Conversation assigned to you': 'Conversa atribuída a você',
+  'by': 'por',
+  // White-label branding (round 2 spec §6)
+  'White-label branding': 'Marca própria (white-label)',
+  'Your name, logo and colour': 'Seu nome, logo e cor',
+  'Not included in your plan': 'Não incluído no seu plano',
+  'Your own name, logo and colour across the app for every member of the account.':
+    'Seu próprio nome, logo e cor em todo o app, para todos os membros da conta.',
+  'Only account admins can change the branding.':
+    'Só administradores da conta podem alterar a marca.',
+  'White-label branding is not part of your current plan. Get in touch with the SempreCRM team to add it.':
+    'A marca própria não faz parte do seu plano atual. Fale com a equipe SempreCRM para adicioná-la.',
+  'Restore defaults': 'Restaurar padrão',
+  'Branding saved': 'Marca salva',
+  'Default branding restored': 'Marca padrão restaurada',
+  'Could not save branding': 'Não foi possível salvar a marca',
+  'App name': 'Nome do app',
+  'Shown in the sidebar, the header and the browser tab title.':
+    'Aparece na barra lateral, no cabeçalho e no título da aba do navegador.',
+  'Logo': 'Logo',
+  'Square works best. PNG, SVG or WebP up to 512 KB; it replaces the default mark in the sidebar.':
+    'Quadrado funciona melhor. PNG, SVG ou WebP de até 512 KB; substitui o símbolo padrão na barra lateral.',
+  'Upload logo': 'Enviar logo',
+  'Replace logo': 'Trocar logo',
+  'Remove logo': 'Remover logo',
+  'Use a PNG, SVG or WebP image.': 'Use uma imagem PNG, SVG ou WebP.',
+  'The logo must be 512 KB or smaller.': 'O logo deve ter no máximo 512 KB.',
+  'Primary colour': 'Cor primária',
+  'Buttons, links and highlights. Each member keeps their own light or dark mode.':
+    'Botões, links e destaques. Cada membro mantém seu próprio modo claro ou escuro.',
+  'Palette': 'Paleta',
+  'Hex colour': 'Cor em hex',
+  'Pick a colour': 'Escolher uma cor',
+  'Use theme colour': 'Usar a cor do tema',
+  'Enter a colour like #7c3aed.': 'Informe uma cor como #7c3aed.',
+  'Overrides the accent theme for everyone in the account.':
+    'Substitui o tema de destaque para todos na conta.',
+  'Empty keeps the theme each member picked under Appearance.':
+    'Vazio mantém o tema que cada membro escolheu em Aparência.',
+  'How the sidebar header looks in light and dark mode.':
+    'Como o topo da barra lateral fica nos modos claro e escuro.',
+  'Primary button': 'Botão primário',
+  'Active item': 'Item ativo',
+  'Blue': 'Azul',
+  'Cyan': 'Ciano',
+  'Green': 'Verde',
+  'Lime': 'Lima',
+  'Orange': 'Laranja',
+  'Red': 'Vermelho',
+  'Pink': 'Rosa',
+  'Slate': 'Cinza',
 };

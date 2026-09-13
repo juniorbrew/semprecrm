@@ -12,6 +12,8 @@ import { NextResponse } from 'next/server'
 import { requireModule, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { LEAD_SOURCE_COLUMNS, normalizeFieldMap } from '@/lib/lead-capture'
 import { generateLeadSourceToken } from '@/lib/lead-capture/token'
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 const MAX_NAME_LEN = 80
@@ -62,6 +64,14 @@ export async function POST(request: Request) {
       console.error('[POST /api/lead-sources] insert failed:', error)
       return NextResponse.json({ error: 'Failed to create lead source' }, { status: 500 })
     }
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.LEAD_SOURCE_CREATED,
+      entityType: 'lead_source',
+      entityId: (data as { id: string }).id,
+      metadata: { name },
+    })
     return NextResponse.json({ source: data }, { status: 201 })
   } catch (err) {
     return toErrorResponse(err)

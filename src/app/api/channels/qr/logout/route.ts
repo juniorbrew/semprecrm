@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 
 import { requireRole, requireModule } from '@/lib/auth/account'
 import { logoutSession } from '@/lib/whatsapp/qr-gateway'
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
 import { qrErrorResponse, readQrSession, upsertQrSession } from '@/lib/whatsapp/qr-session'
 
 /**
@@ -27,6 +29,17 @@ export async function POST() {
       phone_number: null,
       display_name: null,
       last_error: null,
+    })
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.WHATSAPP_QR_LOGGED_OUT,
+      entityType: 'wa_qr_session',
+      entityId: ctx.accountId,
+      metadata: {
+        phone_number: current?.phone_number ?? null,
+        previous_status: current?.status ?? null,
+      },
     })
     return NextResponse.json({
       session: session ?? { account_id: ctx.accountId, status: 'disconnected' },

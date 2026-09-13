@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
+import { useBranding } from "@/hooks/use-branding";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useOverdueTasks } from "@/hooks/use-overdue-tasks";
 import type { Module } from "@/lib/plans";
@@ -122,6 +123,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const { profile, profileLoading, account, accountRole, signOut, isPlatformAdmin } =
     useAuth();
   const { ready: entitlementsReady, modules } = useEntitlements();
+  // White-label (spec round 2 §6): app name + logo when the module is on.
+  const branding = useBranding();
   const totalUnread = useTotalUnread();
   // Red count on Tarefas: my open tasks past their due date (realtime).
   const overdueTasks = useOverdueTasks(!entitlementsReady || modules.tasks);
@@ -203,12 +206,21 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Logo row. On mobile we put a close button here; on desktop the
             close button is hidden since the sidebar is always-visible. */}
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href={homeHref} className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <MessageSquare className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-semibold text-foreground">
-              CRM Template for WhatsApp
+          <Link href={homeHref} className="flex min-w-0 items-center gap-2">
+            {branding.logo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- remote, user-uploaded; no fixed dimensions
+              <img
+                src={branding.logo_url}
+                alt={branding.app_name}
+                className="h-8 w-8 shrink-0 rounded-lg object-contain"
+              />
+            ) : (
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <MessageSquare className="h-4 w-4" />
+              </div>
+            )}
+            <span className="truncate text-sm font-semibold text-foreground" title={branding.app_name}>
+              {branding.app_name}
             </span>
           </Link>
           <button

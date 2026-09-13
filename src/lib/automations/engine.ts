@@ -27,6 +27,7 @@ import {
   type TaskPriority,
 } from '@/lib/tasks'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 
 // ------------------------------------------------------------
 // Public API
@@ -502,22 +503,28 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
-          .from('profiles')
-          .select('user_id')
-          .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+        // Real round-robin (spec round 2 §2): available agent+ members,
+        // fewest open conversations first, oldest last_assigned_at on a
+        // tie. Null when nobody is available — the conversation stays
+        // unassigned and shows up in the Radar.
+        agentId = (await pickRoundRobinAssignee(db, args.automation.account_id)) ?? undefined
       }
       if (!agentId) return 'no agent resolved'
-      await db
+      const { data: assignedRows } = await db
         .from('conversations')
         .update({ assigned_agent_id: agentId })
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
+        .select('id')
+      for (const row of (assignedRows ?? []) as { id: string }[]) {
+        await db.from('conversation_events').insert({
+          account_id: args.automation.account_id,
+          conversation_id: row.id,
+          actor_user_id: null,
+          event_type: 'assigned',
+          payload: { assignee_user_id: agentId, source: 'automation' },
+        })
+      }
       return `assigned to ${agentId}`
     }
 

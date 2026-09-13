@@ -36,6 +36,7 @@ Preencha no `.env.production` (os nomes vêm de `.env.local.example`):
 | `META_APP_SECRET` (e `META_APP_ID` se usar template com imagem) | Meta for Developers → App Settings → Basic |
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.seudominio.com.br` |
 | `AUTOMATION_CRON_SECRET` | obrigatório para o agendador `semprecrm-cron` (etapas "Aguardar", gatilhos por horário e "Conversa sem resposta há X horas", timeouts dos flows); gere com `openssl rand -hex 32` |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | notificações push no navegador; gere uma vez com `node scripts/gen-vapid.mjs` e cole as três linhas (o `VAPID_SUBJECT` é um `mailto:` seu). Trocar as chaves obriga todo mundo a ativar as notificações de novo |
 
 Não defina `WHATSAPP_TEMPLATES_DRY_RUN` em produção.
 

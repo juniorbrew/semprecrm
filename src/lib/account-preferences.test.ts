@@ -23,7 +23,40 @@ describe('parseAccountPreferences', () => {
         cooling_hours: 48,
         opt_out_keywords: ['pare', 'stop'],
       }),
-    ).toEqual({ inbox_sla_minutes: 30, cooling_hours: 48, opt_out_keywords: ['pare', 'stop'] })
+    ).toEqual({
+      ...DEFAULT_ACCOUNT_PREFERENCES,
+      inbox_sla_minutes: 30,
+      cooling_hours: 48,
+      opt_out_keywords: ['pare', 'stop'],
+    })
+  })
+
+  it('parses the availability keys (migration 033) with per-key fallbacks', () => {
+    const p = parseAccountPreferences({
+      out_of_hours_enabled: true,
+      out_of_hours_message: '  Voltamos amanhã.  ',
+      auto_assign_enabled: 'yes',
+      business_hours: { timezone: 'Europe/Lisbon', days: { sat: [{ start: '10:00', end: '13:00' }] } },
+    })
+    expect(p.out_of_hours_enabled).toBe(true)
+    expect(p.out_of_hours_message).toBe('Voltamos amanhã.')
+    expect(p.auto_assign_enabled).toBe(false)
+    expect(p.business_hours.timezone).toBe('Europe/Lisbon')
+    expect(p.business_hours.days.sat).toEqual([{ start: '10:00', end: '13:00' }])
+    expect(p.business_hours.days.mon).toEqual(DEFAULT_ACCOUNT_PREFERENCES.business_hours.days.mon)
+  })
+
+  it('merges the availability keys without touching the others', () => {
+    const merged = mergeAccountPreferences(
+      { inbox_sla_minutes: 5, other_feature: { x: 1 } },
+      { auto_assign_enabled: true, out_of_hours_message: '' },
+    )
+    expect(merged.inbox_sla_minutes).toBe(5)
+    expect(merged.other_feature).toEqual({ x: 1 })
+    expect(merged.auto_assign_enabled).toBe(true)
+    // An empty message falls back to the default rather than saving ''.
+    expect(merged.out_of_hours_message).toBe(DEFAULT_ACCOUNT_PREFERENCES.out_of_hours_message)
+    expect(merged.business_hours).toBeUndefined()
   })
 
   it('accepts numeric strings and falls back per key on bad values', () => {
@@ -85,5 +118,22 @@ describe('mergeAccountPreferences', () => {
     })
     expect(merged.inbox_sla_minutes).toBe(15)
     expect(merged.opt_out_keywords).toEqual(['sair'])
+  })
+})
+
+describe('require_mfa_admins (round 2 spec, section 7)', () => {
+  it('defaults to false and ignores non-booleans', () => {
+    expect(parseAccountPreferences({}).require_mfa_admins).toBe(false)
+    expect(parseAccountPreferences({ require_mfa_admins: 'yes' }).require_mfa_admins).toBe(false)
+    expect(parseAccountPreferences({ require_mfa_admins: true }).require_mfa_admins).toBe(true)
+  })
+
+  it('merges without touching other keys', () => {
+    const merged = mergeAccountPreferences({ inbox_sla_minutes: 10 }, { require_mfa_admins: true })
+    expect(merged).toEqual({ inbox_sla_minutes: 10, require_mfa_admins: true })
+    expect(mergeAccountPreferences({ require_mfa_admins: true }, { cooling_hours: 5 })).toEqual({
+      require_mfa_admins: true,
+      cooling_hours: 5,
+    })
   })
 })

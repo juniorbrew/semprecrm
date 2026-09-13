@@ -147,6 +147,12 @@ interface MessageComposerProps {
   onSendNote?: (text: string) => Promise<void> | void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
+  /**
+   * LGPD (migration 035): the contact was anonymised — every input is
+   * disabled and the placeholder explains why. Notes included: there
+   * is no person left to annotate.
+   */
+  contactAnonymized?: boolean;
 }
 
 /**
@@ -165,6 +171,7 @@ const COMPOSER_COPY: Record<
     notePlaceholder: string;
     expiredPlaceholder: string;
     readOnlyPlaceholder: string;
+    anonymizedPlaceholder: string;
     expiredLine: string;
     templates: string;
     sendTemplate: string;
@@ -196,6 +203,7 @@ const COMPOSER_COPY: Record<
     notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
     expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
     readOnlyPlaceholder: "Somente leitura — seu perfil não pode responder",
+    anonymizedPlaceholder: "Contato anonimizado — envio bloqueado (LGPD)",
     expiredLine:
       "Janela de 24 h encerrada: o WhatsApp só aceita modelos aprovados até o cliente responder de novo.",
     templates: "Modelos",
@@ -227,6 +235,7 @@ const COMPOSER_COPY: Record<
     notePlaceholder: "Write a note for your team — the customer won't see it",
     expiredPlaceholder: "24-hour window closed — send a template",
     readOnlyPlaceholder: "Read-only — your role can't reply",
+    anonymizedPlaceholder: "Contact anonymized — sending is blocked (LGPD)",
     expiredLine:
       "24-hour window closed: WhatsApp only accepts approved templates until the customer replies again.",
     templates: "Templates",
@@ -284,6 +293,7 @@ export function MessageComposer({
   onSendNote,
   replyTo,
   onClearReply,
+  contactAnonymized = false,
 }: MessageComposerProps) {
   const { language } = useLanguage();
   const copy = COMPOSER_COPY[language] ?? COMPOSER_COPY["pt-BR"];
@@ -394,7 +404,7 @@ export function MessageComposer({
   // For solo users this is always true — single-owner accounts pass
   // every capability — so the disabled branch is a no-op there.
   const canSend = useCan("send-messages");
-  const readOnly = !canSend;
+  const readOnly = !canSend || contactAnonymized;
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
 
@@ -777,7 +787,9 @@ export function MessageComposer({
   // Free-form WhatsApp text is gated by the 24h window; notes are not.
   const textDisabled = readOnly || (sessionExpired && !isNote);
   const sendLabel = isNote ? copy.addNote : copy.send;
-  const placeholder = readOnly
+  const placeholder = contactAnonymized
+    ? copy.anonymizedPlaceholder
+    : readOnly
     ? copy.readOnlyPlaceholder
     : isNote
       ? copy.notePlaceholder

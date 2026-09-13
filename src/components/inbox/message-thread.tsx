@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
@@ -997,6 +998,10 @@ export function MessageThread({
       }
 
       onAssignChange(conversation.id, agentId);
+      if (agentId && agentId !== user?.id) {
+        // Push (spec round 2 §5d): the server notifies the new assignee.
+        notifyPushEvent({ kind: "conversation_assigned", conversation_id: conversation.id });
+      }
       if (agentId) {
         const assignee = profiles.find((p) => p.user_id === agentId);
         void logEvent({
@@ -1496,6 +1501,7 @@ export function MessageThread({
         onSendNote={handleSendNote}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
+        contactAnonymized={!!contact?.anonymized_at}
       />
 
       <TemplatePicker

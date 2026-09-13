@@ -10,6 +10,7 @@ import {
   validateStepsForActivation,
   validateTriggerForActivation,
 } from '@/lib/automations/validate'
+import { AUDIT_ACTIONS, logAudit } from '@/lib/audit'
 
 async function requireUser() {
   const supabase = await createClient()
@@ -59,7 +60,7 @@ export async function PATCH(
   // to compute the post-patch "effective" state for validation.
   const { data: existing } = await admin
     .from('automations')
-    .select('id, user_id, is_active, trigger_type, trigger_config')
+    .select('id, user_id, account_id, name, is_active, trigger_type, trigger_config')
     .eq('id', id)
     .maybeSingle()
   if (!existing || existing.user_id !== user.id) {
@@ -110,6 +111,24 @@ export async function PATCH(
       .update(update)
       .eq('id', id)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+
+    // Activation / deactivation is audited (spec §3); plain edits are not.
+    if (
+      typeof update.is_active === 'boolean' &&
+      update.is_active !== existing.is_active &&
+      existing.account_id
+    ) {
+      await logAudit(admin, {
+        accountId: existing.account_id as string,
+        actorUserId: user.id,
+        action: update.is_active
+          ? AUDIT_ACTIONS.AUTOMATION_ACTIVATED
+          : AUDIT_ACTIONS.AUTOMATION_DEACTIVATED,
+        entityType: 'automation',
+        entityId: id,
+        metadata: { name: (update.name as string | undefined) ?? existing.name ?? null },
+      })
+    }
   }
 
   if (Array.isArray(body.steps)) {

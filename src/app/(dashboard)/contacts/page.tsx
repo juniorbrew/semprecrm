@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { AUDIT_ACTIONS } from '@/lib/audit';
+import { recordAudit } from '@/lib/audit-client';
 import {
   findConversationByContact,
   inboxConversationHref,
@@ -40,6 +42,7 @@ import {
   Upload,
   MoreHorizontal,
   Pencil,
+  ShieldCheck,
   Trash2,
   Loader2,
   Users,
@@ -239,6 +242,12 @@ export default function ContactsPage() {
     if (error) {
       toast.error('Failed to delete contact');
     } else {
+      void recordAudit({
+        action: AUDIT_ACTIONS.CONTACT_DELETED,
+        entityType: 'contact',
+        entityId: deleteTarget.id,
+        metadata: { contact_name: deleteTarget.name ?? null, phone: deleteTarget.phone },
+      });
       toast.success('Contato excluído');
       // The detail sheet may be showing the contact we just removed.
       if (detailContactId === deleteTarget.id) {
@@ -288,6 +297,13 @@ export default function ContactsPage() {
     if (error) {
       toast.error('Failed to delete contacts');
     } else {
+      // One trail entry for the whole batch — the ids are in the metadata.
+      void recordAudit({
+        action: AUDIT_ACTIONS.CONTACT_DELETED,
+        entityType: 'contact',
+        entityId: ids.length === 1 ? ids[0] : null,
+        metadata: { count: ids.length, ids: ids.slice(0, 200), bulk: true },
+      });
       toast.success(`${ids.length} contact${ids.length === 1 ? '' : 's'} deleted`);
       setSelected(new Set());
       fetchContacts();
@@ -497,7 +513,15 @@ export default function ContactsPage() {
                         {contact.name || (
                           <span className="text-muted-foreground italic">Unnamed</span>
                         )}
-                        {contact.opted_out_at && (
+                        {contact.anonymized_at ? (
+                          <span
+                            title={t('Personal data removed (LGPD)')}
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium leading-4 text-muted-foreground no-underline"
+                          >
+                            <ShieldCheck className="size-2.5" aria-hidden />
+                            {t('Anonymized')}
+                          </span>
+                        ) : contact.opted_out_at ? (
                           <span
                             title={t('Asked to stop receiving messages')}
                             className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-medium leading-4 text-red-600 no-underline dark:text-red-400"
@@ -505,7 +529,7 @@ export default function ContactsPage() {
                             <Ban className="size-2.5" aria-hidden />
                             {t('Opted out')}
                           </span>
-                        )}
+                        ) : null}
                       </span>
                       <span className="block text-[11px] font-normal text-muted-foreground group-hover/name:text-primary/80">
                         {t('View details')}
@@ -582,8 +606,10 @@ export default function ContactsPage() {
                           {t('Open conversation')}
                         </DropdownMenuItem>
                         <DropdownMenuItem
+                          disabled={!!contact.anonymized_at}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (contact.anonymized_at) return;
                             openEditForm(contact);
                           }}
                           className="text-popover-foreground focus:bg-muted focus:text-foreground"

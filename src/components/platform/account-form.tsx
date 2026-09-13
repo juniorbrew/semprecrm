@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowLeft, Ban, CheckCircle2, Loader2, Save } from "lucide-react";
 
-import { createClient } from "@/lib/supabase/client";
 import { useLanguage } from "@/hooks/use-language";
 import {
   LIMIT_KEYS,
@@ -147,13 +146,24 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
   }, [plan, status, expires, modules, limits, notes]);
 
   async function applyPatch(patch: Record<string, unknown>, successMessage: string) {
-    const supabase = createClient();
-    const { error } = await supabase.rpc("platform_update_account", {
-      p_account_id: row.id,
-      p_patch: patch,
-    });
-    if (error) {
-      toast.error(`${t("Failed to save")}: ${error.message}`);
+    // Server route wraps the `platform_update_account` RPC so the change
+    // is written to the account's audit log (`plan.changed`).
+    let errorMessage: string | null = null;
+    try {
+      const res = await fetch(`/api/platform/accounts/${row.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        errorMessage = body?.error ?? `HTTP ${res.status}`;
+      }
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
+    if (errorMessage) {
+      toast.error(`${t("Failed to save")}: ${errorMessage}`);
       return false;
     }
     toast.success(successMessage);

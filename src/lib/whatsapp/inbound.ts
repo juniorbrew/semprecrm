@@ -25,7 +25,12 @@ import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { parseAccountPreferences } from '@/lib/account-preferences'
 import { isOptOutMessage, normalizeOptOutText } from '@/lib/whatsapp/opt-out'
-import type { WhatsAppChannel } from '@/types'
+import { isWithinBusinessHours, startOfLocalDay } from '@/lib/business-hours'
+import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
+import { engineSendText } from '@/lib/automations/meta-send'
+import { notifyInboundMessage } from '@/lib/push/notify'
+import { isPushConfigured } from '@/lib/push/send'
+import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
 export type InboundMessageType =
@@ -83,6 +88,10 @@ export interface IngestResult {
   contactCreated?: boolean
   /** True when this message was a stop word and the contact was opted out. */
   optedOut?: boolean
+  /** Round-robin auto-assign (spec round 2 §2): who got the conversation, if anyone. */
+  autoAssignedTo?: string | null
+  /** Out-of-hours auto-reply outcome, when the feature is on and we are closed. */
+  outOfHoursReply?: 'sent' | 'skipped' | 'failed'
 }
 
 // ------------------------------------------------------------
@@ -258,23 +267,138 @@ export function toIsoTimestamp(value: InboundMessageInput['timestamp']): string 
 }
 
 /**
- * The account's opt-out stop words (accounts.preferences, migration
+ * The account's parsed preferences (accounts.preferences, migration
  * 030). Defaults apply when the column is missing or malformed.
  */
-export async function loadOptOutKeywords(
+export async function loadAccountPreferences(
   db: SupabaseClient,
   accountId: string,
-): Promise<string[]> {
+): Promise<AccountPreferences> {
   try {
     const { data, error } = await db
       .from('accounts')
       .select('preferences')
       .eq('id', accountId)
       .maybeSingle()
-    if (error) return parseAccountPreferences(null).opt_out_keywords
-    return parseAccountPreferences(data?.preferences).opt_out_keywords
+    if (error) return parseAccountPreferences(null)
+    return parseAccountPreferences(data?.preferences)
   } catch {
-    return parseAccountPreferences(null).opt_out_keywords
+    return parseAccountPreferences(null)
+  }
+}
+
+/** The account's opt-out stop words. */
+export async function loadOptOutKeywords(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<string[]> {
+  return (await loadAccountPreferences(db, accountId)).opt_out_keywords
+}
+
+/**
+ * Auto-assign (spec round 2 §2): when the account has
+ * `auto_assign_enabled` and the conversation receives its first customer
+ * message without an owner, round-robin it to an available agent and
+ * log the `assigned` pill. Nobody available → stays unassigned (Radar).
+ * Best-effort — never breaks the main flow.
+ */
+async function autoAssignIfEnabled(
+  db: SupabaseClient,
+  accountId: string,
+  conversation: Row,
+  prefs: AccountPreferences,
+  isFirstInboundMessage: boolean,
+): Promise<string | null> {
+  if (!prefs.auto_assign_enabled) return null
+  if (!isFirstInboundMessage || conversation.assigned_agent_id) return null
+  try {
+    const assignee = await pickRoundRobinAssignee(db, accountId)
+    if (!assignee) return null
+    const { error: updErr } = await db
+      .from('conversations')
+      .update({ assigned_agent_id: assignee, updated_at: new Date().toISOString() })
+      .eq('id', conversation.id)
+      .eq('account_id', accountId)
+    if (updErr) {
+      console.error('[inbound] auto-assign update failed:', updErr)
+      return null
+    }
+    conversation.assigned_agent_id = assignee
+    const { error: evErr } = await db.from('conversation_events').insert({
+      account_id: accountId,
+      conversation_id: conversation.id,
+      actor_user_id: null,
+      event_type: 'assigned',
+      payload: { assignee_user_id: assignee, source: 'auto_assign' },
+    })
+    if (evErr) console.error('[inbound] auto-assign event insert failed:', evErr)
+    return assignee
+  } catch (err) {
+    console.error('[inbound] autoAssignIfEnabled failed:', err)
+    return null
+  }
+}
+
+/** Meta refuses free-form text outside the 24 h customer-service window. */
+function isOutsideMetaWindowError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /131047|131026|re-?engagement|24[ -]?h/i.test(msg)
+}
+
+/**
+ * Out-of-hours auto-reply (spec round 2 §2): when enabled and we are
+ * outside business hours, send `out_of_hours_message` through the
+ * conversation's channel at most once per local business day. On the
+ * official channel a send outside the 24 h window is impossible —
+ * record it as skipped so we do not retry on every message. Best-effort.
+ */
+async function replyOutOfHoursIfNeeded(
+  db: SupabaseClient,
+  accountId: string,
+  ownerUserId: string,
+  contactId: string,
+  conversation: Row,
+  prefs: AccountPreferences,
+  now: Date,
+): Promise<IngestResult['outOfHoursReply'] | undefined> {
+  if (!prefs.out_of_hours_enabled) return undefined
+  if (isWithinBusinessHours(prefs, now)) return undefined
+  const dayStart = startOfLocalDay(now, prefs.business_hours.timezone)
+  const lastReplied = conversation.out_of_hours_replied_at
+    ? new Date(conversation.out_of_hours_replied_at)
+    : null
+  if (lastReplied && !Number.isNaN(lastReplied.getTime()) && lastReplied >= dayStart) {
+    return undefined
+  }
+
+  const stamp = async () => {
+    const { error } = await db
+      .from('conversations')
+      .update({ out_of_hours_replied_at: now.toISOString() })
+      .eq('id', conversation.id)
+      .eq('account_id', accountId)
+    if (error) console.error('[inbound] out_of_hours_replied_at update failed:', error)
+    conversation.out_of_hours_replied_at = now.toISOString()
+  }
+
+  try {
+    await engineSendText({
+      accountId,
+      userId: ownerUserId,
+      conversationId: conversation.id,
+      contactId,
+      text: prefs.out_of_hours_message,
+    })
+    await stamp()
+    return 'sent'
+  } catch (err) {
+    if (isOutsideMetaWindowError(err)) {
+      console.warn('[inbound] out-of-hours reply skipped (outside Meta window):', conversation.id)
+      await stamp()
+      return 'skipped'
+    }
+    console.error('[inbound] out-of-hours reply failed:', err)
+    return 'failed'
   }
 }
 
@@ -499,6 +623,42 @@ export async function ingestInboundMessage(
     contentText,
   )
 
+  // Availability features (spec round 2 §2): round-robin the first
+  // customer message of an ownerless conversation, and answer outside
+  // business hours. Both read the same preferences row.
+  const prefs = await loadAccountPreferences(db, accountId)
+  const autoAssignedTo = await autoAssignIfEnabled(
+    db,
+    accountId,
+    conversation,
+    prefs,
+    isFirstInboundMessage,
+  )
+  const outOfHoursReply = optedOut
+    ? undefined
+    : await replyOutOfHoursIfNeeded(
+        db,
+        accountId,
+        ownerUserId,
+        contact.id,
+        conversation,
+        prefs,
+        new Date(),
+      )
+
+  // Browser push (spec round 2 §5a): the assignee, or every available
+  // agent+ when unassigned; whoever has the thread open is skipped.
+  // Fire-and-forget — never delays the transport's 200 OK.
+  if (isPushConfigured()) {
+    void notifyInboundMessage(db, {
+      accountId,
+      conversationId: conversation.id,
+      assigneeUserId: (conversation.assigned_agent_id as string | null) ?? null,
+      contactName: (contact.name as string | null) || senderPhone,
+      preview: contentText || `[${input.type}]`,
+    })
+  }
+
   // Flow runner first — when it consumes the message, the content-level
   // automation triggers are suppressed (the customer is navigating a
   // bot menu, not sending a trigger word). Relationship-level triggers
@@ -550,6 +710,18 @@ export async function ingestInboundMessage(
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
+  if (autoAssignedTo) {
+    runAutomationsForTrigger({
+      accountId,
+      triggerType: 'conversation_assigned',
+      contactId: contact.id,
+      context: {
+        conversation_id: conversation.id,
+        agent_id: autoAssignedTo,
+        ...(optedOut ? { vars: { opted_out: true } } : {}),
+      },
+    }).catch((err) => console.error('[automations] dispatch failed:', err))
+  }
 
   return {
     ok: true,
@@ -557,5 +729,7 @@ export async function ingestInboundMessage(
     conversationId: conversation.id,
     contactCreated: contactOutcome.wasCreated,
     optedOut,
+    ...(autoAssignedTo ? { autoAssignedTo } : {}),
+    ...(outOfHoursReply ? { outOfHoursReply } : {}),
   }
 }

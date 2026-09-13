@@ -19,6 +19,9 @@ import { TaskStatusesSettings } from '@/components/settings/task-statuses-settin
 import { QuickRepliesSettings } from '@/components/settings/quick-replies-settings';
 import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings';
 import { InboxSettings } from '@/components/settings/inbox-settings';
+import { AuditLogSettings } from '@/components/settings/audit-log-settings';
+import { NotificationsSettings } from '@/components/settings/notifications-settings';
+import { BrandingSettings } from '@/components/settings/branding-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { PlanPanel } from '@/components/settings/plan-panel';
 import {
@@ -61,6 +64,7 @@ export default function SettingsPage() {
     profile: <ProfileForm />,
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
+    notifications: <NotificationsSettings />,
     whatsapp: <WhatsAppConfig />,
     templates: <TemplateManager />,
     fields: <FieldsAndTagsPanel />,
@@ -69,6 +73,8 @@ export default function SettingsPage() {
     quick_replies: <QuickRepliesSettings />,
     inbox: <InboxSettings />,
     integrations: <LeadSourcesSettings />,
+    audit: <AuditLogSettings />,
+    branding: <BrandingSettings />,
     members: <MembersTab />,
     plan: <PlanPanel />,
   };

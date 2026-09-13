@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { reportConversationFocus } from "@/lib/push/client";
 import type {
   Conversation,
   Message,
@@ -404,6 +405,36 @@ export default function InboxPage() {
   }, []);
 
   /**
+   * Push (spec round 2 §5): tell the server which conversation is on
+   * screen so its inbound-message notifications are skipped for this
+   * user. The server keeps the hint for 60 s, so re-send every 30 s
+   * while the tab is visible; clear it when the thread is deselected,
+   * the tab is hidden or the page unmounts.
+   */
+  const activeConversationId = activeConversation?.id ?? null;
+  useEffect(() => {
+    if (!activeConversationId) {
+      reportConversationFocus(null);
+      return;
+    }
+    const send = () => {
+      if (document.visibilityState === "visible") {
+        reportConversationFocus(activeConversationId);
+      } else {
+        reportConversationFocus(null);
+      }
+    };
+    send();
+    const interval = window.setInterval(send, 30_000);
+    document.addEventListener("visibilitychange", send);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", send);
+      reportConversationFocus(null);
+    };
+  }, [activeConversationId]);
+
+  /**
    * Manual refresh trigger for the thread-header refresh button.
    * Bumps the same resyncToken the reconnect / visibility paths use,
    * so it goes through the existing dedupe & refetch plumbing — no
@@ -668,6 +699,7 @@ export default function InboxPage() {
               contact={activeContact}
               conversationId={activeConversation?.id ?? null}
               onOpenConversation={handleSelectConversation}
+              onContactChanged={setActiveContact}
             />
           </div>
         )}

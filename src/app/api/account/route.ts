@@ -23,6 +23,8 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { AUDIT_ACTIONS } from "@/lib/audit";
+import { audit } from "@/lib/audit-server";
 
 export async function GET() {
   try {
@@ -94,6 +96,17 @@ export async function PATCH(request: Request) {
         { error: "Failed to update account" },
         { status: 500 },
       );
+    }
+
+    if (data.name !== ctx.account.name) {
+      await audit({
+        accountId: ctx.accountId,
+        actorUserId: ctx.userId,
+        action: AUDIT_ACTIONS.ACCOUNT_RENAMED,
+        entityType: "account",
+        entityId: ctx.accountId,
+        metadata: { from: ctx.account.name, to: data.name },
+      });
     }
 
     return NextResponse.json({ account: data });

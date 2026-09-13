@@ -53,7 +53,9 @@ import {
   Pencil,
   ArrowUpRight,
   X,
+  ShieldCheck,
 } from 'lucide-react';
+import { ContactPrivacySection } from './contact-privacy-section';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -497,6 +499,15 @@ export function ContactDetailView({
                   <SheetDescription className="sr-only">
                     {t('Contact details')}
                   </SheetDescription>
+                  {contact.anonymized_at && (
+                    <span
+                      className="mt-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                      title={t('Personal data removed (LGPD)')}
+                    >
+                      <ShieldCheck className="size-3" aria-hidden />
+                      {t('Anonymized')}
+                    </span>
+                  )}
                   {contact.company && (
                     <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground truncate">
                       <Building2 className="size-3 shrink-0" />
@@ -533,7 +544,10 @@ export function ContactDetailView({
                   <Button
                     size="sm"
                     onClick={openConversation}
-                    disabled={openingConversation || (!hasConversation && !canSend)}
+                    disabled={
+                      openingConversation ||
+                      (!hasConversation && (!canSend || !!contact.anonymized_at))
+                    }
                     className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
                   >
                     {openingConversation ? (
@@ -549,6 +563,8 @@ export function ContactDetailView({
                     size="sm"
                     variant="outline"
                     onClick={() => setMode('edit')}
+                    disabled={!!contact.anonymized_at}
+                    title={contact.anonymized_at ? t('Anonymized contacts cannot be edited') : undefined}
                     className="border-border text-foreground hover:bg-muted"
                   >
                     <Pencil className="size-3.5" />
@@ -677,6 +693,12 @@ export function ContactDetailView({
                     className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
                   >
                     {t('Deals')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="privacy"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Privacy')}
                   </TabsTrigger>
                 </TabsList>
 
@@ -963,6 +985,24 @@ export function ContactDetailView({
                       ))}
                     </div>
                   )}
+                </TabsContent>
+
+                {/* Privacy Tab (LGPD, migration 035) */}
+                <TabsContent value="privacy" className="flex-1 overflow-y-auto px-4 py-3">
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    {t(
+                      'Record the consent this contact gave, export everything the workspace holds about them, or remove their personal data for good.',
+                    )}
+                  </p>
+                  <ContactPrivacySection
+                    contact={contact}
+                    onChanged={() => {
+                      fetchContact();
+                      // Message previews are scrubbed too.
+                      fetchConversations();
+                      onUpdated();
+                    }}
+                  />
                 </TabsContent>
               </Tabs>
             )}

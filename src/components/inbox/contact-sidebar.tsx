@@ -37,6 +37,7 @@ import {
   Loader2,
   ExternalLink,
   Ban,
+  ShieldCheck,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -58,6 +59,7 @@ import {
 import type { Task } from "@/lib/tasks";
 import { NewCustomFieldDialog } from "./new-custom-field-dialog";
 import { CustomFieldValue } from "./custom-field-value";
+import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
 import { TeamNoteComposer } from "./team-note-composer";
 import { toast } from "sonner";
 
@@ -70,6 +72,8 @@ interface ContactSidebarProps {
   conversationId?: string | null;
   /** Jump to another conversation with this contact (previous threads). */
   onOpenConversation?: (conversation: Conversation) => void;
+  /** Fired with the refetched row after a privacy action (consent / anonymise). */
+  onContactChanged?: (contact: Contact) => void;
 }
 
 /**
@@ -269,6 +273,7 @@ export function ContactSidebar({
   contact,
   conversationId = null,
   onOpenConversation,
+  onContactChanged,
 }: ContactSidebarProps) {
   const { user, profile, accountId, defaultCurrency } = useAuth();
   const { language, t } = useLanguage();
@@ -290,6 +295,19 @@ export function ContactSidebar({
   useEffect(() => {
     setOptedOutAt(contact?.opted_out_at ?? null);
   }, [contact?.id, contact?.opted_out_at]);
+
+  // LGPD (migration 035): after a consent change or anonymisation the
+  // row is re-read so the badge / blocked composer reflect at once.
+  const handlePrivacyChanged = useCallback(async () => {
+    if (!contact?.id) return;
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("contacts")
+      .select("*")
+      .eq("id", contact.id)
+      .maybeSingle();
+    if (data) onContactChanged?.(data as Contact);
+  }, [contact?.id, onContactChanged]);
 
   const handleReactivate = useCallback(async () => {
     if (!contact?.id || !accountId || !user?.id || reactivating) return;
@@ -669,7 +687,16 @@ export function ContactSidebar({
               )}
             </div>
             <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
-            {optedOutAt && (
+            {contact.anonymized_at && (
+              <span
+                className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                title={t("Personal data removed (LGPD)")}
+              >
+                <ShieldCheck className="h-3 w-3" aria-hidden />
+                {t("Anonymized")}
+              </span>
+            )}
+            {optedOutAt && !contact.anonymized_at && (
               <div
                 className="mt-1.5 flex flex-col items-center gap-1"
                 title={copy.optedOutHint(new Date(optedOutAt).toLocaleDateString(language))}
@@ -1109,6 +1136,19 @@ export function ContactSidebar({
                 </>
               )}
             </div>
+          </div>
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Privacy (LGPD, migration 035) — consent, export, anonymise. */}
+          <div>
+            <SectionHeader icon={ShieldCheck} label={t("Privacy")} />
+            <ContactPrivacySection
+              compact
+              className="mt-2"
+              contact={contact}
+              onChanged={() => void handlePrivacyChanged()}
+            />
           </div>
         </div>
       </ScrollArea>

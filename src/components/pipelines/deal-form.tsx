@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { CURRENCIES } from "@/lib/currency";
+import { AUDIT_ACTIONS } from "@/lib/audit";
+import { recordAudit } from "@/lib/audit-client";
 import type { Contact, Deal, PipelineStage, Profile } from "@/types";
 import {
   Sheet,
@@ -188,6 +190,12 @@ export function DealFormBody({
       toast.error(t("Failed to delete deal"));
       return;
     }
+    void recordAudit({
+      action: AUDIT_ACTIONS.DEAL_DELETED,
+      entityType: "deal",
+      entityId: deal.id,
+      metadata: { name: deal.title, value: deal.value ?? null, contact_id: deal.contact_id },
+    });
     toast.success(t("Deal deleted"));
     setConfirmDelete(false);
     onDeleted?.();

@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
+import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
@@ -236,6 +237,11 @@ function TaskDrawerBody({
       try {
         const updated = await updateTask(supabase, task.id, patch);
         onUpdated?.(updated);
+        // Push (spec round 2 §5b): the server notifies the new assignee
+        // unless it is the caller.
+        if (patch.assignee_user_id && patch.assignee_user_id !== task.assignee_user_id) {
+          notifyPushEvent({ kind: "task_assigned", task_id: task.id });
+        }
       } catch (err) {
         toast.error(t("Failed to save task"));
         console.error(err);
@@ -274,6 +280,9 @@ function TaskDrawerBody({
         },
       );
       toast.success(t("Task created"));
+      if (created.assignee_user_id) {
+        notifyPushEvent({ kind: "task_assigned", task_id: created.id });
+      }
       onCreated?.(created);
       onClose();
     } catch (err) {
