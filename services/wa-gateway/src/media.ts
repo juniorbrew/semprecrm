@@ -23,6 +23,8 @@ export function buildQrMediaPath(accountId: string, filename: string, now: numbe
 
 export interface MediaStoreOptions {
   supabaseUrl: string;
+  /** Base pública das URLs devolvidas (padrão: `supabaseUrl`). */
+  supabasePublicUrl?: string;
   serviceRoleKey: string;
   logger: Logger;
   /** injeção para testes */
@@ -34,8 +36,12 @@ export class MediaStore {
   private readonly client: SupabaseClient;
   private readonly download: (msg: WAMessage, sock: WASocket) => Promise<Buffer>;
   private readonly log: Logger;
+  private readonly baseUrl: string;
+  private readonly publicUrl: string | undefined;
 
   constructor(opts: MediaStoreOptions) {
+    this.baseUrl = opts.supabaseUrl.replace(/\/+$/, "");
+    this.publicUrl = opts.supabasePublicUrl;
     this.client =
       opts.client ??
       createClient(opts.supabaseUrl, opts.serviceRoleKey, {
@@ -74,6 +80,11 @@ export class MediaStore {
     }
     const { data } = this.client.storage.from(CHAT_MEDIA_BUCKET).getPublicUrl(path);
     this.log.debug({ accountId, path, bytes: buffer.length }, "mídia armazenada");
-    return { url: data.publicUrl, path };
+    const publicBase = (this.publicUrl ?? "").replace(/\/+$/, "");
+    const url =
+      publicBase && data.publicUrl.startsWith(this.baseUrl)
+        ? publicBase + data.publicUrl.slice(this.baseUrl.length)
+        : data.publicUrl;
+    return { url, path };
   }
 }

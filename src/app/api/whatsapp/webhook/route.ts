@@ -14,6 +14,7 @@ import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
+import { supabaseServerUrl } from '@/lib/supabase/url'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -21,7 +22,7 @@ let _adminClient: any = null
 function supabaseAdmin() {
   if (!_adminClient) {
     _adminClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      supabaseServerUrl(),
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
   }

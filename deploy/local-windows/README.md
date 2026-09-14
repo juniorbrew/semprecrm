@@ -39,12 +39,18 @@ docker compose -f deploy/local-windows/docker-compose.yml down
 Migrations novas continuam sendo aplicadas no Supabase do CLI: `npx supabase migration up --include-all`
 (nunca `db reset`: apaga os dados de teste).
 
-## Como o container fala com o Supabase do PC
+## Acesso pela rede local e como o container fala com o Supabase do PC
 
-O navegador e o servidor usam a mesma `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:56021`. Dentro do
-container esse endereço não existe, então o `entrypoint.sh` abre um `socat` que encaminha
-`127.0.0.1:56021` → `host.docker.internal:56021`. Se as portas do Supabase mudarem
-(`supabase/config.toml`), ajuste `SUPABASE_FORWARD_PORTS` no compose.
+`NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SITE_URL` no `.env.local` apontam para o IP do PC na rede
+(`http://192.168.1.10:56021` / `http://192.168.1.10:3101`), para que outros computadores consigam
+logar — o navegador fala direto com o Supabase. Reserve esse IP no roteador (DHCP) para ele não mudar;
+se mudar, troque nos dois arquivos `.env`, em `supabase/config.toml` (`site_url`,
+`additional_redirect_urls`) e reconstrua.
+
+De dentro dos containers o IP da rede do próprio PC não é alcançável (Docker Desktop no Windows), por
+isso o servidor usa `SUPABASE_INTERNAL_URL=http://host.docker.internal:56021` e o gateway grava as URLs
+de mídia com `SUPABASE_PUBLIC_URL` (o endereço dos navegadores). O `entrypoint.sh` ainda encaminha
+`127.0.0.1:56021` → host por `socat`, para o caso de alguém voltar a usar `127.0.0.1` no `.env.local`.
 
 ## Desenvolvimento com hot reload
 
