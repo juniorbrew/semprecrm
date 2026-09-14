@@ -853,14 +853,56 @@ export interface LeadSourceEvent {
 }
 
 // ============================================================
-// Internal team chat (migration 038) — 1-to-1 threads between
-// members of the same account, with delivery / read receipts and
-// presence. Logic in src/lib/chat/. Phase 2 (groups, attachments,
-// reactions, edit / delete) reuses these rows: `kind`, `title`,
-// `edited_at`, `deleted_at` and `attachment` are reserved for it.
+// Internal team chat (migrations 038 + 039) — direct and group
+// threads between members of the same account, with delivery /
+// read receipts (per member on groups), presence, attachments,
+// reactions and edit / delete. Logic in src/lib/chat/.
 // ============================================================
 
 export type ChatThreadKind = 'direct' | 'group';
+
+/** `text` = a person wrote it; `system` = group event (JSON body, see ChatSystemEvent). */
+export type ChatMessageKind = 'text' | 'system';
+
+/** Attachment stored on a message (object in the private `chat-internal` bucket). */
+export interface ChatAttachment {
+  /** Object path: `account-<id>/chat/<thread>/<uuid>-<name>`. */
+  path: string;
+  /** Original file name (shown on the document chip / download). */
+  name: string;
+  mime: string;
+  /** Bytes. */
+  size: number;
+  width?: number;
+  height?: number;
+  /** Seconds (audio / video). */
+  duration?: number;
+}
+
+/** Body of a `kind: 'system'` message, stored as JSON text. */
+export type ChatSystemEvent =
+  | { event: 'created' }
+  | { event: 'added'; users: string[] }
+  | { event: 'removed'; users: string[] }
+  | { event: 'left' };
+
+/** Per-member receipt on a group message (`chat_message_receipts`). */
+export interface ChatMessageReceipt {
+  message_id: string;
+  user_id: string;
+  thread_id: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+}
+
+/** One emoji from one user on one message (`chat_message_reactions`). */
+export interface ChatMessageReaction {
+  message_id: string;
+  user_id: string;
+  emoji: string;
+  thread_id: string | null;
+  created_at: string;
+}
 
 export interface ChatThread {
   id: string;
@@ -892,15 +934,19 @@ export interface ChatMessage {
   account_id: string;
   thread_id: string;
   sender_id: string;
+  /** Empty when the message is only an attachment or was deleted. */
   body: string;
+  kind: ChatMessageKind;
   created_at: string;
-  /** Stamped by the recipient's client when the row reaches it. */
+  /** Direct threads: stamped by the recipient's client when the row reaches it. */
   delivered_at: string | null;
-  /** Stamped by the recipient when the thread is open and visible. */
+  /** Direct threads: stamped by the recipient when the thread is open and visible. */
   read_at: string | null;
+  /** Set by the sender's edit (allowed for 15 minutes after `created_at`). */
   edited_at: string | null;
+  /** Set by the sender's delete — body emptied, attachment removed. */
   deleted_at: string | null;
-  attachment: Record<string, unknown> | null;
+  attachment: ChatAttachment | null;
 }
 
 /** Sent → delivered → read, derived from the receipt columns. */

@@ -8,10 +8,12 @@ import { countUnreadMessages, markAllDelivered } from "@/lib/chat";
 
 /**
  * Number of internal-chat messages addressed to the signed-in user
- * with no read receipt. Drives the badge on the sidebar's Chat entry.
+ * with no read receipt (direct: `read_at`; group: my receipt row — see
+ * `chat_unread_counts()` in migration 039). Drives the badge on the
+ * sidebar's Chat entry.
  *
- * Mirrors `useOverdueTasks`: its own realtime channel on chat_messages
- * (RLS-filtered server-side) and a debounced head-only recount on every
+ * Mirrors `useOverdueTasks`: its own realtime channel on the chat
+ * tables (RLS-filtered server-side) and a debounced recount on every
  * change. It is also the "I'm online" hook for delivery receipts: on
  * mount and on every INSERT from someone else it stamps `delivered_at`
  * on the pending rows, so a sender sees ✓✓ as soon as this client is
@@ -32,7 +34,7 @@ export function useChatUnread(enabled = true): number {
 
     const recount = async () => {
       try {
-        const n = await countUnreadMessages(supabase, userId);
+        const n = await countUnreadMessages(supabase);
         if (!cancelled) setCount(n);
       } catch (err) {
         console.error("[chat] unread count:", err);
@@ -43,7 +45,7 @@ export function useChatUnread(enabled = true): number {
       timer.current = setTimeout(() => void recount(), 300);
     };
     const deliverPending = () => {
-      markAllDelivered(supabase, userId).catch((err) => {
+      markAllDelivered(supabase).catch((err) => {
         console.error("[chat] mark delivered:", err);
       });
     };
@@ -68,6 +70,9 @@ export function useChatUnread(enabled = true): number {
         { event: "UPDATE", schema: "public", table: "chat_messages" },
         schedule,
       )
+      // Group threads: my read receipts (and membership changes) move the count.
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_message_receipts" }, schedule)
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_thread_members" }, schedule)
       .subscribe();
 
     // Realtime can drop while a laptop sleeps — resync when the tab comes

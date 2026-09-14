@@ -18,6 +18,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { asChatAttachment, attachmentPreview } from '@/lib/chat/attachments'
 import { DEFAULT_LANGUAGE, translateLiteral } from '@/lib/i18n'
 
 import { isFocusedOn, isFocusedOnChatThread } from './focus'
@@ -335,12 +336,14 @@ export async function notifyChatMessage(
   try {
     const { data: message, error } = await admin
       .from('chat_messages')
-      .select('id, account_id, thread_id, sender_id, body')
+      .select('id, account_id, thread_id, sender_id, body, kind, attachment, deleted_at')
       .eq('id', notice.messageId)
       .eq('account_id', notice.accountId)
       .maybeSingle()
     if (error || !message) return { ...NOOP }
     if (message.sender_id !== notice.actorUserId) return { ...NOOP }
+    // System lines (group events) and already-deleted rows never push.
+    if ((message.kind ?? 'text') !== 'text' || message.deleted_at) return { ...NOOP }
 
     const { data: members, error: membersError } = await admin
       .from('chat_thread_members')
@@ -352,18 +355,27 @@ export async function notifyChatMessage(
       .filter((uid) => uid !== notice.actorUserId)
     if (others.length === 0) return { ...NOOP }
 
-    const [profiles, actor] = await Promise.all([
+    const [profiles, actor, thread] = await Promise.all([
       loadProfiles(admin, notice.accountId, others),
       actorName(admin, notice.actorUserId),
+      admin
+        .from('chat_threads')
+        .select('kind, title')
+        .eq('id', message.thread_id)
+        .maybeSingle()
+        .then((r) => (r.data as { kind?: string; title?: string | null } | null) ?? null),
     ])
     const recipients = allowed(profiles, 'chat_message').filter(
       (uid) => !isFocusedOnChatThread(uid, message.thread_id as string),
     )
     if (recipients.length === 0) return { ...NOOP }
 
-    const body = String(message.body ?? '').replace(/\s+/g, ' ').trim()
+    const body = chatPushBody(message.body, message.attachment)
+    // Groups: "Ana · Vendas" so the recipient knows where it landed.
+    const groupTitle = thread?.kind === 'group' ? thread.title?.trim() : ''
+    const who = actor ?? tr('New chat message')
     return await sendPushToUsers(admin, recipients, {
-      title: actor ?? tr('New chat message'),
+      title: groupTitle ? `${who} · ${groupTitle}` : who,
       body: body.length > CHAT_PREVIEW_MAX ? `${body.slice(0, CHAT_PREVIEW_MAX - 1)}…` : body,
       url: chatThreadUrl(message.thread_id as string),
       tag: `chat:${message.thread_id}`,
@@ -372,6 +384,20 @@ export async function notifyChatMessage(
     console.error('[push] notifyChatMessage threw:', err)
     return { ...NOOP }
   }
+}
+
+/**
+ * Push body for a chat message: the text, else a placeholder for the
+ * attachment ("🎤 Áudio" for voice notes, "📎 Anexo" otherwise) — the
+ * same wording the thread preview trigger uses (migration 039).
+ */
+export function chatPushBody(body: unknown, attachment: unknown): string {
+  const text = String(body ?? '').replace(/\s+/g, ' ').trim()
+  if (text) return text
+  const att = asChatAttachment(attachment)
+  if (!att) return ''
+  const { emoji, label } = attachmentPreview(att.mime)
+  return `${emoji} ${tr(label)}`
 }
 
 async function actorName(admin: SupabaseClient, userId: string): Promise<string | null> {

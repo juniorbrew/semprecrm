@@ -11,6 +11,7 @@ function msg(id: string, createdAt: string, over: Partial<ChatMessage> = {}): Ch
     thread_id: 't1',
     sender_id: 'u1',
     body: id,
+    kind: 'text',
     created_at: createdAt,
     delivered_at: null,
     read_at: null,

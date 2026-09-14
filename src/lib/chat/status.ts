@@ -33,14 +33,47 @@ export const CHAT_STATUS_LABELS: Record<ChatMessageStatus, string> = {
 };
 
 // ------------------------------------------------------------
+// Edit / delete rules (phase 2 — mirrored by the DB trigger)
+// ------------------------------------------------------------
+
+/** A message can be edited for 15 minutes after it was sent. */
+export const CHAT_EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+/** Own, text, not deleted, and still inside the edit window. */
+export function canEditMessage(
+  message: Pick<ChatMessage, 'sender_id' | 'kind' | 'created_at' | 'deleted_at'>,
+  userId: string,
+  now: number = Date.now(),
+): boolean {
+  if (message.sender_id !== userId) return false;
+  if (message.kind !== 'text' || message.deleted_at) return false;
+  const created = new Date(message.created_at).getTime();
+  if (Number.isNaN(created)) return false;
+  return now - created <= CHAT_EDIT_WINDOW_MS;
+}
+
+/** Own text message that is not deleted yet (no time limit). */
+export function canDeleteMessage(
+  message: Pick<ChatMessage, 'sender_id' | 'kind' | 'deleted_at'>,
+  userId: string,
+): boolean {
+  return message.sender_id === userId && message.kind === 'text' && !message.deleted_at;
+}
+
+// ------------------------------------------------------------
 // Unread
 // ------------------------------------------------------------
 
-/** True when `message` is addressed to `userId` and has no read receipt. */
+/**
+ * True when `message` is addressed to `userId` and has no read receipt
+ * (direct threads). System lines and deleted messages never count.
+ */
 export function isUnreadFor(
-  message: Pick<ChatMessage, 'sender_id' | 'read_at'>,
+  message: Pick<ChatMessage, 'sender_id' | 'read_at'> & Partial<Pick<ChatMessage, 'kind' | 'deleted_at'>>,
   userId: string,
 ): boolean {
+  if (message.kind && message.kind !== 'text') return false;
+  if (message.deleted_at) return false;
   return message.sender_id !== userId && !message.read_at;
 }
 

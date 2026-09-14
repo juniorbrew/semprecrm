@@ -9,18 +9,14 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import type { ChatMember, ChatMessage, ChatThread } from '@/types';
+import type { ChatMember, ChatMessage, ChatMessageReaction, ChatMessageReceipt, ChatThread } from '@/types';
 
-import { unreadByThread } from './status';
 
 /** The app's Supabase client is untyped, so this is what callers hold. */
 export type ChatClient = Pick<SupabaseClient, 'from' | 'rpc'>;
 
 /** Messages per history page (spec: 50). */
 export const CHAT_PAGE_SIZE = 50;
-
-/** Cap on the unread scan behind the badges — plenty for a team chat. */
-const UNREAD_SCAN_LIMIT = 5000;
 
 function fail(prefix: string, error: { message: string } | null): never {
   throw new Error(`${prefix}: ${error?.message ?? 'unknown error'}`);
@@ -68,34 +64,29 @@ export async function getThread(db: ChatClient, threadId: string): Promise<ChatT
 }
 
 // ------------------------------------------------------------
-// Unread
+// Unread — chat_unread_counts() (migration 039) does the right thing
+// for both thread kinds: direct → `read_at`, group → my receipt row;
+// system lines, deleted rows and anything before I joined are out.
 // ------------------------------------------------------------
 
-/**
- * Per-thread unread counts for the signed-in user. Pulls only the ids
- * of the unread rows (RLS keeps them to my threads) and folds them
- * client-side — one round trip for every badge in the list.
- */
-export async function loadUnreadByThread(db: ChatClient, userId: string): Promise<Map<string, number>> {
-  const { data, error } = await db
-    .from('chat_messages')
-    .select('thread_id, sender_id, read_at')
-    .neq('sender_id', userId)
-    .is('read_at', null)
-    .limit(UNREAD_SCAN_LIMIT);
+/** Per-thread unread counts for the signed-in user, one round trip. */
+export async function loadUnreadByThread(db: ChatClient): Promise<Map<string, number>> {
+  const { data, error } = await db.rpc('chat_unread_counts');
   if (error) fail('Failed to load unread chat messages', error);
-  return unreadByThread((data ?? []) as Pick<ChatMessage, 'thread_id' | 'sender_id' | 'read_at'>[], userId);
+  const out = new Map<string, number>();
+  for (const row of (data ?? []) as { thread_id: string; unread: number | string }[]) {
+    const n = Number(row.unread);
+    if (n > 0) out.set(row.thread_id, n);
+  }
+  return out;
 }
 
-/** Total unread — head-only count for the sidebar badge. */
-export async function countUnreadMessages(db: ChatClient, userId: string): Promise<number> {
-  const { count, error } = await db
-    .from('chat_messages')
-    .select('id', { count: 'exact', head: true })
-    .neq('sender_id', userId)
-    .is('read_at', null);
-  if (error) fail('Failed to count unread chat messages', error);
-  return count ?? 0;
+/** Total unread for the sidebar badge. */
+export async function countUnreadMessages(db: ChatClient): Promise<number> {
+  const byThread = await loadUnreadByThread(db);
+  let total = 0;
+  for (const n of byThread.values()) total += n;
+  return total;
 }
 
 // ------------------------------------------------------------
@@ -171,4 +162,30 @@ export function compareMessages(a: ChatMessage, b: ChatMessage): number {
   const tb = new Date(b.created_at).getTime();
   if (ta !== tb) return ta - tb;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+// ------------------------------------------------------------
+// Receipts / reactions for a set of messages (phase 2)
+// ------------------------------------------------------------
+
+/** Receipt rows (group threads) for the given message ids. */
+export async function listReceipts(db: ChatClient, messageIds: readonly string[]): Promise<ChatMessageReceipt[]> {
+  if (messageIds.length === 0) return [];
+  const { data, error } = await db
+    .from('chat_message_receipts')
+    .select('message_id, user_id, thread_id, delivered_at, read_at')
+    .in('message_id', [...messageIds]);
+  if (error) fail('Failed to load receipts', error);
+  return (data ?? []) as ChatMessageReceipt[];
+}
+
+/** Reaction rows for the given message ids. */
+export async function listReactions(db: ChatClient, messageIds: readonly string[]): Promise<ChatMessageReaction[]> {
+  if (messageIds.length === 0) return [];
+  const { data, error } = await db
+    .from('chat_message_reactions')
+    .select('message_id, user_id, emoji, thread_id, created_at')
+    .in('message_id', [...messageIds]);
+  if (error) fail('Failed to load reactions', error);
+  return (data ?? []) as ChatMessageReaction[];
 }

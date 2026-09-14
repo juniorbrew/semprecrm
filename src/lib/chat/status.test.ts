@@ -4,6 +4,9 @@ import type { ChatMember, ChatMessage, ChatThread } from '@/types';
 
 import {
   buildPeopleRows,
+  canDeleteMessage,
+  canEditMessage,
+  CHAT_EDIT_WINDOW_MS,
   countUnread,
   dayKey,
   describeLastSeen,
@@ -26,6 +29,7 @@ function msg(over: Partial<ChatMessage> & { id: string }): ChatMessage {
     thread_id: 't1',
     sender_id: ANA,
     body: 'hi',
+    kind: 'text',
     created_at: '2026-09-14T12:00:00.000Z',
     delivered_at: null,
     read_at: null,
@@ -82,6 +86,11 @@ describe('unread', () => {
     expect(countUnread(messages, ME)).toBe(3);
   });
 
+  it('never counts system lines or deleted messages', () => {
+    expect(isUnreadFor(msg({ id: 's', sender_id: ANA, kind: 'system' }), ME)).toBe(false);
+    expect(isUnreadFor(msg({ id: 'x', sender_id: ANA, deleted_at: '2026-09-14T12:05:00Z' }), ME)).toBe(false);
+  });
+
   it('groups per thread and omits threads with nothing unread', () => {
     const map = unreadByThread(messages, ME);
     expect(map.get('t1')).toBe(1);
@@ -90,6 +99,31 @@ describe('unread', () => {
     // From Ana's point of view only my message in t1 is unread.
     expect(countUnread(messages, ANA)).toBe(3); // c (mine) + d + e (Bruno's)
     expect(unreadByThread(messages, ANA).get('t1')).toBe(1);
+  });
+});
+
+describe('edit / delete rules', () => {
+  const at = Date.parse('2026-09-14T12:00:00.000Z');
+  const own = msg({ id: 'm', sender_id: ME });
+
+  it('allows editing own text messages for 15 minutes', () => {
+    expect(canEditMessage(own, ME, at + 60_000)).toBe(true);
+    expect(canEditMessage(own, ME, at + CHAT_EDIT_WINDOW_MS)).toBe(true);
+    expect(canEditMessage(own, ME, at + CHAT_EDIT_WINDOW_MS + 1)).toBe(false);
+  });
+
+  it('refuses edits on other people’s, system or deleted messages', () => {
+    expect(canEditMessage(msg({ id: 'a', sender_id: ANA }), ME, at)).toBe(false);
+    expect(canEditMessage(msg({ id: 's', sender_id: ME, kind: 'system' }), ME, at)).toBe(false);
+    expect(canEditMessage(msg({ id: 'd', sender_id: ME, deleted_at: '2026-09-14T12:01:00Z' }), ME, at)).toBe(false);
+    expect(canEditMessage(msg({ id: 'bad', sender_id: ME, created_at: 'nope' }), ME, at)).toBe(false);
+  });
+
+  it('allows deleting own text messages at any time, once', () => {
+    expect(canDeleteMessage(own, ME)).toBe(true);
+    expect(canDeleteMessage(own, ANA)).toBe(false);
+    expect(canDeleteMessage(msg({ id: 's', sender_id: ME, kind: 'system' }), ME)).toBe(false);
+    expect(canDeleteMessage(msg({ id: 'd', sender_id: ME, deleted_at: '2026-09-14T12:01:00Z' }), ME)).toBe(false);
   });
 });
 
