@@ -6,7 +6,11 @@
 //   pm2-startup install
 //   pm2 start deploy/local-windows/ecosystem.config.cjs && pm2 save
 //
-// Daily use:  pm2 status · pm2 logs semprecrm-dev · pm2 restart all · pm2 stop all
+// Daily use:  pm2 status · pm2 logs semprecrm · pm2 restart all · pm2 stop all
+// The app runs a PRODUCTION build (next start) to keep memory low on this
+// machine (~300 MB vs ~2.4 GB for next dev). After code changes rebuild:
+//   pm2 stop semprecrm && npm run build && pm2 restart semprecrm
+// For hot reload during development run `npx next dev -p 3102` on the side.
 // Ports: app 3101 (3100 is taken by Docker), gateway 3201, cron health 3301.
 // Secrets stay in .env.local and services/wa-gateway/.env — nothing here.
 const path = require("path");
@@ -15,16 +19,16 @@ const root = path.resolve(__dirname, "..", "..");
 module.exports = {
   apps: [
     {
-      name: "semprecrm-dev",
+      name: "semprecrm",
       cwd: root,
       script: "node_modules/next/dist/bin/next",
-      args: "dev -p 3101",
+      args: "start -p 3101",
       interpreter: "node",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
-      max_memory_restart: "2G",
-      env: { NODE_ENV: "development" },
+      max_memory_restart: "768M",
+      env: { NODE_ENV: "production" },
       time: true,
     },
     {
