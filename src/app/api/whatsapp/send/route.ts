@@ -28,6 +28,7 @@ import {
   sendViaGateway,
 } from '@/lib/whatsapp/qr-gateway'
 import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
+import { mediaUrlForPublic, mediaUrlForServer } from '@/lib/storage/media-url'
 
 export async function POST(request: Request) {
   try {
@@ -198,7 +199,10 @@ export async function POST(request: Request) {
           ...(isMediaKind
             ? {
                 media: {
-                  url: media_url,
+                  // Stored URLs may be origin-relative (`/supabase/...`);
+                  // the gateway fetches the bytes, so hand it an absolute
+                  // URL it can reach (internal Supabase route).
+                  url: mediaUrlForServer(media_url),
                   mimetype: mimeFromUrl(message_type, media_url, filename || undefined),
                   filename: filename || undefined,
                   caption: message_type !== 'audio' && content_text ? content_text : undefined,
@@ -401,7 +405,8 @@ export async function POST(request: Request) {
           accessToken,
           to: phone,
           kind: message_type as MediaKind,
-          link: media_url,
+          // Meta fetches the link from the outside → public site origin.
+          link: mediaUrlForPublic(media_url),
           caption: content_text || undefined,
           filename: filename || undefined,
           contextMessageId,

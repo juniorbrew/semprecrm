@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
+import { resolveSupabasePublicUrl } from '@/lib/supabase/public-url';
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
 import {
@@ -91,7 +92,7 @@ async function recordMfaAudit(event: 'enrolled' | 'disabled') {
  */
 async function verifyPassword(email: string, password: string): Promise<boolean> {
   const probe = createSupabaseJsClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    resolveSupabasePublicUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       auth: {

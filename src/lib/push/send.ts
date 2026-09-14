@@ -16,6 +16,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import webpush, { WebPushError, type PushSubscription as WebPushSubscription } from 'web-push'
 
+import { mediaUrlForPublic } from '@/lib/storage/media-url'
+
 export interface PushPayload {
   title: string
   body: string
@@ -93,7 +95,9 @@ export function buildPushMessage(payload: PushPayload): string {
   return JSON.stringify({
     title: payload.title,
     body: truncateBody(payload.body),
-    ...(payload.icon ? { icon: payload.icon } : {}),
+    // The service worker shows the icon outside any page, so a stored
+    // origin-relative avatar/logo must be absolutised here.
+    ...(payload.icon ? { icon: mediaUrlForPublic(payload.icon) } : {}),
     ...(payload.tag ? { tag: payload.tag } : {}),
     data: { url: payload.url },
   })

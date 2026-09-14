@@ -7,7 +7,7 @@ import {
   needsMfaChallenge,
   resolveAssuranceLevels,
 } from '@/lib/auth/mfa'
-import { supabaseServerUrl } from '@/lib/supabase/url'
+import { SUPABASE_AUTH_COOKIE_NAME, supabaseServerUrl } from '@/lib/supabase/url'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -16,6 +16,7 @@ export async function middleware(request: NextRequest) {
     supabaseServerUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { name: SUPABASE_AUTH_COOKIE_NAME },
       cookies: {
         getAll() {
           return request.cookies.getAll()

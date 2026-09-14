@@ -39,20 +39,17 @@ docker compose -f deploy/local-windows/docker-compose.yml down
 Migrations novas continuam sendo aplicadas no Supabase do CLI: `npx supabase migration up --include-all`
 (nunca `db reset`: apaga os dados de teste).
 
-## Acesso pela rede local e como o container fala com o Supabase do PC
+## Acesso pela rede local (e por qualquer endereço)
 
-`NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SITE_URL` no `.env.local` apontam para o IP do PC na rede
-(`http://192.168.1.10:56021` / `http://192.168.1.10:3101`), para que outros computadores consigam
-logar — o navegador fala direto com o Supabase. Reserve esse IP no roteador (DHCP) para ele não mudar;
-se mudar, troque nos dois arquivos `.env`, em `supabase/config.toml` (`site_url`,
-`additional_redirect_urls`) e reconstrua.
+Só a porta **3101** é publicada. O container `edge` (nginx) recebe tudo: `/supabase/*` vai para o
+Supabase do PC (REST, auth, storage e o WebSocket do realtime) e o resto vai para o app. Por isso
+`NEXT_PUBLIC_SUPABASE_URL=/supabase` no `.env.local`: o navegador fala com o Supabase pelo mesmo endereço
+em que abriu o app — `http://localhost:3101`, `http://192.168.1.10:3101` ou pela VPN — sem porta extra
+nem IP fixo. As URLs de mídia são gravadas relativas (`/supabase/storage/...`) pelo mesmo motivo.
 
-De dentro dos containers o IP da rede do próprio PC não é alcançável (Docker Desktop no Windows), por
-isso o servidor usa `SUPABASE_INTERNAL_URL=http://host.docker.internal:56021` e o gateway grava as URLs
-de mídia com `SUPABASE_PUBLIC_URL` (o endereço dos navegadores). O `entrypoint.sh` ainda encaminha
-`127.0.0.1:56021` → host por `socat`, para o caso de alguém voltar a usar `127.0.0.1` no `.env.local`.
+Dentro dos containers o servidor usa `SUPABASE_INTERNAL_URL=http://host.docker.internal:56021`
+(o Docker no Windows não alcança o IP de rede do próprio PC). `NEXT_PUBLIC_SITE_URL` é o endereço que
+aparece em links compartilháveis (convites, URL das fontes de lead): use o IP da rede.
 
-## Desenvolvimento com hot reload
-
-Para trabalhar no código com recarga automática, rode `npx next dev -p 3102` no PC apontando para o
-mesmo Supabase; o container em 3101 continua servindo a versão estável.
+Se as portas do Supabase mudarem (`supabase/config.toml`), ajuste `nginx.conf`, `SUPABASE_INTERNAL_URL`
+no compose e `SUPABASE_URL` do gateway.

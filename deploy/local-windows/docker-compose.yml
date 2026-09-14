@@ -15,6 +15,20 @@
 name: semprecrm
 
 services:
+  # Single entry point on 3101: proxies /supabase/* to the host's Supabase
+  # (WebSocket included) and everything else to the app. See nginx.conf.
+  edge:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3101:3101"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - semprecrm
+    restart: unless-stopped
+
   semprecrm:
     build:
       context: ../..
@@ -28,12 +42,12 @@ services:
     env_file: ../../.env.local
     environment:
       WA_GATEWAY_URL: http://wa-gateway:3201
-      # The browser uses NEXT_PUBLIC_SUPABASE_URL (a LAN IP so other PCs can
-      # log in); the container cannot route to the host's LAN IP, so the
-      # server side talks to Supabase through host.docker.internal instead.
+      # The browser uses NEXT_PUBLIC_SUPABASE_URL="/supabase" (same origin,
+      # via the edge proxy); the server side talks to Supabase directly
+      # through host.docker.internal.
       SUPABASE_INTERNAL_URL: http://host.docker.internal:56021
-    ports:
-      - "3101:3101"
+    expose:
+      - "3101"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -51,7 +65,8 @@ services:
       WA_DATA_DIR: /data
       WA_GATEWAY_PORT: "3201"
       # Same split as the app: reach Supabase via the host gateway, but stamp
-      # media URLs with the address browsers can open.
+      # media URLs with the browser-facing base ("/supabase" → relative URLs
+      # that work from any address the app is opened on).
       SUPABASE_URL: http://host.docker.internal:56021
       SUPABASE_PUBLIC_URL: ${NEXT_PUBLIC_SUPABASE_URL}
     volumes:

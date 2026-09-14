@@ -52,6 +52,16 @@ describe('validateBrandingPatch', () => {
     expect(validateBrandingPatch({}, { app_name: 'x'.repeat(41) }).ok).toBe(false);
     expect(validateBrandingPatch({}, { primary_color: 'blue' }).ok).toBe(false);
     expect(validateBrandingPatch({}, { logo_url: 'javascript:alert(1)' }).ok).toBe(false);
+    expect(validateBrandingPatch({}, { logo_url: '//evil/x.png' }).ok).toBe(false);
+  });
+
+  it('accepts an origin-relative logo path (same-origin Supabase proxy)', () => {
+    const rel = '/supabase/storage/v1/object/public/branding/account-1/logo.png';
+    expect(validateBrandingPatch({}, { logo_url: rel })).toEqual({
+      ok: true,
+      branding: { logo_url: rel },
+    });
+    expect(parseBranding({ logo_url: rel }).logo_url).toBe(rel);
   });
 
   it('merges over the existing jsonb, storing only customised keys', () => {

@@ -5,6 +5,7 @@ import { Check, ImagePlus, Loader2, MessageSquare, Paintbrush, RotateCcw, Trash2
 import { toast } from 'sonner';
 
 import { createClient } from '@/lib/supabase/client';
+import { toStoredMediaUrl } from '@/lib/storage/media-url';
 import { useAuth, useEntitlements } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
 import {
@@ -125,7 +126,7 @@ export function BrandingSettings() {
           contentType: pendingLogo.type,
         });
         if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
-        nextLogo = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+        nextLogo = toStoredMediaUrl(supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl);
       } else if (removeLogo) {
         nextLogo = null;
       }

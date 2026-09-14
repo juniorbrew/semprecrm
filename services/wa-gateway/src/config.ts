@@ -10,6 +10,13 @@ export interface GatewayConfig {
    * salvo quando o gateway alcança o Supabase por outra rota (ex.: Docker,
    * `SUPABASE_URL=http://host.docker.internal:56021` e
    * `SUPABASE_PUBLIC_URL=http://192.168.1.10:56021` para os navegadores).
+   *
+   * Pode ser apenas um CAMINHO (`SUPABASE_PUBLIC_URL=/supabase`) quando o
+   * app expõe o Supabase pela própria origem (nginx faz proxy de
+   * `/supabase/*`): as URLs gravadas ficam relativas à origem
+   * (`/supabase/storage/v1/object/public/...`) e funcionam de localhost, IP
+   * da LAN ou VPN. O app absolutiza a URL antes de pedir um envio de mídia,
+   * então o gateway sempre recebe `http(s)://...` em `media.url`.
    */
   supabasePublicUrl: string;
   supabaseServiceRoleKey: string;

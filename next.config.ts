@@ -68,6 +68,20 @@ const nextConfig: NextConfig = {
   // `next start` on the PM2/VPS deploy is unaffected.
   output: "standalone",
   /**
+   * Dev-only convenience: when NEXT_PUBLIC_SUPABASE_URL is a same-origin path
+   * ("/supabase") the edge nginx of the Docker setup proxies it; outside
+   * Docker (`next dev`) this rewrite does the same for HTTP calls so the app
+   * still works. Realtime WebSockets do not go through rewrites — use the
+   * Docker stack (or an absolute NEXT_PUBLIC_SUPABASE_URL) when you need them.
+   */
+  async rewrites() {
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const internal = process.env.SUPABASE_INTERNAL_URL;
+    if (!base?.startsWith("/") || !internal) return [];
+    const prefix = base.replace(/\/+$/, "");
+    return [{ source: `${prefix}/:path*`, destination: `${internal.replace(/\/+$/, "")}/:path*` }];
+  },
+  /**
    * Cache-Control policy.
    *
    * Why this exists:

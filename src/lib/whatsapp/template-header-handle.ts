@@ -1,5 +1,6 @@
 import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
+import { mediaUrlForServer } from '@/lib/storage/media-url'
 
 /**
  * Meta requires an `example.header_handle` (from the Resumable Upload
@@ -33,11 +34,12 @@ export async function ensureImageHeaderHandle(
     )
   }
 
-  // Fetch the sample image bytes (works for our uploaded chat-media URL
+  // Fetch the sample image bytes (works for our uploaded chat-media URL —
+  // possibly origin-relative, resolved through the internal Supabase route —
   // and for a manually-pasted public link).
   let res: Response
   try {
-    res = await fetch(payload.header_media_url)
+    res = await fetch(mediaUrlForServer(payload.header_media_url))
   } catch {
     throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
   }
