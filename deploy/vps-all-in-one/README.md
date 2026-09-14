@@ -16,7 +16,7 @@ O stack do Supabase parado usa 2 a 3 GB de RAM. Com 4 GB a VPS entra em swap sob
 
 ## Ordem de instalação
 
-Os passos 1 e 2 são iguais ao guia `deploy/contabo/README.md` (Node 20, PM2, Nginx, Certbot, usuário
+Os passos 1 e 2 são iguais ao guia `deploy/contabo/README.md` (Node 22, PM2, Nginx, Certbot, usuário
 `semprecrm`, clone em `/var/www/semprecrm`). Depois:
 
 ### 3. Supabase self-hosted

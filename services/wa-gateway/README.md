@@ -1,6 +1,6 @@
 # wa-gateway — canal WhatsApp por QR code
 
-Serviço Node 20 separado do app que conecta números de WhatsApp pelo protocolo do
+Serviço Node 22+ separado do app que conecta números de WhatsApp pelo protocolo do
 WhatsApp Web (biblioteca [Baileys](https://github.com/WhiskeySockets/Baileys),
 pacote `@whiskeysockets/baileys`), como um "aparelho conectado" da conta. Um único
 processo atende várias contas do SempreCRM: cada `account_id` vira uma sessão com

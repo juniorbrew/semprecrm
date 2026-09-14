@@ -63,6 +63,10 @@ const SECURITY_HEADERS = [
 const nextConfig: NextConfig = {
   // Hide the floating "N" dev-tools badge in `next dev`; no effect on production.
   devIndicators: false,
+  // Emit `.next/standalone` (server + traced node_modules) so the Docker
+  // images in deploy/ can run the app without the full node_modules tree.
+  // `next start` on the PM2/VPS deploy is unaffected.
+  output: "standalone",
   /**
    * Cache-Control policy.
    *

@@ -6,8 +6,8 @@ Este guia assume Ubuntu 22.04/24.04, um domínio apontando para o IP da VPS e um
 ## 1. Servidor (uma vez)
 
 ```bash
-# Node 20 LTS + PM2 + Nginx + Certbot
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Node 22 LTS + PM2 + Nginx + Certbot (o gateway do WhatsApp exige Node 22+: o supabase-js usa o WebSocket nativo)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs nginx certbot python3-certbot-nginx git
 sudo npm i -g pm2
 
