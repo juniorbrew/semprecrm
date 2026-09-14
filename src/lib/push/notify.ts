@@ -12,13 +12,15 @@
 //   (c) notifyTasksDueSoon          — /api/automations/cron
 //   (d) notifyConversationAssigned  — POST /api/push/notify
 //                                     (conversation_assigned)
+//   (e) notifyChatMessage           — POST /api/push/notify (chat_message)
+//                                     internal team chat, migration 038
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { DEFAULT_LANGUAGE, translateLiteral } from '@/lib/i18n'
 
-import { isFocusedOn } from './focus'
+import { isFocusedOn, isFocusedOnChatThread } from './focus'
 import { parseNotificationPrefs, type PushEventKind } from './prefs'
 import { sendPushToUsers, type SendPushResult } from './send'
 
@@ -77,6 +79,11 @@ export function conversationUrl(conversationId: string): string {
 
 export function taskUrl(taskId: string): string {
   return `/tasks?task=${encodeURIComponent(taskId)}`
+}
+
+/** Internal chat deep link (`/chat?t=<thread id>`). */
+export function chatThreadUrl(threadId: string): string {
+  return `/chat?t=${encodeURIComponent(threadId)}`
 }
 
 // ------------------------------------------------------------
@@ -296,6 +303,73 @@ export async function notifyConversationAssigned(
     })
   } catch (err) {
     console.error('[push] notifyConversationAssigned threw:', err)
+    return { ...NOOP }
+  }
+}
+
+// ------------------------------------------------------------
+// (e) Internal chat message
+// ------------------------------------------------------------
+
+export interface ChatMessageNotice {
+  accountId: string
+  messageId: string
+  /** The sender — never notified. */
+  actorUserId: string
+}
+
+/** Cap on the push body so a long message stays a notification. */
+const CHAT_PREVIEW_MAX = 140
+
+/**
+ * Every other member of the message's thread (in phase 1: the one other
+ * person) gets a push unless their prefs turned `chat_message` off or
+ * they reported the thread as open (POST /api/push/seen with
+ * `chat_thread_id`). The message is re-read server-side and must belong
+ * to the caller's account and be authored by the caller.
+ */
+export async function notifyChatMessage(
+  admin: SupabaseClient,
+  notice: ChatMessageNotice,
+): Promise<SendPushResult> {
+  try {
+    const { data: message, error } = await admin
+      .from('chat_messages')
+      .select('id, account_id, thread_id, sender_id, body')
+      .eq('id', notice.messageId)
+      .eq('account_id', notice.accountId)
+      .maybeSingle()
+    if (error || !message) return { ...NOOP }
+    if (message.sender_id !== notice.actorUserId) return { ...NOOP }
+
+    const { data: members, error: membersError } = await admin
+      .from('chat_thread_members')
+      .select('user_id')
+      .eq('thread_id', message.thread_id)
+    if (membersError) return { ...NOOP }
+    const others = ((members ?? []) as { user_id: string }[])
+      .map((m) => m.user_id)
+      .filter((uid) => uid !== notice.actorUserId)
+    if (others.length === 0) return { ...NOOP }
+
+    const [profiles, actor] = await Promise.all([
+      loadProfiles(admin, notice.accountId, others),
+      actorName(admin, notice.actorUserId),
+    ])
+    const recipients = allowed(profiles, 'chat_message').filter(
+      (uid) => !isFocusedOnChatThread(uid, message.thread_id as string),
+    )
+    if (recipients.length === 0) return { ...NOOP }
+
+    const body = String(message.body ?? '').replace(/\s+/g, ' ').trim()
+    return await sendPushToUsers(admin, recipients, {
+      title: actor ?? tr('New chat message'),
+      body: body.length > CHAT_PREVIEW_MAX ? `${body.slice(0, CHAT_PREVIEW_MAX - 1)}…` : body,
+      url: chatThreadUrl(message.thread_id as string),
+      tag: `chat:${message.thread_id}`,
+    })
+  } catch (err) {
+    console.error('[push] notifyChatMessage threw:', err)
     return { ...NOOP }
   }
 }

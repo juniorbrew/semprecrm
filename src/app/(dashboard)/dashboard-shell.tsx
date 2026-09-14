@@ -10,6 +10,7 @@ import { MfaRequiredNotice } from "@/components/settings/mfa-card";
 import { isMfaEnrollAllowedPath, MFA_ENROLL_PATH, mustEnrollMfa } from "@/lib/auth/mfa";
 import { useBranding } from "@/hooks/use-branding";
 import { usePushRegistration } from "@/hooks/use-push-registration";
+import { ChatPresenceProvider } from "@/components/chat/presence-provider";
 import { brandingCssVars } from "@/lib/branding";
 import { getPageTitle } from "@/components/layout/header";
 
@@ -29,7 +30,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const { ready: entitlementsReady, blocked } = useEntitlements();
+  const { ready: entitlementsReady, blocked, modules } = useEntitlements();
 
   // White-label (spec round 2 §6): the account's primary colour
   // overrides the theme's --primary / --ring on the shell root only
@@ -110,15 +111,21 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background" style={brandStyle}>
-      <Sidebar open={sidebarOpen} onClose={closeSidebar} />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <Header onOpenSidebar={() => setSidebarOpen(true)} />
-        <MfaRequiredNotice compact />
-        {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+    // Internal chat (migration 038): the account presence channel + the
+    // last_seen heartbeat live for the whole shell, but only once the
+    // entitlements settled with the module on — accounts without it
+    // open no channel.
+    <ChatPresenceProvider enabled={entitlementsReady && modules.internal_chat}>
+      <div className="flex h-screen overflow-hidden bg-background" style={brandStyle}>
+        <Sidebar open={sidebarOpen} onClose={closeSidebar} />
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <Header onOpenSidebar={() => setSidebarOpen(true)} />
+          <MfaRequiredNotice compact />
+          {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
+          <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+        </div>
       </div>
-    </div>
+    </ChatPresenceProvider>
   );
 }
 

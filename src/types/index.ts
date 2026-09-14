@@ -851,3 +851,67 @@ export interface LeadSourceEvent {
   created_at: string;
   contact?: Pick<Contact, 'id' | 'name' | 'phone'> | null;
 }
+
+// ============================================================
+// Internal team chat (migration 038) — 1-to-1 threads between
+// members of the same account, with delivery / read receipts and
+// presence. Logic in src/lib/chat/. Phase 2 (groups, attachments,
+// reactions, edit / delete) reuses these rows: `kind`, `title`,
+// `edited_at`, `deleted_at` and `attachment` are reserved for it.
+// ============================================================
+
+export type ChatThreadKind = 'direct' | 'group';
+
+export interface ChatThread {
+  id: string;
+  account_id: string;
+  kind: ChatThreadKind;
+  /** Groups only (phase 2). */
+  title: string | null;
+  created_by: string | null;
+  /** Ordered pair (a < b) on direct threads; null on groups. */
+  direct_user_a: string | null;
+  direct_user_b: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string | null;
+  last_message_preview: string | null;
+  /** Embedded `chat_thread_members` rows when selected with the thread. */
+  members?: ChatThreadMember[];
+}
+
+export interface ChatThreadMember {
+  thread_id: string;
+  user_id: string;
+  joined_at: string;
+  last_read_at: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  account_id: string;
+  thread_id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+  /** Stamped by the recipient's client when the row reaches it. */
+  delivered_at: string | null;
+  /** Stamped by the recipient when the thread is open and visible. */
+  read_at: string | null;
+  edited_at: string | null;
+  deleted_at: string | null;
+  attachment: Record<string, unknown> | null;
+}
+
+/** Sent → delivered → read, derived from the receipt columns. */
+export type ChatMessageStatus = 'sent' | 'delivered' | 'read';
+
+/** An account member as the chat lists them (profiles projection). */
+export interface ChatMember {
+  user_id: string;
+  full_name: string | null;
+  email: string;
+  avatar_url: string | null;
+  /** Presence heartbeat fallback — "last seen X ago" when offline. */
+  last_seen_at: string | null;
+}

@@ -8,6 +8,7 @@ import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useBranding } from "@/hooks/use-branding";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useOverdueTasks } from "@/hooks/use-overdue-tasks";
+import { useChatUnread } from "@/hooks/use-chat-unread";
 import type { Module } from "@/lib/plans";
 import {
   CheckSquare,
@@ -16,6 +17,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  MessagesSquare,
   Radio,
   Settings,
   Shield,
@@ -103,6 +105,7 @@ const navItems: NavItem[] = [
   { href: "/contacts", label: "Contatos", icon: Users, module: "contacts" },
   { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines" },
   { href: "/tasks", label: "Tarefas", icon: CheckSquare, module: "tasks" },
+  { href: "/chat", label: "Chat", icon: MessagesSquare, module: "internal_chat" },
   { href: "/broadcasts", label: "Disparos", icon: Radio, module: "broadcasts" },
   { href: "/automations", label: "Automações", icon: Zap, module: "automations" },
   { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows" },
@@ -128,6 +131,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const totalUnread = useTotalUnread();
   // Red count on Tarefas: my open tasks past their due date (realtime).
   const overdueTasks = useOverdueTasks(!entitlementsReady || modules.tasks);
+  // Unread internal-chat messages (realtime on chat_messages).
+  const chatUnread = useChatUnread(!entitlementsReady || modules.internal_chat);
   // Hide rows for modules the plan (or a platform override) turned
   // off. Until the entitlements settle we show everything — a row
   // that appears late is less jarring than the whole menu reflowing
@@ -244,6 +249,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               const showUnreadDot =
                 item.href === "/inbox" && totalUnread > 0 && !isActive;
               const showOverdueBadge = item.href === "/tasks" && overdueTasks > 0;
+              const showChatBadge = item.href === "/chat" && chatUnread > 0;
 
               return (
                 <li key={item.href}>
@@ -274,6 +280,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                         className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400"
                       >
                         {overdueTasks > 99 ? "99+" : overdueTasks}
+                      </span>
+                    )}
+                    {showChatBadge && (
+                      <span
+                        aria-label={`${chatUnread} ${chatUnread === 1 ? "mensagem não lida" : "mensagens não lidas"}`}
+                        title={`${chatUnread} ${chatUnread === 1 ? "mensagem não lida" : "mensagens não lidas"}`}
+                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
+                      >
+                        {chatUnread > 99 ? "99+" : chatUnread}
                       </span>
                     )}
                     {showUnreadDot && (

@@ -4,7 +4,8 @@
 // `profiles.notification_prefs` (migration 036) is a jsonb of
 // `{ <event kind>: boolean }`. A missing key means ON, so a user who
 // never opened Settings → Notificações gets every kind once they
-// enable a browser. The four kinds are the four triggers of the spec.
+// enable a browser. The first four kinds are the four triggers of the
+// spec; `chat_message` is the internal team chat (migration 038).
 // ============================================================
 
 export const PUSH_EVENT_KINDS = [
@@ -12,6 +13,7 @@ export const PUSH_EVENT_KINDS = [
   'task_assigned',
   'task_due',
   'conversation_assigned',
+  'chat_message',
 ] as const;
 export type PushEventKind = (typeof PUSH_EVENT_KINDS)[number];
 
@@ -22,6 +24,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   task_assigned: true,
   task_due: true,
   conversation_assigned: true,
+  chat_message: true,
 };
 
 /** English labels — go through `t()` in the UI. */
@@ -41,6 +44,10 @@ export const PUSH_EVENT_LABELS: Record<PushEventKind, { title: string; descripti
   conversation_assigned: {
     title: 'Conversation assigned to me',
     description: 'When a conversation is handed to you.',
+  },
+  chat_message: {
+    title: 'Internal chat messages',
+    description: 'When a teammate sends you a message in the internal chat and you do not have the conversation open.',
   },
 };
 

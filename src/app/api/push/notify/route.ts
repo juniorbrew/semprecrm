@@ -10,7 +10,8 @@
 // arbitrary users.
 //
 // Body: { kind: 'task_assigned', task_id } |
-//       { kind: 'conversation_assigned', conversation_id }
+//       { kind: 'conversation_assigned', conversation_id } |
+//       { kind: 'chat_message', message_id }   (internal chat, 038)
 // Agent+ (the roles that can perform those mutations). Never fails the
 // caller's flow: push errors are logged and reported as counts.
 // ============================================================
@@ -19,7 +20,7 @@ import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { notifyConversationAssigned, notifyTaskAssigned } from '@/lib/push/notify'
+import { notifyChatMessage, notifyConversationAssigned, notifyTaskAssigned } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
@@ -27,7 +28,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Only the kinds the client may raise. `inbound_message` and `task_due`
  *  come from the webhook / cron and are rejected here. */
-const CLIENT_PUSH_KINDS = ['task_assigned', 'conversation_assigned'] as const
+const CLIENT_PUSH_KINDS = ['task_assigned', 'conversation_assigned', 'chat_message'] as const
 type ClientKind = (typeof CLIENT_PUSH_KINDS)[number]
 
 function isClientKind(v: unknown): v is ClientKind {
@@ -59,6 +60,18 @@ export async function POST(request: Request) {
       const result = await notifyTaskAssigned(admin, {
         accountId: ctx.accountId,
         taskId: body.task_id,
+        actorUserId: ctx.userId,
+      })
+      return NextResponse.json({ ok: true, result })
+    }
+
+    if (body.kind === 'chat_message') {
+      if (typeof body.message_id !== 'string' || !UUID_RE.test(body.message_id)) {
+        return NextResponse.json({ error: "'message_id' must be a uuid" }, { status: 400 })
+      }
+      const result = await notifyChatMessage(admin, {
+        accountId: ctx.accountId,
+        messageId: body.message_id,
         actorUserId: ctx.userId,
       })
       return NextResponse.json({ ok: true, result })
