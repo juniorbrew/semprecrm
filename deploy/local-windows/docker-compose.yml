@@ -46,6 +46,9 @@ services:
       # via the edge proxy); the server side talks to Supabase directly
       # through host.docker.internal.
       SUPABASE_INTERNAL_URL: http://host.docker.internal:56021
+      # Node's 16 KB header limit trips on dev machines where "localhost"
+      # carries cookies from several apps (431). nginx is raised to match.
+      NODE_OPTIONS: --max-http-header-size=65536
     expose:
       - "3101"
     extra_hosts:

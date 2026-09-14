@@ -34,6 +34,23 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
+  // Cookie hygiene: sessions written under the old host-derived names
+  // (`sb-127-auth-token.0`, `sb-localhost-auth-token`, …) before the name
+  // was pinned are never read again but keep inflating every request —
+  // enough of them and nginx/Node reject the headers outright (400/431).
+  // Expire anything that looks like a Supabase auth cookie but isn't ours.
+  const legacyAuthCookies = request.cookies
+    .getAll()
+    .filter(
+      (c) =>
+        /^sb-.+-auth-token(\.\d+)?$/.test(c.name) &&
+        !c.name.startsWith(SUPABASE_AUTH_COOKIE_NAME),
+    )
+  const expireLegacy = (res: NextResponse) => {
+    for (const c of legacyAuthCookies) res.cookies.set(c.name, '', { path: '/', maxAge: 0 })
+    return res
+  }
+
   // MFA (round 2 spec, section 7). A user who owns a verified TOTP
   // factor but whose session is still `aal1` (password only) may reach
   // nothing but the challenge page and our own auth API until they
@@ -46,15 +63,15 @@ export async function middleware(request: NextRequest) {
     const levels = resolveAssuranceLevels(aal?.currentLevel, user.factors)
     if (needsMfaChallenge(levels)) {
       if (request.nextUrl.pathname.startsWith('/api/')) {
-        return NextResponse.json(
+        return expireLegacy(NextResponse.json(
           { error: 'Two-step verification required', code: 'mfa_required' },
           { status: 401 },
-        )
+        ))
       }
       const url = request.nextUrl.clone()
       url.pathname = MFA_PATH
       url.search = ''
-      return NextResponse.redirect(url)
+      return expireLegacy(NextResponse.redirect(url))
     }
   }
 
@@ -82,7 +99,7 @@ export async function middleware(request: NextRequest) {
       url.pathname = '/dashboard'
       url.search = ''
     }
-    return NextResponse.redirect(url)
+    return expireLegacy(NextResponse.redirect(url))
   }
 
   // Protected pages - redirect to login if not authenticated
@@ -90,16 +107,16 @@ export async function middleware(request: NextRequest) {
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
-    return NextResponse.redirect(url)
+    return expireLegacy(NextResponse.redirect(url))
   }
 
   // API routes that need auth (not webhooks)
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
       !request.nextUrl.pathname.includes('/webhook')) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return expireLegacy(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
   }
 
-  return supabaseResponse
+  return expireLegacy(supabaseResponse)
 }
 
 export const config = {
