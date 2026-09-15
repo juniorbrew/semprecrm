@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { AUDIT_ACTIONS } from '@/lib/audit';
+import { recordAudit } from '@/lib/audit-client';
+import {
+  findConversationByContact,
+  inboxConversationHref,
+} from '@/lib/conversations/find-by-contact';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -35,18 +42,22 @@ import {
   Upload,
   MoreHorizontal,
   Pencil,
+  ShieldCheck,
   Trash2,
   Loader2,
   Users,
   ChevronLeft,
   ChevronRight,
   SlidersHorizontal,
+  MessageCircle,
+  Ban,
 } from 'lucide-react';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
+import { useLanguage } from '@/hooks/use-language';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
 
@@ -58,6 +69,8 @@ interface ContactWithTags extends Contact {
 
 export default function ContactsPage() {
   const supabase = createClient();
+  const router = useRouter();
+  const { t } = useLanguage();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -66,6 +79,8 @@ export default function ContactsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  // "Descadastrados" — only contacts with opted_out_at set (migration 030).
+  const [optedOutOnly, setOptedOutOnly] = useState(false);
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -115,6 +130,9 @@ export default function ContactsPage() {
       const term = `%${search.trim()}%`;
       query = query.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
     }
+    if (optedOutOnly) {
+      query = query.not('opted_out_at', 'is', null);
+    }
 
     const { data, count, error } = await query;
 
@@ -154,7 +172,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap]);
+  }, [supabase, page, search, tagsMap, optedOutOnly]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -191,6 +209,22 @@ export default function ContactsPage() {
     setDetailOpen(true);
   }
 
+  /**
+   * Row shortcut to the contact's WhatsApp thread. Uses the same
+   * "newest activity wins" lookup as the detail panel and the deal
+   * drawer. A contact that never talked to us lands in the detail
+   * panel instead, where "Iniciar conversa" can create the thread.
+   */
+  async function openConversationFor(contact: Contact) {
+    const existing = await findConversationByContact(supabase, contact.id);
+    if (existing) {
+      router.push(inboxConversationHref(existing.id));
+      return;
+    }
+    toast.info(t('No conversations with this contact yet.'));
+    openDetail(contact.id);
+  }
+
   function confirmDelete(contact: Contact) {
     setDeleteTarget(contact);
     setDeleteConfirmOpen(true);
@@ -208,7 +242,18 @@ export default function ContactsPage() {
     if (error) {
       toast.error('Failed to delete contact');
     } else {
+      void recordAudit({
+        action: AUDIT_ACTIONS.CONTACT_DELETED,
+        entityType: 'contact',
+        entityId: deleteTarget.id,
+        metadata: { contact_name: deleteTarget.name ?? null, phone: deleteTarget.phone },
+      });
       toast.success('Contato excluído');
+      // The detail sheet may be showing the contact we just removed.
+      if (detailContactId === deleteTarget.id) {
+        setDetailOpen(false);
+        setDetailContactId(null);
+      }
       fetchContacts();
     }
 
@@ -252,6 +297,13 @@ export default function ContactsPage() {
     if (error) {
       toast.error('Failed to delete contacts');
     } else {
+      // One trail entry for the whole batch — the ids are in the metadata.
+      void recordAudit({
+        action: AUDIT_ACTIONS.CONTACT_DELETED,
+        entityType: 'contact',
+        entityId: ids.length === 1 ? ids[0] : null,
+        metadata: { count: ids.length, ids: ids.slice(0, 200), bulk: true },
+      });
       toast.success(`${ids.length} contact${ids.length === 1 ? '' : 's'} deleted`);
       setSelected(new Set());
       fetchContacts();
@@ -308,20 +360,38 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            // Reset pagination when the query changes — the result
-            // set shrinks/grows, page N may no longer be valid.
+      {/* Search + filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative max-w-sm flex-1 min-w-56">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              // Reset pagination when the query changes — the result
+              // set shrinks/grows, page N may no longer be valid.
+              setPage(0);
+            }}
+            placeholder="Search by name, phone, or email..."
+            className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+        <button
+          type="button"
+          aria-pressed={optedOutOnly}
+          onClick={() => {
+            setOptedOutOnly((v) => !v);
             setPage(0);
           }}
-          placeholder="Search by name, phone, or email..."
-          className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground"
-        />
+          className={
+            optedOutOnly
+              ? 'inline-flex h-9 items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/10 px-3 text-xs font-medium text-red-600 dark:text-red-400'
+              : 'inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+          }
+        >
+          <Ban className="size-3.5" aria-hidden />
+          {t('Opted-out contacts')}
+        </button>
       </div>
 
       {/* Bulk action bar */}
@@ -393,9 +463,13 @@ export default function ContactsPage() {
                   <div className="flex flex-col items-center gap-2">
                     <Users className="size-8 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
-                      {search ? 'No contacts match your search.' : 'No contacts yet.'}
+                      {optedOutOnly
+                        ? t('No opted-out contacts.')
+                        : search
+                          ? 'No contacts match your search.'
+                          : 'No contacts yet.'}
                     </p>
-                    {!search && (
+                    {!search && !optedOutOnly && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -420,11 +494,47 @@ export default function ContactsPage() {
                     <Checkbox
                       checked={selected.has(contact.id)}
                       onCheckedChange={() => toggleSelect(contact.id)}
-                      aria-label={`Select ${contact.name || contact.phone}`}
+                      aria-label={`Select contact ${contact.name || contact.phone}`}
                     />
                   </TableCell>
                   <TableCell className="text-foreground font-medium">
-                    {contact.name || <span className="text-muted-foreground italic">Unnamed</span>}
+                    {/* Link-styled name + sub-line so the row reads as
+                        clickable; the button also gives the a11y tree a
+                        named entry point instead of a bare bold span. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDetail(contact.id);
+                      }}
+                      className="group/name block max-w-full text-left cursor-pointer"
+                    >
+                      <span className="flex items-center gap-1.5 truncate text-foreground group-hover/name:text-primary group-hover/name:underline underline-offset-2 transition-colors">
+                        {contact.name || (
+                          <span className="text-muted-foreground italic">Unnamed</span>
+                        )}
+                        {contact.anonymized_at ? (
+                          <span
+                            title={t('Personal data removed (LGPD)')}
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium leading-4 text-muted-foreground no-underline"
+                          >
+                            <ShieldCheck className="size-2.5" aria-hidden />
+                            {t('Anonymized')}
+                          </span>
+                        ) : contact.opted_out_at ? (
+                          <span
+                            title={t('Asked to stop receiving messages')}
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-medium leading-4 text-red-600 no-underline dark:text-red-400"
+                          >
+                            <Ban className="size-2.5" aria-hidden />
+                            {t('Opted out')}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="block text-[11px] font-normal text-muted-foreground group-hover/name:text-primary/80">
+                        {t('View details')}
+                      </span>
+                    </button>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {contact.phone}
@@ -488,6 +598,18 @@ export default function ContactsPage() {
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
+                            openConversationFor(contact);
+                          }}
+                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
+                        >
+                          <MessageCircle className="size-4" />
+                          {t('Open conversation')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!!contact.anonymized_at}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (contact.anonymized_at) return;
                             openEditForm(contact);
                           }}
                           className="text-popover-foreground focus:bg-muted focus:text-foreground"
@@ -520,8 +642,7 @@ export default function ContactsPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, totalCount)} of{' '}
-            {totalCount}
+            {`Showing ${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
           </p>
           <div className="flex items-center gap-1">
             <Button
@@ -534,7 +655,7 @@ export default function ContactsPage() {
               <ChevronLeft className="size-4" />
             </Button>
             <span className="text-xs text-muted-foreground px-2">
-              Page {page + 1} of {totalPages}
+              {`Page ${page + 1} of ${totalPages}`}
             </span>
             <Button
               variant="outline"
@@ -571,6 +692,7 @@ export default function ContactsPage() {
         onOpenChange={setDetailOpen}
         contactId={detailContactId}
         onUpdated={fetchContacts}
+        onDelete={canEdit ? confirmDelete : undefined}
       />
 
       {/* Import Modal */}

@@ -2,19 +2,22 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
+  useSyncExternalStore,
+  type ReactElement,
   type ReactNode,
 } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
   ArrowLeft,
-  ChevronDown,
+  ChevronRight,
   Plus,
   Trash2,
-  GripVertical,
   MessageSquare,
   FileText,
   Tag,
@@ -26,10 +29,14 @@ import {
   GitBranch,
   Webhook,
   CircleSlash,
+  CheckSquare,
   Zap,
   Loader2,
   ArrowDown,
   ArrowUp,
+  X,
+  Filter,
+  MousePointerClick,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -40,8 +47,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Sheet, SheetContent } from "@/components/ui/sheet"
 import type {
   AccountMember,
   AutomationStepType,
@@ -52,6 +63,9 @@ import type {
   Tag as TagRecord,
 } from "@/types"
 import { createClient } from "@/lib/supabase/client"
+import { useLanguage } from "@/hooks/use-language"
+import { LeadSourceSelect } from "@/components/automations/lead-source-select"
+import type { Language } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 // ------------------------------------------------------------
@@ -77,42 +91,43 @@ export interface BuilderInitial {
 }
 
 // ------------------------------------------------------------
-// Step metadata — one source of truth for icon + label + border color
+// Step metadata — one source of truth for icon + label (English key,
+// translated through t()) + accent colour.
 // ------------------------------------------------------------
 
 interface StepMeta {
   label: string
   icon: typeof Zap
-  /** Left-border accent color per spec. */
+  /** Tinted 1px card border per step family (the icon tile carries
+   *  the colour; the border only whispers it). */
   border: string
+  /** Icon tile colours. */
+  tile: string
 }
+
+const ACTION_TILE = "bg-primary/10 text-primary"
 
 const STEP_META: Record<AutomationStepType, StepMeta> = {
-  send_message: { label: "Enviar mensagem", icon: MessageSquare, border: "border-l-primary" },
-  send_template: { label: "Send Template", icon: FileText, border: "border-l-primary" },
-  add_tag: { label: "Adicionar etiqueta", icon: Tag, border: "border-l-primary" },
-  remove_tag: { label: "Remove Tag", icon: TagIcon, border: "border-l-primary" },
-  assign_conversation: { label: "Atribuir conversa", icon: UserCheck, border: "border-l-primary" },
-  update_contact_field: { label: "Update Contact Field", icon: PencilLine, border: "border-l-primary" },
-  create_deal: { label: "Criar negócio", icon: Briefcase, border: "border-l-primary" },
-  wait: { label: "Aguardar", icon: Hourglass, border: "border-l-border" },
-  condition: { label: "Condição (Se/Senão)", icon: GitBranch, border: "border-l-amber-500" },
-  send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-l-primary" },
-  close_conversation: { label: "Encerrar conversa", icon: CircleSlash, border: "border-l-primary" },
+  send_message: { label: "Send message", icon: MessageSquare, border: "border-border", tile: ACTION_TILE },
+  send_template: { label: "Send Template", icon: FileText, border: "border-border", tile: ACTION_TILE },
+  add_tag: { label: "Add tag", icon: Tag, border: "border-border", tile: ACTION_TILE },
+  remove_tag: { label: "Remove Tag", icon: TagIcon, border: "border-border", tile: ACTION_TILE },
+  assign_conversation: { label: "Assign conversation", icon: UserCheck, border: "border-border", tile: ACTION_TILE },
+  update_contact_field: { label: "Update Contact Field", icon: PencilLine, border: "border-border", tile: ACTION_TILE },
+  create_deal: { label: "Create deal", icon: Briefcase, border: "border-border", tile: ACTION_TILE },
+  wait: { label: "Wait", icon: Hourglass, border: "border-border", tile: "bg-muted text-muted-foreground" },
+  condition: { label: "Condition (If/Else)", icon: GitBranch, border: "border-amber-500/40", tile: "bg-amber-500/10 text-amber-500" },
+  send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-border", tile: ACTION_TILE },
+  close_conversation: { label: "Close conversation", icon: CircleSlash, border: "border-border", tile: ACTION_TILE },
+  create_task: { label: "Create task", icon: CheckSquare, border: "border-border", tile: ACTION_TILE },
 }
 
-const ADDABLE_STEPS: AutomationStepType[] = [
-  "send_message",
-  "send_template",
-  "add_tag",
-  "remove_tag",
-  "assign_conversation",
-  "update_contact_field",
-  "create_deal",
-  "wait",
-  "condition",
-  "send_webhook",
-  "close_conversation",
+/** Grouped menu for the "add action" pickers. */
+const STEP_GROUPS: { label: string; types: AutomationStepType[] }[] = [
+  { label: "Messages", types: ["send_message", "send_template"] },
+  { label: "Contact", types: ["add_tag", "remove_tag", "update_contact_field", "create_deal"] },
+  { label: "Conversation", types: ["assign_conversation", "close_conversation", "create_task"] },
+  { label: "Flow control", types: ["wait", "condition", "send_webhook"] },
 ]
 
 const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: string }[] = [
@@ -127,6 +142,16 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   { value: "conversation_assigned", label: "Conversation Assigned", hint: "When assigned to an agent" },
   { value: "tag_added", label: "Tag Added", hint: "When a tag is added to a contact" },
   { value: "time_based", label: "Time-Based", hint: "On a recurring schedule" },
+  {
+    value: "lead_captured",
+    label: "Lead Captured",
+    hint: "When a lead arrives through a webhook source (Settings → Integrations)",
+  },
+  {
+    value: "conversation_inactive",
+    label: "Conversation Inactive",
+    hint: "When a conversation has had no message for a number of hours (checked every minute by the scheduler)",
+  },
 ]
 
 function cid(): string {
@@ -143,7 +168,7 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
     case "send_message":
       return { text: "" }
     case "send_template":
-      return { template_name: "", language: "en_US" }
+      return { template_name: "", language: "pt_BR" }
     case "add_tag":
     case "remove_tag":
       return { tag_id: "" }
@@ -161,8 +186,19 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
       return { url: "", headers: {}, body_template: "" }
     case "close_conversation":
       return {}
+    case "create_task":
+      return { title: "", description: "", priority: "normal", assignee_user_id: "", due_in_hours: 24 }
     default:
       return {}
+  }
+}
+
+function newStep(type: AutomationStepType): BuilderStep {
+  return {
+    cid: cid(),
+    step_type: type,
+    step_config: blankConfig(type),
+    branches: type === "condition" ? { yes: [], no: [] } : undefined,
   }
 }
 
@@ -183,12 +219,14 @@ interface AutomationResources {
   customFields: CustomField[]
 }
 
-const ResourcesContext = createContext<AutomationResources>({
+const EMPTY_RESOURCES: AutomationResources = {
   tags: [],
   members: [],
   templates: [],
   customFields: [],
-})
+}
+
+const ResourcesContext = createContext<AutomationResources>(EMPTY_RESOURCES)
 
 function useResources(): AutomationResources {
   return useContext(ResourcesContext)
@@ -243,11 +281,12 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  return (
-    <ResourcesContext.Provider value={{ tags, members, templates, customFields }}>
-      {children}
-    </ResourcesContext.Provider>
+  const value = useMemo(
+    () => ({ tags, members, templates, customFields }),
+    [tags, members, templates, customFields],
   )
+
+  return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>
 }
 
 const SELECT_CLASS =
@@ -309,9 +348,12 @@ function TagSelect({
 function ContactFieldSelect({
   value,
   onChange,
+  builtInOnly = false,
 }: {
   value: string
   onChange: (v: string) => void
+  /** Conditions read raw contact columns, so custom fields are hidden. */
+  builtInOnly?: boolean
 }) {
   const { customFields } = useResources()
   const customValue = value.startsWith("custom:") ? value : ""
@@ -326,7 +368,7 @@ function ContactFieldSelect({
       <option value="name">Nome</option>
       <option value="email">E-mail</option>
       <option value="company">Empresa</option>
-      {customFields.length > 0 && (
+      {!builtInOnly && customFields.length > 0 && (
         <optgroup label="Campos personalizados">
           {customFields.map((f) => (
             <option key={f.id} value={`custom:${f.id}`}>
@@ -395,11 +437,12 @@ function SendTemplateFields({
   onChange: (patch: { template_name: string; language: string }) => void
 }) {
   const { templates } = useResources()
+  const { t } = useLanguage()
 
   if (templates.length === 0) {
     return (
       <>
-        <FieldBlock label="Template name">
+        <FieldBlock label={t("Template name")}>
           <Input
             value={templateName}
             onChange={(e) =>
@@ -408,7 +451,7 @@ function SendTemplateFields({
             className="bg-muted text-foreground"
           />
         </FieldBlock>
-        <FieldBlock label="Language">
+        <FieldBlock label={t("Language")}>
           <Input
             value={language}
             onChange={(e) =>
@@ -430,7 +473,7 @@ function SendTemplateFields({
   )
 
   return (
-    <FieldBlock label="Template">
+    <FieldBlock label={t("Template")}>
       <select
         value={current}
         onChange={(e) => {
@@ -459,15 +502,372 @@ function SendTemplateFields({
 }
 
 // ------------------------------------------------------------
+// Tree addressing
+//
+// A ListLoc names one list of steps: the root list, or the yes/no
+// branch of a condition step (itself addressed by a StepPath). A
+// StepPath is a list plus an index. Every mutation below is expressed
+// as "replace the list at loc", which keeps the recursion tiny and
+// makes nested branches behave exactly like the root.
+// ------------------------------------------------------------
+
+type Branch = "yes" | "no"
+
+type ListLoc =
+  | { kind: "root" }
+  | { kind: "branch"; condPath: StepPath; branch: Branch }
+
+interface StepPath {
+  loc: ListLoc
+  index: number
+}
+
+const ROOT: ListLoc = { kind: "root" }
+
+function getList(steps: BuilderStep[], loc: ListLoc): BuilderStep[] {
+  if (loc.kind === "root") return steps
+  const cond = getStep(steps, loc.condPath)
+  return cond?.branches?.[loc.branch] ?? []
+}
+
+function getStep(steps: BuilderStep[], path: StepPath): BuilderStep | undefined {
+  return getList(steps, path.loc)[path.index]
+}
+
+function setList(steps: BuilderStep[], loc: ListLoc, next: BuilderStep[]): BuilderStep[] {
+  if (loc.kind === "root") return next
+  return mapStep(steps, loc.condPath, (cond) => ({
+    ...cond,
+    branches: {
+      yes: cond.branches?.yes ?? [],
+      no: cond.branches?.no ?? [],
+      [loc.branch]: next,
+    },
+  }))
+}
+
+function mapStep(
+  steps: BuilderStep[],
+  path: StepPath,
+  fn: (s: BuilderStep) => BuilderStep,
+): BuilderStep[] {
+  const list = getList(steps, path.loc)
+  return setList(
+    steps,
+    path.loc,
+    list.map((s, i) => (i === path.index ? fn(s) : s)),
+  )
+}
+
+function insertStep(steps: BuilderStep[], loc: ListLoc, index: number, node: BuilderStep): BuilderStep[] {
+  const list = [...getList(steps, loc)]
+  list.splice(index, 0, node)
+  return setList(steps, loc, list)
+}
+
+function removeStep(steps: BuilderStep[], path: StepPath): BuilderStep[] {
+  const list = getList(steps, path.loc).filter((_, i) => i !== path.index)
+  return setList(steps, path.loc, list)
+}
+
+function moveStep(steps: BuilderStep[], path: StepPath, direction: -1 | 1): BuilderStep[] {
+  const list = [...getList(steps, path.loc)]
+  const j = path.index + direction
+  if (j < 0 || j >= list.length) return steps
+  ;[list[path.index], list[j]] = [list[j], list[path.index]]
+  return setList(steps, path.loc, list)
+}
+
+interface Located {
+  step: BuilderStep
+  path: StepPath
+}
+
+/** Depth-first search by client id. */
+function findByCid(steps: BuilderStep[], cid: string, loc: ListLoc = ROOT): Located | null {
+  const list = getList(steps, loc)
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i]
+    const path: StepPath = { loc, index: i }
+    if (s.cid === cid) return { step: s, path }
+    if (s.branches) {
+      const inYes = findByCid(steps, cid, { kind: "branch", condPath: path, branch: "yes" })
+      if (inYes) return inYes
+      const inNo = findByCid(steps, cid, { kind: "branch", condPath: path, branch: "no" })
+      if (inNo) return inNo
+    }
+  }
+  return null
+}
+
+// ------------------------------------------------------------
+// Gate chain
+//
+// Chatwoot-style "Conditions" (all must be true, then run the actions)
+// map onto the existing tree without any new persistence: a gate is a
+// condition step that is the ONLY step of its list and whose "no"
+// branch is empty. A chain of gates nests through the "yes" branches;
+// the innermost list holds the actions. Anything else (a condition
+// with an "else" branch, or siblings) stays a regular branching step
+// inside the actions group.
+// ------------------------------------------------------------
+
+interface GateChain {
+  gates: Located[]
+  actionsLoc: ListLoc
+  actions: BuilderStep[]
+}
+
+function gateChain(steps: BuilderStep[]): GateChain {
+  const gates: Located[] = []
+  let loc: ListLoc = ROOT
+  let list = steps
+  while (
+    list.length === 1 &&
+    list[0].step_type === "condition" &&
+    (list[0].branches?.no.length ?? 0) === 0
+  ) {
+    const path: StepPath = { loc, index: 0 }
+    gates.push({ step: list[0], path })
+    loc = { kind: "branch", condPath: path, branch: "yes" }
+    list = list[0].branches?.yes ?? []
+  }
+  return { gates, actionsLoc: loc, actions: list }
+}
+
+// ------------------------------------------------------------
+// Human-readable summaries (one line per card)
+// ------------------------------------------------------------
+
+function excerpt(text: string, max = 90): string {
+  const oneLine = text.replace(/\s+/g, " ").trim()
+  return oneLine.length > max ? oneLine.slice(0, max - 1) + "…" : oneLine
+}
+
+function conditionSummary(
+  cfg: Record<string, unknown>,
+  res: AutomationResources,
+  lang: Language,
+): string {
+  const pt = lang === "pt-BR"
+  const operand = String(cfg.operand ?? "")
+  const value = String(cfg.value ?? "")
+  switch (cfg.subject) {
+    case "tag_presence": {
+      const tag = res.tags.find((t) => t.id === operand)
+      const name = tag?.name || operand
+      if (!name) return pt ? "Contato tem a etiqueta … (escolha uma)" : "Contact has tag … (pick one)"
+      return pt ? `Contato tem a etiqueta "${name}"` : `Contact has tag "${name}"`
+    }
+    case "contact_field": {
+      const fieldLabel =
+        operand === "email" ? "E-mail" : operand === "company" ? (pt ? "Empresa" : "Company") : pt ? "Nome" : "Name"
+      return pt
+        ? `${fieldLabel} do contato é igual a "${value}"`
+        : `Contact ${fieldLabel.toLowerCase()} equals "${value}"`
+    }
+    case "message_content":
+      return pt ? `Mensagem contém "${value || "…"}"` : `Message contains "${value || "…"}"`
+    case "time_of_day": {
+      const [from, to] = operand.split("-")
+      if (!from || !to) return pt ? "Horário entre … e …" : "Time between … and …"
+      return pt ? `Horário entre ${from} e ${to}` : `Time between ${from} and ${to}`
+    }
+    default:
+      return pt ? "Condição não configurada" : "Condition not configured"
+  }
+}
+
+function waitUnitLabel(unit: string, amount: number, lang: Language): string {
+  const pt = lang === "pt-BR"
+  const one = amount === 1
+  switch (unit) {
+    case "minutes":
+      return pt ? (one ? "minuto" : "minutos") : one ? "minute" : "minutes"
+    case "days":
+      return pt ? (one ? "dia" : "dias") : one ? "day" : "days"
+    default:
+      return pt ? (one ? "hora" : "horas") : one ? "hour" : "hours"
+  }
+}
+
+function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language): string {
+  const pt = lang === "pt-BR"
+  const c = step.step_config
+  switch (step.step_type) {
+    case "send_message": {
+      const text = String(c.text ?? "")
+      return text.trim() ? `“${excerpt(text)}”` : pt ? "Sem texto ainda" : "No text yet"
+    }
+    case "send_template": {
+      const name = String(c.template_name ?? "")
+      return name ? `${pt ? "Modelo" : "Template"}: ${name}${c.language ? ` (${c.language})` : ""}` : pt ? "Escolha um modelo" : "Pick a template"
+    }
+    case "add_tag":
+    case "remove_tag": {
+      const tag = res.tags.find((t) => t.id === c.tag_id)
+      const name = tag?.name || (c.tag_id ? String(c.tag_id) : "")
+      return name ? `${pt ? "Etiqueta" : "Tag"}: ${name}` : pt ? "Escolha uma etiqueta" : "Pick a tag"
+    }
+    case "assign_conversation": {
+      if (c.mode === "specific") {
+        const m = res.members.find((x) => x.user_id === c.agent_id)
+        const who = m?.full_name || m?.email || (c.agent_id ? String(c.agent_id) : "")
+        return who ? `${pt ? "Para" : "To"}: ${who}` : pt ? "Escolha um agente" : "Pick an agent"
+      }
+      return pt ? "Distribuição circular entre os agentes" : "Round-robin across agents"
+    }
+    case "update_contact_field": {
+      const field = String(c.field ?? "name")
+      const label =
+        field === "email" ? "E-mail" : field === "company" ? (pt ? "Empresa" : "Company") : field.startsWith("custom:") ? res.customFields.find((f) => `custom:${f.id}` === field)?.field_name ?? field : pt ? "Nome" : "Name"
+      return `${label} → ${String(c.value ?? "") || "…"}`
+    }
+    case "create_deal": {
+      const title = String(c.title ?? "")
+      const value = Number(c.value ?? 0)
+      const money = value
+        ? new Intl.NumberFormat(pt ? "pt-BR" : "en-US", { style: "currency", currency: "BRL" }).format(value)
+        : ""
+      return [title || (pt ? "Sem título" : "Untitled"), money].filter(Boolean).join(" · ")
+    }
+    case "wait": {
+      const amount = Number(c.amount ?? 1)
+      return `${pt ? "Aguardar" : "Wait"} ${amount} ${waitUnitLabel(String(c.unit ?? "hours"), amount, lang)}`
+    }
+    case "condition":
+      return `${pt ? "Se" : "If"}: ${conditionSummary(c, res, lang)}`
+    case "send_webhook":
+      return String(c.url ?? "") || (pt ? "Sem URL" : "No URL")
+    case "close_conversation":
+      return pt ? "Marca a conversa como encerrada" : "Marks the conversation as closed"
+    case "create_task": {
+      const title = String(c.title ?? "").trim()
+      const hours = Number(c.due_in_hours)
+      const due =
+        c.due_in_hours !== "" && c.due_in_hours != null && Number.isFinite(hours) && hours > 0
+          ? pt
+            ? `prazo em ${hours} h`
+            : `due in ${hours} h`
+          : ""
+      return [title ? `“${excerpt(title)}”` : pt ? "Sem título ainda" : "No title yet", due]
+        .filter(Boolean)
+        .join(" · ")
+    }
+    default:
+      return ""
+  }
+}
+
+/** Card eyebrow: "Condição N" for branches, "Ação N" for everything
+ *  else — a wait is still a step in the actions list, and "Aguardar 2 /
+ *  Aguardar / Aguardar 2 horas" read as a stutter. */
+function stepKindLabel(type: AutomationStepType, t: (english: string) => string): string {
+  return type === "condition" ? t("Condition") : t("Action")
+}
+
+function triggerSummary(
+  type: AutomationTriggerType,
+  cfg: Record<string, unknown>,
+  res: AutomationResources,
+  lang: Language,
+): string {
+  const pt = lang === "pt-BR"
+  switch (type) {
+    case "keyword_match": {
+      const kws = Array.isArray(cfg.keywords) ? (cfg.keywords as string[]) : []
+      if (kws.length === 0) return pt ? "Nenhuma palavra-chave definida" : "No keywords set"
+      const mode = cfg.match_type === "exact" ? (pt ? "exata" : "exact") : pt ? "contém" : "contains"
+      return `${kws.map((k) => `"${k}"`).join(", ")} · ${mode}`
+    }
+    case "tag_added": {
+      const tag = res.tags.find((t) => t.id === cfg.tag_id)
+      const name = tag?.name || (cfg.tag_id ? String(cfg.tag_id) : "")
+      return name ? `${pt ? "Etiqueta" : "Tag"}: ${name}` : pt ? "Escolha uma etiqueta" : "Pick a tag"
+    }
+    case "time_based":
+      return cfg.schedule ? `${pt ? "Agenda" : "Schedule"}: ${String(cfg.schedule)}` : pt ? "Defina o horário" : "Set a schedule"
+    case "lead_captured":
+      return cfg.source_id ? (pt ? "Somente uma fonte" : "One source only") : pt ? "Qualquer fonte" : "Any source"
+    case "conversation_inactive": {
+      const hours = Number(cfg.hours)
+      const hoursLabel = Number.isFinite(hours) && hours > 0 ? formatHours(hours, pt) : pt ? "defina as horas" : "set the hours"
+      const from =
+        cfg.last_from === "customer"
+          ? pt ? "cliente" : "customer"
+          : cfg.last_from === "any"
+            ? pt ? "qualquer lado" : "either side"
+            : pt ? "atendente" : "agent"
+      return pt
+        ? `Sem resposta há ${hoursLabel} · última do ${from}`
+        : `No reply for ${hoursLabel} · last from ${from}`
+    }
+    default:
+      return ""
+  }
+}
+
+/** "24 h", "0.05 h (3 min)" — keeps decimals readable in the summary. */
+function formatHours(hours: number, pt: boolean): string {
+  if (hours < 1) {
+    const min = Math.round(hours * 60)
+    return pt ? `${min} min` : `${min} min`
+  }
+  const rounded = Number.isInteger(hours) ? String(hours) : hours.toFixed(2).replace(/0+$/, "")
+  return `${rounded} h`
+}
+
+// ------------------------------------------------------------
+// Selection + media query helpers
+// ------------------------------------------------------------
+
+type Selection = { kind: "trigger" } | { kind: "step"; cid: string } | null
+
+function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const mql = window.matchMedia(query)
+      mql.addEventListener("change", onChange)
+      return () => mql.removeEventListener("change", onChange)
+    },
+    [query],
+  )
+  return useSyncExternalStore(
+    subscribe,
+    () => window.matchMedia(query).matches,
+    // Server snapshot: assume the docked layout; the client corrects
+    // it on hydration (this subtree only mounts client-side anyway).
+    () => true,
+  )
+}
+
+// ------------------------------------------------------------
 // Main builder component
 // ------------------------------------------------------------
 
 export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const router = useRouter()
+  const { t } = useLanguage()
   const isEditing = !!initial.id
   const [state, setState] = useState<BuilderInitial>(initial)
+  const [baseline, setBaseline] = useState<BuilderInitial>(initial)
   const [saving, setSaving] = useState(false)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  // The trigger opens in the inspector by default so the right-hand
+  // panel is never blank on first paint (docked layout only — see the
+  // effect below for the narrow/sheet case).
+  const [selection, setSelection] = useState<Selection>({ kind: "trigger" })
+  const isWide = useMediaQuery("(min-width: 1024px)")
+
+  // Below lg the inspector is a slide-over sheet; never auto-open it
+  // (on mount, or when the viewport shrinks) — wait for a tap.
+  useEffect(() => {
+    if (!isWide) setSelection(null)
+  }, [isWide])
+
+  const dirty = useMemo(
+    () => JSON.stringify(state) !== JSON.stringify(baseline),
+    [state, baseline],
+  )
 
   function patchTop<K extends keyof BuilderInitial>(key: K, value: BuilderInitial[K]) {
     setState((s) => ({ ...s, [key]: value }))
@@ -475,34 +875,54 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
 
   // --- Step tree mutations (immutable) ---
 
-  function updateStep(path: StepPath, updater: (s: BuilderStep) => BuilderStep) {
-    setState((s) => ({ ...s, steps: mapAtPath(s.steps, path, updater) }))
-  }
+  const updateStep = useCallback((path: StepPath, updater: (s: BuilderStep) => BuilderStep) => {
+    setState((s) => ({ ...s, steps: mapStep(s.steps, path, updater) }))
+  }, [])
 
-  function addStepAt(parent: ParentScope, index: number, type: AutomationStepType) {
-    const node: BuilderStep = {
-      cid: cid(),
-      step_type: type,
-      step_config: blankConfig(type),
-      branches: type === "condition" ? { yes: [], no: [] } : undefined,
-    }
-    setState((s) => ({ ...s, steps: insertAt(s.steps, parent, index, node) }))
-    setExpandedId(node.cid)
+  function addStepAt(loc: ListLoc, index: number, type: AutomationStepType) {
+    const node = newStep(type)
+    setState((s) => ({ ...s, steps: insertStep(s.steps, loc, index, node) }))
+    setSelection({ kind: "step", cid: node.cid })
   }
 
   function deleteStepAt(path: StepPath) {
-    setState((s) => ({ ...s, steps: removeAt(s.steps, path) }))
+    setState((s) => ({ ...s, steps: removeStep(s.steps, path) }))
+    setSelection(null)
   }
 
   function moveStepAt(path: StepPath, direction: -1 | 1) {
-    setState((s) => ({ ...s, steps: moveAt(s.steps, path, direction) }))
+    setState((s) => ({ ...s, steps: moveStep(s.steps, path, direction) }))
+  }
+
+  /** Wrap the current actions list in a new gate condition. */
+  function addGateCondition() {
+    const node = newStep("condition")
+    setState((s) => {
+      const chain = gateChain(s.steps)
+      const wrapped: BuilderStep = {
+        ...node,
+        branches: { yes: chain.actions, no: [] },
+      }
+      return { ...s, steps: setList(s.steps, chain.actionsLoc, [wrapped]) }
+    })
+    setSelection({ kind: "step", cid: node.cid })
+  }
+
+  /** Unwrap a gate: its "yes" contents take its place. */
+  function removeGate(path: StepPath) {
+    setState((s) => {
+      const gate = getStep(s.steps, path)
+      if (!gate) return s
+      return { ...s, steps: setList(s.steps, path.loc, gate.branches?.yes ?? []) }
+    })
+    setSelection(null)
   }
 
   async function save() {
     setSaving(true)
     try {
       const payload = {
-        name: state.name || "Untitled automation",
+        name: state.name || t("Untitled automation"),
         description: state.description || null,
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
@@ -534,11 +954,12 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
             description: firstIssue.path ? `at ${firstIssue.path}` : undefined,
           })
         } else {
-          toast.error(body?.error ?? "Save failed")
+          toast.error(body?.error ?? t("Save failed"))
         }
         return
       }
       toast.success(isEditing ? "Automação salva" : "Automação criada")
+      setBaseline(state)
       if (!isEditing && body?.automation?.id) {
         router.replace(`/automations/${body.automation.id}/edit`)
       }
@@ -547,77 +968,758 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
     }
   }
 
+  // Escape clears the selection (the mobile sheet handles its own).
+  useEffect(() => {
+    if (!isWide || !selection) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelection(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [isWide, selection])
+
+  const chain = useMemo(() => gateChain(state.steps), [state.steps])
+  const selectedStep =
+    selection?.kind === "step" ? findByCid(state.steps, selection.cid) : null
+  const selectedIsGate =
+    !!selectedStep && chain.gates.some((g) => g.step.cid === selectedStep.step.cid)
+
+  // A stale selection (step deleted elsewhere) is simply nothing.
+  const effectiveSelection: Selection =
+    selection?.kind === "step" && !selectedStep ? null : selection
+
+  const inspector = (
+    <Inspector
+      selection={effectiveSelection}
+      state={state}
+      located={selectedStep}
+      isGate={selectedIsGate}
+      onClose={() => setSelection(null)}
+      onTriggerTypeChange={(v) => patchTop("trigger_type", v)}
+      onTriggerConfigChange={(c) => patchTop("trigger_config", c)}
+      updateStep={updateStep}
+      deleteStepAt={deleteStepAt}
+      moveStepAt={moveStepAt}
+      removeGate={removeGate}
+      listLength={(loc) => getList(state.steps, loc).length}
+    />
+  )
+
   return (
-    <div className="fixed inset-0 flex flex-col bg-background">
-      {/* Top bar. At sub-sm widths the "Ativo" label is hidden and the
-          switch moves to the right of the save button, so the name input
-          gets maximum width. */}
-      <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 py-3 sm:gap-3 sm:px-4">
+    <ResourcesProvider>
+      <div className="fixed inset-0 flex flex-col bg-background">
+        {/* Top bar. At sub-sm widths the "Ativo" label is hidden so the
+            name input gets maximum width. */}
+        <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 py-2.5 sm:gap-3 sm:px-4">
+          <button
+            type="button"
+            onClick={() => router.push("/automations")}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label={t("Back to automations")}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="hidden text-[11px] uppercase tracking-wide text-muted-foreground sm:block">
+              {t("Automations")}
+              <span className="mx-1 text-border">/</span>
+              {isEditing ? t("Edit rule") : t("New rule")}
+            </div>
+            <input
+              value={state.name}
+              onChange={(e) => patchTop("name", e.target.value)}
+              placeholder={t("Untitled automation")}
+              aria-label={t("Rule name")}
+              className="w-full min-w-0 rounded-md bg-transparent px-1 py-0.5 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
+            />
+          </div>
+          {dirty && (
+            <span className="hidden items-center gap-1.5 text-[11px] text-muted-foreground md:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+              {t("Unsaved changes")}
+            </span>
+          )}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="hidden sm:inline">Ativo</span>
+            <Switch
+              checked={state.is_active}
+              onCheckedChange={(v) => patchTop("is_active", !!v)}
+              aria-label="Ativo"
+            />
+          </div>
+          <Button
+            onClick={save}
+            disabled={saving}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {isEditing ? "Salvar" : t("Save Draft")}
+          </Button>
+        </header>
+
+        <div className="flex min-h-0 flex-1">
+          {/* Rule document */}
+          <main className="min-w-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
+            <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
+              {/* Details */}
+              <section className="rounded-xl border border-border bg-card p-4">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  {t("Description")}
+                </label>
+                <Textarea
+                  value={state.description}
+                  onChange={(e) => patchTop("description", e.target.value)}
+                  placeholder={t("Describe what this rule does (optional)")}
+                  className="min-h-[56px] bg-muted text-foreground"
+                  rows={2}
+                />
+              </section>
+
+              {/* 1 · Trigger */}
+              <SectionHeader
+                n={1}
+                title={t("Trigger")}
+                hint={t("When should this rule run?")}
+              />
+              <TriggerCard
+                type={state.trigger_type}
+                config={state.trigger_config}
+                selected={effectiveSelection?.kind === "trigger"}
+                onSelect={() => setSelection({ kind: "trigger" })}
+              />
+
+              {/* 2 · Conditions */}
+              <SectionHeader
+                n={2}
+                title={t("Conditions")}
+                hint={t("Only continue when all conditions are true")}
+                action={
+                  <Button variant="outline" size="sm" onClick={addGateCondition}>
+                    <Plus className="h-3.5 w-3.5" />
+                    {t("Add condition")}
+                  </Button>
+                }
+              />
+              <ConditionsGroup
+                gates={chain.gates}
+                selectedCid={effectiveSelection?.kind === "step" ? effectiveSelection.cid : null}
+                onSelect={(cidValue) => setSelection({ kind: "step", cid: cidValue })}
+                onRemove={removeGate}
+                onAdd={addGateCondition}
+              />
+
+              {/* 3 · Actions */}
+              <SectionHeader
+                n={3}
+                title={t("Actions")}
+                hint={t("What to do, in order")}
+                action={
+                  <AddStepMenu
+                    onPick={(type) => addStepAt(chain.actionsLoc, chain.actions.length, type)}
+                  >
+                    <Button variant="outline" size="sm">
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("Add action")}
+                    </Button>
+                  </AddStepMenu>
+                }
+              />
+              <StepList
+                steps={chain.actions}
+                loc={chain.actionsLoc}
+                selectedCid={effectiveSelection?.kind === "step" ? effectiveSelection.cid : null}
+                onSelect={(cidValue) => setSelection({ kind: "step", cid: cidValue })}
+                addStepAt={addStepAt}
+                nested={false}
+              />
+            </div>
+          </main>
+
+          {/* Inspector — docked at lg+, a sheet below that */}
+          {isWide && (
+            <aside className="flex w-[380px] flex-shrink-0 flex-col overflow-y-auto border-l border-border bg-card [scrollbar-width:thin]">
+              {inspector}
+            </aside>
+          )}
+        </div>
+
+        {!isWide && (
+          <Sheet
+            open={!!effectiveSelection}
+            onOpenChange={(open) => {
+              if (!open) setSelection(null)
+            }}
+          >
+            <SheetContent side="right" showCloseButton={false} className="w-full gap-0 p-0 sm:max-w-md">
+              <div className="flex h-full flex-col overflow-y-auto">
+                {inspector}
+              </div>
+            </SheetContent>
+          </Sheet>
+        )}
+      </div>
+    </ResourcesProvider>
+  )
+}
+
+// ------------------------------------------------------------
+// Document pieces
+// ------------------------------------------------------------
+
+function SectionHeader({
+  n,
+  title,
+  hint,
+  action,
+}: {
+  n: number
+  title: string
+  hint: string
+  action?: ReactNode
+}) {
+  return (
+    <div className="-mb-3 flex items-end justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+          {n}
+        </span>
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          <p className="text-xs text-muted-foreground">{hint}</p>
+        </div>
+      </div>
+      {action}
+    </div>
+  )
+}
+
+function TriggerCard({
+  type,
+  config,
+  selected,
+  onSelect,
+}: {
+  type: AutomationTriggerType
+  config: Record<string, unknown>
+  selected: boolean
+  onSelect: () => void
+}) {
+  const { t, language } = useLanguage()
+  const res = useResources()
+  const option = TRIGGER_OPTIONS.find((o) => o.value === type)
+  const summary = triggerSummary(type, config, res, language) || (option ? t(option.hint) : "")
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-xl border border-blue-500/40 bg-card px-4 py-3 text-left shadow-sm transition-colors hover:bg-muted/40",
+        selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+      )}
+    >
+      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+        <Zap className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] uppercase tracking-wide text-blue-500">{t("Trigger")}</div>
+        <div className="truncate text-sm font-medium text-foreground">
+          {option ? t(option.label) : type}
+        </div>
+        <div className="truncate text-xs text-muted-foreground">{summary}</div>
+      </div>
+      <span className="hidden text-xs text-muted-foreground sm:inline">{t("Edit")}</span>
+      <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+    </button>
+  )
+}
+
+function ConditionsGroup({
+  gates,
+  selectedCid,
+  onSelect,
+  onRemove,
+  onAdd,
+}: {
+  gates: Located[]
+  selectedCid: string | null
+  onSelect: (cid: string) => void
+  onRemove: (path: StepPath) => void
+  onAdd: () => void
+}) {
+  const { t, language } = useLanguage()
+  const res = useResources()
+
+  if (gates.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onAdd}
+        className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border bg-card/40 px-4 py-3 text-left transition-colors hover:border-primary/50 hover:bg-primary/5"
+      >
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <Filter className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-foreground">
+            {t("No conditions — actions run for every trigger event.")}
+          </div>
+          <div className="text-xs text-primary">{t("Add condition")}</div>
+        </div>
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+      <ol className="flex flex-col">
+        {gates.map((g, i) => {
+          const selected = g.step.cid === selectedCid
+          return (
+            <li key={g.step.cid} className="flex flex-col">
+              {i > 0 && (
+                <div className="flex items-center gap-2 py-1 pl-4">
+                  <span className="h-3 w-px bg-amber-500/40" aria-hidden />
+                  <span className="rounded-full border border-amber-500/40 bg-background px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                    {t("AND")}
+                  </span>
+                </div>
+              )}
+              <div
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm",
+                  selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelect(g.step.cid)}
+                  aria-pressed={selected}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
+                    <GitBranch className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] uppercase tracking-wide text-amber-600">
+                      {t("Condition")} {i + 1}
+                    </div>
+                    <div className="truncate text-sm text-foreground">
+                      {conditionSummary(g.step.step_config, res, language)}
+                    </div>
+                  </div>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("Remove condition")}
+                  onClick={() => onRemove(g.path)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
+function StepList({
+  steps,
+  loc,
+  selectedCid,
+  onSelect,
+  addStepAt,
+  nested,
+}: {
+  steps: BuilderStep[]
+  loc: ListLoc
+  selectedCid: string | null
+  onSelect: (cid: string) => void
+  addStepAt: (loc: ListLoc, index: number, type: AutomationStepType) => void
+  nested: boolean
+}) {
+  const { t } = useLanguage()
+
+  if (steps.length === 0) {
+    return (
+      <AddStepMenu onPick={(type) => addStepAt(loc, 0, type)}>
         <button
           type="button"
-          onClick={() => router.push("/automations")}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Back to automations"
+          className={cn(
+            "flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card/40 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary",
+            nested ? "px-3 py-3 text-xs" : "px-4 py-5",
+          )}
         >
-          <ArrowLeft className="h-4 w-4" />
+          <Plus className="h-4 w-4" />
+          {nested ? t("Add action") : t("No actions yet. Add the first one.")}
         </button>
-        <input
-          value={state.name}
-          onChange={(e) => patchTop("name", e.target.value)}
-          placeholder="Untitled automation"
-          className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
+      </AddStepMenu>
+    )
+  }
+
+  return (
+    <div className="flex flex-col">
+      {steps.map((step, idx) => (
+        <div key={step.cid} className="flex flex-col">
+          {idx > 0 && (
+            <InsertConnector onPick={(type) => addStepAt(loc, idx, type)} />
+          )}
+          <StepCard
+            step={step}
+            index={idx}
+            selected={step.cid === selectedCid}
+            onSelect={() => onSelect(step.cid)}
+            nested={nested}
+          />
+          {step.step_type === "condition" && (
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <BranchColumn label={t("Yes")} tone="text-primary border-primary/30">
+                <StepList
+                  steps={step.branches?.yes ?? []}
+                  loc={{ kind: "branch", condPath: { loc, index: idx }, branch: "yes" }}
+                  selectedCid={selectedCid}
+                  onSelect={onSelect}
+                  addStepAt={addStepAt}
+                  nested
+                />
+              </BranchColumn>
+              <BranchColumn label={t("No")} tone="text-rose-500 border-rose-500/30">
+                <StepList
+                  steps={step.branches?.no ?? []}
+                  loc={{ kind: "branch", condPath: { loc, index: idx }, branch: "no" }}
+                  selectedCid={selectedCid}
+                  onSelect={onSelect}
+                  addStepAt={addStepAt}
+                  nested
+                />
+              </BranchColumn>
+            </div>
+          )}
+        </div>
+      ))}
+      <InsertConnector onPick={(type) => addStepAt(loc, steps.length, type)} />
+      <AddStepMenu onPick={(type) => addStepAt(loc, steps.length, type)}>
+        <button
+          type="button"
+          className={cn(
+            "flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card/40 font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary",
+            nested ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm",
+          )}
+        >
+          <Plus className="h-4 w-4" />
+          {t("Add action")}
+        </button>
+      </AddStepMenu>
+    </div>
+  )
+}
+
+function BranchColumn({
+  label,
+  tone,
+  children,
+}: {
+  label: string
+  tone: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn("flex flex-col rounded-xl border border-dashed p-2", tone)}>
+      <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide">{label}</div>
+      {children}
+    </div>
+  )
+}
+
+/** Thin connector with a small "+" for inserting between two steps. */
+function InsertConnector({ onPick }: { onPick: (t: AutomationStepType) => void }) {
+  const { t } = useLanguage()
+  return (
+    <div className="group relative flex h-8 items-center justify-center">
+      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" aria-hidden />
+      <AddStepMenu onPick={onPick}>
+        <button
+          type="button"
+          aria-label={t("Add step")}
+          title={t("Add step")}
+          className="relative z-10 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-60 transition-all hover:border-primary hover:bg-primary/10 hover:text-primary hover:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </AddStepMenu>
+    </div>
+  )
+}
+
+function StepCard({
+  step,
+  index,
+  selected,
+  onSelect,
+  nested,
+}: {
+  step: BuilderStep
+  index: number
+  selected: boolean
+  onSelect: () => void
+  nested: boolean
+}) {
+  const { t, language } = useLanguage()
+  const res = useResources()
+  const meta = STEP_META[step.step_type]
+  const Icon = meta.icon
+  const kind =
+    stepKindLabel(step.step_type, t)
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      data-step-cid={step.cid}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-xl border bg-card text-left shadow-sm transition-colors hover:bg-muted/40",
+        meta.border,
+        nested ? "px-3 py-2" : "px-4 py-3",
+        selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+      )}
+    >
+      <div
+        className={cn(
+          "flex flex-shrink-0 items-center justify-center rounded-lg",
+          meta.tile,
+          nested ? "h-8 w-8" : "h-9 w-9",
+        )}
+      >
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <span>
+            {kind} {index + 1}
+          </span>
+        </div>
+        <div className="truncate text-sm font-medium text-foreground">{t(meta.label)}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {stepSummary(step, res, language)}
+        </div>
+      </div>
+      <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+    </button>
+  )
+}
+
+function AddStepMenu({
+  onPick,
+  children,
+}: {
+  onPick: (t: AutomationStepType) => void
+  children: ReactNode
+}) {
+  const { t } = useLanguage()
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={children as ReactElement} />
+      <DropdownMenuContent
+        align="start"
+        className="max-h-96 min-w-60 overflow-y-auto border-border bg-popover"
+      >
+        {STEP_GROUPS.map((group, gi) => (
+          <DropdownMenuGroup key={group.label}>
+            {gi > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              {t(group.label)}
+            </DropdownMenuLabel>
+            {group.types.map((type) => {
+              const Icon = STEP_META[type].icon
+              return (
+                <DropdownMenuItem key={type} onClick={() => onPick(type)}>
+                  <Icon className="h-4 w-4" />
+                  {t(STEP_META[type].label)}
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuGroup>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+// ------------------------------------------------------------
+// Inspector (right-hand panel)
+// ------------------------------------------------------------
+
+function Inspector({
+  selection,
+  state,
+  located,
+  isGate,
+  onClose,
+  onTriggerTypeChange,
+  onTriggerConfigChange,
+  updateStep,
+  deleteStepAt,
+  moveStepAt,
+  removeGate,
+  listLength,
+}: {
+  selection: Selection
+  state: BuilderInitial
+  located: Located | null
+  isGate: boolean
+  onClose: () => void
+  onTriggerTypeChange: (t: AutomationTriggerType) => void
+  onTriggerConfigChange: (c: Record<string, unknown>) => void
+  updateStep: (path: StepPath, updater: (s: BuilderStep) => BuilderStep) => void
+  deleteStepAt: (path: StepPath) => void
+  moveStepAt: (path: StepPath, direction: -1 | 1) => void
+  removeGate: (path: StepPath) => void
+  listLength: (loc: ListLoc) => number
+}) {
+  const { t } = useLanguage()
+
+  if (!selection) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <MousePointerClick className="h-5 w-5" />
+        </div>
+        <p className="text-sm font-medium text-foreground">{t("Nothing selected")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("Select the trigger, a condition or an action to edit it here.")}
+        </p>
+      </div>
+    )
+  }
+
+  if (selection.kind === "trigger") {
+    const option = TRIGGER_OPTIONS.find((o) => o.value === state.trigger_type)
+    return (
+      <div className="flex flex-col">
+        <InspectorHeader
+          eyebrow={t("Trigger")}
+          title={option ? t(option.label) : state.trigger_type}
+          icon={<Zap className="h-4 w-4" />}
+          tile="bg-blue-500/10 text-blue-500"
+          onClose={onClose}
         />
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="hidden sm:inline">Ativo</span>
-          <Switch
-            checked={state.is_active}
-            onCheckedChange={(v) => patchTop("is_active", !!v)}
-            aria-label="Ativo"
+        <div className="flex flex-col gap-3 px-4 py-4">
+          <TriggerEditor
+            type={state.trigger_type}
+            config={state.trigger_config}
+            onTypeChange={onTriggerTypeChange}
+            onConfigChange={onTriggerConfigChange}
           />
         </div>
-        <Button
-          onClick={save}
-          disabled={saving}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {isEditing ? "Salvar" : "Save Draft"}
-        </Button>
-      </header>
+      </div>
+    )
+  }
 
-      {/* Canvas */}
-      <div className="relative flex-1 overflow-y-auto">
-        <div className="absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
-        <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
-          <ResourcesProvider>
-            <TriggerCard
-              type={state.trigger_type}
-              config={state.trigger_config}
-              onTypeChange={(t) => patchTop("trigger_type", t)}
-              onConfigChange={(c) => patchTop("trigger_config", c)}
-            />
-            <StepList
-              steps={state.steps}
-              parentPath={[]}
-              expandedId={expandedId}
-              setExpandedId={setExpandedId}
-              updateStep={updateStep}
-              addStepAt={addStepAt}
-              deleteStepAt={deleteStepAt}
-              moveStepAt={moveStepAt}
-            />
-          </ResourcesProvider>
-        </div>
+  if (!located) return null
+  const { step, path } = located
+  const meta = STEP_META[step.step_type]
+  const Icon = meta.icon
+  const total = listLength(path.loc)
+  const kind =
+    stepKindLabel(step.step_type, t)
+
+  return (
+    <div className="flex flex-col">
+      <InspectorHeader
+        eyebrow={isGate ? t("Condition") : `${kind} ${path.index + 1}`}
+        title={t(meta.label)}
+        icon={<Icon className="h-4 w-4" />}
+        tile={meta.tile}
+        onClose={onClose}
+      />
+      <div className="flex flex-col gap-3 px-4 py-4">
+        <StepEditor
+          step={step}
+          isGate={isGate}
+          onChange={(next) => updateStep(path, () => next)}
+        />
+      </div>
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+        {isGate ? (
+          <span className="text-xs text-muted-foreground">
+            {t("Removing keeps the actions below it.")}
+          </span>
+        ) : (
+          <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={path.index === 0}
+              aria-label={t("Move up")}
+              title={t("Move up")}
+              onClick={() => moveStepAt(path, -1)}
+            >
+              <ArrowUp className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={path.index >= total - 1}
+              aria-label={t("Move down")}
+              title={t("Move down")}
+              onClick={() => moveStepAt(path, 1)}
+            >
+              <ArrowDown className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={() => (isGate ? removeGate(path) : deleteStepAt(path))}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {isGate ? t("Remove condition") : t("Delete")}
+        </Button>
       </div>
     </div>
   )
 }
 
+function InspectorHeader({
+  eyebrow,
+  title,
+  icon,
+  tile,
+  onClose,
+}: {
+  eyebrow: string
+  title: string
+  icon: ReactNode
+  tile: string
+  onClose: () => void
+}) {
+  const { t } = useLanguage()
+  return (
+    <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+      <div className={cn("flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg", tile)}>
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{eyebrow}</div>
+        <div className="truncate text-sm font-semibold text-foreground">{title}</div>
+      </div>
+      <Button variant="ghost" size="icon-sm" aria-label={t("Close")} onClick={onClose}>
+        <X className="h-4 w-4" />
+      </Button>
+    </div>
+  )
+}
+
 // ------------------------------------------------------------
-// Trigger card
+// Trigger editor
 // ------------------------------------------------------------
 
-function TriggerCard({
+function TriggerEditor({
   type,
   config,
   onTypeChange,
@@ -628,82 +1730,180 @@ function TriggerCard({
   onTypeChange: (t: AutomationTriggerType) => void
   onConfigChange: (c: Record<string, unknown>) => void
 }) {
-  const [open, setOpen] = useState(false)
+  const { t } = useLanguage()
+  const option = TRIGGER_OPTIONS.find((o) => o.value === type)
   return (
-    // Card width: full on mobile, fixed 320px on sm+. The canvas wrapper
-    // (max-w-2xl + px-4) keeps this tidy on tablet/desktop.
-    <div className="z-10 w-full max-w-[320px] sm:w-80">
-      <div className="rounded-lg border border-border border-l-4 border-l-blue-500 bg-card shadow-lg">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+    <>
+      <FieldBlock label={t("Trigger type")}>
+        <select
+          value={type}
+          onChange={(e) => onTypeChange(e.target.value as AutomationTriggerType)}
+          className={SELECT_CLASS}
         >
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-500/10 text-blue-400">
-            <Zap className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] uppercase tracking-wide text-blue-300">Gatilho</div>
-            <div className="truncate text-sm font-medium text-foreground">
-              {TRIGGER_OPTIONS.find((o) => o.value === type)?.label ?? type}
-            </div>
-          </div>
-          <ChevronDown
-            className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")}
+          {TRIGGER_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {t(o.label)}
+            </option>
+          ))}
+        </select>
+        {option && <p className="mt-1 text-[11px] text-muted-foreground">{t(option.hint)}</p>}
+      </FieldBlock>
+      {type === "keyword_match" && (
+        <KeywordMatchConfig
+          key={type}
+          config={config as unknown as KeywordMatchTriggerConfig}
+          onChange={onConfigChange}
+        />
+      )}
+      {type === "tag_added" && (
+        <FieldBlock label={t("Tag")}>
+          <TagSelect
+            value={(config.tag_id as string) ?? ""}
+            onChange={(v) => onConfigChange({ ...config, tag_id: v })}
           />
-        </button>
-        {open && (
-          <div className="space-y-3 border-t border-border px-4 py-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                Tipo de gatilho
-              </label>
-              <select
-                value={type}
-                onChange={(e) => onTypeChange(e.target.value as AutomationTriggerType)}
-                className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
+        </FieldBlock>
+      )}
+      {type === "lead_captured" && (
+        <FieldBlock label={t("Lead source")}>
+          <LeadSourceSelect
+            value={(config.source_id as string) ?? ""}
+            onChange={(v) => onConfigChange(v ? { ...config, source_id: v } : { ...config, source_id: undefined })}
+          />
+        </FieldBlock>
+      )}
+      {type === "time_based" && (
+        <FieldBlock label={t("Schedule")}>
+          <Input
+            placeholder="Cron expression or HH:mm"
+            value={(config.schedule as string) ?? ""}
+            onChange={(e) => onConfigChange({ ...config, schedule: e.target.value })}
+            className="bg-muted text-foreground"
+          />
+        </FieldBlock>
+      )}
+      {type === "conversation_inactive" && (
+        <ConversationInactiveConfig key={type} config={config} onChange={onConfigChange} />
+      )}
+    </>
+  )
+}
+
+const INACTIVE_STATUSES: ("open" | "pending")[] = ["open", "pending"]
+
+/**
+ * `conversation_inactive` inspector: hours (decimal, 0.05–720), whose
+ * message was the last one, and which statuses count. Missing keys are
+ * filled with the template defaults on first render so the summary card
+ * and the validator see a complete config right away.
+ */
+function ConversationInactiveConfig({
+  config,
+  onChange,
+}: {
+  config: Record<string, unknown>
+  onChange: (c: Record<string, unknown>) => void
+}) {
+  const { t } = useLanguage()
+  const hours = config.hours
+  const lastFrom = (config.last_from as string) ?? "agent"
+  const statuses = Array.isArray(config.statuses)
+    ? (config.statuses as string[])
+    : [...INACTIVE_STATUSES]
+
+  // Seed defaults once so an automation created from scratch is valid
+  // without touching every field.
+  useEffect(() => {
+    if (config.hours === undefined || config.last_from === undefined || !Array.isArray(config.statuses)) {
+      onChange({
+        ...config,
+        hours: config.hours ?? 24,
+        last_from: config.last_from ?? "agent",
+        statuses: Array.isArray(config.statuses) ? config.statuses : [...INACTIVE_STATUSES],
+      })
+    }
+    // Only on mount / type switch (the component is keyed by trigger type).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const [hoursDraft, setHoursDraft] = useState(hours === undefined ? "24" : String(hours))
+
+  function commitHours() {
+    const n = Number(hoursDraft.replace(",", "."))
+    if (Number.isFinite(n) && n > 0) {
+      onChange({ ...config, hours: n })
+      setHoursDraft(String(n))
+    } else {
+      setHoursDraft(hours === undefined ? "24" : String(hours))
+    }
+  }
+
+  function toggleStatus(s: "open" | "pending") {
+    const next = statuses.includes(s) ? statuses.filter((x) => x !== s) : [...statuses, s]
+    onChange({ ...config, statuses: next })
+  }
+
+  return (
+    <>
+      <FieldBlock label={t("Hours without a message")}>
+        <Input
+          type="number"
+          inputMode="decimal"
+          min={0.05}
+          max={720}
+          step={0.05}
+          value={hoursDraft}
+          onChange={(e) => setHoursDraft(e.target.value)}
+          onBlur={commitHours}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commitHours()
+            }
+          }}
+          className="bg-muted text-foreground"
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {t("Decimals allowed — 0.05 is 3 minutes, 24 is one day, 720 is the maximum (30 days).")}
+        </p>
+      </FieldBlock>
+      <FieldBlock label={t("Last message was from")}>
+        <select
+          value={lastFrom}
+          onChange={(e) => onChange({ ...config, last_from: e.target.value })}
+          className={SELECT_CLASS}
+        >
+          <option value="agent">{t("The agent (customer went quiet)")}</option>
+          <option value="customer">{t("The customer (nobody replied)")}</option>
+          <option value="any">{t("Either side")}</option>
+        </select>
+      </FieldBlock>
+      <FieldBlock label={t("Conversation status")}>
+        <div className="flex flex-wrap gap-2">
+          {INACTIVE_STATUSES.map((s) => {
+            const on = statuses.includes(s)
+            return (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggleStatus(s)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                  on
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground",
+                )}
               >
-                {TRIGGER_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {TRIGGER_OPTIONS.find((o) => o.value === type)?.hint}
-              </p>
-            </div>
-            {type === "keyword_match" && (
-              <KeywordMatchConfig
-                config={config as unknown as KeywordMatchTriggerConfig}
-                onChange={onConfigChange}
-              />
-            )}
-            {type === "tag_added" && (
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Tag
-                </label>
-                <TagSelect
-                  value={(config.tag_id as string) ?? ""}
-                  onChange={(v) => onConfigChange({ ...config, tag_id: v })}
-                />
-              </div>
-            )}
-            {type === "time_based" && (
-              <Input
-                placeholder="Cron expression or HH:mm"
-                value={(config.schedule as string) ?? ""}
-                onChange={(e) =>
-                  onConfigChange({ ...config, schedule: e.target.value })
-                }
-                className="bg-muted text-foreground"
-              />
-            )}
-          </div>
+                {t(s === "open" ? "Open" : "Pending")}
+              </button>
+            )
+          })}
+        </div>
+        {statuses.length === 0 && (
+          <p className="mt-1 text-[11px] text-destructive">{t("Pick at least one status.")}</p>
         )}
-      </div>
-    </div>
+      </FieldBlock>
+    </>
   )
 }
 
@@ -714,6 +1914,7 @@ function KeywordMatchConfig({
   config: KeywordMatchTriggerConfig
   onChange: (c: Record<string, unknown>) => void
 }) {
+  const { t } = useLanguage()
   const keywords = config?.keywords ?? []
   // Keep a local draft string so the comma and trailing space aren't
   // stripped on every keystroke (which made multi-word, comma-separated
@@ -729,15 +1930,12 @@ function KeywordMatchConfig({
       .map((s) => s.trim())
       .filter(Boolean)
     setDraft(parsed.join(", "))
-    onChange({ ...config, keywords: parsed })
+    onChange({ ...config, match_type: config?.match_type ?? "contains", keywords: parsed })
   }
 
   return (
-    <div className="space-y-2">
-      <div>
-        <label className="mb-1 block text-xs font-medium text-muted-foreground">
-          Palavras-chave (separadas por vírgula)
-        </label>
+    <>
+      <FieldBlock label={t("Keywords (comma-separated)")}>
         <Input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -751,275 +1949,20 @@ function KeywordMatchConfig({
           placeholder="e.g. pricing, demo request, talk to sales"
           className="bg-muted text-foreground"
         />
-      </div>
-      <div>
-        <label className="mb-1 block text-xs font-medium text-muted-foreground">
-          Tipo de correspondência
-        </label>
+      </FieldBlock>
+      <FieldBlock label={t("Match type")}>
         <select
           value={config?.match_type ?? "contains"}
-          onChange={(e) => onChange({ ...config, match_type: e.target.value as "exact" | "contains" })}
-          className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:outline-none"
+          onChange={(e) =>
+            onChange({ ...config, keywords, match_type: e.target.value as "exact" | "contains" })
+          }
+          className={SELECT_CLASS}
         >
-          <option value="contains">Contains</option>
-          <option value="exact">Exact</option>
+          <option value="contains">{t("Contains")}</option>
+          <option value="exact">{t("Exact")}</option>
         </select>
-      </div>
-    </div>
-  )
-}
-
-// ------------------------------------------------------------
-// Step list + card + connectors
-// ------------------------------------------------------------
-
-type ParentScope =
-  | { kind: "root" }
-  | { kind: "branch"; parentCid: string; branch: "yes" | "no" }
-
-type StepPath = (
-  | { kind: "root"; index: number }
-  | { kind: "branch"; parentCid: string; branch: "yes" | "no"; index: number }
-)[]
-
-interface StepListProps {
-  steps: BuilderStep[]
-  parentPath: StepPath
-  expandedId: string | null
-  setExpandedId: (id: string | null) => void
-  updateStep: (path: StepPath, updater: (s: BuilderStep) => BuilderStep) => void
-  addStepAt: (parent: ParentScope, index: number, type: AutomationStepType) => void
-  deleteStepAt: (path: StepPath) => void
-  moveStepAt: (path: StepPath, direction: -1 | 1) => void
-}
-
-function StepList(props: StepListProps) {
-  const { steps, parentPath, ...rest } = props
-  const parentScope: ParentScope =
-    parentPath.length === 0
-      ? { kind: "root" }
-      : (() => {
-          const last = parentPath[parentPath.length - 1]
-          if (last.kind !== "branch") return { kind: "root" } as const
-          return { kind: "branch", parentCid: last.parentCid, branch: last.branch } as const
-        })()
-
-  return (
-    <div className="flex flex-col items-center">
-      <AddButton onPick={(t) => props.addStepAt(parentScope, 0, t)} />
-      {steps.map((step, idx) => (
-        <StepRenderer
-          key={step.cid}
-          step={step}
-          index={idx}
-          total={steps.length}
-          parentScope={parentScope}
-          parentPath={parentPath}
-          {...rest}
-        />
-      ))}
-    </div>
-  )
-}
-
-function StepRenderer({
-  step,
-  index,
-  total,
-  parentScope,
-  parentPath,
-  ...props
-}: {
-  step: BuilderStep
-  index: number
-  total: number
-  parentScope: ParentScope
-  parentPath: StepPath
-} & Omit<StepListProps, "steps" | "parentPath">) {
-  const path: StepPath = [
-    ...parentPath,
-    parentScope.kind === "root"
-      ? { kind: "root", index }
-      : { kind: "branch", parentCid: parentScope.parentCid, branch: parentScope.branch, index },
-  ]
-  const meta = STEP_META[step.step_type]
-  const Icon = meta.icon
-  const expanded = props.expandedId === step.cid
-  const isCondition = step.step_type === "condition"
-  // Card widths on mobile fill the full canvas column (max-w-2xl px-4
-  // still keeps them reasonable). On sm+ the original fixed widths
-  // come back so the flow visual stays recognisable.
-  const width = isCondition
-    ? "w-full max-w-[400px] sm:w-[400px]"
-    : "w-full max-w-[320px] sm:w-80"
-
-  return (
-    <>
-      <div className={cn("z-10 flex flex-col", width)}>
-        <div
-          className={cn(
-            "rounded-lg border border-border border-l-4 bg-card shadow-lg",
-            meta.border,
-          )}
-        >
-          <button
-            type="button"
-            onClick={() => props.setExpandedId(expanded ? null : step.cid)}
-            className="flex w-full items-center gap-3 px-4 py-3 text-left"
-          >
-            <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden />
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
-              <Icon className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                {isCondition ? "Condition" : step.step_type === "wait" ? "Aguardar" : "Action"}
-              </div>
-              <div className="truncate text-sm font-medium text-foreground">{meta.label}</div>
-              <div className="truncate text-[11px] text-muted-foreground">{previewFor(step)}</div>
-            </div>
-            <ChevronDown
-              className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-180")}
-            />
-          </button>
-          {expanded && (
-            <div className="border-t border-border px-4 py-3">
-              <StepEditor
-                step={step}
-                onChange={(next) => props.updateStep(path, () => next)}
-              />
-              <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={index === 0}
-                    aria-label="Move up"
-                    onClick={() => props.moveStepAt(path, -1)}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={index === total - 1}
-                    aria-label="Move down"
-                    onClick={() => props.moveStepAt(path, 1)}
-                  >
-                    <ArrowDown className="h-4 w-4" />
-                  </Button>
-                </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => props.deleteStepAt(path)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Excluir
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {isCondition && (
-          <ConditionBranches step={step} parentPath={path} {...props} />
-        )}
-      </div>
-
-      {/* A condition branches into Yes/No (rendered above by
-          ConditionBranches), so it has no linear "continue" path — adding
-          the trailing connector here would produce a spurious third output. */}
-      {!isCondition && (
-        <AddButton
-          onPick={(t) => props.addStepAt(parentScope, index + 1, t)}
-        />
-      )}
+      </FieldBlock>
     </>
-  )
-}
-
-function ConditionBranches({
-  step,
-  parentPath,
-  ...props
-}: {
-  step: BuilderStep
-  parentPath: StepPath
-} & Omit<StepListProps, "steps" | "parentPath">) {
-  const yes = step.branches?.yes ?? []
-  const no = step.branches?.no ?? []
-  // Build the child scope by appending a branch marker. The scope the
-  // StepList uses is driven by the LAST element of parentPath, so the
-  // tail's `index` doesn't matter — it's replaced per child during walks.
-  const yesPath: StepPath = [
-    ...parentPath,
-    { kind: "branch", parentCid: step.cid, branch: "yes", index: 0 },
-  ]
-  const noPath: StepPath = [
-    ...parentPath,
-    { kind: "branch", parentCid: step.cid, branch: "no", index: 0 },
-  ]
-  return (
-    // Stack Yes/No vertically on mobile — two columns at 375px would
-    // cram each branch to ~170px which is too narrow for the nested
-    // cards. Two-column grid returns on sm+.
-    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <BranchColumn label="Sim" color="text-primary">
-        <StepList {...props} steps={yes} parentPath={yesPath} />
-      </BranchColumn>
-      <BranchColumn label="Não" color="text-rose-400">
-        <StepList {...props} steps={no} parentPath={noPath} />
-      </BranchColumn>
-    </div>
-  )
-}
-
-function BranchColumn({
-  label,
-  color,
-  children,
-}: {
-  label: string
-  color: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col items-center">
-      <div className={cn("mb-2 text-[11px] font-semibold uppercase", color)}>{label}</div>
-      {children}
-    </div>
-  )
-}
-
-function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
-  return (
-    <div className="relative flex flex-col items-center">
-      <div className="h-4 w-[2px] bg-border" aria-hidden />
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-dashed border-border bg-background text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary data-[popup-open]:border-primary data-[popup-open]:bg-primary/20 data-[popup-open]:text-primary"
-          aria-label="Adicionar etapa"
-        >
-          <Plus className="h-4 w-4" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className="max-h-80 min-w-56 overflow-y-auto border-border bg-popover"
-        >
-          {ADDABLE_STEPS.map((t) => {
-            const Icon = STEP_META[t].icon
-            return (
-              <DropdownMenuItem key={t} onClick={() => onPick(t)}>
-                <Icon className="h-4 w-4" />
-                {STEP_META[t].label}
-              </DropdownMenuItem>
-            )
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <div className="h-4 w-[2px] bg-border" aria-hidden />
-    </div>
   )
 }
 
@@ -1029,11 +1972,14 @@ function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
 
 function StepEditor({
   step,
+  isGate,
   onChange,
 }: {
   step: BuilderStep
+  isGate: boolean
   onChange: (s: BuilderStep) => void
 }) {
+  const { t } = useLanguage()
   const cfg = step.step_config
   const set = (patch: Record<string, unknown>) =>
     onChange({ ...step, step_config: { ...cfg, ...patch } })
@@ -1041,13 +1987,17 @@ function StepEditor({
   switch (step.step_type) {
     case "send_message":
       return (
-        <FieldBlock label="Message text">
+        <FieldBlock label={t("Message text")}>
           <Textarea
             value={(cfg.text as string) ?? ""}
             onChange={(e) => set({ text: e.target.value })}
             placeholder="Hi! Thanks for reaching out…"
-            className="min-h-24 bg-muted text-foreground"
+            className="min-h-32 bg-muted text-foreground"
+            autoFocus
           />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {t("Sent to the contact on WhatsApp as a plain text message.")}
+          </p>
         </FieldBlock>
       )
     case "send_template":
@@ -1061,7 +2011,7 @@ function StepEditor({
     case "add_tag":
     case "remove_tag":
       return (
-        <FieldBlock label="Tag">
+        <FieldBlock label={t("Tag")}>
           <TagSelect
             value={(cfg.tag_id as string) ?? ""}
             onChange={(v) => set({ tag_id: v })}
@@ -1071,18 +2021,18 @@ function StepEditor({
     case "assign_conversation":
       return (
         <>
-          <FieldBlock label="Mode">
+          <FieldBlock label={t("Mode")}>
             <select
               value={(cfg.mode as string) ?? "round_robin"}
               onChange={(e) => set({ mode: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
+              className={SELECT_CLASS}
             >
-              <option value="round_robin">Round-robin</option>
-              <option value="specific">Specific agent</option>
+              <option value="round_robin">{t("Round-robin")}</option>
+              <option value="specific">{t("Specific agent")}</option>
             </select>
           </FieldBlock>
           {cfg.mode === "specific" && (
-            <FieldBlock label="Agente">
+            <FieldBlock label={t("Agent")}>
               <AgentSelect
                 value={(cfg.agent_id as string) ?? ""}
                 onChange={(v) => set({ agent_id: v })}
@@ -1094,13 +2044,13 @@ function StepEditor({
     case "update_contact_field":
       return (
         <>
-          <FieldBlock label="Field">
+          <FieldBlock label={t("Field")}>
             <ContactFieldSelect
               value={(cfg.field as string) ?? "name"}
               onChange={(v) => set({ field: v })}
             />
           </FieldBlock>
-          <FieldBlock label="Valor">
+          <FieldBlock label={t("Value")}>
             <Input
               value={(cfg.value as string) ?? ""}
               onChange={(e) => set({ value: e.target.value })}
@@ -1113,28 +2063,14 @@ function StepEditor({
     case "create_deal":
       return (
         <>
-          <FieldBlock label="Pipeline id">
-            <Input
-              value={(cfg.pipeline_id as string) ?? ""}
-              onChange={(e) => set({ pipeline_id: e.target.value })}
-              className="bg-muted text-foreground"
-            />
-          </FieldBlock>
-          <FieldBlock label="Stage id">
-            <Input
-              value={(cfg.stage_id as string) ?? ""}
-              onChange={(e) => set({ stage_id: e.target.value })}
-              className="bg-muted text-foreground"
-            />
-          </FieldBlock>
-          <FieldBlock label="Title">
+          <FieldBlock label={t("Title")}>
             <Input
               value={(cfg.title as string) ?? ""}
               onChange={(e) => set({ title: e.target.value })}
               className="bg-muted text-foreground"
             />
           </FieldBlock>
-          <FieldBlock label="Valor">
+          <FieldBlock label={t("Value")}>
             <Input
               type="number"
               value={(cfg.value as number) ?? 0}
@@ -1142,12 +2078,26 @@ function StepEditor({
               className="bg-muted text-foreground"
             />
           </FieldBlock>
+          <FieldBlock label={t("Pipeline id")}>
+            <Input
+              value={(cfg.pipeline_id as string) ?? ""}
+              onChange={(e) => set({ pipeline_id: e.target.value })}
+              className="bg-muted font-mono text-xs text-foreground"
+            />
+          </FieldBlock>
+          <FieldBlock label={t("Stage id")}>
+            <Input
+              value={(cfg.stage_id as string) ?? ""}
+              onChange={(e) => set({ stage_id: e.target.value })}
+              className="bg-muted font-mono text-xs text-foreground"
+            />
+          </FieldBlock>
         </>
       )
     case "wait":
       return (
         <div className="grid grid-cols-2 gap-2">
-          <FieldBlock label="Amount">
+          <FieldBlock label={t("Amount")}>
             <Input
               type="number"
               min={1}
@@ -1156,61 +2106,21 @@ function StepEditor({
               className="bg-muted text-foreground"
             />
           </FieldBlock>
-          <FieldBlock label="Unit">
+          <FieldBlock label={t("Unit")}>
             <select
               value={(cfg.unit as string) ?? "hours"}
               onChange={(e) => set({ unit: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
+              className={SELECT_CLASS}
             >
-              <option value="minutes">Minutes</option>
-              <option value="hours">Hours</option>
-              <option value="days">Days</option>
+              <option value="minutes">{t("Minutes")}</option>
+              <option value="hours">{t("Hours")}</option>
+              <option value="days">{t("Days")}</option>
             </select>
           </FieldBlock>
         </div>
       )
     case "condition":
-      return (
-        <>
-          <FieldBlock label="Subject">
-            <select
-              value={(cfg.subject as string) ?? "tag_presence"}
-              onChange={(e) => set({ subject: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
-            >
-              <option value="tag_presence">Tag presence</option>
-              <option value="contact_field">Contact field</option>
-              <option value="message_content">Message content</option>
-              <option value="time_of_day">Time of day</option>
-            </select>
-          </FieldBlock>
-          <FieldBlock label="Operand">
-            <Input
-              placeholder={
-                cfg.subject === "time_of_day"
-                  ? "HH:mm-HH:mm"
-                  : cfg.subject === "contact_field"
-                  ? "name / email / company"
-                  : cfg.subject === "tag_presence"
-                  ? "tag id"
-                  : ""
-              }
-              value={(cfg.operand as string) ?? ""}
-              onChange={(e) => set({ operand: e.target.value })}
-              className="bg-muted text-foreground"
-            />
-          </FieldBlock>
-          {(cfg.subject === "contact_field" || cfg.subject === "message_content") && (
-            <FieldBlock label="Valor">
-              <Input
-                value={(cfg.value as string) ?? ""}
-                onChange={(e) => set({ value: e.target.value })}
-                className="bg-muted text-foreground"
-              />
-            </FieldBlock>
-          )}
-        </>
-      )
+      return <ConditionEditor cfg={cfg} set={set} isGate={isGate} />
     case "send_webhook":
       return (
         <>
@@ -1218,14 +2128,15 @@ function StepEditor({
             <Input
               value={(cfg.url as string) ?? ""}
               onChange={(e) => set({ url: e.target.value })}
+              placeholder="https://"
               className="bg-muted text-foreground"
             />
           </FieldBlock>
-          <FieldBlock label="Body template (JSON)">
+          <FieldBlock label={t("Body template (JSON)")}>
             <Textarea
               value={(cfg.body_template as string) ?? ""}
               onChange={(e) => set({ body_template: e.target.value })}
-              className="min-h-20 bg-muted font-mono text-xs text-foreground"
+              className="min-h-24 bg-muted font-mono text-xs text-foreground"
             />
           </FieldBlock>
         </>
@@ -1233,12 +2144,178 @@ function StepEditor({
     case "close_conversation":
       return (
         <p className="text-xs text-muted-foreground">
-          Define o status da conversa como &quot;fechada&quot;. Nenhuma configuração é necessária.
+          {t('Sets the conversation status to "closed". No configuration needed.')}
         </p>
+      )
+    case "create_task":
+      return (
+        <>
+          <FieldBlock label={t("Task title")}>
+            <Input
+              value={(cfg.title as string) ?? ""}
+              onChange={(e) => set({ title: e.target.value })}
+              placeholder={t("Follow up with {{ contact.name }}")}
+              className="bg-muted text-foreground"
+              autoFocus
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("Variables: {{ contact.name }}, {{ contact.phone }}, {{ message.text }}, {{ vars.x }}")}
+            </p>
+          </FieldBlock>
+          <FieldBlock label={t("Description (optional)")}>
+            <Textarea
+              value={(cfg.description as string) ?? ""}
+              onChange={(e) => set({ description: e.target.value })}
+              className="min-h-20 bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <div className="grid grid-cols-2 gap-2">
+            <FieldBlock label={t("Priority")}>
+              <select
+                value={(cfg.priority as string) ?? "normal"}
+                onChange={(e) => set({ priority: e.target.value })}
+                className={SELECT_CLASS}
+              >
+                <option value="low">{t("Low")}</option>
+                <option value="normal">{t("Normal")}</option>
+                <option value="high">{t("High")}</option>
+                <option value="urgent">{t("Urgent")}</option>
+              </select>
+            </FieldBlock>
+            <FieldBlock label={t("Due in (hours)")}>
+              <Input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.due_in_hours === "" || cfg.due_in_hours == null ? "" : Number(cfg.due_in_hours)}
+                onChange={(e) =>
+                  set({ due_in_hours: e.target.value === "" ? "" : Math.max(0, Number(e.target.value)) })
+                }
+                placeholder={t("No due date")}
+                className="bg-muted text-foreground"
+              />
+            </FieldBlock>
+          </div>
+          <FieldBlock label={t("Assignee")}>
+            <AgentSelect
+              value={(cfg.assignee_user_id as string) ?? ""}
+              onChange={(v) => set({ assignee_user_id: v })}
+            />
+          </FieldBlock>
+          <p className="text-[11px] text-muted-foreground">
+            {t("The task is linked to the contact and conversation that fired the automation and lands on the default open status.")}
+          </p>
+        </>
       )
     default:
       return null
   }
+}
+
+function ConditionEditor({
+  cfg,
+  set,
+  isGate,
+}: {
+  cfg: Record<string, unknown>
+  set: (patch: Record<string, unknown>) => void
+  isGate: boolean
+}) {
+  const { t } = useLanguage()
+  const subject = (cfg.subject as string) ?? "tag_presence"
+  const operand = (cfg.operand as string) ?? ""
+  const value = (cfg.value as string) ?? ""
+  const [from = "", to = ""] = operand.split("-")
+
+  return (
+    <>
+      <FieldBlock label={t("Check")}>
+        <select
+          value={subject}
+          onChange={(e) => {
+            const next = e.target.value
+            // Reset the operand when the subject changes — the old one
+            // (a tag id, a column, a time window) never carries over.
+            set({ subject: next, operand: next === "contact_field" ? "name" : "", value: "" })
+          }}
+          className={SELECT_CLASS}
+        >
+          <option value="tag_presence">{t("Contact has tag")}</option>
+          <option value="contact_field">{t("Contact field equals")}</option>
+          <option value="message_content">{t("Message contains")}</option>
+          <option value="time_of_day">{t("Time of day is between")}</option>
+        </select>
+      </FieldBlock>
+
+      {subject === "tag_presence" && (
+        <FieldBlock label={t("Tag")}>
+          <TagSelect value={operand} onChange={(v) => set({ operand: v })} />
+        </FieldBlock>
+      )}
+
+      {subject === "contact_field" && (
+        <>
+          <FieldBlock label={t("Field")}>
+            <ContactFieldSelect
+              value={operand || "name"}
+              onChange={(v) => set({ operand: v })}
+              builtInOnly
+            />
+          </FieldBlock>
+          <FieldBlock label={t("Value")}>
+            <Input
+              value={value}
+              onChange={(e) => set({ value: e.target.value })}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+        </>
+      )}
+
+      {subject === "message_content" && (
+        <FieldBlock label={t("Text to look for")}>
+          {/* The engine compares `value`; `operand` is mirrored so the
+              activation validator (which requires an operand) passes. */}
+          <Input
+            value={value}
+            onChange={(e) => set({ value: e.target.value, operand: e.target.value })}
+            placeholder="e.g. price"
+            className="bg-muted text-foreground"
+          />
+        </FieldBlock>
+      )}
+
+      {subject === "time_of_day" && (
+        <div className="grid grid-cols-2 gap-2">
+          <FieldBlock label={t("Start time")}>
+            <Input
+              type="time"
+              value={from}
+              onChange={(e) => set({ operand: `${e.target.value}-${to}` })}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <FieldBlock label={t("End time")}>
+            <Input
+              type="time"
+              value={to}
+              onChange={(e) => set({ operand: `${from}-${e.target.value}` })}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <p className="col-span-2 text-[11px] text-muted-foreground">
+            {t("Overnight windows like 18:00–09:00 are supported.")}
+          </p>
+        </div>
+      )}
+
+      <p className="rounded-md bg-muted/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        {isGate
+          ? t("The actions only run when this condition is true.")
+          : t('Steps under "Yes" run when true; steps under "No" run otherwise.')}
+      </p>
+    </>
+  )
 }
 
 function FieldBlock({
@@ -1246,7 +2323,7 @@ function FieldBlock({
   children,
 }: {
   label: string
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <div className="mb-2 last:mb-0">
@@ -1254,190 +2331,6 @@ function FieldBlock({
       {children}
     </div>
   )
-}
-
-function previewFor(step: BuilderStep): string {
-  switch (step.step_type) {
-    case "send_message":
-      return (step.step_config.text as string) || "no text yet"
-    case "send_template":
-      return (step.step_config.template_name as string) || "pick a template"
-    case "wait":
-      return `${step.step_config.amount ?? "?"} ${step.step_config.unit ?? ""}`
-    case "condition":
-      return `when ${step.step_config.subject ?? "?"}`
-    case "send_webhook":
-      return (step.step_config.url as string) || "no url"
-    default:
-      return ""
-  }
-}
-
-// ------------------------------------------------------------
-// Tree mutation helpers
-// ------------------------------------------------------------
-
-function insertAt(
-  steps: BuilderStep[],
-  parent: ParentScope,
-  index: number,
-  node: BuilderStep,
-): BuilderStep[] {
-  if (parent.kind === "root") {
-    const copy = [...steps]
-    copy.splice(index, 0, node)
-    return copy
-  }
-  return steps.map((s) => {
-    if (s.cid !== parent.parentCid || !s.branches) return s
-    const list = [...s.branches[parent.branch]]
-    list.splice(index, 0, node)
-    return { ...s, branches: { ...s.branches, [parent.branch]: list } }
-  })
-}
-
-function mapAtPath(
-  steps: BuilderStep[],
-  path: StepPath,
-  updater: (s: BuilderStep) => BuilderStep,
-): BuilderStep[] {
-  if (path.length === 0) return steps
-  const head = path[0]
-  const rest = path.slice(1)
-
-  if (head.kind === "root") {
-    return steps.map((s, i) => {
-      if (i !== head.index) return s
-      return rest.length === 0
-        ? updater(s)
-        : { ...s, branches: walkBranches(s.branches, rest, updater) }
-    })
-  }
-  return steps.map((s) => {
-    if (s.cid !== head.parentCid || !s.branches) return s
-    const bucket = s.branches[head.branch]
-    const updated = bucket.map((child, i) => {
-      if (i !== head.index) return child
-      return rest.length === 0
-        ? updater(child)
-        : { ...child, branches: walkBranches(child.branches, rest, updater) }
-    })
-    return { ...s, branches: { ...s.branches, [head.branch]: updated } }
-  })
-}
-
-function walkBranches(
-  branches: BuilderStep["branches"],
-  path: StepPath,
-  updater: (s: BuilderStep) => BuilderStep,
-): BuilderStep["branches"] {
-  if (!branches) return branches
-  const head = path[0]
-  if (head.kind !== "branch") return branches
-  const bucket = branches[head.branch]
-  const rest = path.slice(1)
-  const updated = bucket.map((child, i) => {
-    if (i !== head.index) return child
-    return rest.length === 0
-      ? updater(child)
-      : { ...child, branches: walkBranches(child.branches, rest, updater) }
-  })
-  return { ...branches, [head.branch]: updated }
-}
-
-function removeAt(steps: BuilderStep[], path: StepPath): BuilderStep[] {
-  if (path.length === 0) return steps
-  const head = path[0]
-  const rest = path.slice(1)
-  if (head.kind === "root") {
-    if (rest.length === 0) return steps.filter((_, i) => i !== head.index)
-    return steps.map((s, i) =>
-      i !== head.index ? s : { ...s, branches: removeFromBranches(s.branches, rest) },
-    )
-  }
-  return steps.map((s) => {
-    if (s.cid !== head.parentCid || !s.branches) return s
-    const bucket = s.branches[head.branch]
-    const next =
-      rest.length === 0
-        ? bucket.filter((_, i) => i !== head.index)
-        : bucket.map((child, i) =>
-            i !== head.index
-              ? child
-              : { ...child, branches: removeFromBranches(child.branches, rest) },
-          )
-    return { ...s, branches: { ...s.branches, [head.branch]: next } }
-  })
-}
-
-function removeFromBranches(
-  branches: BuilderStep["branches"],
-  path: StepPath,
-): BuilderStep["branches"] {
-  if (!branches) return branches
-  const head = path[0]
-  if (head.kind !== "branch") return branches
-  const rest = path.slice(1)
-  const bucket = branches[head.branch]
-  const next =
-    rest.length === 0
-      ? bucket.filter((_, i) => i !== head.index)
-      : bucket.map((child, i) =>
-          i !== head.index
-            ? child
-            : { ...child, branches: removeFromBranches(child.branches, rest) },
-        )
-  return { ...branches, [head.branch]: next }
-}
-
-function moveAt(
-  steps: BuilderStep[],
-  path: StepPath,
-  direction: -1 | 1,
-): BuilderStep[] {
-  if (path.length === 0) return steps
-  const head = path[0]
-  const rest = path.slice(1)
-  const swap = <T,>(arr: T[], i: number) => {
-    const j = i + direction
-    if (j < 0 || j >= arr.length) return arr
-    const copy = [...arr]
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-    return copy
-  }
-  if (head.kind === "root") {
-    if (rest.length === 0) return swap(steps, head.index)
-    return steps.map((s, i) =>
-      i !== head.index ? s : { ...s, branches: moveInBranches(s.branches, rest, direction) },
-    )
-  }
-  return steps.map((s) => {
-    if (s.cid !== head.parentCid || !s.branches) return s
-    const bucket = s.branches[head.branch]
-    const next = rest.length === 0 ? swap(bucket, head.index) : bucket
-    return { ...s, branches: { ...s.branches, [head.branch]: next } }
-  })
-}
-
-function moveInBranches(
-  branches: BuilderStep["branches"],
-  path: StepPath,
-  direction: -1 | 1,
-): BuilderStep["branches"] {
-  if (!branches) return branches
-  const head = path[0]
-  if (head.kind !== "branch") return branches
-  const rest = path.slice(1)
-  const bucket = branches[head.branch]
-  const swap = <T,>(arr: T[], i: number) => {
-    const j = i + direction
-    if (j < 0 || j >= arr.length) return arr
-    const copy = [...arr]
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-    return copy
-  }
-  const next = rest.length === 0 ? swap(bucket, head.index) : bucket
-  return { ...branches, [head.branch]: next }
 }
 
 // ------------------------------------------------------------

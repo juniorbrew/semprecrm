@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { accountHasModule } from '@/lib/plans-server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
@@ -9,6 +10,7 @@ import {
   isValidE164,
   phoneVariants,
   isRecipientNotAllowedError,
+  normalizePhone,
 } from '@/lib/whatsapp/phone-utils'
 import {
   checkRateLimit,
@@ -96,6 +98,19 @@ export async function POST(request: Request) {
       )
     }
 
+    // Plan gate (migration 025): the `broadcasts` module must be on
+    // and the account not blocked. The UI hides the module already;
+    // this is the enforcement for direct API callers.
+    if (!(await accountHasModule(supabase, accountId, 'broadcasts'))) {
+      return NextResponse.json(
+        {
+          error: 'Module not included in your plan',
+          code: 'module_not_included',
+        },
+        { status: 403 },
+      )
+    }
+
     const body = await request.json()
     const {
       recipients: newRecipients,
@@ -175,6 +190,29 @@ export async function POST(request: Request) {
     }
     const templateRow = rawTemplateRow ?? null
 
+    // Opt-out (migration 030): never message a contact who asked to
+    // stop, even if the caller's audience still lists them. Match on the
+    // digits-only phone against the account's opted-out contacts; the
+    // dropped ones are reported separately from failures.
+    let excludedOptedOut = 0
+    const { data: optedOutRows } = await supabase
+      .from('contacts')
+      .select('phone, phone_normalized')
+      .eq('account_id', accountId)
+      .not('opted_out_at', 'is', null)
+    if (optedOutRows && optedOutRows.length > 0) {
+      const blocked = new Set<string>()
+      for (const row of optedOutRows as { phone: string; phone_normalized?: string | null }[]) {
+        if (row.phone_normalized) blocked.add(row.phone_normalized)
+        if (row.phone) blocked.add(normalizePhone(row.phone))
+      }
+      recipients = recipients.filter((r) => {
+        const keep = !blocked.has(normalizePhone(r.phone))
+        if (!keep) excludedOptedOut++
+        return keep
+      })
+    }
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
@@ -251,6 +289,7 @@ export async function POST(request: Request) {
       total: recipients.length,
       sent: sentCount,
       failed: failedCount,
+      excluded_opted_out: excludedOptedOut,
       results,
     })
   } catch (error) {

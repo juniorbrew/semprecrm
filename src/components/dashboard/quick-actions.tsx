@@ -3,12 +3,14 @@
 import Link from 'next/link'
 import { UserPlus, Briefcase, Radio, Zap } from 'lucide-react'
 import type { ComponentType } from 'react'
+import { useLanguage } from '@/hooks/use-language'
 
 // Quick-action shortcuts. Each navigates to the page that owns the
 // relevant "create" flow. We deliberately don't try to auto-open any
 // modal on the target page — that'd require touching those pages,
 // which is out of scope here.
 interface Action {
+  /** English catalogue key; rendered through `t()`. */
   label: string
   href: string
   icon: ComponentType<{ className?: string }>
@@ -18,13 +20,16 @@ interface Action {
 const ACTIONS: Action[] = [
   { label: 'New Contact', href: '/contacts', icon: UserPlus, tint: 'text-primary' },
   { label: 'New Deal', href: '/pipelines', icon: Briefcase, tint: 'text-blue-400' },
-  { label: 'Novo disparo', href: '/broadcasts/new', icon: Radio, tint: 'text-amber-400' },
-  { label: 'Nova automação', href: '/automations/new', icon: Zap, tint: 'text-primary' },
+  { label: 'New Broadcast', href: '/broadcasts/new', icon: Radio, tint: 'text-amber-400' },
+  { label: 'New Automation', href: '/automations/new', icon: Zap, tint: 'text-primary' },
 ]
 
 export function QuickActions() {
+  const { t } = useLanguage()
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    // 2x2 until xl, matching the KPI row above: at 1024px four across
+    // leaves ~90px for the label and "Nova automação" wraps.
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
       {ACTIONS.map((a) => {
         const Icon = a.icon
         return (
@@ -36,7 +41,7 @@ export function QuickActions() {
             <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-muted ${a.tint}`}>
               <Icon className="h-4 w-4" />
             </div>
-            <span className="text-sm font-medium text-foreground">{a.label}</span>
+            <span className="whitespace-nowrap text-sm font-medium text-foreground">{t(a.label)}</span>
           </Link>
         )
       })}

@@ -1,8 +1,16 @@
 "use client";
 
 import type { Deal, PipelineStage } from "@/types";
-import { Calendar, Check, X } from "lucide-react";
+import { CalendarClock, Check, Clock, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
+import { useLanguage } from "@/hooks/use-language";
+import {
+  closeDateInfo,
+  longDateTime,
+  relativeTime,
+  type CloseDateTone,
+} from "@/lib/pipelines/deal-dates";
+import { cn } from "@/lib/utils";
 
 interface DealCardProps {
   deal: Deal;
@@ -11,13 +19,15 @@ interface DealCardProps {
   isOverlay?: boolean;
 }
 
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("pt-BR", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+// Close-date urgency: overdue reads red, today amber, everything else
+// stays quiet so the urgent card is the one that stands out.
+const CLOSE_TONE_CLASS: Record<CloseDateTone, string> = {
+  overdue:
+    "bg-red-500/10 text-red-600 dark:text-red-400 font-semibold",
+  today: "bg-amber-500/15 text-amber-700 dark:text-amber-400 font-semibold",
+  soon: "bg-muted text-foreground",
+  later: "text-muted-foreground",
+};
 
 function initials(name?: string, fallback?: string) {
   const source = (name || fallback || "?").trim();
@@ -26,8 +36,16 @@ function initials(name?: string, fallback?: string) {
 }
 
 export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
-  const contactLabel = deal.contact?.name || deal.contact?.phone || "Sem contato";
+  const { t, language } = useLanguage();
+  const contactLabel =
+    deal.contact?.name || deal.contact?.phone || t("No contact");
   const assigneeLabel = deal.assignee?.full_name || null;
+  const isOpen = (deal.status ?? "open") === "open";
+  const close =
+    isOpen && deal.expected_close_date
+      ? closeDateInfo(deal.expected_close_date, language)
+      : null;
+  const activityAt = deal.updated_at || deal.created_at;
 
   return (
     <button
@@ -59,16 +77,33 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         {deal.status === "won" && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
             <Check className="h-3 w-3" />
-            Won
+            {t("Won")}
           </span>
         )}
         {deal.status === "lost" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+          <span
+            title={
+              deal.loss_reason?.name
+                ? `${t("Loss reason")}: ${deal.loss_reason.name}`
+                : undefined
+            }
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400"
+          >
             <X className="h-3 w-3" />
-            Lost
+            {t("Lost")}
           </span>
         )}
       </div>
+
+      {/* Why it was lost — one quiet line so the board explains itself. */}
+      {deal.status === "lost" && deal.loss_reason?.name && (
+        <p className="mt-1 truncate text-[11px] text-red-500/90 dark:text-red-400/90">
+          {deal.loss_reason.name}
+          {deal.lost_note?.trim() && (
+            <span className="text-muted-foreground"> · {deal.lost_note.trim()}</span>
+          )}
+        </p>
+      )}
 
       {/* Contact row */}
       <div className="mt-2 flex items-center gap-2">
@@ -78,28 +113,48 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
       </div>
 
-      <div className="mt-2 flex items-center justify-between">
+      <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-primary">
           {formatCurrency(deal.value, deal.currency)}
         </span>
-        {deal.expected_close_date && (
-          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Calendar className="h-3 w-3" />
-            {formatDate(deal.expected_close_date)}
+        {close && (
+          <span
+            title={close.long}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
+              CLOSE_TONE_CLASS[close.tone],
+            )}
+          >
+            <CalendarClock className="h-3 w-3" />
+            {close.short}
           </span>
         )}
       </div>
 
-      {assigneeLabel && (
-        <div className="mt-2 flex items-center justify-end">
+      {/* Working signal: last activity age + owner. Reads "há 2 d" so a
+          stale card looks stale next to a fresh one. */}
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {activityAt ? (
+          <span
+            title={longDateTime(activityAt, language)}
+            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+          >
+            <Clock className="h-3 w-3" />
+            {relativeTime(activityAt, language)}
+          </span>
+        ) : (
+          <span />
+        )}
+        {assigneeLabel && (
           <span
             title={assigneeLabel}
+            aria-label={assigneeLabel}
             className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
           >
             {initials(assigneeLabel)}
           </span>
-        </div>
-      )}
+        )}
+      </div>
     </button>
   );
 }

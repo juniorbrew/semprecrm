@@ -10,7 +10,8 @@ export type TemplateSlug =
   | 'welcome_message'
   | 'out_of_office'
   | 'lead_qualifier'
-  | 'follow_up_reminder';
+  | 'follow_up_reminder'
+  | 'revive_cold_conversation';
 
 export interface TemplateStepSeed {
   step_type: AutomationStepType;
@@ -126,6 +127,25 @@ export const AUTOMATION_TEMPLATES: Record<
       },
     ],
   },
+  revive_cold_conversation: {
+    slug: 'revive_cold_conversation',
+    name: 'Revive a cold conversation',
+    description:
+      'When the customer goes quiet for 24 hours after your last message, send a gentle nudge.',
+    // conversation_inactive (migration 030) is evaluated by the cron scan
+    // rather than by an inbound event: once per silence, re-armed by the
+    // next message either way.
+    trigger_type: 'conversation_inactive',
+    trigger_config: { hours: 24, last_from: 'agent', statuses: ['open', 'pending'] },
+    steps: [
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: 'Hi {{contact.name}}, any questions left? I am here if you need anything.',
+        },
+      },
+    ],
+  },
 };
 
 export function getTemplate(slug: string): AutomationTemplateDefinition | null {
@@ -169,6 +189,15 @@ const PT_BR_TEMPLATE_COPY: Record<
     messages: {
       'Just circling back — did you have any other questions for us? Happy to help!':
         'Passando para acompanhar — ficou alguma dúvida? Será um prazer ajudar!',
+    },
+  },
+  revive_cold_conversation: {
+    name: 'Retomar conversa fria',
+    description:
+      'Quando o cliente fica 24 horas sem responder à sua última mensagem, envie um lembrete gentil.',
+    messages: {
+      'Hi {{contact.name}}, any questions left? I am here if you need anything.':
+        'Oi {{contact.name}}, ficou alguma dúvida? Estou por aqui se precisar de algo.',
     },
   },
 };

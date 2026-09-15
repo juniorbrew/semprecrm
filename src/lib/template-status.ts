@@ -3,8 +3,9 @@
  *
  * The DB stores Meta's raw enum (DRAFT / APPROVED / PENDING / REJECTED /
  * PAUSED / DISABLED / IN_APPEAL / PENDING_DELETION) — the UI maps it to
- * a human label + dark-theme badge classes here so the template manager,
- * inbox picker, and broadcast picker stay aligned.
+ * an English label key + dark-theme badge classes here so the template
+ * manager, inbox picker, and broadcast picker stay aligned. Labels are
+ * translated by the i18n layer (src/lib/i18n*.ts) at render time.
  */
 
 import type { MessageTemplateStatus } from '@/types';
@@ -19,11 +20,11 @@ export const templateStatusConfig: Record<
   TemplateStatusDisplay
 > = {
   DRAFT: {
-    label: 'Rascunho',
+    label: 'Draft',
     classes: 'bg-slate-600/20 text-muted-foreground border-slate-600/30',
   },
   PENDING: {
-    label: 'Pendente',
+    label: 'Pending',
     classes: 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30',
   },
   APPROVED: {
@@ -35,7 +36,7 @@ export const templateStatusConfig: Record<
     classes: 'bg-red-600/20 text-red-400 border-red-600/30',
   },
   PAUSED: {
-    label: 'Pausado',
+    label: 'Paused',
     classes: 'bg-orange-600/20 text-orange-400 border-orange-600/30',
   },
   DISABLED: {

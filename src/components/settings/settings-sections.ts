@@ -1,13 +1,21 @@
 import {
+  Bell,
+  CheckSquare,
   Coins,
+  CreditCard,
   FileText,
   LayoutGrid,
+  Paintbrush,
   Palette,
   PlugZap,
+  ScrollText,
   Shield,
   Tags,
+  Timer,
   User,
   UsersRound,
+  Webhook,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -24,11 +32,19 @@ export const SETTINGS_SECTIONS = [
   'profile',
   'security',
   'appearance',
+  'notifications',
   'whatsapp',
   'templates',
   'fields',
   'deals',
+  'tasks',
+  'quick_replies',
+  'inbox',
+  'integrations',
+  'audit',
+  'branding',
   'members',
+  'plan',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -41,6 +57,8 @@ export interface SectionMeta {
   label: string;
   icon: LucideIcon;
   group: 'top' | 'account' | 'workspace';
+  /** Hidden from the rail / overview for non-admins (admin+ only). */
+  adminOnly?: boolean;
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
@@ -48,11 +66,19 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   profile: { id: 'profile', label: 'Seu perfil', icon: User, group: 'account' },
   security: { id: 'security', label: 'Login e segurança', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Aparência', icon: Palette, group: 'account' },
+  notifications: { id: 'notifications', label: 'Notificações', icon: Bell, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
   templates: { id: 'templates', label: 'Modelos', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Campos e etiquetas', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Negócios e moeda', icon: Coins, group: 'workspace' },
+  tasks: { id: 'tasks', label: 'Tarefas', icon: CheckSquare, group: 'workspace' },
+  quick_replies: { id: 'quick_replies', label: 'Respostas rápidas', icon: Zap, group: 'workspace' },
+  inbox: { id: 'inbox', label: 'Atendimento', icon: Timer, group: 'workspace', adminOnly: true },
+  integrations: { id: 'integrations', label: 'Integrações', icon: Webhook, group: 'workspace', adminOnly: true },
+  audit: { id: 'audit', label: 'Auditoria', icon: ScrollText, group: 'workspace', adminOnly: true },
+  branding: { id: 'branding', label: 'Marca', icon: Paintbrush, group: 'workspace', adminOnly: true },
   members: { id: 'members', label: 'Membros da equipe', icon: UsersRound, group: 'workspace' },
+  plan: { id: 'plan', label: 'Plano', icon: CreditCard, group: 'workspace' },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [

@@ -3,14 +3,23 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
+import { reportConversationFocus } from "@/lib/push/client";
+import type {
+  Conversation,
+  Message,
+  Contact,
+  ConversationStatus,
+} from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
-import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  whatsappConnectionBanner,
+  type WhatsAppBanner,
+} from "@/lib/whatsapp/connection-banner";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -31,9 +40,14 @@ export default function InboxPage() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
-    null
-  );
+  /**
+   * `undefined` while loading, `null` when at least one WhatsApp channel
+   * (official Cloud API or QR-code session) is connected, otherwise the
+   * banner to show. See `whatsappConnectionBanner`.
+   */
+  const [whatsappBanner, setWhatsappBanner] = useState<
+    WhatsAppBanner | null | undefined
+  >(undefined);
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -179,17 +193,34 @@ export default function InboxPage() {
         .maybeSingle();
       const accountId = profile?.account_id as string | undefined;
       if (!accountId) {
-        setWhatsappConnected(false);
+        setWhatsappBanner(
+          whatsappConnectionBanner({ officialStatus: null, qrStatus: null })
+        );
         return;
       }
 
-      const { data } = await supabase
-        .from("whatsapp_config")
-        .select("status")
-        .eq("account_id", accountId)
-        .maybeSingle();
+      // Two channels can carry the account's WhatsApp: the official
+      // Cloud API (whatsapp_config) and the QR-code session
+      // (wa_qr_sessions). Either one being connected clears the banner.
+      const [{ data: official }, { data: qr }] = await Promise.all([
+        supabase
+          .from("whatsapp_config")
+          .select("status")
+          .eq("account_id", accountId)
+          .maybeSingle(),
+        supabase
+          .from("wa_qr_sessions")
+          .select("status")
+          .eq("account_id", accountId)
+          .maybeSingle(),
+      ]);
 
-      setWhatsappConnected(data?.status === "connected");
+      setWhatsappBanner(
+        whatsappConnectionBanner({
+          officialStatus: official?.status ?? null,
+          qrStatus: qr?.status ?? null,
+        })
+      );
     };
 
     checkConnection();
@@ -374,6 +405,36 @@ export default function InboxPage() {
   }, []);
 
   /**
+   * Push (spec round 2 §5): tell the server which conversation is on
+   * screen so its inbound-message notifications are skipped for this
+   * user. The server keeps the hint for 60 s, so re-send every 30 s
+   * while the tab is visible; clear it when the thread is deselected,
+   * the tab is hidden or the page unmounts.
+   */
+  const activeConversationId = activeConversation?.id ?? null;
+  useEffect(() => {
+    if (!activeConversationId) {
+      reportConversationFocus(null);
+      return;
+    }
+    const send = () => {
+      if (document.visibilityState === "visible") {
+        reportConversationFocus(activeConversationId);
+      } else {
+        reportConversationFocus(null);
+      }
+    };
+    send();
+    const interval = window.setInterval(send, 30_000);
+    document.addEventListener("visibilitychange", send);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", send);
+      reportConversationFocus(null);
+    };
+  }, [activeConversationId]);
+
+  /**
    * Manual refresh trigger for the thread-header refresh button.
    * Bumps the same resyncToken the reconnect / visibility paths use,
    * so it goes through the existing dedupe & refetch plumbing — no
@@ -466,9 +527,15 @@ export default function InboxPage() {
       // Reflect the selection in the URL so a refresh lands the user
       // back in the same thread, and so copy-paste links work. Use
       // replace() to avoid polluting browser history with every click.
-      router.replace(`/inbox?c=${conv.id}`, { scroll: false });
+      // Keep the Radar filter (?radar=) the agent arrived with, so the
+      // list stays on "Aguardando" while they work through it.
+      const radar = searchParams.get("radar");
+      router.replace(
+        `/inbox?c=${conv.id}${radar ? `&radar=${encodeURIComponent(radar)}` : ""}`,
+        { scroll: false },
+      );
     },
-    [activeConversation?.id, router]
+    [activeConversation?.id, router, searchParams]
   );
 
   // Mobile "back" — deselect the conversation so the list pane comes
@@ -481,8 +548,11 @@ export default function InboxPage() {
     // Clearing the ref lets the deep-link auto-selector fire again if
     // the user later visits /inbox?c=<same-id> — desirable UX.
     autoSelectedForDeepLinkRef.current = null;
-    router.replace("/inbox", { scroll: false });
-  }, [router]);
+    const radar = searchParams.get("radar");
+    router.replace(radar ? `/inbox?radar=${encodeURIComponent(radar)}` : "/inbox", {
+      scroll: false,
+    });
+  }, [router, searchParams]);
 
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
@@ -548,12 +618,13 @@ export default function InboxPage() {
     <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
-      {whatsappConnected === false && (
-        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
+      {whatsappBanner && (
+        <div
+          className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2"
+          data-banner={whatsappBanner.kind}
+        >
           <WifiOff className="h-4 w-4 text-amber-400" />
-          <p className="text-xs text-amber-400">
-            WhatsApp® is not connected. Go to Settings to connect your account.
-          </p>
+          <p className="text-xs text-amber-400">{whatsappBanner.message}</p>
         </div>
       )}
 
@@ -561,9 +632,15 @@ export default function InboxPage() {
         {/* Left panel: Conversation list.
             Hidden on mobile when a conversation is selected so the
             thread can occupy the full width. Always visible on lg+. */}
+        {/* `min-w-0` + `w-full` are load-bearing on phones: as the only
+            visible pane the wrapper is `flex-1` with `min-width:auto`, so
+            it sized itself to the list's min-content (the longest nowrap
+            preview, ~530 px) and the tab strip + filters were pushed past
+            the 375 px viewport and clipped by the parent's overflow-hidden.
+            On lg+ the list is a fixed 320 px column again. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
+            "flex h-full w-full min-w-0 flex-1 lg:w-auto lg:flex-none",
             hasActiveConv ? "hidden lg:flex" : "flex",
           )}
         >
@@ -609,13 +686,21 @@ export default function InboxPage() {
           />
         </div>
 
-        {/* Right panel: Contact sidebar — desktop only, and only when the
-            agent hasn't collapsed it via the thread-header toggle (#258).
-            On mobile it's always hidden (the `lg:block` below), so the
-            toggle — which is itself desktop-only — never affects it. */}
+        {/* Right panel: Contact sidebar — wide desktop only (xl+), and only
+            when the agent hasn't collapsed it via the thread-header toggle
+            (#258). Between lg and xl (1024–1279 px) the nav (240) + list
+            (320) + panel (280) would leave the thread just ~184 px, so the
+            panel stays hidden there and the thread keeps the room; the
+            toggle in the thread header is xl-only to match. On mobile it's
+            always hidden. */}
         {contactPanelOpen && (
-          <div className="hidden lg:block">
-            <ContactSidebar contact={activeContact} />
+          <div className="hidden min-h-0 xl:flex">
+            <ContactSidebar
+              contact={activeContact}
+              conversationId={activeConversation?.id ?? null}
+              onOpenConversation={handleSelectConversation}
+              onContactChanged={setActiveContact}
+            />
           </div>
         )}
       </div>

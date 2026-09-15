@@ -29,6 +29,8 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { loadAccountEntitlements } from "@/lib/plans-server";
+import { resolveEntitlements, type Entitlements, type Module } from "@/lib/plans";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
 
 // ------------------------------------------------------------
@@ -48,9 +50,37 @@ export class UnauthorizedError extends Error {
 
 export class ForbiddenError extends Error {
   readonly status = 403 as const;
-  constructor(message = "Forbidden") {
+  /** Optional machine-readable reason, surfaced as `code` in the
+   *  JSON body so clients can branch without parsing the message. */
+  readonly code?: string;
+  constructor(message = "Forbidden", code?: string) {
     super(message);
     this.name = "ForbiddenError";
+    this.code = code;
+  }
+}
+
+/**
+ * The account's plan does not include the requested module (or the
+ * account is blocked). 403 with `code: "module_not_included"`.
+ */
+export class ModuleNotIncludedError extends ForbiddenError {
+  readonly module: Module;
+  constructor(module: Module) {
+    super(`Module '${module}' is not included in your plan`, "module_not_included");
+    this.name = "ModuleNotIncludedError";
+    this.module = module;
+  }
+}
+
+/**
+ * A plan limit (`max_users`, `max_channels`) would be exceeded. 403
+ * with `code: "plan_limit_reached"`.
+ */
+export class PlanLimitError extends ForbiddenError {
+  constructor(message: string) {
+    super(message, "plan_limit_reached");
+    this.name = "PlanLimitError";
   }
 }
 
@@ -67,8 +97,14 @@ export class ForbiddenError extends Error {
  * server internals out of the wire.
  */
 export function toErrorResponse(err: unknown): NextResponse {
-  if (err instanceof UnauthorizedError || err instanceof ForbiddenError) {
+  if (err instanceof UnauthorizedError) {
     return NextResponse.json({ error: err.message }, { status: err.status });
+  }
+  if (err instanceof ForbiddenError) {
+    return NextResponse.json(
+      err.code ? { error: err.message, code: err.code } : { error: err.message },
+      { status: err.status },
+    );
   }
   console.error("[toErrorResponse] uncategorized error:", err);
   return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -170,4 +206,41 @@ export async function requireRole(min: AccountRole): Promise<AccountContext> {
     );
   }
   return ctx;
+}
+
+// ------------------------------------------------------------
+// Plan entitlements (migration 025)
+// ------------------------------------------------------------
+
+/**
+ * Resolve the caller's account entitlements. Reads the plan columns
+ * through the RLS-scoped client (members can SELECT their own
+ * account). A missing row resolves to the trial defaults rather
+ * than throwing, mirroring the client-side hook.
+ */
+export async function getEntitlements(ctx: AccountContext): Promise<Entitlements> {
+  const ent = await loadAccountEntitlements(ctx.supabase, ctx.accountId);
+  if (ent) return ent;
+  // Fall back to the permissive default only for *reads*; callers
+  // that must fail closed use `requireModule` (below), which treats
+  // a missing row as blocked.
+  return resolveEntitlements(null);
+}
+
+/**
+ * Enforce that the caller's plan includes `module` and the account
+ * is not blocked. Throws `ModuleNotIncludedError` (403) otherwise.
+ *
+ *   const ctx = await requireRole("agent");
+ *   await requireModule(ctx, "broadcasts");
+ */
+export async function requireModule(
+  ctx: AccountContext,
+  module: Module,
+): Promise<Entitlements> {
+  const ent = await loadAccountEntitlements(ctx.supabase, ctx.accountId);
+  if (!ent || ent.blocked || !ent.modules[module]) {
+    throw new ModuleNotIncludedError(module);
+  }
+  return ent;
 }

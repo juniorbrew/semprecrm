@@ -55,11 +55,25 @@ export type ActivityKind =
   | 'automation'
   | 'contact'
 
+/**
+ * Structured description of what happened, so the feed can render
+ * the row in the active language (pt-BR / en-US) with correct
+ * pluralisation. See `activityEventText` in ./i18n.ts.
+ */
+export type ActivityEvent =
+  | { type: 'message'; who: string | null }
+  | { type: 'contact'; who: string }
+  | { type: 'deal'; title: string; stage: string | null }
+  | { type: 'broadcast'; name: string; status: string; recipients: number }
+  | { type: 'automation'; name: string | null; who: string | null; failed: boolean }
+
 export interface ActivityItem {
   id: string
   kind: ActivityKind
-  /** Primary line of text rendered in the feed. Pre-formatted. */
+  /** English fallback line, used only when `event` is absent. */
   text: string
+  /** Structured event — the feed renders this in the active language. */
+  event?: ActivityEvent
   /** ISO timestamp the item happened at, drives relative-time + sort. */
   at: string
   /** Optional deep-link for the whole row (not all items have a target). */

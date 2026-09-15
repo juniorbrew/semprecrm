@@ -2,9 +2,11 @@ import type {
   Automation,
   AutomationLogStepResult,
   AutomationStep,
+  AutomationStepType,
   AutomationTriggerType,
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
+  LeadCapturedTriggerConfig,
   SendMessageStepConfig,
   SendTemplateStepConfig,
   SendWebhookStepConfig,
@@ -12,10 +14,20 @@ import type {
   UpdateContactFieldStepConfig,
   WaitStepConfig,
   CreateDealStepConfig,
+  CreateTaskStepConfig,
   AssignConversationStepConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
+import { accountHasModule } from '@/lib/plans-server'
+import {
+  createTask,
+  dueInHours,
+  isTaskPriority,
+  listTaskStatuses,
+  type TaskPriority,
+} from '@/lib/tasks'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 
 // ------------------------------------------------------------
 // Public API
@@ -82,6 +94,13 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
       }
     }
 
+    // Plan gate (migration 025): an account without the `automations`
+    // module (or a blocked account) runs nothing, even if active rows
+    // exist from before the plan changed.
+    if (!(await accountHasModule(db, input.accountId, 'automations'))) {
+      return
+    }
+
     const { data: automations, error } = await db
       .from('automations')
       .select('*')
@@ -137,6 +156,13 @@ export async function resumePendingExecution(pending: {
 
   if (error || !automation) {
     console.error('[automations] resume: missing automation', pending.automation_id, error)
+    await markPending(pending.id, 'failed')
+    return
+  }
+
+  // Plan gate — same rule as dispatch. A wait step parked before the
+  // module was switched off must not wake up and keep sending.
+  if (!(await accountHasModule(db, (automation as Automation).account_id, 'automations'))) {
     await markPending(pending.id, 'failed')
     return
   }
@@ -221,6 +247,45 @@ interface ExecuteArgs {
   startPosition: number
   logId: string | null
   triggerEvent: string
+  /**
+   * Lazily resolved "contact has opted out" flag (migration 030), shared
+   * by every scope of one run so the contact row is read at most once.
+   */
+  optedOut?: Promise<boolean>
+}
+
+const SEND_STEP_TYPES = new Set<AutomationStepType>(['send_message', 'send_template'])
+
+/** pt-BR on purpose: it is shown verbatim in the automation log table. */
+const OPTED_OUT_SKIP_DETAIL = 'contato descadastrado'
+
+/**
+ * Whether the run's contact asked to stop receiving messages. The
+ * inbound pipeline pre-flags the very message that opted out through
+ * `context.vars.opted_out`; every other run reads `contacts.opted_out_at`
+ * once. A contact-less run cannot send anyway, so it reads as not opted out.
+ */
+function contactOptedOut(args: ExecuteArgs): Promise<boolean> {
+  if (args.optedOut) return args.optedOut
+  if (args.context.vars?.opted_out === true) {
+    args.optedOut = Promise.resolve(true)
+    return args.optedOut
+  }
+  args.optedOut = (async () => {
+    if (!args.contactId) return false
+    const { data, error } = await supabaseAdmin()
+      .from('contacts')
+      .select('opted_out_at')
+      .eq('id', args.contactId)
+      .eq('account_id', args.automation.account_id)
+      .maybeSingle()
+    if (error) {
+      console.error('[automations] opt-out check failed:', error)
+      return false
+    }
+    return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at
+  })()
+  return args.optedOut
 }
 
 async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
@@ -308,6 +373,19 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         continue
       }
 
+      // Opt-out (spec §5): never message a contact who asked to stop.
+      // The step is recorded as skipped, not failed, and the run goes on
+      // (tags, tasks, deals still apply).
+      if (SEND_STEP_TYPES.has(step.step_type) && (await contactOptedOut(args))) {
+        results.push({
+          step_id: step.id,
+          step_type: step.step_type,
+          status: 'skipped',
+          detail: OPTED_OUT_SKIP_DETAIL,
+        })
+        continue
+      }
+
       const detail = await runStep(step, args)
       results.push({
         step_id: step.id,
@@ -344,7 +422,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_message': {
       const cfg = step.step_config as SendMessageStepConfig
       if (!args.contactId) throw new Error('send_message needs a contact')
-      const text = interpolate(cfg.text, args)
+      const text = await interpolate(cfg.text, args)
       if (!text.trim()) throw new Error('send_message has empty text')
       const conversationId = await resolveConversationId(args)
       const { whatsapp_message_id } = await engineSendText({
@@ -425,22 +503,28 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
-          .from('profiles')
-          .select('user_id')
-          .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+        // Real round-robin (spec round 2 §2): available agent+ members,
+        // fewest open conversations first, oldest last_assigned_at on a
+        // tie. Null when nobody is available — the conversation stays
+        // unassigned and shows up in the Radar.
+        agentId = (await pickRoundRobinAssignee(db, args.automation.account_id)) ?? undefined
       }
       if (!agentId) return 'no agent resolved'
-      await db
+      const { data: assignedRows } = await db
         .from('conversations')
         .update({ assigned_agent_id: agentId })
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
+        .select('id')
+      for (const row of (assignedRows ?? []) as { id: string }[]) {
+        await db.from('conversation_events').insert({
+          account_id: args.automation.account_id,
+          conversation_id: row.id,
+          actor_user_id: null,
+          event_type: 'assigned',
+          payload: { assignee_user_id: agentId, source: 'automation' },
+        })
+      }
       return `assigned to ${agentId}`
     }
 
@@ -449,7 +533,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('update_contact_field needs a contact')
       // Resolve workflow variables ({{ vars.* }}, {{ message.text }}) so custom
       // values can be populated dynamically from the triggering context.
-      const value = interpolate(cfg.value, args)
+      const value = await interpolate(cfg.value, args)
 
       // Custom fields are encoded as `custom:<custom_field_id>`; anything else
       // is a built-in contact column.
@@ -516,7 +600,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         pipeline_id: cfg.pipeline_id,
         stage_id: cfg.stage_id,
         contact_id: args.contactId,
-        title: interpolate(cfg.title, args),
+        title: await interpolate(cfg.title, args),
         value: cfg.value ?? 0,
         currency: acct?.default_currency ?? 'USD',
         status: 'open',
@@ -527,7 +611,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
-      const body = cfg.body_template ? interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      const body = cfg.body_template ? await interpolate(cfg.body_template, args) : JSON.stringify(args.context)
       const res = await fetch(cfg.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
@@ -545,6 +629,70 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
       return 'conversation closed'
+    }
+
+    case 'create_task': {
+      const cfg = step.step_config as CreateTaskStepConfig
+      const accountId = args.automation.account_id
+      if (!cfg.title || !cfg.title.trim()) throw new Error('create_task needs a title')
+      // Plan gate for the Tasks module (migration 027 + plans.ts): the
+      // automations module being on does not imply tasks is.
+      if (!(await accountHasModule(db, accountId, 'tasks'))) {
+        throw new Error('tasks module is not enabled for this account')
+      }
+      const statuses = await listTaskStatuses(db, accountId)
+      if (statuses.length === 0) throw new Error('account has no task statuses')
+
+      // Assignee must be a member of this account — the service-role
+      // client would otherwise happily point the task at a stranger.
+      let assigneeUserId: string | undefined
+      if (cfg.assignee_user_id) {
+        const { data: member } = await db
+          .from('profiles')
+          .select('user_id')
+          .eq('user_id', cfg.assignee_user_id)
+          .eq('account_id', accountId)
+          .maybeSingle()
+        assigneeUserId = (member as { user_id: string } | null)?.user_id ?? undefined
+      }
+
+      const priority: TaskPriority = isTaskPriority(cfg.priority) ? cfg.priority : 'normal'
+      const hours = Number(cfg.due_in_hours)
+      const dueAt =
+        cfg.due_in_hours != null && Number.isFinite(hours) && hours > 0
+          ? dueInHours(hours)
+          : null
+
+      // Link the conversation when the trigger had one (inbound message)
+      // or the contact has exactly one; a contact-only trigger (tag added
+      // to an imported contact) just leaves it empty.
+      let conversationId: string | undefined = args.context.conversation_id
+      if (!conversationId && args.contactId) {
+        try {
+          conversationId = await resolveConversationId(args)
+        } catch {
+          conversationId = undefined
+        }
+      }
+
+      const title = await interpolate(cfg.title, args)
+      const description = cfg.description ? await interpolate(cfg.description, args) : undefined
+      const task = await createTask(
+        db,
+        // created_by stays null: the row was produced by the automation,
+        // not by its author.
+        { accountId, userId: null, statuses },
+        {
+          title,
+          description,
+          priority,
+          assignee_user_id: assigneeUserId,
+          contact_id: args.contactId ?? undefined,
+          conversation_id: conversationId,
+          due_at: dueAt ?? undefined,
+        },
+      )
+      return `task created (${task.id})`
     }
 
     default:
@@ -579,6 +727,21 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
 }
 
 function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
+  if (automation.trigger_type === 'lead_captured') {
+    // Optional per-source filter (migration 029): an empty source_id
+    // means "any source"; otherwise the webhook's context must name it.
+    const wanted = (automation.trigger_config as LeadCapturedTriggerConfig | null)?.source_id
+    if (!wanted) return true
+    return ctx?.vars?.source_id === wanted
+  }
+  if (automation.trigger_type === 'conversation_inactive') {
+    // The cron scan (src/lib/automations/inactivity.ts) evaluates each
+    // automation's own hours / last_from / statuses and dispatches per
+    // automation; the context names which one matched so a second
+    // inactivity rule in the same account does not piggy-back.
+    const wanted = ctx?.vars?.inactive_automation_id
+    return !wanted || wanted === automation.id
+  }
   if (automation.trigger_type !== 'keyword_match') return true
   const cfg = automation.trigger_config as KeywordMatchTriggerConfig
   if (!cfg?.keywords || cfg.keywords.length === 0) return false
@@ -648,11 +811,55 @@ function waitMs(cfg: WaitStepConfig): number {
   return Math.max(1_000, cfg.amount * unitMs)
 }
 
-function interpolate(s: string, args: ExecuteArgs): string {
-  return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
+/** Contact columns exposed as `{{ contact.* }}` template variables. */
+interface ContactVars {
+  name: string | null
+  phone: string | null
+  email: string | null
+  company: string | null
+}
+
+const CONTACT_VAR_KEYS = new Set<keyof ContactVars>(['name', 'phone', 'email', 'company'])
+
+// One contact read per execution scope, and only for templates that
+// actually reference `contact.*` — keeps the existing steps' query
+// count untouched.
+const contactVarsCache = new WeakMap<ExecuteArgs, Promise<ContactVars | null>>()
+
+function loadContactVars(args: ExecuteArgs): Promise<ContactVars | null> {
+  const cached = contactVarsCache.get(args)
+  if (cached) return cached
+  const promise = (async () => {
+    if (!args.contactId) return null
+    const { data } = await supabaseAdmin()
+      .from('contacts')
+      .select('name, phone, email, company')
+      .eq('id', args.contactId)
+      .eq('account_id', args.automation.account_id)
+      .maybeSingle()
+    return (data as ContactVars | null) ?? null
+  })()
+  contactVarsCache.set(args, promise)
+  return promise
+}
+
+const TEMPLATE_VAR = /\{\{\s*([\w.]+)\s*\}\}/g
+
+/**
+ * Resolve `{{ message.text }}`, `{{ vars.* }}` and `{{ contact.name |
+ * phone | email | company }}` in a step's text. Unknown variables
+ * become empty strings.
+ */
+async function interpolate(s: string, args: ExecuteArgs): Promise<string> {
+  const needsContact = /\{\{\s*contact\./.test(s)
+  const contact = needsContact ? await loadContactVars(args) : null
+  return s.replace(TEMPLATE_VAR, (_, key) => {
     const [ns, prop] = String(key).split('.')
     if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
     if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
+    if (ns === 'contact' && prop && CONTACT_VAR_KEYS.has(prop as keyof ContactVars)) {
+      return String(contact?.[prop as keyof ContactVars] ?? '')
+    }
     return ''
   })
 }

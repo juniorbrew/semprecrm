@@ -17,13 +17,38 @@
 import { NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 
-import { requireRole, toErrorResponse } from "@/lib/auth/account";
+import {
+  requireRole,
+  toErrorResponse,
+  type AccountContext,
+} from "@/lib/auth/account";
 import { isAccountRole } from "@/lib/auth/roles";
 import {
   checkRateLimit,
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { AUDIT_ACTIONS } from "@/lib/audit";
+import { audit } from "@/lib/audit-server";
+
+/** Snapshot of the target member for the audit row (before the RPC). */
+async function snapshotMember(
+  supabase: AccountContext["supabase"],
+  userId: string,
+): Promise<{ role: string | null; name: string | null }> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("account_role, full_name, email")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const row = data as
+    | { account_role?: string | null; full_name?: string | null; email?: string | null }
+    | null;
+  return {
+    role: row?.account_role ?? null,
+    name: row?.full_name?.trim() || row?.email?.trim() || null,
+  };
+}
 
 // Map known SQLSTATEs from the RPCs (see migration 018) onto HTTP
 // statuses. The `error.code` field is the SQLSTATE; the `message`
@@ -81,12 +106,23 @@ export async function PATCH(
       );
     }
 
+    const before = await snapshotMember(ctx.supabase, userId);
+
     const { error } = await ctx.supabase.rpc("set_member_role", {
       p_user_id: userId,
       p_new_role: role,
     });
 
     if (error) return rpcErrorToResponse(error);
+
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.MEMBER_ROLE_CHANGED,
+      entityType: "member",
+      entityId: userId,
+      metadata: { member_name: before.name, from: before.role, to: role },
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -109,11 +145,22 @@ export async function DELETE(
 
     const { userId } = await params;
 
+    const before = await snapshotMember(ctx.supabase, userId);
+
     const { data, error } = await ctx.supabase.rpc("remove_account_member", {
       p_user_id: userId,
     });
 
     if (error) return rpcErrorToResponse(error);
+
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.MEMBER_REMOVED,
+      entityType: "member",
+      entityId: userId,
+      metadata: { member_name: before.name, role: before.role },
+    });
 
     return NextResponse.json({ ok: true, newPersonalAccountId: data });
   } catch (err) {

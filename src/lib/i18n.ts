@@ -428,7 +428,7 @@ function translateDynamic(value: string, language: Language): string {
   if (language === 'pt-BR') {
     let match: RegExpMatchArray | null;
     if ((match = trimmed.match(/^(\d+) runs?$/)))
-      return wrap(`${match[1]} execução${match[1] === '1' ? '' : 'ões'}`);
+      return wrap(`${match[1]} ${match[1] === '1' ? 'execução' : 'execuções'}`);
     if ((match = trimmed.match(/^last (.+)$/)))
       return wrap(`última: ${match[1]}`);
     if ((match = trimmed.match(/^(\d+) total contacts\.?$/)))
@@ -459,8 +459,16 @@ function translateDynamic(value: string, language: Language): string {
       return wrap(
         `${match[1]} conversa${match[1] === '1' ? '' : 's'} não lida${match[1] === '1' ? '' : 's'}`
       );
+    if ((match = trimmed.match(/^Showing (\d+)-(\d+) of (\d+)$/)))
+      return wrap(`Mostrando ${match[1]}-${match[2]} de ${match[3]}`);
+    if ((match = trimmed.match(/^Page (\d+) of (\d+)$/)))
+      return wrap(`Página ${match[1]} de ${match[2]}`);
+    if ((match = trimmed.match(/^Select contact (.+)$/)))
+      return wrap(`Selecionar contato ${match[1]}`);
     if ((match = trimmed.match(/^(\d+) s ago$/)))
       return wrap(`há ${match[1]} s`);
+    if ((match = trimmed.match(/^(\d+)([hm]) remaining$/)))
+      return wrap(`${match[1]}${match[2]} restantes`);
     if ((match = trimmed.match(/^File is (.+) MB — limit is 16 MB\.$/)))
       return wrap(`O arquivo possui ${match[1]} MB — o limite é 16 MB.`);
     if ((match = trimmed.match(/^Failed to load \((.+)\)$/)))
@@ -505,6 +513,8 @@ function translateDynamic(value: string, language: Language): string {
       return wrap(`A imagem possui ${match[1]} MB — o limite da Meta é 5 MB.`);
     if ((match = trimmed.match(/^Upload failed: (.+)$/)))
       return wrap(`Falha no envio: ${match[1]}`);
+    if ((match = trimmed.match(/^Failed to send: (.+)$/)))
+      return wrap(`Falha ao enviar: ${match[1]}`);
     if ((match = trimmed.match(/^Email change failed: (.+)$/)))
       return wrap(`Falha ao alterar o e-mail: ${match[1]}`);
     if ((match = trimmed.match(/^Sign-out failed: (.+)$/)))

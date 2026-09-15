@@ -172,6 +172,43 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Pipeline Name': 'Nome do funil',
   'New stage name': 'Nome da nova etapa',
   'Create a new pipeline': 'Criar um novo funil',
+  // Pipelines — deal drawer (read view first, edit second)
+  'Deal details': 'Detalhes do negócio',
+  'Edit deal': 'Editar negócio',
+  'Back to deal': 'Voltar ao negócio',
+  'Open deal': 'Em aberto',
+  Timeline: 'Linha do tempo',
+  'No contact': 'Sem contato',
+  'Last update': 'Última atualização',
+  'Expected close': 'Fechamento previsto',
+  Closes: 'Fecha em',
+  'Add a note': 'Adicionar uma observação',
+  'No conversation with this contact yet':
+    'Ainda não há conversa com este contato',
+  'No contact linked to this deal': 'Nenhum contato vinculado a este negócio',
+  'Last message': 'Última mensagem',
+  'Deal moved': 'Negócio movido',
+  'Mark as Won': 'Marcar como ganho',
+  'Mark as Lost': 'Marcar como perdido',
+  'Advance stage': 'Avançar etapa',
+  'Deal title': 'Título do negócio',
+  'Expected close date': 'Data prevista de fechamento',
+  'Assigned to': 'Atribuído a',
+  'Save changes': 'Salvar alterações',
+  'Saving...': 'Salvando...',
+  'Deleting...': 'Excluindo...',
+  'Create deal': 'Criar negócio',
+  Confirm: 'Confirmar',
+  'Currently in': 'Atualmente em',
+  'Last stage': 'Última etapa',
+  'Next stage': 'Próxima etapa',
+  'Contact deleted': 'Contato excluído',
+  unread: 'não lida',
+  'Days in pipeline': 'Dias no funil',
+  'Deal value': 'Valor do negócio',
+  'Start a conversation': 'Iniciar conversa',
+  Overdue: 'Atrasado',
+  'Due today': 'Vence hoje',
 
   // Inbox
   'Search conversations...': 'Pesquisar conversas...',
@@ -230,6 +267,12 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Create deals in Pipelines to see stage breakdowns here.':
     'Crie negócios nos Funis para ver aqui a divisão por etapas.',
   'Pipeline value by stage': 'Valor do funil por etapa',
+  'Incoming': 'Recebidas',
+  'Outgoing': 'Enviadas',
+  'View all →': 'Ver tudo →',
+  'Refresh': 'Atualizar',
+  'Refresh dashboard data': 'Atualizar os dados do painel',
+  'Open deals by stage': 'Negócios abertos por etapa',
   'This chart fills in as you reply to customer messages.':
     'Este gráfico será preenchido conforme você responder às mensagens dos clientes.',
 
@@ -374,6 +417,8 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Failed to hydrate conversation:': 'Falha ao carregar a conversa:',
   'WhatsApp® is not connected. Go to Settings to connect your account.':
     'O WhatsApp® não está conectado. Acesse Configurações para conectar sua conta.',
+  'WhatsApp via QR code is disconnected. Reconnect in Settings.':
+    'WhatsApp via QR code desconectado. Reconecte em Configurações.',
   'Failed to seed pipeline:': 'Falha ao preparar o funil:',
   'Welcome to the team': 'Bem-vindo à equipe',
   'Could not sign out. Try refreshing the page.':
@@ -526,6 +571,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   "Triggers on a contact's first-ever inbound message":
     'Aciona na primeira mensagem recebida de um contato',
   'Manual trigger': 'Acionamento manual',
+  'Triggers on:': 'Aciona com:',
   'New Lead': 'Novo lead',
   'Proposal Sent': 'Proposta enviada',
   'Sales Pipeline': 'Funil de vendas',
@@ -826,4 +872,995 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Go to': 'Acesse',
   'Paste the': 'Cole o',
   'from above': 'acima',
+  // Inbox triage (round 1)
+  Assign: 'Atribuir',
+  Expired: 'Expirado',
+  '(me)': '(eu)',
+  'Try another queue tab or status filter.':
+    'Tente outra aba da fila ou outro filtro de status.',
+  'Contact details will appear here': 'Os detalhes do contato aparecem aqui',
+  // Contacts — detail panel (conversation-first)
+  'Open conversation': 'Abrir conversa',
+  'Start conversation': 'Iniciar conversa',
+  'Previous conversations': 'Conversas anteriores',
+  'No conversations with this contact yet.':
+    'Ainda não há conversas com este contato.',
+  'Open in inbox': 'Abrir na caixa de entrada',
+  Conversations: 'Conversas',
+  Fields: 'Campos',
+  Deals: 'Negócios',
+  'Editing contact': 'Editando contato',
+  'Failed to start conversation': 'Falha ao iniciar a conversa',
+  'You do not have permission to start conversations':
+    'Você não tem permissão para iniciar conversas',
+  'Delete contact': 'Excluir contato',
+  'Copy phone': 'Copiar telefone',
+  'Add note': 'Adicionar observação',
+  'No notes yet.': 'Ainda não há observações.',
+  'Delete note': 'Excluir observação',
+  'No custom fields defined. Create them in Settings.':
+    'Nenhum campo personalizado definido. Crie-os nas Configurações.',
+  'Click a tag to add or remove it from this contact.':
+    'Clique em uma etiqueta para adicioná-la ou removê-la deste contato.',
+  'No tags available. Create tags in Settings.':
+    'Nenhuma etiqueta disponível. Crie etiquetas nas Configurações.',
+  'Save custom fields': 'Salvar campos personalizados',
+  Created: 'Criado em',
+  Unnamed: 'Sem nome',
+  'View details': 'Ver detalhes',
+
+  // Broadcasts — list / detail / wizard (round 1 localisation pass)
+  Recipients: 'Destinatários',
+  Delivery: 'Entrega',
+  'Total Recipients': 'Total de destinatários',
+  Replied: 'Respondeu',
+  Responded: 'Responderam',
+  Funnel: 'Funil',
+  of: 'de',
+  'Scheduled for': 'Agendado para',
+  'Sent on': 'Enviado em',
+  'Not sent yet': 'Ainda não enviado',
+  'Broadcast deleted': 'Disparo excluído',
+  'Delete broadcast': 'Excluir disparo',
+  'Broadcast actions': 'Ações do disparo',
+  'This will permanently delete the broadcast and its recipient report. This action cannot be undone.':
+    'Isso excluirá permanentemente o disparo e o relatório de destinatários. Esta ação não pode ser desfeita.',
+  'Failed to save draft': 'Falha ao salvar o rascunho',
+  'Calculating…': 'Calculando…',
+  'estimated recipients': 'destinatários estimados',
+  Summary: 'Resumo',
+  'Live Preview': 'Pré-visualização',
+  'e.g. Summer Sale Announcement': 'ex.: Promoção de verão',
+  selected: 'selecionadas',
+  is: 'é',
+  contains: 'contém',
+  'CSV list': 'Lista CSV',
+  'Manage templates': 'Gerenciar modelos',
+  'Search templates…': 'Pesquisar modelos…',
+  'No template matches your search.':
+    'Nenhum modelo corresponde à pesquisa.',
+  'Only approved templates can be used in broadcasts.':
+    'Somente modelos aprovados podem ser usados em disparos.',
+  'approved templates': 'modelos aprovados',
+  'Failed to load broadcasts': 'Falha ao carregar os disparos',
+  // Wizard — step indicator, step headings and copy
+  Personalize: 'Personalizar',
+  Steps: 'Etapas',
+  'Choose a template': 'Escolha um modelo',
+  'Select an approved message template for the broadcast.':
+    'Selecione um modelo de mensagem aprovado para o disparo.',
+  'Choose who will receive this broadcast.':
+    'Escolha quem receberá este disparo.',
+  'Select an audience type to see the estimate.':
+    'Selecione um tipo de público para ver a estimativa.',
+  'Exclude contacts with these tags': 'Excluir contatos com estas etiquetas',
+  'No tags found. Create tags in Settings.':
+    'Nenhuma etiqueta encontrada. Crie etiquetas nas Configurações.',
+  'No custom fields defined. Create one in Settings → Custom fields.':
+    'Nenhum campo personalizado definido. Crie um em Configurações → Campos personalizados.',
+  'This template has no variables to personalize.':
+    'Este modelo não possui variáveis para personalizar.',
+  'Mapping type': 'Tipo de associação',
+  Operator: 'Operador',
+  'Name the broadcast, review the details and send.':
+    'Dê um nome ao disparo, revise os detalhes e envie.',
+  'Save as draft': 'Salvar como rascunho',
+  'Confirm broadcast': 'Confirmar disparo',
+  'contacts using the template': 'contatos usando o modelo',
+  // WhatsApp template categories (Meta enum, title-cased in the DB)
+  Marketing: 'Marketing',
+  Utility: 'Utilidade',
+  Authentication: 'Autenticação',
+  // Meta template review statuses (src/lib/template-status.ts)
+  Approved: 'Aprovado',
+  Rejected: 'Rejeitado',
+  Disabled: 'Desativado',
+  'In Appeal': 'Em recurso',
+  'Pending Deletion': 'Exclusão pendente',
+
+  // Automations builder (src/components/automations/automation-builder.tsx)
+  'Edit rule': 'Editar regra',
+  'New rule': 'Nova regra',
+  'Rule name': 'Nome da regra',
+  'Unsaved changes': 'Alterações não salvas',
+  'Describe what this rule does (optional)':
+    'Descreva o que esta regra faz (opcional)',
+  'When should this rule run?': 'Quando esta regra deve rodar?',
+  Conditions: 'Condições',
+  'Only continue when all conditions are true':
+    'Só continua quando todas as condições forem verdadeiras',
+  'Add condition': 'Adicionar condição',
+  'What to do, in order': 'O que fazer, nesta ordem',
+  'No conditions — actions run for every trigger event.':
+    'Sem condições — as ações rodam para todo evento do gatilho.',
+  AND: 'E',
+  'Remove condition': 'Remover condição',
+  'Removing keeps the actions below it.': 'Remover mantém as ações abaixo dela.',
+  'No actions yet. Add the first one.': 'Ainda não há ações. Adicione a primeira.',
+  'Add action': 'Adicionar ação',
+  Yes: 'Sim',
+  No: 'Não',
+  'Nothing selected': 'Nada selecionado',
+  'Select the trigger, a condition or an action to edit it here.':
+    'Selecione o gatilho, uma condição ou uma ação para editar aqui.',
+  'Trigger type': 'Tipo de gatilho',
+  Tag: 'Etiqueta',
+  Schedule: 'Agendamento',
+  'Keywords (comma-separated)': 'Palavras-chave (separadas por vírgula)',
+  'Match type': 'Tipo de correspondência',
+  'Sent to the contact on WhatsApp as a plain text message.':
+    'Enviada ao contato no WhatsApp como mensagem de texto simples.',
+  'Sets the conversation status to "closed". No configuration needed.':
+    'Define o status da conversa como "encerrada". Nenhuma configuração é necessária.',
+  Check: 'Verificar',
+  'Contact field equals': 'Campo do contato é igual a',
+  'Message contains': 'A mensagem contém',
+  'Time of day is between': 'Horário do dia está entre',
+  'Text to look for': 'Texto a procurar',
+  'Start time': 'Início',
+  'End time': 'Fim',
+  'Overnight windows like 18:00–09:00 are supported.':
+    'Janelas que viram a noite, como 18:00–09:00, são aceitas.',
+  'The actions only run when this condition is true.':
+    'As ações só rodam quando esta condição for verdadeira.',
+  'Steps under "Yes" run when true; steps under "No" run otherwise.':
+    'As etapas em "Sim" rodam quando verdadeira; as etapas em "Não" rodam caso contrário.',
+  'Assign conversation': 'Atribuir conversa',
+  'Close conversation': 'Encerrar conversa',
+  Messages: 'Mensagens',
+  'Flow control': 'Controle de fluxo',
+
+  // Plans, modules and the platform admin (migration 025)
+  Plan: 'Plano',
+  Trial: 'Teste',
+  Basic: 'Básico',
+  Pro: 'Pro',
+  Enterprise: 'Empresa',
+  'Past due': 'Pagamento pendente',
+  Canceled: 'Cancelado',
+  Suspended: 'Suspenso',
+  'Trial expired': 'Teste expirado',
+  'Official WhatsApp API': 'API oficial do WhatsApp',
+  'WhatsApp via QR code': 'WhatsApp via QR code',
+  'Max users': 'Máx. de usuários',
+  'Max channels': 'Máx. de canais',
+  Modules: 'Módulos',
+  Limits: 'Limites',
+  Unlimited: 'Ilimitado',
+  'No expiry': 'Sem validade',
+  'Valid until': 'Válido até',
+  'Trial ends': 'Teste termina em',
+  day: 'dia',
+  days: 'dias',
+  'Module not included in your plan': 'Módulo não incluído no seu plano',
+  Loading: 'Carregando',
+  // Blocked screen
+  'Your trial has ended': 'Seu período de teste terminou',
+  'The 14-day trial for this account is over. Choose a plan to keep using SempreCRM — your data is safe and will be right here when you come back.':
+    'Os 14 dias de teste desta conta acabaram. Escolha um plano para continuar usando o SempreCRM — seus dados estão seguros e estarão aqui quando você voltar.',
+  'Payment past due': 'Pagamento em atraso',
+  'We could not confirm the latest payment for this account. Settle the outstanding invoice to restore access.':
+    'Não conseguimos confirmar o último pagamento desta conta. Quite a fatura pendente para restaurar o acesso.',
+  'Subscription canceled': 'Assinatura cancelada',
+  "This account's subscription was canceled. Reactivate it to get back in — nothing has been deleted.":
+    'A assinatura desta conta foi cancelada. Reative para voltar a usar — nada foi apagado.',
+  'Account suspended': 'Conta suspensa',
+  'This account was suspended by the platform team. Get in touch with support to find out why and how to restore access.':
+    'Esta conta foi suspensa pela equipe da plataforma. Fale com o suporte para entender o motivo e como restaurar o acesso.',
+  'Ask the account owner to review the plan.':
+    'Peça ao proprietário da conta para revisar o plano.',
+  'Support: ': 'Suporte: ',
+  'View plan': 'Ver plano',
+  // Settings → Plan panel
+  'What your account includes today. To change the plan or add modules, get in touch with the SempreCRM team.':
+    'O que sua conta inclui hoje. Para trocar de plano ou adicionar módulos, fale com a equipe do SempreCRM.',
+  'Current plan': 'Plano atual',
+  'Plan, status and validity for this account.':
+    'Plano, status e validade desta conta.',
+  'Access to the app is currently blocked. Contact support to restore it.':
+    'O acesso ao sistema está bloqueado no momento. Fale com o suporte para restaurá-lo.',
+  'Inbox and Contacts are always included.':
+    'Caixa de entrada e Contatos estão sempre incluídos.',
+  // Platform admin
+  Platform: 'Plataforma',
+  'Accounts, plans and modules': 'Contas, planos e módulos',
+  'Back to app': 'Voltar ao app',
+  Accounts: 'Contas',
+  account: 'conta',
+  accounts: 'contas',
+  shown: 'exibidas',
+  'Search by name or e-mail': 'Buscar por nome ou e-mail',
+  'Search accounts': 'Buscar contas',
+  'Filter by status': 'Filtrar por status',
+  'All statuses': 'Todos os status',
+  Channels: 'Canais',
+  'No accounts match the current filters.':
+    'Nenhuma conta corresponde aos filtros atuais.',
+  'All accounts': 'Todas as contas',
+  member: 'membro',
+  members: 'membros',
+  channel: 'canal',
+  channels: 'canais',
+  Reactivate: 'Reativar',
+  Suspend: 'Suspender',
+  'Account updated': 'Conta atualizada',
+  'Account reactivated': 'Conta reativada',
+  'Failed to save': 'Falha ao salvar',
+  'Custom limits must be a number of 0 or more.':
+    'Limites personalizados devem ser um número maior ou igual a 0.',
+  'The plan sets the default modules and limits; overrides below win over it.':
+    'O plano define os módulos e limites padrão; as sobrescritas abaixo têm prioridade.',
+  'Only a trial is blocked by the expiry date. Paid plans are blocked by status (past due, canceled, suspended).':
+    'Só o teste é bloqueado pela data de validade. Planos pagos são bloqueados pelo status (pagamento pendente, cancelado, suspenso).',
+  'Inbox and Contacts are always on. For the rest, "Inherit" follows the plan.':
+    'Caixa de entrada e Contatos estão sempre ligados. Para os demais, "Herdar" segue o plano.',
+  On: 'Ligado',
+  Off: 'Desligado',
+  Override: 'Sobrescrita',
+  override: 'sobrescrita',
+  Inherit: 'Herdar',
+  'Force on': 'Forçar ligado',
+  'Force off': 'Forçar desligado',
+  'Seats count active members plus pending invites. Channels are connected WhatsApp numbers.':
+    'Usuários contam membros ativos mais convites pendentes. Canais são números de WhatsApp conectados.',
+  'custom value': 'valor personalizado',
+  Effective: 'Efetivo',
+  'Platform notes': 'Notas da plataforma',
+  'Internal only — the customer never sees this.':
+    'Uso interno — o cliente nunca vê isto.',
+  'Payment references, contact history, special deals…':
+    'Referências de pagamento, histórico de contato, condições especiais…',
+  'Customer will see': 'O cliente verá',
+  'Resolved from the form above, before saving.':
+    'Calculado a partir do formulário acima, antes de salvar.',
+  Access: 'Acesso',
+  Blocked: 'Bloqueado',
+  Allowed: 'Liberado',
+
+  // WhatsApp channel chooser + QR panel (migration 026)
+  'Choose how this account talks to WhatsApp: the official Meta Business API or a number linked by QR code.':
+    'Escolha como esta conta fala com o WhatsApp: a API oficial da Meta ou um número vinculado por QR code.',
+  'How to connect': 'Como conectar',
+  'Meta Cloud API with templates, broadcasts and the 24-hour window. Recommended for scale.':
+    'API Cloud da Meta com modelos, disparos e janela de 24 horas. Recomendada para escala.',
+  Recommended: 'Recomendada',
+  'Link an existing number by scanning a QR code, like WhatsApp Web. For 1:1 support only.':
+    'Vincule um número existente lendo um QR code, como no WhatsApp Web. Só para atendimento 1:1.',
+  Unofficial: 'Não oficial',
+  'No channel included in your plan': 'Nenhum canal incluído no seu plano',
+  'Your current plan does not include a WhatsApp channel. Get in touch with the SempreCRM team to add one.':
+    'Seu plano atual não inclui um canal de WhatsApp. Fale com a equipe do SempreCRM para adicionar um.',
+  'Unofficial channel — use with care': 'Canal não oficial — use com cuidado',
+  'The WhatsApp Web protocol is reverse-engineered (Baileys library). It is not official, it violates WhatsApp’s terms and the number can be banned, especially with bulk sending. Broadcasts and templates therefore stay exclusive to the official API; the QR channel is for 1:1 support and reply automations.':
+    'O protocolo do WhatsApp Web é usado por engenharia reversa (biblioteca Baileys). Não é oficial, viola os termos do WhatsApp e o número pode ser banido, sobretudo com envio em massa. Por isso, disparos e modelos ficam exclusivos da API oficial; o canal QR serve o atendimento 1:1 e as automações de resposta.',
+  'Gateway not configured': 'Gateway não configurado',
+  'The QR channel needs the wa-gateway service. Set WA_GATEWAY_URL and WA_GATEWAY_SECRET on the server and restart the app.':
+    'O canal QR precisa do serviço wa-gateway. Defina WA_GATEWAY_URL e WA_GATEWAY_SECRET no servidor e reinicie o app.',
+  'Gateway unreachable': 'Gateway fora do ar',
+  'Could not talk to the WhatsApp gateway. Check that the wa-gateway service is running.':
+    'Não foi possível falar com o gateway do WhatsApp. Verifique se o serviço wa-gateway está em execução.',
+  'The QR channel is not part of your current plan. Get in touch with the SempreCRM team to add it.':
+    'O canal QR não faz parte do seu plano atual. Fale com a equipe do SempreCRM para adicioná-lo.',
+  'WhatsApp Web session': 'Sessão do WhatsApp Web',
+  'Scan the QR code with the phone that owns the number: WhatsApp → Linked devices → Link a device.':
+    'Leia o QR code com o celular dono do número: WhatsApp → Aparelhos conectados → Conectar um aparelho.',
+  'Connected as': 'Conectado como',
+  'Unknown name': 'Nome desconhecido',
+  'unknown number': 'número desconhecido',
+  Since: 'Desde',
+  'WhatsApp QR code': 'QR code do WhatsApp',
+  'The code refreshes automatically. Waiting for the scan…':
+    'O código é renovado automaticamente. Aguardando a leitura…',
+  'Reconnecting to WhatsApp…': 'Reconectando ao WhatsApp…',
+  'Generating QR code…': 'Gerando QR code…',
+  'No number connected. Click Connect to get a QR code.':
+    'Nenhum número conectado. Clique em Conectar para gerar um QR code.',
+  'Last error': 'Último erro',
+  Disconnect: 'Desconectar',
+  Disconnected: 'Desconectado',
+  Connecting: 'Conectando',
+  'Waiting for scan': 'Aguardando leitura',
+  Retry: 'Tentar de novo',
+  Connect: 'Conectar',
+  'Only account admins can connect or disconnect the number.':
+    'Só administradores da conta podem conectar ou desconectar o número.',
+  'How it works': 'Como funciona',
+  'What the QR channel can and cannot do.': 'O que o canal QR faz e não faz.',
+  'Receives and sends 1:1 messages (text, images, audio, video, documents).':
+    'Recebe e envia mensagens 1:1 (texto, imagens, áudio, vídeo, documentos).',
+  'Reply automations work; buttons and lists are sent as numbered text.':
+    'Automações de resposta funcionam; botões e listas vão como texto numerado.',
+  'Broadcasts and message templates stay on the official API.':
+    'Disparos e modelos de mensagem continuam na API oficial.',
+  'Keep the phone online — WhatsApp Web depends on it.':
+    'Mantenha o celular conectado — o WhatsApp Web depende dele.',
+  'Counts as one channel against your plan limit while connected.':
+    'Conta como um canal no limite do seu plano enquanto estiver conectado.',
+  'WhatsApp connected.': 'WhatsApp conectado.',
+  'WhatsApp disconnected.': 'WhatsApp desconectado.',
+  'Disconnect this WhatsApp number? You will need to scan a new QR code to reconnect.':
+    'Desconectar este número do WhatsApp? Será preciso ler um novo QR code para reconectar.',
+  'Plan limit reached': 'Limite do plano atingido',
+  'Something went wrong. Please try again.': 'Algo deu errado. Tente novamente.',
+  'Could not reach the server. Check your connection and try again.':
+    'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+  'Send a message to start the conversation': 'Envie uma mensagem para iniciar a conversa',
+  // Inbox contact panel — inline add (custom fields, deals, team notes)
+  'New field': 'Novo campo',
+  'Custom fields appear on every contact in this account.':
+    'Campos personalizados aparecem em todos os contatos desta conta.',
+  'Field name': 'Nome do campo',
+  'e.g. ZIP code, lead source': 'ex.: CEP, origem do lead',
+  'A field with this name already exists.': 'Já existe um campo com este nome.',
+  Text: 'Texto',
+  'Create field': 'Criar campo',
+  'Field created': 'Campo criado',
+  'Add custom field': 'Adicionar campo personalizado',
+  'Could not save the field value': 'Não foi possível salvar o valor do campo',
+  'Click to edit': 'Clique para editar',
+  'Create a pipeline first in Pipelines.': 'Crie um funil primeiro em Funis.',
+  'Could not load pipelines': 'Não foi possível carregar os funis',
+  'Open in Pipelines': 'Abrir em Funis',
+  'Add team note': 'Adicionar nota da equipe',
+  'Write a note for the team…': 'Escreva uma nota para a equipe…',
+  'Team note': 'Nota da equipe',
+  'Team only': 'Só para a equipe',
+  'Ctrl+Enter to save': 'Ctrl+Enter para salvar',
+  'Private note added': 'Nota interna adicionada',
+  'Could not save the note': 'Não foi possível salvar a nota',
+  // Tasks module
+  Priority: 'Prioridade',
+  Tasks: 'Tarefas',
+  Task: 'Tarefa',
+  'New task': 'Nova tarefa',
+  'Create task': 'Criar tarefa',
+  'Add task': 'Adicionar tarefa',
+  'Task title': 'Título da tarefa',
+  'What needs to be done?': 'O que precisa ser feito?',
+  'Details, context, next steps…': 'Detalhes, contexto, próximos passos…',
+  'Task created': 'Tarefa criada',
+  'Task completed': 'Tarefa concluída',
+  'Task reopened': 'Tarefa reaberta',
+  'Task deleted': 'Tarefa excluída',
+  'Task title is required': 'O título da tarefa é obrigatório',
+  'Failed to create task': 'Não foi possível criar a tarefa',
+  'Failed to save task': 'Não foi possível salvar a tarefa',
+  'Failed to delete task': 'Não foi possível excluir a tarefa',
+  'Failed to move task': 'Não foi possível mover a tarefa',
+  'Failed to load tasks': 'Não foi possível carregar as tarefas',
+  'Failed to add comment': 'Não foi possível adicionar o comentário',
+  'Delete this task? This cannot be undone.':
+    'Excluir esta tarefa? Esta ação não pode ser desfeita.',
+  Complete: 'Concluir',
+  Reopen: 'Reabrir',
+  'Complete task': 'Concluir tarefa',
+  'Reopen task': 'Reabrir tarefa',
+  Assignee: 'Responsável',
+  'Any assignee': 'Qualquer responsável',
+  'Any status': 'Qualquer status',
+  'Any priority': 'Qualquer prioridade',
+  Due: 'Prazo',
+  Links: 'Vínculos',
+  Deal: 'Negócio',
+  'No deal': 'Sem negócio',
+  'No deals for this contact': 'Este contato não tem negócios',
+  'Search contact by name or phone': 'Buscar contato por nome ou telefone',
+  'Open contact': 'Abrir contato',
+  Unlink: 'Desvincular',
+  Comments: 'Comentários',
+  'No comments yet.': 'Nenhum comentário ainda.',
+  'Write a comment…': 'Escreva um comentário…',
+  'Send comment': 'Enviar comentário',
+  'Ctrl+Enter to send': 'Ctrl+Enter para enviar',
+  Low: 'Baixa',
+  Normal: 'Normal',
+  High: 'Alta',
+  Urgent: 'Urgente',
+  Mine: 'Minhas',
+  Today: 'Hoje',
+  'Overdue tasks': 'Atrasadas',
+  'All tasks': 'Todas',
+  'Search tasks': 'Buscar tarefas',
+  Board: 'Quadro',
+  'No tasks here': 'Nenhuma tarefa aqui',
+  'Create a task or change the filters.': 'Crie uma tarefa ou altere os filtros.',
+  'Drop a task here': 'Solte uma tarefa aqui',
+  'open task': 'aberta',
+  'open tasks': 'abertas',
+  'overdue task': 'atrasada',
+  'overdue tasks': 'atrasadas',
+  "Read-only — your role can't create tasks":
+    'Somente leitura — seu perfil não pode criar tarefas',
+  // Settings → Tasks (statuses)
+  'Task statuses': 'Status de tarefas',
+  'Task statuses for the board': 'Status de tarefas do quadro',
+  'The columns of the task board. Every account keeps at least one open, one in-progress and one done status; new tasks land on the default.':
+    'As colunas do quadro de tarefas. Cada conta mantém ao menos um status aberto, um em andamento e um concluído; novas tarefas entram no padrão.',
+  'Drag to reorder. Names are saved when you leave the field.':
+    'Arraste para reordenar. Os nomes são salvos ao sair do campo.',
+  'Missing a status of kind:': 'Falta um status do tipo:',
+  'Keep at least one status of each kind.': 'Mantenha ao menos um status de cada tipo.',
+  'New status': 'Novo status',
+  'Status name': 'Nome do status',
+  'Status created': 'Status criado',
+  'Status deleted': 'Status excluído',
+  'Failed to create status': 'Não foi possível criar o status',
+  'Failed to delete status': 'Não foi possível excluir o status',
+  'Failed to load task statuses': 'Não foi possível carregar os status',
+  'Delete status': 'Excluir status',
+  'Delete this status? Its tasks move to': 'Excluir este status? As tarefas vão para',
+  'Default status for new tasks': 'Status padrão para novas tarefas',
+  'Make default': 'Tornar padrão',
+  'Only account admins can change task statuses.':
+    'Somente administradores da conta podem alterar os status de tarefas.',
+  Kind: 'Tipo',
+  'In progress': 'Em andamento',
+  'Pick color': 'Escolher cor',
+  // Tasks — inbox / pipelines panels, dashboard card, sidebar
+  'No open tasks': 'Nenhuma tarefa aberta',
+  'More actions': 'Mais ações',
+  Service: 'Atendimento',
+  "Today's tasks": 'Tarefas de hoje',
+  'Your tasks due today and overdue': 'Suas tarefas para hoje e as atrasadas',
+  'to do': 'a fazer',
+  'View all': 'Ver todas',
+  'Nothing due today': 'Nada para hoje',
+  'Tasks assigned to you that are due today or overdue show up here.':
+    'Tarefas atribuídas a você com prazo para hoje ou atrasadas aparecem aqui.',
+  'more task': 'outra tarefa',
+  'more tasks': 'outras tarefas',
+  // Tasks — automation step create_task
+  'Follow up with {{ contact.name }}': 'Fazer follow-up com {{ contact.name }}',
+  'Variables: {{ contact.name }}, {{ contact.phone }}, {{ message.text }}, {{ vars.x }}':
+    'Variáveis: {{ contact.name }}, {{ contact.phone }}, {{ message.text }}, {{ vars.x }}',
+  'Description (optional)': 'Descrição (opcional)',
+  'Due in (hours)': 'Prazo em (horas)',
+  'No due date': 'Sem prazo',
+  'The task is linked to the contact and conversation that fired the automation and lands on the default open status.':
+    'A tarefa fica vinculada ao contato e à conversa que dispararam a automação e entra no status aberto padrão.',
+  // Deals — loss reasons (Entrega D, migration 031)
+  'Mark as lost': 'Marcar como perdido',
+  'Pick why this deal was lost. The reason feeds the pipeline analytics.':
+    'Escolha por que este negócio foi perdido. O motivo alimenta a análise do pipeline.',
+  'Loss reason': 'Motivo de perda',
+  'Loss reasons': 'Motivos de perda',
+  'No active loss reasons': 'Nenhum motivo de perda ativo',
+  'Select a reason': 'Selecione um motivo',
+  'Add reasons in': 'Adicione motivos em',
+  'Settings › Deals and currency': 'Configurações › Negócios e moeda',
+  'Ask an account admin to add loss reasons in Settings.':
+    'Peça a um administrador da conta para adicionar motivos de perda nas Configurações.',
+  'Note (optional)': 'Observação (opcional)',
+  'What happened? Anything useful for next time.':
+    'O que aconteceu? Algo útil para a próxima vez.',
+  'No reason': 'Sem motivo',
+  'lost deal': 'negócio perdido',
+  'lost deals': 'negócios perdidos',
+  'Bar length': 'Tamanho da barra',
+  Count: 'Quantidade',
+  'Failed to load loss reasons': 'Não foi possível carregar os motivos de perda',
+  'Loss reason created': 'Motivo de perda criado',
+  'Failed to create loss reason': 'Não foi possível criar o motivo de perda',
+  'Loss reason deleted': 'Motivo de perda excluído',
+  'Failed to delete loss reason': 'Não foi possível excluir o motivo de perda',
+  'What your team picks when a deal is marked as lost. Names are saved when you leave the field; inactive reasons stay on old deals but are no longer offered.':
+    'O que sua equipe escolhe ao marcar um negócio como perdido. Os nomes são salvos ao sair do campo; motivos inativos permanecem nos negócios antigos, mas deixam de ser oferecidos.',
+  'No loss reasons yet. Add the first one below.':
+    'Nenhum motivo de perda ainda. Adicione o primeiro abaixo.',
+  'New loss reason': 'Novo motivo de perda',
+  'e.g. Budget cut, Timing': 'ex.: Corte de orçamento, Momento errado',
+  'Only account admins can change loss reasons.':
+    'Somente administradores da conta podem alterar os motivos de perda.',
+  'Loss reason name': 'Nome do motivo de perda',
+  'Delete loss reason': 'Excluir motivo de perda',
+  'Delete this loss reason?': 'Excluir este motivo de perda?',
+  "This reason is used by 1 deal and can't be deleted. Deactivate it instead to hide it from the list.":
+    'Este motivo é usado por 1 negócio e não pode ser excluído. Desative-o para ocultá-lo da lista.',
+  'This reason is used by': 'Este motivo é usado por',
+  "deals and can't be deleted. Deactivate it instead to hide it from the list.":
+    'negócios e não pode ser excluído. Desative-o para ocultá-lo da lista.',
+  Deactivate: 'Desativar',
+  'The currency used for new deals and for pipeline and dashboard totals, and the reasons a deal can be marked as lost.':
+    'A moeda usada em novos negócios e nos totais do pipeline e do painel, e os motivos pelos quais um negócio pode ser marcado como perdido.',
+  // Quick replies (Entrega A) — settings panel + overview tile
+  'Quick replies': 'Respostas rápidas',
+  'Canned responses for the inbox': 'Respostas prontas para o inbox',
+  'Ready-made answers your team inserts in the inbox by typing / followed by the shortcut. Variables fill in the contact, agent and company names.':
+    'Respostas prontas que a equipe insere no inbox digitando / seguido do atalho. As variáveis preenchem o nome do contato, do atendente e da empresa.',
+  'New quick reply': 'Nova resposta rápida',
+  'Edit quick reply': 'Editar resposta rápida',
+  Library: 'Biblioteca',
+  'Shortcuts are lower-case, without spaces, and unique in the account.':
+    'Os atalhos são em minúsculas, sem espaços e únicos na conta.',
+  'Search by shortcut or title': 'Buscar por atalho ou título',
+  'No quick replies yet': 'Nenhuma resposta rápida ainda',
+  'Create the first one — for example /oi with a greeting that uses the contact name.':
+    'Crie a primeira — por exemplo /oi com uma saudação que usa o nome do contato.',
+  'Nothing matches your search.': 'Nada corresponde à sua busca.',
+  Shortcut: 'Atalho',
+  Preview: 'Prévia',
+  Body: 'Corpo',
+  'Only agents and admins can change quick replies.':
+    'Somente atendentes e administradores podem alterar respostas rápidas.',
+  'Delete quick reply?': 'Excluir resposta rápida?',
+  "This can't be undone.": 'Isso não pode ser desfeito.',
+  'Quick reply created': 'Resposta rápida criada',
+  'Quick reply saved': 'Resposta rápida salva',
+  'Quick reply deleted': 'Resposta rápida excluída',
+  'Failed to load quick replies': 'Falha ao carregar respostas rápidas',
+  'Failed to save quick reply': 'Falha ao salvar resposta rápida',
+  'Failed to delete quick reply': 'Falha ao excluir resposta rápida',
+  'Type / plus the shortcut in the inbox composer to insert this text.':
+    'Digite / mais o atalho no compositor do inbox para inserir este texto.',
+  'Use 1–30 lower-case letters, numbers, "_" or "-" — no spaces.':
+    'Use de 1 a 30 letras minúsculas, números, "_" ou "-" — sem espaços.',
+  'This shortcut is already in use.': 'Este atalho já está em uso.',
+  'Letters, numbers, "_" and "-".': 'Letras, números, "_" e "-".',
+  'Title is required': 'O título é obrigatório',
+  'Body is required': 'O corpo é obrigatório',
+  'Body is too long': 'O corpo é muito longo',
+  'Welcome message': 'Mensagem de boas-vindas',
+  'Hi {{contato.primeiro_nome}}! This is {{atendente.nome}} from {{empresa}}. How can I help?':
+    'Oi {{contato.primeiro_nome}}! Aqui é {{atendente.nome}} da {{empresa}}. Como posso ajudar?',
+  'Insert variable:': 'Inserir variável:',
+  'Contact name': 'Nome do contato',
+  'Contact first name': 'Primeiro nome do contato',
+  'Agent name': 'Nome do atendente',
+
+  // Lead capture by webhook (migration 029) — Settings → Integrations
+  'Lead capture (webhook)': 'Captura de leads (webhook)',
+  Integrations: 'Integrações',
+  'Lead capture by webhook': 'Captura de leads por webhook',
+  'Receive leads from landing pages, forms, Zapier and n8n straight into the CRM.':
+    'Receba leads de landing pages, formulários, Zapier e n8n direto no CRM.',
+  'Each lead source gets its own webhook URL. Post a form to it and the lead becomes a contact (deduplicated by phone), lands in the pipeline you choose, gets tagged and fires your automations.':
+    'Cada fonte de leads tem sua própria URL de webhook. Envie um formulário para ela e o lead vira contato (sem duplicar pelo telefone), entra no funil escolhido, recebe etiquetas e dispara suas automações.',
+  'Admins only': 'Somente administradores',
+  'Only account admins can manage lead sources — the webhook URL is a credential.':
+    'Somente administradores da conta gerenciam fontes de leads — a URL do webhook é uma credencial.',
+  'Lead capture by webhook is not part of your current plan. Get in touch with the SempreCRM team to add it.':
+    'A captura de leads por webhook não está incluída no seu plano atual. Fale com a equipe do SempreCRM para adicioná-la.',
+  'New lead source': 'Nova fonte de leads',
+  'Lead sources': 'Fontes de leads',
+  'Lead source': 'Fonte de leads',
+  'Pick a source to see its URL, examples and the latest submissions.':
+    'Escolha uma fonte para ver a URL, exemplos e os últimos recebimentos.',
+  'No lead sources yet': 'Nenhuma fonte de leads ainda',
+  'Create one per landing page or form — each gets its own URL and counters.':
+    'Crie uma por landing page ou formulário — cada uma tem URL e contadores próprios.',
+  Received: 'Recebidos',
+  'Last received': 'Último recebimento',
+  'Paused source': 'Fonte pausada',
+  'Source activated': 'Fonte ativada',
+  'Source paused': 'Fonte pausada',
+  'Failed to load lead sources': 'Falha ao carregar fontes de leads',
+  'Failed to save lead source': 'Falha ao salvar fonte de leads',
+  'Failed to delete lead source': 'Falha ao excluir fonte de leads',
+  'Lead source created': 'Fonte de leads criada',
+  'Lead source saved': 'Fonte de leads salva',
+  'Lead source deleted': 'Fonte de leads excluída',
+  'Delete lead source?': 'Excluir fonte de leads?',
+  'Its URL stops working immediately and the submission log is removed. Contacts and deals stay.':
+    'A URL para de funcionar na hora e o histórico de recebimentos é removido. Contatos e negócios permanecem.',
+  'Deals go to': 'Negócios vão para',
+  'No deal is created — the lead becomes a contact only.':
+    'Nenhum negócio é criado — o lead vira apenas contato.',
+  'Webhook URL': 'URL do webhook',
+  'Could not copy': 'Não foi possível copiar',
+  'Accepts POST with JSON, form-urlencoded or multipart. Opening it in a browser shows { ok: true }.':
+    'Aceita POST com JSON, form-urlencoded ou multipart. Abrir no navegador mostra { ok: true }.',
+  'curl example': 'Exemplo com curl',
+  'HTML form example': 'Exemplo de formulário HTML',
+  'Generating a new token changes the URL. Every form still posting to the old one will get 404.':
+    'Gerar um novo token muda a URL. Todo formulário que ainda enviar para a antiga receberá 404.',
+  'Generate new token': 'Gerar novo token',
+  'Yes, generate new token': 'Sim, gerar novo token',
+  'New token generated — update your forms with the new URL.':
+    'Novo token gerado — atualize seus formulários com a nova URL.',
+  'Failed to generate a new token': 'Falha ao gerar novo token',
+  'Latest submissions': 'Últimos recebimentos',
+  'The last 50 payloads received, newest first. Click a row to see the payload.':
+    'Os últimos 50 envios recebidos, do mais novo para o mais antigo. Clique numa linha para ver o payload.',
+  'Failed to load submissions': 'Falha ao carregar recebimentos',
+  'Nothing received yet. Try the curl example above.':
+    'Nada recebido ainda. Experimente o exemplo com curl acima.',
+  When: 'Quando',
+  'Contact created': 'Contato criado',
+  'Existing contact': 'Contato existente',
+  'Phone missing from payload': 'Telefone ausente no payload',
+  'Invalid phone number': 'Telefone inválido',
+  'Account owner not found': 'Dono da conta não encontrado',
+  'Edit lead source': 'Editar fonte de leads',
+  'Where leads from this source land and which payload keys feed each CRM field.':
+    'Onde os leads desta fonte entram e quais chaves do payload alimentam cada campo do CRM.',
+  'e.g. Landing page — winter campaign': 'ex.: Landing page — campanha de inverno',
+  "Don't create a deal": 'Não criar negócio',
+  'Pick a stage': 'Escolha uma etapa',
+  'Pick the stage new deals start in': 'Escolha a etapa em que os negócios começam',
+  'No tags yet': 'Nenhuma etiqueta ainda',
+  'Field mapping': 'Mapeamento de campos',
+  'CRM field ← payload key. Leave blank to use the default key (name/nome, phone/telefone, email, company/empresa). Dotted paths like lead.telefone work.':
+    'Campo do CRM ← chave do payload. Deixe em branco para usar a chave padrão (name/nome, phone/telefone, email, company/empresa). Caminhos com ponto como lead.telefone funcionam.',
+  'payload key': 'chave do payload',
+  'Custom field': 'Campo personalizado',
+  'Custom field…': 'Campo personalizado…',
+  'Map a custom field': 'Mapear campo personalizado',
+  'Create custom fields in Settings → Fields and tags to map extra payload keys.':
+    'Crie campos personalizados em Configurações → Campos e etiquetas para mapear outras chaves do payload.',
+  // Automation trigger "lead_captured"
+  'Lead Captured': 'Lead capturado',
+  'When a lead arrives through a webhook source (Settings → Integrations)':
+    'Quando um lead chega por uma fonte de webhook (Configurações → Integrações)',
+  'Any source': 'Qualquer fonte',
+  'Deleted source': 'Fonte excluída',
+  paused: 'pausada',
+  'No lead sources yet — create one in Settings → Integrations.':
+    'Nenhuma fonte de leads ainda — crie uma em Configurações → Integrações.',
+  'Fires for every webhook lead, or only for the chosen source.':
+    'Dispara para todo lead via webhook, ou só para a fonte escolhida.',
+
+  // ------------------------------------------------------------
+  // Radar + follow-up + opt-out (migration 030, spec §3 / §5)
+  // ------------------------------------------------------------
+  Radar: 'Radar',
+  Waiting: 'Aguardando',
+  'No owner': 'Sem responsável',
+  Cooling: 'Esfriando',
+  'Oldest waiting': 'Aguardando há mais tempo',
+  'Oldest cooling': 'Esfriando há mais tempo',
+  'Conversations at risk right now': 'Conversas em risco agora',
+  'Nothing at risk — everyone has been answered.': 'Nada em risco — todo mundo foi respondido.',
+  'Open inbox': 'Abrir inbox',
+  SLA: 'SLA',
+  'Cooling after': 'Esfriando após',
+  Adjust: 'Ajustar',
+  cooling: 'esfriando',
+  // Settings → Atendimento
+  'Response-time limits behind the Radar (dashboard and inbox) and the words a customer can send to stop receiving messages.':
+    'Limites de tempo de resposta por trás do Radar (dashboard e inbox) e as palavras que um cliente pode enviar para parar de receber mensagens.',
+  'Response times': 'Tempos de resposta',
+  'A conversation shows up as waiting when the customer has been unanswered for longer than the SLA, and as cooling when the customer has not replied to you for the given hours.':
+    'Uma conversa aparece como aguardando quando o cliente fica sem resposta por mais tempo que o SLA, e como esfriando quando o cliente não responde a você pelas horas indicadas.',
+  'Reply SLA (minutes)': 'SLA de resposta (minutos)',
+  'Customers waiting longer than this appear under “Waiting”.':
+    'Clientes esperando mais que isso aparecem em “Aguardando”.',
+  'Enter a value between': 'Informe um valor entre',
+  and: 'e',
+  'Cooling after (hours)': 'Esfriando após (horas)',
+  'Silence after your last message for this long marks the conversation as cooling.':
+    'Silêncio por esse tempo depois da sua última mensagem marca a conversa como esfriando.',
+  'Opt-out words': 'Palavras de descadastro',
+  'When a customer sends exactly one of these words (accents and punctuation ignored), the contact is marked as opted out: automations stop messaging them and broadcasts skip them. An admin can reactivate the contact from the inbox panel.':
+    'Quando um cliente envia exatamente uma destas palavras (acentos e pontuação ignorados), o contato é marcado como descadastrado: as automações deixam de enviar mensagens e os disparos o pulam. Um administrador pode reativar o contato pelo painel do inbox.',
+  'Type a word and press Enter': 'Digite uma palavra e pressione Enter',
+  'Add opt-out word': 'Adicionar palavra de descadastro',
+  'No words — opt-out by message is off for this account.':
+    'Sem palavras — o descadastro por mensagem está desligado nesta conta.',
+  'Press Enter or comma to add a word; Backspace removes the last one.':
+    'Pressione Enter ou vírgula para adicionar uma palavra; Backspace remove a última.',
+  'Only admins can change service settings.':
+    'Somente administradores podem alterar as configurações de atendimento.',
+  'Keyword limit reached': 'Limite de palavras atingido',
+  'Service settings saved': 'Configurações de atendimento salvas',
+  'Failed to save service settings': 'Falha ao salvar as configurações de atendimento',
+  // Automation trigger: conversation_inactive
+  'Conversation Inactive': 'Conversa sem resposta há X horas',
+  'When a conversation has had no message for a number of hours (checked every minute by the scheduler)':
+    'Quando uma conversa fica sem mensagens por um número de horas (verificado a cada minuto pelo agendador)',
+  'Hours without a message': 'Horas sem mensagem',
+  'Decimals allowed — 0.05 is 3 minutes, 24 is one day, 720 is the maximum (30 days).':
+    'Decimais permitidos — 0.05 são 3 minutos, 24 é um dia, 720 é o máximo (30 dias).',
+  'Last message was from': 'Última mensagem foi do',
+  'The agent (customer went quiet)': 'Atendente (cliente ficou em silêncio)',
+  'The customer (nobody replied)': 'Cliente (ninguém respondeu)',
+  'Either side': 'Qualquer lado',
+  'Conversation status': 'Status da conversa',
+  'Pick at least one status.': 'Escolha pelo menos um status.',
+  // Opt-out badges and audience
+  'Opted out': 'Descadastrado',
+  'Opted-out contacts': 'Descadastrados',
+  'Asked to stop receiving messages': 'Pediu para não receber mensagens',
+  'No opted-out contacts.': 'Nenhum contato descadastrado.',
+  'opted-out contact excluded': 'contato descadastrado excluído',
+  'opted-out contacts excluded': 'contatos descadastrados excluídos',
+  // Round 2 §1 — Team metrics (dashboard "Equipe")
+  Team: 'Equipe',
+  'Per-member activity in the period': 'Atividade por membro no período',
+  'Your activity in the period': 'Sua atividade no período',
+  Period: 'Período',
+  Handled: 'Atendidas',
+  Resolved: 'Resolvidas',
+  '1st response': '1ª resposta',
+  'Tasks done': 'Tarefas concluídas',
+  'Open now': 'Abertas agora',
+  'Conversations with at least one reply from the member in the period':
+    'Conversas com pelo menos uma resposta do membro no período',
+  'Conversations the member marked as resolved in the period':
+    'Conversas que o membro marcou como resolvidas no período',
+  'Average (median) time until the first reply, over conversations the member answered first':
+    'Tempo médio (mediana) até a primeira resposta, nas conversas em que o membro respondeu primeiro',
+  'Tasks assigned to the member completed in the period':
+    'Tarefas atribuídas ao membro concluídas no período',
+  'Conversations currently open and assigned to the member':
+    'Conversas abertas agora atribuídas ao membro',
+  median: 'mediana',
+  you: 'você',
+  'No first response yet': 'Ainda sem primeira resposta',
+  'No team activity yet': 'Ainda sem atividade da equipe',
+  'Replies, resolutions and completed tasks will show up here per member.':
+    'Respostas, resoluções e tarefas concluídas aparecem aqui por membro.',
+  // Round 2 §2 — Availability, business hours, round-robin
+  Availability: 'Disponibilidade',
+  Available: 'Disponível',
+  Away: 'Ausente',
+  'You are now available': 'Você está disponível',
+  'You are now away': 'Você está ausente',
+  'Failed to update availability': 'Falha ao atualizar a disponibilidade',
+  'Business hours': 'Horário de atendimento',
+  'When your team is available. Up to two ranges per day (for a lunch break); a day with no range is closed. Used by the out-of-hours reply below.':
+    'Quando sua equipe está disponível. Até duas faixas por dia (para o almoço); um dia sem faixa fica fechado. Usado pela mensagem fora do horário abaixo.',
+  Timezone: 'Fuso horário',
+  Monday: 'Segunda-feira',
+  Tuesday: 'Terça-feira',
+  Wednesday: 'Quarta-feira',
+  Thursday: 'Quinta-feira',
+  Friday: 'Sexta-feira',
+  Saturday: 'Sábado',
+  Sunday: 'Domingo',
+  start: 'início',
+  end: 'fim',
+  'Add range': 'Adicionar faixa',
+  'Remove range': 'Remover faixa',
+  'Out-of-hours reply': 'Mensagem fora do horário',
+  'When a customer writes outside business hours, send this message automatically — once per conversation per day, through the same channel. On the official channel it is skipped when the 24-hour window is closed.':
+    'Quando um cliente escreve fora do horário de atendimento, envia esta mensagem automaticamente — uma vez por conversa por dia, pelo mesmo canal. No canal oficial ela é pulada quando a janela de 24 horas está fechada.',
+  Message: 'Mensagem',
+  'Enter a message to send outside business hours.':
+    'Informe a mensagem a enviar fora do horário de atendimento.',
+  'Automatic distribution': 'Distribuição automática',
+  'Round-robin: when a new conversation gets its first customer message and has no owner, assign it to the available member with the fewest open conversations. Members marked as away are skipped; with nobody available the conversation stays in the Radar.':
+    'Rodízio: quando uma conversa recebe a primeira mensagem do cliente e não tem responsável, atribui ao membro disponível com menos conversas abertas. Membros ausentes são pulados; sem ninguém disponível a conversa fica no Radar.',
+  'Response-time limits behind the Radar, business hours, automatic distribution and the words a customer can send to stop receiving messages.':
+    'Limites de tempo de resposta do Radar, horário de atendimento, distribuição automática e as palavras que um cliente pode enviar para parar de receber mensagens.',
+  // Audit log (round 2 spec §3)
+  'Audit log': 'Auditoria',
+  'Who changed what, and when': 'Quem alterou o quê, e quando',
+  'Only admins can view the audit log.': 'Somente administradores podem ver a auditoria.',
+  'Sensitive actions in this workspace — members, channels, contacts, plan — with who did them and when. Entries are kept for 365 days.':
+    'Ações sensíveis neste espaço de trabalho — membros, canais, contatos, plano — com quem fez e quando. Os registros são mantidos por 365 dias.',
+  'All actions': 'Todas as ações',
+  'All members': 'Todos os membros',
+  'Last 7 days': 'Últimos 7 dias',
+  'Last 30 days': 'Últimos 30 dias',
+  'Last 90 days': 'Últimos 90 dias',
+  'All time': 'Todo o período',
+  'Clear filters': 'Limpar filtros',
+  'No entries match these filters.': 'Nenhum registro corresponde a esses filtros.',
+  'Nothing recorded yet. Sensitive actions will show up here.':
+    'Nada registrado ainda. As ações sensíveis vão aparecer aqui.',
+  'Who': 'Quem',
+  'Action': 'Ação',
+  'Entity': 'Entidade',
+  'Details': 'Detalhes',
+  'System': 'Sistema',
+  'Load more': 'Carregar mais',
+  'items': 'itens',
+  'Account': 'Conta',
+  'Invitation': 'Convite',
+  'Official WhatsApp': 'WhatsApp oficial',
+  'WhatsApp QR': 'WhatsApp QR',
+  'Contact': 'Contato',
+  'Automation': 'Automação',
+  'Preferences': 'Preferências',
+  'Branding': 'Marca',
+  'Two-step verification': 'Verificação em duas etapas',
+  // LGPD (round 2 spec §4)
+  'Privacy': 'Privacidade',
+  'Consent': 'Consentimento',
+  'Not recorded': 'Não registrado',
+  'Consent granted': 'Consentimento concedido',
+  'Consent revoked': 'Consentimento revogado',
+  'Consent updated': 'Consentimento atualizado',
+  'Could not update consent': 'Não foi possível atualizar o consentimento',
+  'Updated on': 'Atualizado em',
+  'Export data': 'Exportar dados',
+  'Contact data exported': 'Dados do contato exportados',
+  'Could not export contact data': 'Não foi possível exportar os dados do contato',
+  'Anonymize': 'Anonimizar',
+  'Anonymized': 'Anonimizado',
+  'Anonymize contact?': 'Anonimizar contato?',
+  'This permanently removes name, phone, email, company, custom fields, notes, message contents and media. Conversations, deals and tasks stay for statistics. This cannot be undone.':
+    'Isso remove permanentemente nome, telefone, e-mail, empresa, campos personalizados, notas, conteúdo das mensagens e mídias. Conversas, negócios e tarefas ficam para estatísticas. Não é possível desfazer.',
+  'Type the contact name to confirm': 'Digite o nome do contato para confirmar',
+  'Contact anonymized': 'Contato anonimizado',
+  'Could not anonymize the contact': 'Não foi possível anonimizar o contato',
+  'Personal data removed (LGPD)': 'Dados pessoais removidos (LGPD)',
+  'Personal data was removed on': 'Os dados pessoais foram removidos em',
+  'Editing and messaging are blocked for this contact.':
+    'Edição e envio de mensagens estão bloqueados para este contato.',
+  'Anonymized contacts cannot be edited': 'Contatos anonimizados não podem ser editados',
+  'Record the consent this contact gave, export everything the workspace holds about them, or remove their personal data for good.':
+    'Registre o consentimento dado por este contato, exporte tudo que o espaço de trabalho tem sobre ele ou remova seus dados pessoais em definitivo.',
+  // MFA (round 2 spec, section 7)
+  'Enter the 6-digit code from your authenticator app':
+    'Digite o código de 6 dígitos do seu aplicativo autenticador',
+  'Verification code': 'Código de verificação',
+  'Verifying…': 'Verificando…',
+  'Invalid code. Check the time on your phone and try again.':
+    'Código inválido. Confira a hora do seu celular e tente de novo.',
+  'Could not start the verification': 'Não foi possível iniciar a verificação',
+  'No authenticator is linked to this account. Sign out and sign in again.':
+    'Nenhum aplicativo autenticador está vinculado a esta conta. Saia e entre novamente.',
+  'Sign in with another account': 'Entrar com outra conta',
+  'Enabled': 'Ativada',
+  'Besides your password, sign-in asks for a 6-digit code from an authenticator app (Google Authenticator, Authy, 1Password…).':
+    'Além da senha, o login pede um código de 6 dígitos de um aplicativo autenticador (Google Authenticator, Authy, 1Password…).',
+  'Not enabled. Anyone with your password can sign in.':
+    'Não ativada. Qualquer pessoa com a sua senha consegue entrar.',
+  'Enable two-step verification': 'Ativar verificação em duas etapas',
+  'Could not start two-step verification': 'Não foi possível iniciar a verificação em duas etapas',
+  'Open your authenticator app and scan the QR code (or type the key).':
+    'Abra o aplicativo autenticador e escaneie o QR code (ou digite a chave).',
+  'Enter the 6-digit code the app shows to confirm.':
+    'Digite o código de 6 dígitos que o aplicativo mostra para confirmar.',
+  'QR code for the authenticator app': 'QR code para o aplicativo autenticador',
+  'Setup key': 'Chave de configuração',
+  'Copy setup key': 'Copiar chave de configuração',
+  'There are no recovery codes': 'Não existem códigos de recuperação',
+  'If you lose the phone with the authenticator app you will not be able to sign in. Keep the app backed up (or save the setup key somewhere safe) before continuing.':
+    'Se você perder o celular com o aplicativo autenticador, não conseguirá entrar. Mantenha o backup do aplicativo (ou guarde a chave de configuração em local seguro) antes de continuar.',
+  'Confirm and enable': 'Confirmar e ativar',
+  'Two-step verification enabled': 'Verificação em duas etapas ativada',
+  'Two-step verification disabled': 'Verificação em duas etapas desativada',
+  'Your account asks for a code from the authenticator app at every sign-in.':
+    'Sua conta pede um código do aplicativo autenticador em todo login.',
+  'Enabled on': 'Ativada em',
+  'Disable': 'Desativar',
+  'Without the phone that has the authenticator app you cannot sign in. If you change phones, disable and enable two-step verification again first.':
+    'Sem o celular com o aplicativo autenticador você não consegue entrar. Se trocar de celular, desative e ative a verificação em duas etapas novamente antes.',
+  'Disable two-step verification?': 'Desativar a verificação em duas etapas?',
+  'Confirm your password. Sign-in will only ask for the password afterwards.':
+    'Confirme sua senha. Depois disso, o login pedirá apenas a senha.',
+  'Cannot verify the password without a current email':
+    'Não é possível verificar a senha sem um e-mail atual',
+  'Two-step verification required': 'Verificação em duas etapas obrigatória',
+  'This account requires two-step verification for administrators. Enable it to continue using the app.':
+    'Esta conta exige verificação em duas etapas para administradores. Ative-a para continuar usando o sistema.',
+  'This account requires two-step verification for administrators. Enable it below to continue using the app.':
+    'Esta conta exige verificação em duas etapas para administradores. Ative-a abaixo para continuar usando o sistema.',
+  'Security policy': 'Política de segurança',
+  'Require two-step verification for administrators': 'Exigir duas etapas para admins',
+  'Owners and admins without an authenticator app are sent to Login e segurança until they enable it. Agents and viewers are not affected.':
+    'Proprietários e admins sem aplicativo autenticador são levados para Login e segurança até ativá-lo. Atendentes e visualizadores não são afetados.',
+  'You have not enabled two-step verification yet — this applies to you too.':
+    'Você ainda não ativou a verificação em duas etapas — isso vale para você também.',
+  'Could not save the setting': 'Não foi possível salvar a configuração',
+  'Could not reach the server': 'Não foi possível acessar o servidor',
+  'Two-step verification is now required for administrators':
+    'Verificação em duas etapas agora é obrigatória para administradores',
+  'Two-step verification is no longer required for administrators':
+    'Verificação em duas etapas não é mais obrigatória para administradores',
+  // Push notifications (round 2 spec §5)
+  'Notifications': 'Notificações',
+  'Browser push notifications': 'Notificações push no navegador',
+  'Get a browser notification when a customer writes, a conversation or task is assigned to you, or a task is about to be due — even with the tab closed.':
+    'Receba uma notificação do navegador quando um cliente escrever, uma conversa ou tarefa for atribuída a você ou uma tarefa estiver para vencer — mesmo com a aba fechada.',
+  'This browser': 'Este navegador',
+  'Notifications are on in this browser.': 'As notificações estão ativas neste navegador.',
+  'Notifications are blocked for this site. Allow them in the browser settings, then try again.':
+    'As notificações estão bloqueadas para este site. Permita nas configurações do navegador e tente de novo.',
+  'This browser does not support push notifications.':
+    'Este navegador não suporta notificações push.',
+  'Turn on notifications here — the browser will ask for permission.':
+    'Ative as notificações aqui — o navegador vai pedir permissão.',
+  'Enable in this browser': 'Ativar neste navegador',
+  'Turn off here': 'Desativar aqui',
+  'Notifications enabled in this browser': 'Notificações ativadas neste navegador',
+  'Notifications disabled in this browser': 'Notificações desativadas neste navegador',
+  'Permission denied — allow notifications for this site in your browser settings.':
+    'Permissão negada — permita notificações para este site nas configurações do navegador.',
+  'Could not enable notifications': 'Não foi possível ativar as notificações',
+  'Push is not configured on this server.': 'O push não está configurado neste servidor.',
+  'Ask the administrator to set the VAPID keys (see .env.local.example).':
+    'Peça ao administrador para definir as chaves VAPID (veja .env.local.example).',
+  'Devices': 'Dispositivos',
+  'Every browser where you turned notifications on. Remove one to stop sending there.':
+    'Todos os navegadores em que você ativou as notificações. Remova um para parar de enviar para ele.',
+  'No devices yet.': 'Nenhum dispositivo ainda.',
+  'this browser': 'este navegador',
+  'Added on': 'Adicionado em',
+  'last notified': 'última notificação',
+  'Remove device': 'Remover dispositivo',
+  'Device removed': 'Dispositivo removido',
+  'Could not remove the device': 'Não foi possível remover o dispositivo',
+  'Unknown browser': 'Navegador desconhecido',
+  'What to notify': 'O que notificar',
+  'Applies to all your devices. You are never notified about a conversation you have open on screen.':
+    'Vale para todos os seus dispositivos. Você nunca é notificado sobre uma conversa que está aberta na tela.',
+  'Could not save the preference': 'Não foi possível salvar a preferência',
+  'New customer message': 'Nova mensagem de cliente',
+  'When a conversation assigned to you (or unassigned) receives a message and you are not looking at it.':
+    'Quando uma conversa atribuída a você (ou sem responsável) recebe uma mensagem e você não está olhando para ela.',
+  'Task assigned to me': 'Tarefa atribuída a mim',
+  'When someone assigns you a task.': 'Quando alguém atribui uma tarefa a você.',
+  'Task due soon': 'Tarefa vencendo em breve',
+  'Fifteen minutes before one of your tasks is due.':
+    'Quinze minutos antes de uma das suas tarefas vencer.',
+  'Conversation assigned to me': 'Conversa atribuída a mim',
+  'When a conversation is handed to you.': 'Quando uma conversa é passada para você.',
+  'New message': 'Nova mensagem',
+  'Task assigned to you': 'Tarefa atribuída a você',
+  'Task due in': 'Tarefa vence em',
+  'Task due now': 'Tarefa vence agora',
+  'Conversation assigned to you': 'Conversa atribuída a você',
+  'by': 'por',
+  // White-label branding (round 2 spec §6)
+  'White-label branding': 'Marca própria (white-label)',
+  'Your name, logo and colour': 'Seu nome, logo e cor',
+  'Not included in your plan': 'Não incluído no seu plano',
+  'Your own name, logo and colour across the app for every member of the account.':
+    'Seu próprio nome, logo e cor em todo o app, para todos os membros da conta.',
+  'Only account admins can change the branding.':
+    'Só administradores da conta podem alterar a marca.',
+  'White-label branding is not part of your current plan. Get in touch with the SempreCRM team to add it.':
+    'A marca própria não faz parte do seu plano atual. Fale com a equipe SempreCRM para adicioná-la.',
+  'Restore defaults': 'Restaurar padrão',
+  'Branding saved': 'Marca salva',
+  'Default branding restored': 'Marca padrão restaurada',
+  'Could not save branding': 'Não foi possível salvar a marca',
+  'App name': 'Nome do app',
+  'Shown in the sidebar, the header and the browser tab title.':
+    'Aparece na barra lateral, no cabeçalho e no título da aba do navegador.',
+  'Logo': 'Logo',
+  'Square works best. PNG, SVG or WebP up to 512 KB; it replaces the default mark in the sidebar.':
+    'Quadrado funciona melhor. PNG, SVG ou WebP de até 512 KB; substitui o símbolo padrão na barra lateral.',
+  'Upload logo': 'Enviar logo',
+  'Replace logo': 'Trocar logo',
+  'Remove logo': 'Remover logo',
+  'Use a PNG, SVG or WebP image.': 'Use uma imagem PNG, SVG ou WebP.',
+  'The logo must be 512 KB or smaller.': 'O logo deve ter no máximo 512 KB.',
+  'Primary colour': 'Cor primária',
+  'Buttons, links and highlights. Each member keeps their own light or dark mode.':
+    'Botões, links e destaques. Cada membro mantém seu próprio modo claro ou escuro.',
+  'Palette': 'Paleta',
+  'Hex colour': 'Cor em hex',
+  'Pick a colour': 'Escolher uma cor',
+  'Use theme colour': 'Usar a cor do tema',
+  'Enter a colour like #7c3aed.': 'Informe uma cor como #7c3aed.',
+  'Overrides the accent theme for everyone in the account.':
+    'Substitui o tema de destaque para todos na conta.',
+  'Empty keeps the theme each member picked under Appearance.':
+    'Vazio mantém o tema que cada membro escolheu em Aparência.',
+  'How the sidebar header looks in light and dark mode.':
+    'Como o topo da barra lateral fica nos modos claro e escuro.',
+  'Primary button': 'Botão primário',
+  'Active item': 'Item ativo',
+  'Blue': 'Azul',
+  'Cyan': 'Ciano',
+  'Green': 'Verde',
+  'Lime': 'Lima',
+  'Orange': 'Laranja',
+  'Red': 'Vermelho',
+  'Pink': 'Rosa',
+  'Slate': 'Cinza',
 };

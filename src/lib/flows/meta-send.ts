@@ -15,6 +15,12 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import {
+  conversationChannel,
+  engineSendViaQr,
+  mimeFromUrl,
+  renderInteractiveAsText,
+} from '@/lib/whatsapp/qr-engine-send'
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -61,6 +67,17 @@ export async function engineSendText(
   args: SendTextEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // QR channel (migration 026) → gateway.
+  if ((await conversationChannel(db, args.conversationId)) === 'qr') {
+    return engineSendViaQr(db, {
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      text: args.text,
+      contentType: 'text',
+    })
+  }
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -170,6 +187,23 @@ export async function engineSendMedia(
   args: SendMediaEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // QR channel (migration 026) → gateway media send.
+  if ((await conversationChannel(db, args.conversationId)) === 'qr') {
+    return engineSendViaQr(db, {
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      media: {
+        url: args.link,
+        mimetype: mimeFromUrl(args.kind, args.link, args.filename),
+        filename: args.filename,
+        caption: args.caption,
+      },
+      contentType: args.kind,
+      preview: args.caption?.trim() || `[${args.kind}]`,
+    })
+  }
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -319,6 +353,29 @@ async function sendInteractiveViaMeta(
   input: SendInput,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // QR channel (migration 026): WhatsApp Web has no interactive
+  // messages, so the prompt degrades to body + a numbered option list.
+  if ((await conversationChannel(db, input.conversationId)) === 'qr') {
+    const options =
+      input.kind === 'buttons'
+        ? input.buttons.map((b) => b.title)
+        : input.sections.flatMap((s) => s.rows.map((r) => r.title))
+    const text = renderInteractiveAsText({
+      bodyText: input.bodyText,
+      options,
+      headerText: input.headerText,
+      footerText: input.footerText,
+    })
+    return engineSendViaQr(db, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      text,
+      contentType: 'text',
+      preview: input.bodyText,
+    })
+  }
 
   // Scope the contact + whatsapp_config lookups by account_id —
   // same defense-in-depth rationale as automations/meta-send.ts.

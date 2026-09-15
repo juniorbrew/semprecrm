@@ -15,7 +15,15 @@ import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
+import { TaskStatusesSettings } from '@/components/settings/task-statuses-settings';
+import { QuickRepliesSettings } from '@/components/settings/quick-replies-settings';
+import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings';
+import { InboxSettings } from '@/components/settings/inbox-settings';
+import { AuditLogSettings } from '@/components/settings/audit-log-settings';
+import { NotificationsSettings } from '@/components/settings/notifications-settings';
+import { BrandingSettings } from '@/components/settings/branding-settings';
 import { MembersTab } from '@/components/settings/members-tab';
+import { PlanPanel } from '@/components/settings/plan-panel';
 import {
   resolveSection,
   type SettingsSection,
@@ -56,11 +64,19 @@ export default function SettingsPage() {
     profile: <ProfileForm />,
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
+    notifications: <NotificationsSettings />,
     whatsapp: <WhatsAppConfig />,
     templates: <TemplateManager />,
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
+    tasks: <TaskStatusesSettings />,
+    quick_replies: <QuickRepliesSettings />,
+    inbox: <InboxSettings />,
+    integrations: <LeadSourcesSettings />,
+    audit: <AuditLogSettings />,
+    branding: <BrandingSettings />,
     members: <MembersTab />,
+    plan: <PlanPanel />,
   };
 
   return (

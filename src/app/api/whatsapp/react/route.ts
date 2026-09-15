@@ -86,7 +86,7 @@ export async function POST(request: Request) {
 
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('id, account_id, contact:contacts(phone)')
+      .select('id, account_id, channel, contact:contacts(phone)')
       .eq('id', targetMessage.conversation_id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -95,6 +95,19 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Conversation not found' },
         { status: 404 },
+      );
+    }
+
+    // Reactions over the QR channel are out of scope for this version
+    // (spec: "reações via QR" fora de escopo) — say so instead of
+    // trying Meta with a Baileys message id.
+    if (conversation.channel === 'qr') {
+      return NextResponse.json(
+        {
+          error: 'Reações ainda não estão disponíveis em conversas do canal QR.',
+          code: 'unsupported_on_qr',
+        },
+        { status: 400 },
       );
     }
 

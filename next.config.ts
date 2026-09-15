@@ -61,6 +61,8 @@ const SECURITY_HEADERS = [
 ] as const;
 
 const nextConfig: NextConfig = {
+  // Hide the floating "N" dev-tools badge in `next dev`; no effect on production.
+  devIndicators: false,
   /**
    * Cache-Control policy.
    *

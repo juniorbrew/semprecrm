@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { MFA_PATH, needsMfaChallenge } from "@/lib/auth/mfa";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,11 +60,22 @@ function LoginPageInner() {
       return;
     }
 
-    if (inviteToken) {
-      router.push(`/join/${encodeURIComponent(inviteToken)}`);
-    } else {
-      router.push("/dashboard");
+    const destination = inviteToken
+      ? `/join/${encodeURIComponent(inviteToken)}`
+      : "/dashboard";
+
+    // MFA (round 2 spec, section 7): the password only buys an `aal1`
+    // session. When the user owns a verified TOTP factor, Supabase
+    // reports `nextLevel === 'aal2'` and the code is asked on /mfa
+    // before the destination. The middleware enforces the same rule
+    // for direct navigation; this just skips the extra bounce.
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (needsMfaChallenge(aal)) {
+      router.push(`${MFA_PATH}?next=${encodeURIComponent(destination)}`);
+      return;
     }
+
+    router.push(destination);
   };
 
   return (

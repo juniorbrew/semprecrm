@@ -53,9 +53,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { RequireRole } from '@/components/auth/require-role';
+import { AvailabilityDot } from '@/components/layout/availability-toggle';
 import { useAuth } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
 import type { AccountRole } from '@/lib/auth/roles';
 import { InviteMemberDialog } from './invite-member-dialog';
+import { MfaRequirementToggle } from './mfa-requirement-toggle';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
 
@@ -66,6 +69,7 @@ interface Member {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  availability?: 'available' | 'away';
 }
 
 interface Invitation {
@@ -110,6 +114,7 @@ function fmtExpiresIn(iso: string): string {
 
 export function MembersTab() {
   const { user, canManageMembers } = useAuth();
+  const { t } = useLanguage();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -298,19 +303,28 @@ export function MembersTab() {
                   className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-4">
-                    <Avatar className="size-9 shrink-0">
-                      {member.avatar_url ? (
-                        <AvatarImage
-                          src={member.avatar_url}
-                          alt={member.full_name || 'Member'}
-                        />
-                      ) : null}
-                      <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                        {(member.full_name || member.email || 'U')
-                          .charAt(0)
-                          .toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
+                    <span
+                      className="relative shrink-0"
+                      title={member.availability === 'away' ? t('Away') : t('Available')}
+                    >
+                      <Avatar className="size-9">
+                        {member.avatar_url ? (
+                          <AvatarImage
+                            src={member.avatar_url}
+                            alt={member.full_name || 'Member'}
+                          />
+                        ) : null}
+                        <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
+                          {(member.full_name || member.email || 'U')
+                            .charAt(0)
+                            .toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <AvailabilityDot
+                        availability={member.availability}
+                        className="absolute -bottom-0.5 -right-0.5"
+                      />
+                    </span>
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -320,6 +334,11 @@ export function MembersTab() {
                         {isSelf && (
                           <Badge className="bg-muted text-muted-foreground border-border text-[10px] uppercase tracking-wide">
                             You
+                          </Badge>
+                        )}
+                        {member.availability === 'away' && (
+                          <Badge className="bg-muted text-muted-foreground border-border text-[10px] uppercase tracking-wide">
+                            {t('Away')}
                           </Badge>
                         )}
                       </div>
@@ -492,6 +511,16 @@ export function MembersTab() {
               </CardContent>
             </Card>
           )}
+        </div>
+      </RequireRole>
+
+      {/* Owner-only security policy for the team (round 2 spec, section 7). */}
+      <RequireRole min="owner">
+        <div>
+          <h3 className="mb-3 text-sm font-medium text-foreground">
+            {t('Security policy')}
+          </h3>
+          <MfaRequirementToggle />
         </div>
       </RequireRole>
 

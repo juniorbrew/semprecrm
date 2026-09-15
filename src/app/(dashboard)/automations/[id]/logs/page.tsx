@@ -250,6 +250,7 @@ function StepRow({
               condition: 'condição',
               send_webhook: 'enviar webhook',
               close_conversation: 'encerrar conversa',
+              create_task: 'criar tarefa',
             }[result.step_type] ?? result.step_type)
           : result.step_type}
       </span>

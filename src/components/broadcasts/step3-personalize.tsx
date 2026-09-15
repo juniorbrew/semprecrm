@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ArrowLeft, ArrowRight, Eye, Loader2 } from 'lucide-react';
+import { useLanguage } from '@/hooks/use-language';
 
 type VariableType = 'static' | 'field' | 'custom_field';
 
@@ -29,21 +30,22 @@ interface Step3Props {
   onBack: () => void;
 }
 
+/** Labels are English i18n keys — rendered through t(). */
 const contactFields = [
   { value: 'name', label: 'Contact Name' },
   { value: 'phone', label: 'Phone Number' },
-  { value: 'email', label: 'Endereço de e-mail' },
-  { value: 'company', label: 'Empresa' },
+  { value: 'email', label: 'Email Address' },
+  { value: 'company', label: 'Company' },
 ];
 
 const SAMPLE_CONTACT: Contact = {
   id: 'sample',
   user_id: '',
   account_id: '',
-  name: 'John Doe',
-  phone: '+1234567890',
-  email: 'john@example.com',
-  company: 'Acme Corp',
+  name: 'Maria Silva',
+  phone: '+55 11 99999-0000',
+  email: 'maria@exemplo.com.br',
+  company: 'Empresa Exemplo',
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
@@ -55,6 +57,7 @@ export function Step3Personalize({
   onNext,
   onBack,
 }: Step3Props) {
+  const { t } = useLanguage();
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingFields, setLoadingFields] = useState(true);
   const [firstContact, setFirstContact] = useState<Contact | null>(null);
@@ -182,22 +185,21 @@ export function Step3Personalize({
 
   const previewLabel = firstContact
     ? firstContact.name || firstContact.phone
-    : 'sample data';
+    : t('sample data');
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Personalize Message</h2>
+        <h2 className="text-lg font-semibold text-foreground">{t('Personalize Message')}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Map template variables to contact fields, custom fields, or static
-          values.
+          {t('Map template variables to contact fields, custom fields, or static values.')}
         </p>
       </div>
 
       {placeholders.length === 0 ? (
         <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
           <p className="text-sm text-muted-foreground">
-            Este modelo não possui variáveis para personalizar.
+            {t('This template has no variables to personalize.')}
           </p>
         </div>
       ) : (
@@ -220,10 +222,15 @@ export function Step3Personalize({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      Tipo de associação
+                      {t('Mapping type')}
                     </label>
                     <Select
                       value={mapping.type}
+                      items={{
+                        static: t('Static Value'),
+                        field: t('Contact Field'),
+                        custom_field: t('Custom Field'),
+                      }}
                       onValueChange={(val) =>
                         updateVariable(key, {
                           type: val as VariableType,
@@ -235,10 +242,10 @@ export function Step3Personalize({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="border-border bg-popover">
-                        <SelectItem value="static">Static Value</SelectItem>
-                        <SelectItem value="field">Contact Field</SelectItem>
+                        <SelectItem value="static">{t('Static Value')}</SelectItem>
+                        <SelectItem value="field">{t('Contact Field')}</SelectItem>
                         <SelectItem value="custom_field">
-                          Campo personalizado
+                          {t('Custom Field')}
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -246,7 +253,7 @@ export function Step3Personalize({
 
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {mapping.type === 'static' ? 'Valor' : 'Field'}
+                      {mapping.type === 'static' ? t('Value') : t('Field')}
                     </label>
                     {mapping.type === 'static' ? (
                       <Input
@@ -254,7 +261,7 @@ export function Step3Personalize({
                         onChange={(e) =>
                           updateVariable(key, { value: e.target.value })
                         }
-                        placeholder="Enter value..."
+                        placeholder={t('Enter value...')}
                         className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                       />
                     ) : mapping.type === 'field' ? (
@@ -265,12 +272,12 @@ export function Step3Personalize({
                         }
                       >
                         <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                          <SelectValue placeholder="Select field..." />
+                          <SelectValue placeholder={t('Select field…')} />
                         </SelectTrigger>
                         <SelectContent className="border-border bg-popover">
                           {contactFields.map((field) => (
                             <SelectItem key={field.value} value={field.value}>
-                              {field.label}
+                              {t(field.label)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -286,10 +293,10 @@ export function Step3Personalize({
                           <SelectValue
                             placeholder={
                               loadingFields
-                                ? 'Carregando…'
+                                ? t('Loading…')
                                 : customFields.length === 0
-                                  ? 'No custom fields'
-                                  : 'Select custom field…'
+                                  ? t('No custom fields')
+                                  : t('Select custom field…')
                             }
                           />
                         </SelectTrigger>
@@ -315,7 +322,7 @@ export function Step3Personalize({
       <div className="rounded-xl border border-border bg-card/50 p-4">
         <div className="mb-3 flex items-center gap-2">
           <Eye className="h-4 w-4 text-primary" />
-          <p className="text-sm font-medium text-foreground">Live Preview</p>
+          <p className="text-sm font-medium text-foreground">{t('Live Preview')}</p>
           <span className="text-xs text-muted-foreground">({previewLabel})</span>
           {loadingPreview && (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
@@ -332,11 +339,11 @@ export function Step3Personalize({
 
       {unmappedKeys.length > 0 && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Map every placeholder before continuing — still missing{' '}
+          {t('Map every placeholder before continuing — still missing')}{' '}
           <span className="font-mono font-semibold">
             {unmappedKeys.join(', ')}
           </span>
-          . Otherwise those placeholders will ship to Meta as empty strings.
+          {t('. Otherwise those placeholders will ship to Meta as empty strings.')}
         </div>
       )}
 
@@ -347,14 +354,14 @@ export function Step3Personalize({
           className="border-border text-muted-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Voltar
+          {t('Back')}
         </Button>
         <Button
           onClick={onNext}
           disabled={unmappedKeys.length > 0}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          Avançar
+          {t('Next')}
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>

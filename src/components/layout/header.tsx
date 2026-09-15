@@ -3,7 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
+import { useBranding } from "@/hooks/use-branding";
+import {
+  LogOut,
+  Menu,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  User,
+} from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -17,18 +24,24 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import {
+  AvailabilityDot,
+  AvailabilityToggle,
+} from "@/components/layout/availability-toggle";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Painel",
   "/inbox": "Caixa de entrada",
   "/contacts": "Contatos",
   "/pipelines": "Funis",
+  "/tasks": "Tarefas",
   "/broadcasts": "Disparos",
   "/automations": "Automações",
+  "/flows": "Fluxos",
   "/settings": "Configurações",
 };
 
-function getPageTitle(pathname: string): string {
+export function getPageTitle(pathname: string): string {
   if (pageTitles[pathname]) return pageTitles[pathname];
   const match = Object.entries(pageTitles).find(([path]) =>
     pathname.startsWith(path),
@@ -44,7 +57,8 @@ interface HeaderProps {
 
 export function Header({ onOpenSidebar }: HeaderProps) {
   const pathname = usePathname();
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, isPlatformAdmin } = useAuth();
+  const branding = useBranding();
   const title = getPageTitle(pathname);
 
   const initial =
@@ -67,6 +81,14 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
           {title}
         </h1>
+        {/* White-label: the account's app name sits next to the page title
+            on wide screens (the sidebar carries it on desktop, but the
+            header is all a phone shows). */}
+        {branding.enabled ? (
+          <span className="hidden truncate text-sm text-muted-foreground md:inline lg:hidden">
+            · {branding.app_name}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
@@ -77,17 +99,23 @@ export function Header({ onOpenSidebar }: HeaderProps) {
           className="flex items-center gap-2 rounded-md px-1 py-1 transition-colors hover:bg-muted/70 focus:bg-muted/70 focus:outline-none data-popup-open:bg-muted/70 sm:gap-3 sm:pl-1 sm:pr-3"
           aria-label="Abrir menu da conta"
         >
-          <Avatar className="size-8">
-            {profile?.avatar_url ? (
-              <AvatarImage
-                src={profile.avatar_url}
-                alt={profile.full_name ?? "Avatar"}
-              />
-            ) : null}
-            <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-              {initial}
-            </AvatarFallback>
-          </Avatar>
+          <span className="relative">
+            <Avatar className="size-8">
+              {profile?.avatar_url ? (
+                <AvatarImage
+                  src={profile.avatar_url}
+                  alt={profile.full_name ?? "Avatar"}
+                />
+              ) : null}
+              <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
+                {initial}
+              </AvatarFallback>
+            </Avatar>
+            <AvailabilityDot
+              availability={profile?.availability}
+              className="absolute -bottom-0.5 -right-0.5"
+            />
+          </span>
           <span className="hidden text-sm font-medium text-foreground sm:inline">
             {profile?.full_name ?? "Usuário"}
           </span>
@@ -104,6 +132,9 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             <p className="truncate text-xs text-muted-foreground">
               {profile?.email ?? ""}
             </p>
+          </div>
+          <div className="px-2 pb-2 pt-1">
+            <AvailabilityToggle />
           </div>
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem
@@ -128,6 +159,19 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             <SettingsIcon className="size-4" />
             Settings
           </DropdownMenuItem>
+          {isPlatformAdmin ? (
+            <DropdownMenuItem
+              render={
+                <Link
+                  href="/platform"
+                  className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                />
+              }
+            >
+              <ShieldCheck className="size-4" />
+              Platform
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem
             onClick={signOut}

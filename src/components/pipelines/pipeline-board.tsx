@@ -19,6 +19,7 @@ import { DealCard } from "./deal-card";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useLanguage } from "@/hooks/use-language";
 import { formatCurrency } from "@/lib/currency";
 
 interface PipelineBoardProps {
@@ -102,7 +103,11 @@ export function PipelineBoard({
           natural layout. The board can still overflow horizontally on
           lg+ once a pipeline has many stages (columns keep a 260px
           min-width), so a thin scrollbar stays visible on desktop. */}
-      <div className="pipeline-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 lg:snap-none">
+      {/* Under the `board-fit` variant (globals.css) the page is a
+          full-height flex column, so the board takes the remaining
+          height and each column scrolls its own card list; header, KPI
+          strip and stage headers stay put while a long column is read. */}
+      <div className="pipeline-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 lg:snap-none board-fit:min-h-0 board-fit:flex-1">
         {sortedStages.map((stage) => {
           const stageDeals = dealsByStage.get(stage.id) ?? [];
           const totalValue = stageDeals.reduce(
@@ -162,7 +167,8 @@ export function PipelineBoard({
           }
         }
         @media (hover: hover) and (pointer: fine) {
-          .pipeline-scroll {
+          .pipeline-scroll,
+          :global(.stage-scroll) {
             scrollbar-width: thin;
             scrollbar-color: var(--border) transparent;
           }
@@ -201,6 +207,7 @@ function StageColumn({
   onEditDeal: (deal: Deal) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
+  const { t } = useLanguage();
 
   return (
     // On mobile each column is `w-[85vw]` (with a reasonable min/max)
@@ -209,7 +216,7 @@ function StageColumn({
     // restore the flex-1 share-the-row behavior. The droppable ref is
     // on the inner messages region below — intentionally NOT here, so
     // a drag over the column header doesn't highlight the whole column.
-    <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 lg:w-auto lg:max-w-none lg:flex-1 lg:basis-[260px] lg:shrink lg:snap-none">
+    <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none">
       {/* 3px colored top border — sits above the column's padding */}
       <div
         className="-mx-4 -mt-4 h-[3px] rounded-t-xl"
@@ -229,7 +236,7 @@ function StageColumn({
 
       <div
         ref={setNodeRef}
-        className={`mt-3 flex flex-1 flex-col gap-2 rounded-lg transition-all ${
+        className={`stage-scroll mt-3 flex flex-1 flex-col gap-2 rounded-lg transition-all board-fit:min-h-0 board-fit:overflow-y-auto ${
           isOver
             ? "bg-primary/5 outline outline-2 outline-dashed outline-primary outline-offset-2"
             : ""
@@ -237,7 +244,7 @@ function StageColumn({
       >
         {deals.length === 0 ? (
           <div className="flex flex-1 items-center justify-center rounded-lg border-2 border-dashed border-border py-10 text-xs text-muted-foreground">
-            Drop a deal here
+            {t("Drop a deal here")}
           </div>
         ) : (
           deals.map((deal) => (
@@ -258,7 +265,7 @@ function StageColumn({
         className="mt-3 w-full justify-start border border-dashed border-border bg-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
       >
         <Plus className="mr-1 h-3 w-3" />
-        Add Deal
+        {t("Add Deal")}
       </Button>
     </div>
   );

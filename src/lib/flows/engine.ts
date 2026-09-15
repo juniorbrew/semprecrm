@@ -33,6 +33,7 @@
  */
 
 import { supabaseAdmin } from "./admin-client";
+import { accountHasModule } from "@/lib/plans-server";
 import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
@@ -831,6 +832,12 @@ export async function dispatchInboundToFlows(
 ): Promise<DispatchInboundResult> {
   const db = supabaseAdmin();
   try {
+    // Plan gate (migration 025): no `flows` module (or a blocked
+    // account) -> the inbound is left for the rest of the pipeline.
+    if (!(await accountHasModule(db, input.accountId, "flows"))) {
+      return { consumed: false, outcome: "no_match" };
+    }
+
     const activeRun = await loadActiveRunForContact(
       db,
       input.accountId,

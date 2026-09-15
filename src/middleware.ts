@@ -1,6 +1,13 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+import {
+  isMfaExemptPath,
+  MFA_PATH,
+  needsMfaChallenge,
+  resolveAssuranceLevels,
+} from '@/lib/auth/mfa'
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -24,6 +31,30 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+
+  // MFA (round 2 spec, section 7). A user who owns a verified TOTP
+  // factor but whose session is still `aal1` (password only) may reach
+  // nothing but the challenge page and our own auth API until they
+  // enter the code. One extra *local* call: the AAL comes from the JWT
+  // in the cookie; the factor list rides on the `getUser()` result we
+  // already paid for, so a factor enrolled on another device counts
+  // immediately instead of after the next token refresh.
+  if (user && !isMfaExemptPath(request.nextUrl.pathname)) {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+    const levels = resolveAssuranceLevels(aal?.currentLevel, user.factors)
+    if (needsMfaChallenge(levels)) {
+      if (request.nextUrl.pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { error: 'Two-step verification required', code: 'mfa_required' },
+          { status: 401 },
+        )
+      }
+      const url = request.nextUrl.clone()
+      url.pathname = MFA_PATH
+      url.search = ''
+      return NextResponse.redirect(url)
+    }
+  }
 
   // Auth pages - redirect to dashboard if already logged in.
   // Exception: when an invite token is in the query string we

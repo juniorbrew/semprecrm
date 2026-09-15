@@ -174,6 +174,56 @@ describe("validateStepsForActivation", () => {
       "steps[0].subject",
     ]);
   });
+
+  describe("create_task", () => {
+    it("accepts a title-only step and a fully configured one", () => {
+      expect(
+        validateStepsForActivation([
+          { step_type: "create_task", step_config: { title: "Follow up" } },
+          {
+            step_type: "create_task",
+            step_config: {
+              title: "Call {{ contact.name }}",
+              description: "Ask about the quote",
+              priority: "high",
+              assignee_user_id: "user-uuid",
+              due_in_hours: 24,
+            },
+          },
+          // The builder stores an emptied number input as "" — that
+          // means "no due date", not an error.
+          {
+            step_type: "create_task",
+            step_config: { title: "x", priority: "", due_in_hours: "" },
+          },
+        ]),
+      ).toEqual([]);
+    });
+
+    it("requires a non-blank title", () => {
+      const issues = validateStepsForActivation([
+        { step_type: "create_task", step_config: { title: "   " } },
+        { step_type: "create_task", step_config: {} },
+      ]);
+      expect(issues).toEqual([
+        { path: "steps[0].title", message: "task title is required" },
+        { path: "steps[1].title", message: "task title is required" },
+      ]);
+    });
+
+    it("rejects unknown priorities and negative / non-numeric due hours", () => {
+      const issues = validateStepsForActivation([
+        { step_type: "create_task", step_config: { title: "x", priority: "asap" } },
+        { step_type: "create_task", step_config: { title: "x", due_in_hours: -2 } },
+        { step_type: "create_task", step_config: { title: "x", due_in_hours: "soon" } },
+      ]);
+      expect(issues.map((i) => i.path)).toEqual([
+        "steps[0].priority",
+        "steps[1].due_in_hours",
+        "steps[2].due_in_hours",
+      ]);
+    });
+  });
 });
 
 describe("validateTriggerForActivation", () => {
@@ -228,6 +278,63 @@ describe("validateTriggerForActivation", () => {
     expect(
       validateTriggerForActivation("tag_added", { tag_id: "tag-uuid" }),
     ).toEqual([]);
+  });
+
+  it("lead_captured: source_id is optional but must be a uuid when set", () => {
+    expect(validateTriggerForActivation("lead_captured", {})).toEqual([]);
+    expect(validateTriggerForActivation("lead_captured", { source_id: "" })).toEqual([]);
+    expect(
+      validateTriggerForActivation("lead_captured", {
+        source_id: "0b7f2a6e-4b1c-4d2e-9f3a-8c1d2e3f4a5b",
+      }),
+    ).toEqual([]);
+    expect(
+      validateTriggerForActivation("lead_captured", { source_id: "not-a-uuid" }).map((i) => i.path),
+    ).toEqual(["trigger.source_id"]);
+    expect(
+      validateTriggerForActivation("lead_captured", { source_id: 42 }).map((i) => i.path),
+    ).toEqual(["trigger.source_id"]);
+  });
+
+  it("conversation_inactive: hours 0.05–720, known last_from, non-empty statuses", () => {
+    expect(
+      validateTriggerForActivation("conversation_inactive", {
+        hours: 24,
+        last_from: "agent",
+        statuses: ["open", "pending"],
+      }),
+    ).toEqual([]);
+    expect(
+      validateTriggerForActivation("conversation_inactive", {
+        hours: 0.05,
+        last_from: "any",
+        statuses: ["open"],
+      }),
+    ).toEqual([]);
+    expect(
+      validateTriggerForActivation("conversation_inactive", {
+        hours: "12",
+        last_from: "customer",
+        statuses: ["pending"],
+      }),
+    ).toEqual([]);
+
+    const paths = (cfg: unknown) =>
+      validateTriggerForActivation("conversation_inactive", cfg).map((i) => i.path);
+    expect(paths({ hours: 0.01, last_from: "agent", statuses: ["open"] })).toEqual([
+      "trigger.hours",
+    ]);
+    expect(paths({ hours: 721, last_from: "agent", statuses: ["open"] })).toEqual([
+      "trigger.hours",
+    ]);
+    expect(paths({ hours: 2, last_from: "bot", statuses: ["open"] })).toEqual([
+      "trigger.last_from",
+    ]);
+    expect(paths({ hours: 2, last_from: "agent", statuses: [] })).toEqual(["trigger.statuses"]);
+    expect(paths({ hours: 2, last_from: "agent", statuses: ["closed"] })).toEqual([
+      "trigger.statuses",
+    ]);
+    expect(paths({})).toEqual(["trigger.hours", "trigger.last_from", "trigger.statuses"]);
   });
 
   it("does not flag unknown trigger types (handled elsewhere)", () => {

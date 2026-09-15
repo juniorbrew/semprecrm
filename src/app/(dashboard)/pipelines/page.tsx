@@ -6,6 +6,7 @@ import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
+import { DealDrawer } from "@/components/pipelines/deal-drawer";
 import { PipelineAnalytics } from "@/components/pipelines/pipeline-analytics";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,8 +66,13 @@ export default function PipelinesPage() {
   // Deal form state is lifted here so both the top-bar "Adicionar negócio" and
   // the per-column "+" trigger the same Sheet.
   const [dealFormOpen, setDealFormOpen] = useState(false);
-  const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>("");
+
+  // Clicking a card opens the deal drawer (read view first). Only the
+  // id is stored so the drawer always renders the live row from
+  // `deals` and reflects status / stage changes after a refetch.
+  const [drawerDealId, setDrawerDealId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Guard against double-seeding (React StrictMode double-effect in dev).
   const seedAttempted = useRef(false);
@@ -99,7 +105,9 @@ export default function PipelinesPage() {
     async (pipelineId: string) => {
       const { data } = await supabase
         .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
+        .select(
+          "*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*), loss_reason:deal_loss_reasons(id, name)",
+        )
         .eq("pipeline_id", pipelineId)
         .order("created_at", { ascending: false });
       return (data ?? []) as Deal[];
@@ -175,7 +183,6 @@ export default function PipelinesPage() {
     if (!selectedPipelineId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setStages([]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDeals([]);
       return;
     }
@@ -220,30 +227,34 @@ export default function PipelinesPage() {
       );
       const { error } = await supabase
         .from("deals")
-        .update({ stage_id: newStageId })
+        .update({ stage_id: newStageId, updated_at: new Date().toISOString() })
         .eq("id", dealId);
       if (error) {
         toast.error("Failed to move deal");
-        refreshDeals();
       }
+      // Refetch either way so `updated_at` (shown in the drawer
+      // timeline) and any server-side changes come back.
+      await refreshDeals();
     },
     [supabase, refreshDeals],
   );
 
   const handleAddDeal = useCallback(
     (stageId?: string) => {
-      setEditingDeal(null);
       setDefaultStageId(stageId ?? stages[0]?.id ?? "");
       setDealFormOpen(true);
     },
     [stages],
   );
 
-  const handleEditDeal = useCallback((deal: Deal) => {
-    setEditingDeal(deal);
-    setDefaultStageId(deal.stage_id);
-    setDealFormOpen(true);
+  const handleOpenDeal = useCallback((deal: Deal) => {
+    setDrawerDealId(deal.id);
+    setDrawerOpen(true);
   }, []);
+
+  const drawerDeal = drawerDealId
+    ? deals.find((d) => d.id === drawerDealId) ?? null
+    : null;
 
   async function handleCreatePipeline() {
     const name = newPipelineName.trim();
@@ -312,7 +323,11 @@ export default function PipelinesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    // `board-fit` (globals.css: ≥80rem wide and ≥760px tall): fill
+    // <main> so the board takes the leftover height and scrolls per
+    // column while header + KPIs stay visible. Otherwise the page keeps
+    // its natural height and <main> scrolls as before.
+    <div className="space-y-6 board-fit:flex board-fit:h-full board-fit:flex-col">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -416,7 +431,7 @@ export default function PipelinesPage() {
             deals={deals}
             onDealMoved={handleDealMoved}
             onAddDeal={handleAddDeal}
-            onEditDeal={handleEditDeal}
+            onEditDeal={handleOpenDeal}
           />
         </>
       )}
@@ -477,15 +492,29 @@ export default function PipelinesPage() {
         />
       )}
 
-      {/* Deal Form (Sheet) */}
+      {/* New deal (Sheet) */}
       <DealForm
         open={dealFormOpen}
         onOpenChange={setDealFormOpen}
-        deal={editingDeal}
+        deal={null}
         pipelineId={selectedPipelineId}
         stages={stages}
         defaultStageId={defaultStageId}
         onSaved={refreshDeals}
+      />
+
+      {/* Existing deal: read view first, edit second */}
+      <DealDrawer
+        open={drawerOpen && !!drawerDeal}
+        onOpenChange={(next) => {
+          setDrawerOpen(next);
+          if (!next) setDrawerDealId(null);
+        }}
+        deal={drawerDeal}
+        pipelineId={selectedPipelineId}
+        stages={stages}
+        onChanged={refreshDeals}
+        onDealMoved={handleDealMoved}
       />
     </div>
   );

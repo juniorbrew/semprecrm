@@ -19,7 +19,13 @@
 
 import { NextResponse } from "next/server";
 
-import { requireRole, toErrorResponse } from "@/lib/auth/account";
+import {
+  getEntitlements,
+  PlanLimitError,
+  requireRole,
+  toErrorResponse,
+} from "@/lib/auth/account";
+import { canAddUser } from "@/lib/plans";
 import {
   clampExpiryDays,
   generateInviteToken,
@@ -32,6 +38,8 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { AUDIT_ACTIONS } from "@/lib/audit";
+import { audit } from "@/lib/audit-server";
 
 // Resolve the base URL we publish invite links under.
 //
@@ -214,6 +222,44 @@ export async function POST(request: Request) {
       label = trimmed === "" ? null : trimmed;
     }
 
+    // Plan limit (migration 025): active members + pending invites
+    // must stay below `max_users`. Pending invites count so an admin
+    // can't pre-issue ten links on a two-seat plan. `null` = unlimited.
+    const entitlements = await getEntitlements(ctx);
+    const maxUsers = entitlements.limits.max_users;
+    if (maxUsers !== null) {
+      const nowIso = new Date().toISOString();
+      const [membersRes, invitesRes] = await Promise.all([
+        ctx.supabase
+          .from("profiles")
+          .select("user_id", { count: "exact", head: true })
+          .eq("account_id", ctx.accountId),
+        ctx.supabase
+          .from("account_invitations")
+          .select("id", { count: "exact", head: true })
+          .eq("account_id", ctx.accountId)
+          .is("accepted_at", null)
+          .gt("expires_at", nowIso),
+      ]);
+      if (membersRes.error || invitesRes.error) {
+        console.error("[POST /api/account/invitations] limit check failed:", {
+          members: membersRes.error,
+          invites: invitesRes.error,
+        });
+        return NextResponse.json(
+          { error: "Failed to check plan limits" },
+          { status: 500 },
+        );
+      }
+      const activeMembers = membersRes.count ?? 0;
+      const pendingInvites = invitesRes.count ?? 0;
+      if (!canAddUser(activeMembers, pendingInvites, maxUsers)) {
+        throw new PlanLimitError(
+          `Your plan allows up to ${maxUsers} users (including pending invites). Remove a member, revoke an invite, or upgrade the plan.`,
+        );
+      }
+    }
+
     const { token, hash } = generateInviteToken();
 
     const { data, error } = await ctx.supabase
@@ -236,6 +282,15 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
+
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.MEMBER_INVITED,
+      entityType: "invitation",
+      entityId: data.id,
+      metadata: { role, label, expires_at: data.expires_at },
+    });
 
     return NextResponse.json(
       {

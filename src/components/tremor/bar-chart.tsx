@@ -692,9 +692,15 @@ const BarChart = React.forwardRef<HTMLDivElement, BarChartProps>(
             ) : null}
             <XAxis
               hide={!showXAxis}
+              // Recharts 3 renders each tick as <text class={clsx(tick.className,
+              // 'recharts-cartesian-axis-tick-value')}> and no longer wraps the
+              // axis in a <g className>, so the font-size / fill classes must
+              // travel on the `tick` object — on the axis they silently drop
+              // and the labels fall back to the 16px black UA default.
               tick={{
                 transform:
                   layout !== "vertical" ? "translate(0, 6)" : undefined,
+                className: cx("text-xs", "fill-muted-foreground"),
               }}
               fill=""
               stroke=""
@@ -752,6 +758,7 @@ const BarChart = React.forwardRef<HTMLDivElement, BarChartProps>(
                   layout !== "vertical"
                     ? "translate(-3, 0)"
                     : "translate(0, 0)",
+                className: cx("text-xs", "fill-muted-foreground"),
               }}
               {...(layout !== "vertical"
                 ? {

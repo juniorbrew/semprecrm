@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -32,6 +33,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
+import { translateLiteral } from "@/lib/i18n";
 
 /**
  * Flows list page.
@@ -57,7 +60,7 @@ interface FlowRow {
 const STATUS_LABELS: Record<FlowRow["status"], string> = {
   draft: "Rascunho",
   active: "Ativo",
-  archived: "Archived",
+  archived: "Arquivado",
 };
 
 const STATUS_COLORS: Record<FlowRow["status"], string> = {
@@ -83,6 +86,7 @@ const TEMPLATE_ICONS = {
 
 export default function FlowsPage() {
   const router = useRouter();
+  const { t, language } = useLanguage();
   const canCreate = useCan("send-messages");
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,6 +119,8 @@ export default function FlowsPage() {
       } catch (err) {
         if (!cancelled) {
           console.error(err);
+          // Literal on purpose: `t` would become an effect dependency;
+          // the DOM translator localises the toast anyway.
           toast.error("Couldn't load flows.");
         }
       } finally {
@@ -146,7 +152,7 @@ export default function FlowsPage() {
       router.push(`/flows/${json.flow.id}`);
     } catch (err) {
       console.error(err);
-      toast.error("Couldn't create flow.");
+      toast.error(t("Couldn't create flow."));
     } finally {
       setCreating(false);
     }
@@ -176,18 +182,23 @@ export default function FlowsPage() {
   }
 
   async function handleDelete(flow: FlowRow) {
+    // window.confirm is native UI, so the DOM translator never sees it —
+    // translate the literal by hand.
     const yes = window.confirm(
-      `Delete "${flow.name}"? Any active runs will end immediately.`,
+      translateLiteral(
+        `Delete "${flow.name}"? Any active runs will end immediately.`,
+        language,
+      ),
     );
     if (!yes) return;
     try {
       const res = await fetch(`/api/flows/${flow.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       setFlows((prev) => prev.filter((f) => f.id !== flow.id));
-      toast.success("Flow deleted.");
+      toast.success(t("Flow deleted."));
     } catch (err) {
       console.error(err);
-      toast.error("Couldn't delete flow.");
+      toast.error(t("Couldn't delete flow."));
     }
   }
 
@@ -279,7 +290,7 @@ export default function FlowsPage() {
                         {t.description}
                       </span>
                       <span className="mt-auto border-t border-border pt-2 text-[11px] text-muted-foreground">
-                        {t.node_count} {t.node_count === 1 ? "node" : "nodes"}
+                        {`${t.node_count} ${t.node_count === 1 ? "nó" : "nós"}`}
                       </span>
                     </button>
                   );
@@ -295,7 +306,7 @@ export default function FlowsPage() {
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g. Welcome menu"
+              placeholder="ex.: Menu de boas-vindas"
               className="bg-muted"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreate();
@@ -364,7 +375,8 @@ function FlowCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const triggerSummary = describeTrigger(flow);
+  const { t } = useLanguage();
+  const triggerSummary = describeTrigger(flow, t);
   const StatusIcon =
     flow.status === "active"
       ? PlayCircle
@@ -376,8 +388,14 @@ function FlowCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Workflow className="h-4 w-4 shrink-0 text-primary" />
-          <h3 className="truncate text-sm font-semibold text-foreground">
-            {flow.name}
+          <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
+            <button
+              type="button"
+              onClick={onEdit}
+              className="max-w-full truncate text-left hover:text-primary hover:underline"
+            >
+              {flow.name}
+            </button>
           </h3>
         </div>
         <Badge
@@ -399,12 +417,20 @@ function FlowCard({
       <div className="mt-4 flex items-center gap-3 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <MessageSquare className="h-3 w-3" />
-          {flow.execution_count} {flow.execution_count === 1 ? "run" : "runs"}
+          {`${flow.execution_count} ${flow.execution_count === 1 ? "execução" : "execuções"}`}
         </span>
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
-        <Button variant="ghost" size="sm" onClick={onEdit}>
+        {/* A real anchor (via next/link) so the editor opens on any
+            click strategy — keyboard, middle-click, programmatic — and
+            not only through the router handler. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          nativeButton={false}
+          render={<Link href={`/flows/${flow.id}`} />}
+        >
           <Pencil className="h-3.5 w-3.5" />
           Editar
         </Button>
@@ -422,16 +448,19 @@ function FlowCard({
   );
 }
 
-function describeTrigger(flow: FlowRow): string {
+function describeTrigger(
+  flow: FlowRow,
+  t: (english: string) => string,
+): string {
   if (flow.trigger_type === "keyword") {
     const keywords = Array.isArray(flow.trigger_config.keywords)
       ? (flow.trigger_config.keywords as string[])
       : [];
-    if (keywords.length === 0) return "Triggers on keyword (none set)";
-    return `Triggers on: ${keywords.join(", ")}`;
+    if (keywords.length === 0) return t("Triggers on keyword (none set)");
+    return `${t("Triggers on:")} ${keywords.join(", ")}`;
   }
   if (flow.trigger_type === "first_inbound_message") {
-    return "Triggers on a contact's first-ever inbound message";
+    return t("Triggers on a contact's first-ever inbound message");
   }
-  return "Manual trigger";
+  return t("Manual trigger");
 }

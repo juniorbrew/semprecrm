@@ -32,8 +32,11 @@ import {
   Download,
   ChevronDown,
   Trash2,
+  CalendarClock,
+  FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useLanguage } from '@/hooks/use-language';
 import {
   getBroadcastStatus,
   getRecipientStatus,
@@ -74,11 +77,11 @@ interface FunnelStep {
  * Width is relative to the largest step (typically Sent) so we
  * always render a full bar at the top and proportional tails.
  */
-function FunnelChart({ steps }: { steps: FunnelStep[] }) {
+function FunnelChart({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const max = Math.max(...steps.map((s) => s.value), 1);
   return (
     <div className="rounded-xl border border-border bg-card p-4">
-      <h3 className="mb-4 text-sm font-medium text-foreground">Funnel</h3>
+      <h3 className="mb-4 text-sm font-medium text-foreground">{title}</h3>
       <div className="space-y-2">
         {steps.map((step) => {
           const pctOfMax = Math.max(5, Math.round((step.value / max) * 100));
@@ -88,7 +91,7 @@ function FunnelChart({ steps }: { steps: FunnelStep[] }) {
               : 0;
           return (
             <div key={step.label} className="flex items-center gap-3">
-              <span className="w-20 shrink-0 text-xs text-muted-foreground">
+              <span className="w-24 shrink-0 text-xs text-muted-foreground">
                 {step.label}
               </span>
               <div className="relative h-7 flex-1 rounded-full bg-muted">
@@ -144,6 +147,7 @@ function downloadBlob(filename: string, content: string) {
 export default function BroadcastDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { t, language } = useLanguage();
   const broadcastId = params.id as string;
 
   const [broadcast, setBroadcast] = useState<Broadcast | null>(null);
@@ -196,22 +200,53 @@ export default function BroadcastDetailPage() {
     [recipients, statusFilter],
   );
 
+  /**
+   * The broadcasts row carries no sent_at of its own — derive the send
+   * moment from the earliest recipient timestamp so the header can say
+   * "Enviado em …" without a schema change.
+   */
+  const sentAt = useMemo(() => {
+    let earliest: string | null = null;
+    for (const r of recipients) {
+      if (r.sent_at && (!earliest || r.sent_at < earliest)) earliest = r.sent_at;
+    }
+    return earliest;
+  }, [recipients]);
+
+  const formatDate = (iso: string) => new Date(iso).toLocaleDateString(language);
+  const formatDateTime = (iso: string) =>
+    new Date(iso).toLocaleString(language, {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+
+  function describeAudience(filter: Record<string, unknown> | undefined) {
+    const type = typeof filter?.type === 'string' ? filter.type : 'all';
+    if (type === 'tags') {
+      const n = Array.isArray(filter?.tagIds) ? filter.tagIds.length : 0;
+      return `${t('Tags')} (${n})`;
+    }
+    if (type === 'custom_field') return t('Custom Field');
+    if (type === 'csv') return t('CSV list');
+    return t('All Contacts');
+  }
+
   function handleExport() {
     if (!broadcast) return;
     const header = [
-      'Contato',
-      'Telefone',
-      'Status',
-      'Sent At',
-      'Delivered At',
-      'Read At',
-      'Replied At',
-      'Erro',
+      t('Contact'),
+      t('Phone'),
+      t('Status'),
+      t('Sent At'),
+      t('Delivered At'),
+      t('Read At'),
+      t('Replied At'),
+      t('Error'),
     ];
     const rows = recipients.map((r) => [
       r.contact?.name ?? '',
       r.contact?.phone ?? '',
-      r.status,
+      t(getRecipientStatus(r.status).label),
       r.sent_at ?? '',
       r.delivered_at ?? '',
       r.read_at ?? '',
@@ -236,10 +271,10 @@ export default function BroadcastDetailPage() {
       .eq('id', broadcastId);
     setDeleting(false);
     if (delErr) {
-      toast.error(`Failed to delete: ${delErr.message}`);
+      toast.error(`${t('Failed to delete')}: ${delErr.message}`);
       return;
     }
-    toast.success('Broadcast deleted');
+    toast.success(t('Broadcast deleted'));
     router.push('/broadcasts');
   }
 
@@ -254,9 +289,9 @@ export default function BroadcastDetailPage() {
   if (error || !broadcast) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error ?? 'Broadcast not found'}</p>
+        <p className="text-sm text-red-400">{t(error ?? 'Broadcast not found')}</p>
         <Button variant="outline" onClick={() => router.push('/broadcasts')}>
-          Back to Broadcasts
+          {t('Back to Broadcasts')}
         </Button>
       </div>
     );
@@ -265,10 +300,10 @@ export default function BroadcastDetailPage() {
   const status = getBroadcastStatus(broadcast.status);
 
   const funnelSteps: FunnelStep[] = [
-    { label: 'Enviado', value: broadcast.sent_count, color: 'bg-primary' },
-    { label: 'Entregue', value: broadcast.delivered_count, color: 'bg-teal-500' },
-    { label: 'Lido', value: broadcast.read_count, color: 'bg-blue-500' },
-    { label: 'Replied', value: broadcast.replied_count, color: 'bg-indigo-500' },
+    { label: t('Sent'), value: broadcast.sent_count, color: 'bg-primary' },
+    { label: t('Delivered'), value: broadcast.delivered_count, color: 'bg-teal-500' },
+    { label: t('Read'), value: broadcast.read_count, color: 'bg-blue-500' },
+    { label: t('Responded'), value: broadcast.replied_count, color: 'bg-indigo-500' },
   ];
 
   return (
@@ -280,6 +315,7 @@ export default function BroadcastDetailPage() {
             variant="outline"
             size="icon"
             onClick={() => router.push('/broadcasts')}
+            aria-label={t('Back to Broadcasts')}
             className="border-border"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -290,15 +326,41 @@ export default function BroadcastDetailPage() {
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${status.classes}`}
               >
-                {status.label}
+                {t(status.label)}
               </span>
             </div>
-            <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
-              <span>Template: {broadcast.template_name}</span>
-              <span>-</span>
-              <span>
-                Created {new Date(broadcast.created_at).toLocaleDateString()}
+            {/* Lifecycle meta: template · audience · created · sent/scheduled */}
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('Template')}: {broadcast.template_name}
               </span>
+              <span aria-hidden="true">·</span>
+              <span className="inline-flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('Audience')}: {describeAudience(broadcast.audience_filter)}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                {t('Created')} {formatDate(broadcast.created_at)}
+              </span>
+              {sentAt ? (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1.5 text-foreground">
+                    <Send className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                    {t('Sent on')} {formatDateTime(sentAt)}
+                  </span>
+                </>
+              ) : broadcast.status === 'scheduled' && broadcast.scheduled_at ? (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1.5 text-foreground">
+                    <CalendarClock className="h-3.5 w-3.5 text-blue-400" aria-hidden="true" />
+                    {t('Scheduled for')} {formatDateTime(broadcast.scheduled_at)}
+                  </span>
+                </>
+              ) : null}
             </div>
           </div>
         </div>
@@ -309,7 +371,7 @@ export default function BroadcastDetailPage() {
             funnel inconsistent. */}
         {confirmDelete ? (
           <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm">
-            <span className="text-red-300">Delete this broadcast?</span>
+            <span className="text-red-300">{t('Delete this broadcast?')}</span>
             <Button
               variant="outline"
               size="sm"
@@ -317,7 +379,7 @@ export default function BroadcastDetailPage() {
               disabled={deleting}
               className="h-7 border-border bg-transparent text-muted-foreground hover:bg-muted"
             >
-              Cancelar
+              {t('Cancel')}
             </Button>
             <Button
               size="sm"
@@ -325,7 +387,7 @@ export default function BroadcastDetailPage() {
               disabled={deleting}
               className="h-7 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
             >
-              {deleting ? 'Excluindo…' : 'Confirm'}
+              {deleting ? t('Deleting…') : t('Confirm')}
             </Button>
           </div>
         ) : (
@@ -336,13 +398,13 @@ export default function BroadcastDetailPage() {
             onClick={() => setConfirmDelete(true)}
             title={
               broadcast.status === 'sending'
-                ? 'Cannot delete while a broadcast is actively sending'
-                : 'Delete this broadcast'
+                ? t('Cannot delete while a broadcast is actively sending')
+                : t('Delete this broadcast')
             }
             className="border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10 disabled:opacity-40"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Excluir
+            {t('Delete')}
           </Button>
         )}
       </div>
@@ -350,42 +412,42 @@ export default function BroadcastDetailPage() {
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard
-          label="Total Recipients"
+          label={t('Total Recipients')}
           value={broadcast.total_recipients}
           total={broadcast.total_recipients}
           icon={<Users className="h-4 w-4" />}
           color="bg-muted text-muted-foreground"
         />
         <StatCard
-          label="Enviado"
+          label={t('Sent')}
           value={broadcast.sent_count}
           total={broadcast.total_recipients}
           icon={<Send className="h-4 w-4" />}
           color="bg-primary/10 text-primary"
         />
         <StatCard
-          label="Entregue"
+          label={t('Delivered')}
           value={broadcast.delivered_count}
           total={broadcast.total_recipients}
           icon={<CheckCheck className="h-4 w-4" />}
           color="bg-teal-500/10 text-teal-400"
         />
         <StatCard
-          label="Lido"
+          label={t('Read')}
           value={broadcast.read_count}
           total={broadcast.total_recipients}
           icon={<Eye className="h-4 w-4" />}
           color="bg-blue-500/10 text-blue-400"
         />
         <StatCard
-          label="Replied"
+          label={t('Responded')}
           value={broadcast.replied_count}
           total={broadcast.total_recipients}
           icon={<MessageCircle className="h-4 w-4" />}
           color="bg-indigo-500/10 text-indigo-400"
         />
         <StatCard
-          label="Falhou"
+          label={t('Failed')}
           value={broadcast.failed_count}
           total={broadcast.total_recipients}
           icon={<AlertCircle className="h-4 w-4" />}
@@ -393,14 +455,14 @@ export default function BroadcastDetailPage() {
         />
       </div>
 
-      <FunnelChart steps={funnelSteps} />
+      <FunnelChart title={t('Funnel')} steps={funnelSteps} />
 
       {/* Recipients Table */}
       <div className="rounded-xl border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
           <h2 className="text-sm font-medium text-foreground">
-            Recipients ({filteredRecipients.length}
-            {statusFilter !== 'all' ? ` of ${recipients.length}` : ''})
+            {t('Recipients')} ({filteredRecipients.length}
+            {statusFilter !== 'all' ? ` ${t('of')} ${recipients.length}` : ''})
           </h2>
           <div className="flex items-center gap-2">
             <DropdownMenu>
@@ -415,8 +477,8 @@ export default function BroadcastDetailPage() {
               >
                 <Filter className="h-3.5 w-3.5" />
                 {statusFilter === 'all'
-                  ? 'Todos os status'
-                  : getRecipientStatus(statusFilter).label}
+                  ? t('All statuses')
+                  : t(getRecipientStatus(statusFilter).label)}
                 <ChevronDown className="h-3 w-3" />
               </DropdownMenuTrigger>
               <DropdownMenuContent className="border-border bg-popover">
@@ -426,7 +488,7 @@ export default function BroadcastDetailPage() {
                     statusFilter === 'all' ? 'text-primary' : 'text-popover-foreground'
                   }
                 >
-                  All statuses
+                  {t('All statuses')}
                 </DropdownMenuItem>
                 {RECIPIENT_STATUSES.map((s) => (
                   <DropdownMenuItem
@@ -438,7 +500,7 @@ export default function BroadcastDetailPage() {
                         : 'text-popover-foreground'
                     }
                   >
-                    {getRecipientStatus(s).label}
+                    {t(getRecipientStatus(s).label)}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -452,7 +514,7 @@ export default function BroadcastDetailPage() {
               className="border-border text-muted-foreground hover:bg-muted"
             >
               <Download className="h-3.5 w-3.5" />
-              Export CSV
+              {t('Export CSV')}
             </Button>
           </div>
         </div>
@@ -461,8 +523,8 @@ export default function BroadcastDetailPage() {
           <div className="flex h-32 items-center justify-center">
             <p className="text-sm text-muted-foreground">
               {recipients.length === 0
-                ? 'No recipients found.'
-                : 'No recipients match this filter.'}
+                ? t('No recipients found.')
+                : t('No recipients match this filter.')}
             </p>
           </div>
         ) : (
@@ -470,13 +532,13 @@ export default function BroadcastDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="text-muted-foreground">Contato</TableHead>
-                  <TableHead className="text-muted-foreground">Telefone</TableHead>
-                  <TableHead className="text-muted-foreground">Status</TableHead>
-                  <TableHead className="text-muted-foreground">Enviado</TableHead>
-                  <TableHead className="text-muted-foreground">Entregue</TableHead>
-                  <TableHead className="text-muted-foreground">Lido</TableHead>
-                  <TableHead className="text-muted-foreground">Erro</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Contact')}</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Phone')}</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Status')}</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Sent')}</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Delivered')}</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Read')}</TableHead>
+                  <TableHead className="text-muted-foreground">{t('Error')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -485,7 +547,7 @@ export default function BroadcastDetailPage() {
                   return (
                     <TableRow key={recipient.id} className="border-border">
                       <TableCell className="font-medium text-foreground">
-                        {recipient.contact?.name ?? 'Unknown'}
+                        {recipient.contact?.name ?? t('Unknown contact')}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {recipient.contact?.phone ?? '-'}
@@ -494,23 +556,19 @@ export default function BroadcastDetailPage() {
                         <span
                           className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${rStatus.classes}`}
                         >
-                          {rStatus.label}
+                          {t(rStatus.label)}
                         </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {recipient.sent_at
-                          ? new Date(recipient.sent_at).toLocaleString()
-                          : '-'}
+                        {recipient.sent_at ? formatDateTime(recipient.sent_at) : '-'}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {recipient.delivered_at
-                          ? new Date(recipient.delivered_at).toLocaleString()
+                          ? formatDateTime(recipient.delivered_at)
                           : '-'}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {recipient.read_at
-                          ? new Date(recipient.read_at).toLocaleString()
-                          : '-'}
+                        {recipient.read_at ? formatDateTime(recipient.read_at) : '-'}
                       </TableCell>
                       <TableCell className="max-w-xs truncate text-xs text-red-400">
                         {recipient.error_message ?? '-'}

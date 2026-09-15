@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   X,
 } from 'lucide-react';
+import { useLanguage } from '@/hooks/use-language';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -39,6 +40,7 @@ interface Step2Props {
   onBack: () => void;
 }
 
+/** Labels and descriptions are English i18n keys — rendered through t(). */
 const audienceOptions: {
   type: AudienceType;
   label: string;
@@ -53,7 +55,7 @@ const audienceOptions: {
   },
   {
     type: 'tags',
-    label: 'Filtrar por etiquetas',
+    label: 'Filter by Tags',
     description: 'Target contacts with specific tags',
     icon: Tags,
   },
@@ -83,14 +85,17 @@ export function Step2SelectAudience({
   onNext,
   onBack,
 }: Step2Props) {
+  const { t, language } = useLanguage();
   const [tags, setTags] = useState<Tag[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  /** Contacts dropped from the estimate because they opted out (migration 030). */
+  const [excludedOptedOut, setExcludedOptedOut] = useState(0);
 
-  // Tags are used both by the primary "Filtrar por etiquetas" audience type
+  // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
   useEffect(() => {
     async function fetchTags() {
@@ -132,6 +137,7 @@ export function Step2SelectAudience({
 
       // Base query — produces the superset before exclude is applied.
       let baseIds: Set<string> | null = null; // null means "all contacts"
+      setExcludedOptedOut(0);
 
       if (audience.type === 'all') {
         // Handled below — full-table count adjusted by excludes.
@@ -183,18 +189,31 @@ export function Step2SelectAudience({
         excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
       }
 
+      // Opted-out contacts never receive broadcasts (migration 030) —
+      // drop them from the estimate and tell the user how many.
+      const { data: optedOutRows } = await supabase
+        .from('contacts')
+        .select('id')
+        .not('opted_out_at', 'is', null);
+      const optedOutIds = new Set((optedOutRows ?? []).map((r) => r.id as string));
+
       if (baseIds) {
-        const effective = [...baseIds].filter(
-          (id) => !excludeSet?.has(id),
-        );
+        const afterTags = [...baseIds].filter((id) => !excludeSet?.has(id));
+        const effective = afterTags.filter((id) => !optedOutIds.has(id));
+        setExcludedOptedOut(afterTags.length - effective.length);
         setEstimatedCount(effective.length);
       } else {
-        // "Todos" — fetch the total, then subtract exclude set if any.
+        // "All contacts" — fetch the total, then subtract exclude set if any.
         const { count } = await supabase
           .from('contacts')
           .select('*', { count: 'exact', head: true });
         const total = count ?? 0;
-        setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
+        // Opted-out contacts that are also tag-excluded must not be
+        // subtracted twice.
+        const optedOutNotTagExcluded = [...optedOutIds].filter((id) => !excludeSet?.has(id)).length;
+        setExcludedOptedOut(optedOutNotTagExcluded);
+        const afterTags = excludeSet ? Math.max(0, total - excludeSet.size) : total;
+        setEstimatedCount(Math.max(0, afterTags - optedOutNotTagExcluded));
       }
     } finally {
       setLoadingCount(false);
@@ -249,9 +268,9 @@ export function Step2SelectAudience({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Select Audience</h2>
+        <h2 className="text-lg font-semibold text-foreground">{t('Select Audience')}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Escolha quem receberá este disparo.
+          {t('Choose who will receive this broadcast.')}
         </p>
       </div>
 
@@ -262,6 +281,8 @@ export function Step2SelectAudience({
           return (
             <button
               key={option.type}
+              type="button"
+              aria-pressed={isSelected}
               onClick={() =>
                 onUpdate({
                   ...audience,
@@ -293,9 +314,9 @@ export function Step2SelectAudience({
                 <Icon className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">{option.label}</p>
+                <p className="text-sm font-medium text-foreground">{t(option.label)}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  {option.description}
+                  {t(option.description)}
                 </p>
               </div>
             </button>
@@ -305,12 +326,12 @@ export function Step2SelectAudience({
 
       {audience.type === 'tags' && (
         <div className="rounded-xl border border-border bg-card/50 p-4">
-          <p className="mb-3 text-sm font-medium text-foreground">Select Tags</p>
+          <p className="mb-3 text-sm font-medium text-foreground">{t('Select Tags')}</p>
           {loadingTags ? (
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
           ) : tags.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Nenhuma etiqueta encontrada. Crie etiquetas nas Configurações.
+              {t('No tags found. Create tags in Settings.')}
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -319,6 +340,8 @@ export function Step2SelectAudience({
                 return (
                   <button
                     key={tag.id}
+                    type="button"
+                    aria-pressed={isSelected}
                     onClick={() => toggleTag(tag.id)}
                     className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
                       isSelected
@@ -341,21 +364,22 @@ export function Step2SelectAudience({
 
       {audience.type === 'custom_field' && (
         <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
-          <p className="text-sm font-medium text-foreground">Custom Field Filter</p>
+          <p className="text-sm font-medium text-foreground">{t('Custom Field Filter')}</p>
           {loadingFields ? (
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
           ) : customFields.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Nenhum campo personalizado definido. Crie um em Configurações → Campos personalizados.
+              {t('No custom fields defined. Create one in Settings → Custom fields.')}
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)]">
               <select
+                aria-label={t('Field')}
                 value={audience.customField?.fieldId ?? ''}
                 onChange={(e) => updateCustomField({ fieldId: e.target.value })}
                 className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
               >
-                <option value="">Select field…</option>
+                <option value="">{t('Select field…')}</option>
                 {customFields.map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.field_name}
@@ -363,6 +387,7 @@ export function Step2SelectAudience({
                 ))}
               </select>
               <select
+                aria-label={t('Operator')}
                 value={audience.customField?.operator ?? 'is'}
                 onChange={(e) =>
                   updateCustomField({
@@ -373,7 +398,7 @@ export function Step2SelectAudience({
               >
                 {OPERATOR_OPTIONS.map((op) => (
                   <option key={op.value} value={op.value}>
-                    {op.label}
+                    {t(op.label)}
                   </option>
                 ))}
               </select>
@@ -381,7 +406,8 @@ export function Step2SelectAudience({
                 type="text"
                 value={audience.customField?.value ?? ''}
                 onChange={(e) => updateCustomField({ value: e.target.value })}
-                placeholder="Valor"
+                placeholder={t('Value')}
+                aria-label={t('Value')}
                 className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
               />
             </div>
@@ -394,12 +420,12 @@ export function Step2SelectAudience({
         <div className="mb-3 flex items-center gap-2">
           <X className="h-4 w-4 text-red-400" />
           <p className="text-sm font-medium text-foreground">
-            Excluir contatos com estas etiquetas
+            {t('Exclude contacts with these tags')}
           </p>
-          <span className="text-xs text-muted-foreground">(optional)</span>
+          <span className="text-xs text-muted-foreground">{t('(optional)')}</span>
         </div>
         {tags.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No tags available.</p>
+          <p className="text-xs text-muted-foreground">{t('No tags available.')}</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {tags.map((tag) => {
@@ -407,6 +433,8 @@ export function Step2SelectAudience({
               return (
                 <button
                   key={tag.id}
+                  type="button"
+                  aria-pressed={isExcluded}
                   onClick={() => toggleExcludeTag(tag.id)}
                   className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
                     isExcluded
@@ -428,23 +456,29 @@ export function Step2SelectAudience({
 
       {/* Audience Summary */}
       <div className="rounded-xl border border-border bg-card/50 p-4">
-        <p className="mb-2 text-sm font-medium text-foreground">Resumo do público</p>
+        <p className="mb-2 text-sm font-medium text-foreground">{t('Audience Summary')}</p>
         {loadingCount ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            <span className="text-xs text-muted-foreground">Calculating…</span>
+            <span className="text-xs text-muted-foreground">{t('Calculating…')}</span>
           </div>
         ) : estimatedCount !== null ? (
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-primary" />
             <span className="text-sm text-foreground">
-              {estimatedCount.toLocaleString()}
+              {estimatedCount.toLocaleString(language)}
             </span>
-            <span className="text-xs text-muted-foreground">estimated recipients</span>
+            <span className="text-xs text-muted-foreground">{t('estimated recipients')}</span>
+            {excludedOptedOut > 0 && (
+              <span className="text-xs text-muted-foreground">
+                · {excludedOptedOut}{' '}
+                {t(excludedOptedOut === 1 ? 'opted-out contact excluded' : 'opted-out contacts excluded')}
+              </span>
+            )}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Selecione um tipo de público para ver a estimativa.
+            {t('Select an audience type to see the estimate.')}
           </p>
         )}
       </div>
@@ -456,14 +490,14 @@ export function Step2SelectAudience({
           className="border-border text-muted-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Voltar
+          {t('Back')}
         </Button>
         <Button
           onClick={onNext}
           disabled={!isValid}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          Avançar
+          {t('Next')}
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
