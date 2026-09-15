@@ -267,6 +267,15 @@ export function SettingsOverview({
       loading: false,
       subtitle: t('Browser push notifications'),
     },
+    ...(entitlements.modules.calendar
+      ? [
+          {
+            section: 'calendar' as const,
+            loading: false,
+            subtitle: t('Google Calendar and Outlook sync'),
+          },
+        ]
+      : []),
     {
       section: 'plan',
       loading: !entitlements.ready,

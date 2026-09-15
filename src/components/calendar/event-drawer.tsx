@@ -69,6 +69,7 @@ import { cn } from "@/lib/utils";
 import { EVENT_COLORS, colorForUser } from "./colors";
 import { ContactPicker } from "./contact-picker";
 import { memberName, useCalendarMembers, useCalendarTimezone } from "./hooks";
+import { ProviderIcon } from "./provider-icon";
 
 const SELECT_CLASS =
   "h-8 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
@@ -500,6 +501,15 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
           {cancelled && (
             <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {t("Cancelled")}
+            </span>
+          )}
+          {isEdit && event && event.source !== "internal" && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title={event.source === "google" ? t("Synced from Google Calendar") : t("Synced from Outlook")}
+            >
+              <ProviderIcon provider={event.source} />
+              {event.source === "google" ? t("Synced from Google Calendar") : t("Synced from Outlook")}
             </span>
           )}
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
@@ -966,7 +976,6 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
         {isEdit && event && (
           <p className="text-[11px] text-muted-foreground">
             {t("Created by")} {memberName(members, event.created_by) || "—"}
-            {event.source !== "internal" && ` · ${event.source}`}
           </p>
         )}
       </div>

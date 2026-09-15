@@ -973,8 +973,43 @@ export interface ChatMember {
 
 export type CalendarEventStatus = 'confirmed' | 'cancelled';
 
-/** Phase 2 (Google / Outlook sync) — only `internal` exists today. */
+/** Where an event came from: created here, or imported from a provider (migration 041). */
 export type CalendarEventSource = 'internal' | 'google' | 'microsoft';
+
+/** External calendar providers (migration 041). */
+export type CalendarProvider = 'google' | 'microsoft';
+
+export type CalendarConnectionStatus = 'active' | 'error' | 'revoked';
+
+/**
+ * `calendar_connections_public` — one row per (user, provider) as the
+ * owner sees it (no tokens). The base table holds the encrypted
+ * tokens and is only reachable with the service role.
+ */
+export interface CalendarConnectionPublic {
+  id: string;
+  account_id: string;
+  user_id: string;
+  provider: CalendarProvider;
+  email: string | null;
+  external_calendar_id: string | null;
+  token_expires_at: string | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+  status: CalendarConnectionStatus;
+  /** Also mirror appointments where the user is an attendee. */
+  mirror_attending: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Full `calendar_connections` row — service role only (sync engine, OAuth routes). */
+export interface CalendarConnection extends CalendarConnectionPublic {
+  access_token_enc: string | null;
+  refresh_token_enc: string | null;
+  /** Google `syncToken` / Graph `deltaLink` (see migration 041). */
+  sync_cursor: string | null;
+}
 
 export type CalendarAttendeeResponse = 'needs_action' | 'accepted' | 'declined';
 

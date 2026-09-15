@@ -2049,4 +2049,55 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Appointment in': 'Compromisso em',
   'Appointment starting now': 'Compromisso começando agora',
   'Appointment today': 'Compromisso hoje',
+  // Calendar phase 2 — Google / Outlook sync (Settings → Agenda, event badges)
+  'Google Calendar and Outlook sync': 'Sincronização com Google Agenda e Outlook',
+  'Connect your Google Calendar or Outlook: appointments you create here appear there, and events from there appear on your agenda. Each member connects their own account.':
+    'Conecte seu Google Agenda ou Outlook: os compromissos criados aqui aparecem lá, e os eventos de lá aparecem na sua agenda. Cada membro conecta a própria conta.',
+  'Sync now': 'Sincronizar agora',
+  'Connected': 'Conectado',
+  'connected': 'conectado',
+  'disconnected': 'desconectado',
+  'Reconnect': 'Reconectar',
+  'Error': 'Erro',
+  'Last sync': 'Última sincronização',
+  'Not synced yet': 'Ainda não sincronizado',
+  'Integration not configured': 'Integração não configurada',
+  'Two-way sync with the primary calendar of your Google account.':
+    'Sincronização nos dois sentidos com a agenda principal da sua conta Google.',
+  'Two-way sync with the default calendar of your Microsoft account.':
+    'Sincronização nos dois sentidos com o calendário padrão da sua conta Microsoft.',
+  'Ask the administrator to set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see docs/integracoes-agenda.md).':
+    'Peça ao administrador para definir GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET (veja docs/integracoes-agenda.md).',
+  'Ask the administrator to set MS_CLIENT_ID and MS_CLIENT_SECRET (see docs/integracoes-agenda.md).':
+    'Peça ao administrador para definir MS_CLIENT_ID e MS_CLIENT_SECRET (veja docs/integracoes-agenda.md).',
+  'Access revoked': 'Acesso revogado',
+  'The provider no longer accepts our access — reconnect to resume the sync.':
+    'O provedor não aceita mais o nosso acesso — reconecte para retomar a sincronização.',
+  'Last sync failed': 'A última sincronização falhou',
+  'It will be retried automatically every 5 minutes.':
+    'Será tentada novamente automaticamente a cada 5 minutos.',
+  'Mirror appointments where I am an attendee': 'Espelhar compromissos em que sou participante',
+  'Besides the appointments you own, also send the ones you were added to (when their owner has no calendar connected).':
+    'Além dos compromissos em que você é responsável, enviar também aqueles em que você foi incluído (quando o responsável não tem agenda conectada).',
+  'Only the title, description, location and time of an appointment are shared with the provider. Links to contacts, deals and tasks stay here.':
+    'Só o título, a descrição, o local e o horário do compromisso são enviados ao provedor. Os vínculos com contatos, negócios e tarefas ficam aqui.',
+  'Failed to load the calendar connections': 'Não foi possível carregar as conexões da agenda',
+  'Could not disconnect': 'Não foi possível desconectar',
+  'Nothing to sync': 'Nada para sincronizar',
+  'Calendars synced': 'Agendas sincronizadas',
+  'Some calendars could not be synced — see the cards below':
+    'Algumas agendas não puderam ser sincronizadas — veja os cartões abaixo',
+  'Could not sync now': 'Não foi possível sincronizar agora',
+  'The calendar module is not included in your plan.': 'O módulo Agenda não está incluído no seu plano.',
+  'This integration is not configured on this server.':
+    'Esta integração não está configurada neste servidor.',
+  'You cancelled the authorization on the provider.': 'Você cancelou a autorização no provedor.',
+  'The authorization link expired or was tampered with. Try again.':
+    'O link de autorização expirou ou foi alterado. Tente de novo.',
+  'The provider did not accept the authorization code. Try again.':
+    'O provedor não aceitou o código de autorização. Tente de novo.',
+  'The provider returned an error. Try again.': 'O provedor retornou um erro. Tente de novo.',
+  'Sign in again and retry the connection.': 'Entre novamente e tente conectar de novo.',
+  'Synced from Google Calendar': 'Sincronizado do Google Agenda',
+  'Synced from Outlook': 'Sincronizado do Outlook',
 };

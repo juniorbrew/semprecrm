@@ -120,6 +120,7 @@ No `/var/www/semprecrm/.env.production`:
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.SEU.DOMINIO` |
 | `AUTOMATION_CRON_SECRET` | `openssl rand -hex 32` — usado pelo agendador `semprecrm-cron` (ver 6.2 do guia Contabo) |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | `node scripts/gen-vapid.mjs` — notificações push no navegador (gere uma vez; trocar as chaves invalida as assinaturas) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT` | opcional — Agenda sincronizada com Google Agenda / Outlook; siga `docs/integracoes-agenda.md` e registre `https://crm.SEU.DOMINIO/api/integrations/google/callback` e `/api/integrations/microsoft/callback` no provedor. O `semprecrm-cron` chama `POST /api/integrations/calendar/sync` a cada 5 min (`CALENDAR_SYNC_INTERVAL_MS`) |
 
 Depois siga os passos 4 a 7 do `deploy/contabo/README.md` (build, PM2, Nginx do app, Certbot, webhook
 da Meta). O `pm2 start deploy/contabo/ecosystem.config.cjs` sobe também o `semprecrm-cron`

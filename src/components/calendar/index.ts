@@ -7,6 +7,7 @@
 //   <LinkedEvents>    "Agenda" side section: next 3 + inline "+" + drawer
 //   <ScheduleButton>  "Agendar" trigger for the drawer with a prefill
 //   <EventChip>       one-line chip
+//   <ProviderIcon>    Google / Outlook glyph for synced events (phase 2)
 //   hooks             useCalendarTimezone, useCalendarMembers, useCalendarRealtime, useLinkedEvents
 //   colors            colorForUser, eventColor, EVENT_COLORS
 // ============================================================
@@ -17,6 +18,7 @@ export { QuickCreate, type QuickCreateProps, type QuickCreateDraft } from './qui
 export { LinkedEvents, type LinkedEventsProps } from './linked-events';
 export { ScheduleButton, type ScheduleButtonProps } from './schedule-button';
 export { EventChip } from './event-chip';
+export { ProviderIcon } from './provider-icon';
 export {
   memberName,
   useCalendarMembers,

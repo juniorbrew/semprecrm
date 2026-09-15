@@ -7,6 +7,7 @@ import { formatTime, type CalendarEvent } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 
 import { chipStyle, eventColor } from "./colors";
+import { ProviderIcon } from "./provider-icon";
 
 /**
  * One-line event chip for the month grid, the all-day strip and the
@@ -57,6 +58,7 @@ export function EventChip({
         <span className="shrink-0 tabular-nums opacity-80">{formatTime(event.starts_at, language, tz)}</span>
       )}
       <span className="min-w-0 flex-1 truncate font-medium">{event.title}</span>
+      {event.source !== "internal" && <ProviderIcon provider={event.source} className="h-2.5 w-2.5 opacity-80" />}
     </div>
   );
 }

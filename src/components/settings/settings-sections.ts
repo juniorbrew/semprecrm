@@ -1,5 +1,6 @@
 import {
   Bell,
+  CalendarDays,
   CheckSquare,
   Coins,
   CreditCard,
@@ -19,6 +20,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
+import type { Module } from '@/lib/plans';
+
 /**
  * Settings information architecture for the redesigned page.
  *
@@ -33,6 +36,7 @@ export const SETTINGS_SECTIONS = [
   'security',
   'appearance',
   'notifications',
+  'calendar',
   'whatsapp',
   'templates',
   'fields',
@@ -59,6 +63,8 @@ export interface SectionMeta {
   group: 'top' | 'account' | 'workspace';
   /** Hidden from the rail / overview for non-admins (admin+ only). */
   adminOnly?: boolean;
+  /** Hidden from the rail / overview when the plan does not include this module. */
+  module?: Module;
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
@@ -67,6 +73,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   security: { id: 'security', label: 'Login e segurança', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Aparência', icon: Palette, group: 'account' },
   notifications: { id: 'notifications', label: 'Notificações', icon: Bell, group: 'account' },
+  calendar: { id: 'calendar', label: 'Agenda', icon: CalendarDays, group: 'account', module: 'calendar' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
   templates: { id: 'templates', label: 'Modelos', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Campos e etiquetas', icon: Tags, group: 'workspace' },

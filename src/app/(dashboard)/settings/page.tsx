@@ -21,6 +21,7 @@ import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings
 import { InboxSettings } from '@/components/settings/inbox-settings';
 import { AuditLogSettings } from '@/components/settings/audit-log-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
+import { CalendarSettings } from '@/components/settings/calendar-settings';
 import { BrandingSettings } from '@/components/settings/branding-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { PlanPanel } from '@/components/settings/plan-panel';
@@ -65,6 +66,7 @@ export default function SettingsPage() {
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
     notifications: <NotificationsSettings />,
+    calendar: <CalendarSettings />,
     whatsapp: <WhatsAppConfig />,
     templates: <TemplateManager />,
     fields: <FieldsAndTagsPanel />,

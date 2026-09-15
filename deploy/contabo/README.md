@@ -37,6 +37,7 @@ Preencha no `.env.production` (os nomes vêm de `.env.local.example`):
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.seudominio.com.br` |
 | `AUTOMATION_CRON_SECRET` | obrigatório para o agendador `semprecrm-cron` (etapas "Aguardar", gatilhos por horário e "Conversa sem resposta há X horas", timeouts dos flows); gere com `openssl rand -hex 32` |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | notificações push no navegador; gere uma vez com `node scripts/gen-vapid.mjs` e cole as três linhas (o `VAPID_SUBJECT` é um `mailto:` seu). Trocar as chaves obriga todo mundo a ativar as notificações de novo |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET` / `MS_TENANT` | opcional — Agenda sincronizada com Google Agenda e Outlook (Configurações → Agenda). Passo a passo em `docs/integracoes-agenda.md`; registre no provedor as URLs `https://crm.seudominio.com.br/api/integrations/google/callback` e `/api/integrations/microsoft/callback`. Sem as variáveis a tela mostra "Integração não configurada" |
 
 Não defina `WHATSAPP_TEMPLATES_DRY_RUN` em produção.
 
@@ -123,6 +124,9 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
 - Precisa de `AUTOMATION_CRON_SECRET` no `.env.production` (o mesmo arquivo que o app lê).
 - `APP_URL` já vem do `ecosystem.config.cjs` (`http://127.0.0.1:3000`); ajuste se mudar a porta do Next.
 - `CRON_INTERVAL_MS` (padrão 60000) controla a frequência. Não rode duas instâncias.
+- O mesmo script chama `POST /api/integrations/calendar/sync` (sincronização Google Agenda /
+  Outlook, até 20 conexões por chamada, as mais antigas primeiro) a cada `CALENDAR_SYNC_INTERVAL_MS`
+  (padrão 300000 = 5 min). Sem conexões ativas a chamada responde `connections=0` e não custa nada.
 - Logs: `pm2 logs semprecrm-cron` ou `/var/log/semprecrm/cron.*.log` — uma linha por chamada
   (`GET /api/automations/cron 200 85ms processed=0 inactive_fired=2`).
 - Se preferir um cron externo (Vercel Cron, UptimeRobot, crontab com `curl -H "x-cron-secret: …"`),

@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 import { chipStyle, eventColor } from "./colors";
 import { EventChip } from "./event-chip";
+import { ProviderIcon } from "./provider-icon";
 
 /** Pixels per hour on the time grid. */
 const HOUR_PX = 56;
@@ -331,13 +332,16 @@ export function TimeGridView({ days, events, tz, now, readOnly, onOpenEvent, onC
                           readOnly && "cursor-pointer",
                         )}
                       >
-                        <span className={cn("truncate font-medium", short && "flex items-center gap-1")}>
+                        <span className={cn("flex items-center gap-1 font-medium")}>
                           {short && (
                             <span className="shrink-0 tabular-nums opacity-80">
                               {formatTime(minutesToInstant(day, startMin, tz), language, tz)}
                             </span>
                           )}
-                          {p.event.title}
+                          <span className="min-w-0 flex-1 truncate">{p.event.title}</span>
+                          {p.event.source !== "internal" && (
+                            <ProviderIcon provider={p.event.source} className="h-2.5 w-2.5 opacity-80" />
+                          )}
                         </span>
                         {!short && (
                           <span className="truncate tabular-nums opacity-80">

@@ -113,6 +113,24 @@ export function CalendarBoard() {
 
   useCalendarRealtime(() => void load());
 
+  // Phase 2: on open, pull the user's Google / Outlook changes when the
+  // last sync is older than 2 min (the route decides; cheap otherwise).
+  // Realtime on `calendar_events` repaints whatever the sync writes.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/integrations/calendar/sync/me?ifStale=1", { method: "POST" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { connections?: number } | null) => {
+        if (!cancelled && body && body.connections) void load();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // Once per mount — `load` is stable for the initial range.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const visibleEvents = useMemo(() => filterByScope(events ?? [], scope, me), [events, scope, me]);
 
   // `?event=<id>` (push click, "Agenda" sections): jump to it and open the drawer.
