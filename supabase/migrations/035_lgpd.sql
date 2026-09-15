@@ -2,7 +2,7 @@
 -- 035_lgpd.sql — LGPD: consent status, data export and
 -- anonymisation markers on contacts.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round2-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round2-design.md
 --       section "4. LGPD"
 --
 -- What this migration does

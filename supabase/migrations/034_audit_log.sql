@@ -1,7 +1,7 @@
 -- ============================================================
 -- 034_audit_log.sql — Account audit trail.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round2-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round2-design.md
 --       section "3. Log de auditoria"
 --
 -- What this migration does
