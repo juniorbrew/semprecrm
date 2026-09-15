@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
@@ -73,6 +74,12 @@ export default function PipelinesPage() {
   // `deals` and reflects status / stage changes after a refetch.
   const [drawerDealId, setDrawerDealId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // `?deal=<id>` (calendar / task links): switch to the deal's pipeline
+  // and open its drawer once the board has that row. Applied once.
+  const searchParams = useSearchParams();
+  const deepLinkDealId = searchParams.get("deal");
+  const deepLinkApplied = useRef<string | null>(null);
 
   // Guard against double-seeding (React StrictMode double-effect in dev).
   const seedAttempted = useRef(false);
@@ -255,6 +262,41 @@ export default function PipelinesPage() {
   const drawerDeal = drawerDealId
     ? deals.find((d) => d.id === drawerDealId) ?? null
     : null;
+
+  useEffect(() => {
+    if (!deepLinkDealId || loading || deepLinkApplied.current === deepLinkDealId) return;
+    if (deals.some((d) => d.id === deepLinkDealId)) {
+      deepLinkApplied.current = deepLinkDealId;
+      // Syncing URL state into the drawer once the board has the row.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDrawerDealId(deepLinkDealId);
+      setDrawerOpen(true);
+      return;
+    }
+    // Not on this board — look the deal up and jump to its pipeline.
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("deals")
+        .select("id, pipeline_id")
+        .eq("id", deepLinkDealId)
+        .maybeSingle();
+      if (cancelled || !data) return;
+      const row = data as { id: string; pipeline_id: string };
+      if (row.pipeline_id === selectedPipelineId) {
+        // Same pipeline but the list has not caught up yet — wait for it.
+        return;
+      }
+      if (pipelines.some((p) => p.id === row.pipeline_id)) {
+        setSelectedPipelineId(row.pipeline_id);
+      } else {
+        deepLinkApplied.current = deepLinkDealId;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deepLinkDealId, loading, deals, pipelines, selectedPipelineId, supabase]);
 
   async function handleCreatePipeline() {
     const name = newPipelineName.trim();

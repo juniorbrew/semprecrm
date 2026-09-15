@@ -56,6 +56,7 @@ import {
   TaskQuickCreate,
   useLinkedTasks,
 } from "@/components/tasks";
+import { LinkedEvents } from "@/components/calendar";
 import type { Task } from "@/lib/tasks";
 import { NewCustomFieldDialog } from "./new-custom-field-dialog";
 import { CustomFieldValue } from "./custom-field-value";
@@ -287,6 +288,7 @@ export function ContactSidebar({
   const { ready: entitlementsReady, modules } = useEntitlements();
   const pipelinesEnabled = !entitlementsReady || modules.pipelines;
   const tasksEnabled = !entitlementsReady || modules.tasks;
+  const calendarEnabled = !entitlementsReady || modules.calendar;
   const [copied, setCopied] = useState(false);
   // Opt-out state mirrors `contact.opted_out_at` but is kept locally so
   // "Reativar" reflects at once, before the parent refetches the contact.
@@ -1029,6 +1031,22 @@ export function ContactSidebar({
                   onDeleted={linkedTasks.remove}
                 />
               </div>
+            </>
+          )}
+
+          {calendarEnabled && (
+            <>
+              <div className="my-4 border-t border-border" />
+
+              {/* Agenda — the contact's next appointments; "+" reveals the
+                  inline title + when creator linked to the contact and thread. */}
+              <LinkedEvents
+                contactId={contact.id}
+                defaults={{ conversation_id: conversationId ?? undefined }}
+                readOnly={!canWrite}
+                headerClassName="px-1"
+                bodyClassName="px-1"
+              />
             </>
           )}
 

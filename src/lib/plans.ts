@@ -44,6 +44,7 @@ export const MODULES = [
   'lead_capture',
   'white_label',
   'internal_chat',
+  'calendar',
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -60,6 +61,7 @@ export const OPTIONAL_MODULES = [
   'lead_capture',
   'white_label',
   'internal_chat',
+  'calendar',
 ] as const satisfies readonly Module[];
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
@@ -89,8 +91,9 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  * | basico  | dashboard, pipelines, tasks, channel_qr | 3   | 1            |
  * | pro     | todos menos flows                | 10        | 2            |
  * (`lead_capture` — webhook lead capture, migration 029 —,
- *  `white_label` — own branding, migration 037 — and `internal_chat`
- *  — team chat, migration 038 — are in every plan except basico.)
+ *  `white_label` — own branding, migration 037 —, `internal_chat`
+ *  — team chat, migration 038 — and `calendar` — agenda, migration
+ *  040 — are in every plan except basico.)
  * | empresa | todos                            | null      | 5            |
  */
 export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
@@ -142,6 +145,7 @@ export const MODULE_LABELS: Record<Module, string> = {
   lead_capture: 'Lead capture (webhook)',
   white_label: 'White-label branding',
   internal_chat: 'Internal chat',
+  calendar: 'Calendar',
 };
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {

@@ -9,6 +9,7 @@ import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TaskDrawer } from "@/components/tasks";
+import { EventDrawer } from "@/components/calendar";
 import type {
   WhatsAppChannel,
   Conversation,
@@ -34,6 +35,7 @@ import {
   PanelRightClose,
   MoreVertical,
   CheckSquare,
+  CalendarPlus,
 } from "lucide-react";
 import { isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -264,8 +266,14 @@ export function MessageThread({
   // drawer in create mode, prefilled with this contact + conversation.
   const { ready: entitlementsReady, modules } = useEntitlements();
   const tasksEnabled = !entitlementsReady || modules.tasks;
-  const canCreateTask = useCan("send-messages") && tasksEnabled;
+  const canWriteHere = useCan("send-messages");
+  const canCreateTask = canWriteHere && tasksEnabled;
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  // "Agendar" in the same menu — opens the calendar drawer prefilled
+  // with this contact + conversation (calendar module, agent+).
+  const calendarEnabled = !entitlementsReady || modules.calendar;
+  const canSchedule = canWriteHere && calendarEnabled;
+  const [eventDrawerOpen, setEventDrawerOpen] = useState(false);
   // Team-only notes for this contact, interleaved in the stream as amber
   // bubbles. Stored in `contact_notes` (account-scoped, shared with the
   // whole team via RLS) — they never go anywhere near the WhatsApp API.
@@ -1324,9 +1332,9 @@ export function MessageThread({
               />
             </button>
           )}
-          {/* Overflow — actions that are not queue operations. Currently
-              "Criar tarefa" (Tasks module, agent+). */}
-          {canCreateTask && (
+          {/* Overflow — actions that are not queue operations: "Criar
+              tarefa" (Tasks module) and "Agendar" (Calendar module), agent+. */}
+          {(canCreateTask || canSchedule) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={t("More actions")}
@@ -1339,13 +1347,24 @@ export function MessageThread({
                 align="end"
                 className="min-w-44 border-border bg-popover"
               >
-                <DropdownMenuItem
-                  onClick={() => setTaskDrawerOpen(true)}
-                  className="gap-2 text-sm text-popover-foreground"
-                >
-                  <CheckSquare className="h-4 w-4" />
-                  {t("Create task")}
-                </DropdownMenuItem>
+                {canCreateTask && (
+                  <DropdownMenuItem
+                    onClick={() => setTaskDrawerOpen(true)}
+                    className="gap-2 text-sm text-popover-foreground"
+                  >
+                    <CheckSquare className="h-4 w-4" />
+                    {t("Create task")}
+                  </DropdownMenuItem>
+                )}
+                {canSchedule && (
+                  <DropdownMenuItem
+                    onClick={() => setEventDrawerOpen(true)}
+                    className="gap-2 text-sm text-popover-foreground"
+                  >
+                    <CalendarPlus className="h-4 w-4" />
+                    {t("Schedule appointment")}
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -1380,6 +1399,18 @@ export function MessageThread({
           open={taskDrawerOpen}
           onOpenChange={setTaskDrawerOpen}
           task={null}
+          defaults={{
+            contact_id: contact.id,
+            conversation_id: conversation.id,
+            title: `${t("Service")}: ${displayName}`,
+          }}
+        />
+      )}
+      {canSchedule && (
+        <EventDrawer
+          open={eventDrawerOpen}
+          onOpenChange={setEventDrawerOpen}
+          event={null}
           defaults={{
             contact_id: contact.id,
             conversation_id: conversation.id,

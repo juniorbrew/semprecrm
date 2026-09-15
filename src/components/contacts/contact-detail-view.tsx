@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth, useEntitlements } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
+import { LinkedEvents } from '@/components/calendar';
 import { useLanguage } from '@/hooks/use-language';
 import { formatCurrency } from '@/lib/currency';
 import {
@@ -93,6 +94,9 @@ export function ContactDetailView({
   const { t, language } = useLanguage();
   const { accountId, defaultCurrency, user } = useAuth();
   const canSend = useCan('send-messages');
+  // "Agenda" tab — hidden when the plan has no Calendar module.
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const calendarEnabled = !entitlementsReady || modules.calendar;
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -694,6 +698,14 @@ export function ContactDetailView({
                   >
                     {t('Deals')}
                   </TabsTrigger>
+                  {calendarEnabled && (
+                    <TabsTrigger
+                      value="calendar"
+                      className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    >
+                      {t('Calendar')}
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger
                     value="privacy"
                     className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
@@ -986,6 +998,13 @@ export function ContactDetailView({
                     </div>
                   )}
                 </TabsContent>
+
+                {/* Calendar Tab (migration 040): the contact's next appointments + "+". */}
+                {calendarEnabled && (
+                  <TabsContent value="calendar" className="flex-1 overflow-y-auto px-4 py-3">
+                    <LinkedEvents contactId={contact.id} readOnly={!canSend} label={t('Upcoming appointments')} />
+                  </TabsContent>
+                )}
 
                 {/* Privacy Tab (LGPD, migration 035) */}
                 <TabsContent value="privacy" className="flex-1 overflow-y-auto px-4 py-3">

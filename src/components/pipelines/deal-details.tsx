@@ -10,6 +10,7 @@ import {
   TaskQuickCreate,
   useLinkedTasks,
 } from "@/components/tasks";
+import { LinkedEvents } from "@/components/calendar";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { formatCurrency } from "@/lib/currency";
@@ -92,6 +93,8 @@ export function DealDetails({
   const { ready: entitlementsReady, modules } = useEntitlements();
   const tasksEnabled = !entitlementsReady || modules.tasks;
   const canWriteTasks = useCan("send-messages");
+  // "Agenda" section — the deal's next appointments (calendar module).
+  const calendarEnabled = !entitlementsReady || modules.calendar;
   const linkedTasks = useLinkedTasks({ dealId: deal.id, enabled: tasksEnabled });
   const [taskAddOpen, setTaskAddOpen] = useState(false);
   const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
@@ -566,6 +569,18 @@ export function DealDetails({
               statuses={linkedTasks.statuses}
               onUpdated={linkedTasks.patch}
               onDeleted={linkedTasks.remove}
+            />
+          </section>
+        )}
+
+        {/* Agenda — the deal's next appointments; "+" reveals the inline
+            creator prefilled with deal + contact. */}
+        {calendarEnabled && (
+          <section>
+            <LinkedEvents
+              dealId={deal.id}
+              defaults={{ contact_id: deal.contact_id ?? undefined }}
+              readOnly={!canWriteTasks}
             />
           </section>
         )}

@@ -961,3 +961,88 @@ export interface ChatMember {
   /** Presence heartbeat fallback — "last seen X ago" when offline. */
   last_seen_at: string | null;
 }
+
+// ============================================================
+// Calendar (migration 040, module `calendar`) — appointments owned
+// by a member, with attendees and optional links to a contact, an
+// inbox conversation, a deal, a task and an internal chat thread.
+// Everything is stored in UTC; the account timezone
+// (`preferences.business_hours.timezone`) is applied by the UI.
+// Logic in src/lib/calendar/.
+// ============================================================
+
+export type CalendarEventStatus = 'confirmed' | 'cancelled';
+
+/** Phase 2 (Google / Outlook sync) — only `internal` exists today. */
+export type CalendarEventSource = 'internal' | 'google' | 'microsoft';
+
+export type CalendarAttendeeResponse = 'needs_action' | 'accepted' | 'declined';
+
+export interface CalendarEventAttendee {
+  event_id: string;
+  user_id: string;
+  response: CalendarAttendeeResponse;
+}
+
+/** Minimal projections embedded on an event row. */
+export interface CalendarContactRef {
+  id: string;
+  name: string | null;
+  phone: string;
+  avatar_url: string | null;
+}
+
+export interface CalendarDealRef {
+  id: string;
+  title: string;
+  pipeline_id: string;
+}
+
+export interface CalendarTaskRef {
+  id: string;
+  title: string;
+}
+
+export interface CalendarChatThreadRef {
+  id: string;
+  kind: ChatThreadKind;
+  title: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  account_id: string;
+  owner_user_id: string | null;
+  title: string;
+  description: string | null;
+  location: string | null;
+  /** Hex colour chosen on the event; null = the owner's palette colour. */
+  color: string | null;
+  starts_at: string;
+  ends_at: string;
+  all_day: boolean;
+  status: CalendarEventStatus;
+  /** 5, 10, 15, 30, 60 or 1440 — null = no reminder. */
+  reminder_minutes: number | null;
+  reminded_at: string | null;
+  contact_id: string | null;
+  conversation_id: string | null;
+  deal_id: string | null;
+  task_id: string | null;
+  chat_thread_id: string | null;
+  source: CalendarEventSource;
+  external_connection_id: string | null;
+  external_id: string | null;
+  external_etag: string | null;
+  external_updated_at: string | null;
+  sync_hash: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Embedded by `EVENT_SELECT` (src/lib/calendar/queries.ts). */
+  attendees?: CalendarEventAttendee[];
+  contact?: CalendarContactRef | null;
+  deal?: CalendarDealRef | null;
+  task?: CalendarTaskRef | null;
+  chat_thread?: CalendarChatThreadRef | null;
+}

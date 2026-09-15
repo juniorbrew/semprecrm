@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Ban, Check, CheckCheck, Info, Loader2, MoreHorizontal, Pencil, SmilePlus, Trash2 } from "lucide-react";
+import { Ban, CalendarPlus, Check, CheckCheck, Info, Loader2, MoreHorizontal, Pencil, SmilePlus, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import { titleFromMessage } from "@/lib/calendar";
+import { EventDrawer } from "@/components/calendar";
 import {
   aggregateReactions,
   canDeleteMessage,
@@ -182,6 +185,12 @@ export function ChatMessageBubble({
   const [draft, setDraft] = useState(message.body);
   const [busy, setBusy] = useState(false);
   const editRef = useRef<HTMLTextAreaElement | null>(null);
+  // "Agendar a partir desta mensagem" (calendar module): the drawer
+  // opens prefilled with the message text as title, this thread as the
+  // link and the thread's members as attendees.
+  const { modules } = useEntitlements();
+  const canSchedule = modules.calendar && !message.deleted_at;
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   useEffect(() => {
     if (editing) {
@@ -328,7 +337,7 @@ export function ChatMessageBubble({
             {mine && group ? (
               <ReceiptsPopover message={message} members={members} receipts={receipts} nameOf={nameOf} mine={mine} />
             ) : null}
-            {mine && (editable || deletable) ? (
+            {(mine && (editable || deletable)) || canSchedule ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
                   aria-label={t("Message")}
@@ -337,13 +346,19 @@ export function ChatMessageBubble({
                   {busy ? <Loader2 className="size-4 animate-spin" /> : <MoreHorizontal className="size-4" />}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-auto min-w-44 border-border bg-popover">
-                  {editable ? (
+                  {canSchedule ? (
+                    <DropdownMenuItem onClick={() => setScheduleOpen(true)}>
+                      <CalendarPlus className="mr-2 size-4" />
+                      {t("Schedule from this message")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {mine && editable ? (
                     <DropdownMenuItem onClick={() => setEditing(true)}>
                       <Pencil className="mr-2 size-4" />
                       {t("Edit message")}
                     </DropdownMenuItem>
                   ) : null}
-                  {deletable ? (
+                  {mine && deletable ? (
                     <DropdownMenuItem onClick={() => void remove()} className="text-destructive focus:text-destructive">
                       <Trash2 className="mr-2 size-4" />
                       {t("Delete message")}
@@ -377,6 +392,20 @@ export function ChatMessageBubble({
             </button>
           ))}
         </div>
+      ) : null}
+
+      {scheduleOpen ? (
+        <EventDrawer
+          open={scheduleOpen}
+          onOpenChange={setScheduleOpen}
+          event={null}
+          defaults={{
+            title: titleFromMessage(message.body),
+            description: message.body,
+            chat_thread_id: message.thread_id,
+            attendee_user_ids: members.map((m) => m.user_id).filter((id) => id !== userId),
+          }}
+        />
       ) : null}
     </div>
   );

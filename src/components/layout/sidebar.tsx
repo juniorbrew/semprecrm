@@ -9,8 +9,10 @@ import { useBranding } from "@/hooks/use-branding";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useOverdueTasks } from "@/hooks/use-overdue-tasks";
 import { useChatUnread } from "@/hooks/use-chat-unread";
+import { useUpcomingEvents } from "@/hooks/use-upcoming-events";
 import type { Module } from "@/lib/plans";
 import {
+  CalendarDays,
   CheckSquare,
   Crown,
   GitBranch,
@@ -106,6 +108,7 @@ const navItems: NavItem[] = [
   { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines" },
   { href: "/tasks", label: "Tarefas", icon: CheckSquare, module: "tasks" },
   { href: "/chat", label: "Chat", icon: MessagesSquare, module: "internal_chat" },
+  { href: "/agenda", label: "Agenda", icon: CalendarDays, module: "calendar" },
   { href: "/broadcasts", label: "Disparos", icon: Radio, module: "broadcasts" },
   { href: "/automations", label: "Automações", icon: Zap, module: "automations" },
   { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows" },
@@ -133,6 +136,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const overdueTasks = useOverdueTasks(!entitlementsReady || modules.tasks);
   // Unread internal-chat messages (realtime on chat_messages).
   const chatUnread = useChatUnread(!entitlementsReady || modules.internal_chat);
+  // Count on Agenda: my appointments starting in the next two hours (realtime).
+  const upcomingEvents = useUpcomingEvents(!entitlementsReady || modules.calendar);
   // Hide rows for modules the plan (or a platform override) turned
   // off. Until the entitlements settle we show everything — a row
   // that appears late is less jarring than the whole menu reflowing
@@ -250,6 +255,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 item.href === "/inbox" && totalUnread > 0 && !isActive;
               const showOverdueBadge = item.href === "/tasks" && overdueTasks > 0;
               const showChatBadge = item.href === "/chat" && chatUnread > 0;
+              const showAgendaBadge = item.href === "/agenda" && upcomingEvents > 0;
 
               return (
                 <li key={item.href}>
@@ -289,6 +295,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                         className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
                       >
                         {chatUnread > 99 ? "99+" : chatUnread}
+                      </span>
+                    )}
+                    {showAgendaBadge && (
+                      <span
+                        aria-label={`${upcomingEvents} ${upcomingEvents === 1 ? "compromisso nas próximas 2 h" : "compromissos nas próximas 2 h"}`}
+                        title={`${upcomingEvents} ${upcomingEvents === 1 ? "compromisso nas próximas 2 h" : "compromissos nas próximas 2 h"}`}
+                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-amber-600 dark:text-amber-400"
+                      >
+                        {upcomingEvents > 99 ? "99+" : upcomingEvents}
                       </span>
                     )}
                     {showUnreadDot && (

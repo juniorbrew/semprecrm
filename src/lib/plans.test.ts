@@ -70,6 +70,7 @@ describe('resolveEntitlements — each plan', () => {
     expect(e.modules.lead_capture).toBe(false);
     expect(e.modules.white_label).toBe(false);
     expect(e.modules.internal_chat).toBe(false);
+    expect(e.modules.calendar).toBe(false);
     expect(e.limits).toEqual({ max_users: 3, max_channels: 1 });
     expect(e.blocked).toBe(false);
   });
@@ -80,6 +81,7 @@ describe('resolveEntitlements — each plan', () => {
     expect(e.modules.lead_capture).toBe(true);
     expect(e.modules.white_label).toBe(true);
     expect(e.modules.internal_chat).toBe(true);
+    expect(e.modules.calendar).toBe(true);
     expect(onModules(e)).toEqual(MODULES.filter((m) => m !== 'flows'));
     expect(e.limits).toEqual({ max_users: 10, max_channels: 2 });
   });

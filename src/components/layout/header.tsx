@@ -36,6 +36,7 @@ const pageTitles: Record<string, string> = {
   "/pipelines": "Funis",
   "/tasks": "Tarefas",
   "/chat": "Chat",
+  "/agenda": "Agenda",
   "/broadcasts": "Disparos",
   "/automations": "Automações",
   "/flows": "Fluxos",

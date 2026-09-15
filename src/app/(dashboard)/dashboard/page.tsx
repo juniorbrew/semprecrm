@@ -37,6 +37,7 @@ import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
 import { TasksToday } from '@/components/dashboard/tasks-today'
+import { CalendarToday } from '@/components/dashboard/calendar-today'
 import { RadarCard } from '@/components/dashboard/radar-card'
 import { TeamMetrics } from '@/components/dashboard/team-metrics'
 import { cn } from '@/lib/utils'
@@ -48,6 +49,7 @@ export default function DashboardPage() {
   const { t, language } = useLanguage()
   const { ready: entitlementsReady, modules } = useEntitlements()
   const tasksEnabled = !entitlementsReady || modules.tasks
+  const calendarEnabled = !entitlementsReady || modules.calendar
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
 
@@ -272,13 +274,24 @@ export default function DashboardPage() {
       {/* Radar + today's tasks: the two "act now" cards side by side.
           Radar reads the same classifier as the inbox chips, so its
           counters deep-link into a matching filtered inbox. */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-4',
+          tasksEnabled && calendarEnabled ? 'xl:grid-cols-3' : 'xl:grid-cols-2',
+        )}
+      >
         <div className="h-full">
           <RadarCard refreshToken={tasksRefreshToken} />
         </div>
         {tasksEnabled && (
           <div className="h-full">
             <TasksToday refreshToken={tasksRefreshToken} />
+          </div>
+        )}
+        {/* "Hoje na agenda" (calendar module): my appointments of the day. */}
+        {calendarEnabled && (
+          <div className="h-full">
+            <CalendarToday refreshToken={tasksRefreshToken} />
           </div>
         )}
       </div>

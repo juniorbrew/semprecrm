@@ -67,9 +67,12 @@ export function NotificationsSettings() {
   const { user, profile, profileLoading, refreshProfile } = useAuth();
   // The internal-chat toggle only makes sense when the module is on.
   const { ready: entitlementsReady, modules } = useEntitlements();
-  const visibleKinds = PUSH_EVENT_KINDS.filter(
-    (kind) => kind !== 'chat_message' || !entitlementsReady || modules.internal_chat,
-  );
+  const visibleKinds = PUSH_EVENT_KINDS.filter((kind) => {
+    if (!entitlementsReady) return true;
+    if (kind === 'chat_message') return modules.internal_chat;
+    if (kind === 'calendar_reminder') return modules.calendar;
+    return true;
+  });
 
   const [permission, setPermission] = useState<PushPermission>('unsupported');
   const [thisBrowserEndpoint, setThisBrowserEndpoint] = useState<string | null>(null);
