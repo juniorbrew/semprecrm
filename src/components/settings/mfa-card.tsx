@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createClient as createSupabaseJsClient } from '@supabase/supabase-js';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -15,6 +14,7 @@ import {
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { verifyPassword } from '@/lib/auth/reauth';
 import { useLanguage } from '@/hooks/use-language';
 import {
   isValidMfaCode,
@@ -82,31 +82,6 @@ async function recordMfaAudit(event: 'enrolled' | 'disabled') {
   } catch (err) {
     console.warn('[MfaCard] audit call failed:', err);
   }
-}
-
-/**
- * Verify the password without touching the shared session. A separate
- * client with in-memory storage signs in, we look at the error, and
- * the extra session is revoked right away.
- */
-async function verifyPassword(email: string, password: string): Promise<boolean> {
-  const probe = createSupabaseJsClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-        storageKey: 'sb-mfa-reauth',
-      },
-    },
-  );
-  const { error } = await probe.auth.signInWithPassword({ email, password });
-  if (error) return false;
-  // Drop the throwaway session server-side (scope local = this one only).
-  await probe.auth.signOut({ scope: 'local' }).catch(() => undefined);
-  return true;
 }
 
 export function MfaCard() {

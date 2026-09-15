@@ -6,6 +6,7 @@ import { Loader2, KeyRound } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { verifyPassword } from '@/lib/auth/reauth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,15 +48,11 @@ export function PasswordForm() {
     setSaving(true);
 
     try {
-      // Supabase doesn't expose a "verify password without issuing a
-      // session" API, so we re-authenticate with the provided current
-      // password. If it matches, the session refreshes silently; if it
-      // doesn't, we abort before calling updateUser.
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: profile.email,
-        password: current,
-      });
-      if (signInError) {
+      // Verified on a throwaway client so the shared session keeps its
+      // assurance level — signing in here would downgrade an `aal2`
+      // (TOTP-verified) session to `aal1` and bounce the user to /mfa.
+      const ok = await verifyPassword(profile.email, current);
+      if (!ok) {
         toast.error('Current password is incorrect');
         return;
       }
