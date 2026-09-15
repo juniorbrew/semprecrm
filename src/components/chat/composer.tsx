@@ -158,13 +158,18 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
     setSending(true);
     try {
       await onSend(body.slice(0, CHAT_MESSAGE_MAX), pending);
-      setValue("");
+      // Drop only what was sent: anything typed while the request was in
+      // flight stays in the box.
+      const sent = value;
+      setValue((current) => (current.startsWith(sent) ? current.slice(sent.length).trimStart() : current));
       clearPending();
     } catch {
       // The panel toasts; keep the draft so the user can retry.
     } finally {
       setSending(false);
-      textareaRef.current?.focus();
+      // Refocus after React commits the re-render: focusing a control the
+      // browser just blurred (or one still marked disabled) is a no-op.
+      requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }, [value, pending, sending, disabled, onSend, clearPending]);
 
@@ -346,7 +351,9 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             rows={1}
-            disabled={disabled || sending}
+            // Stay editable while a send is in flight so the caret never
+            // leaves the box: Enter → message goes out → keep typing.
+            disabled={disabled}
             placeholder={t("Type a message")}
             aria-label={t("Message")}
             className="max-h-40 min-h-10 flex-1 resize-none overflow-y-auto py-2.5"
