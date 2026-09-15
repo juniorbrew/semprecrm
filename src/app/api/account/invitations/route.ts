@@ -71,13 +71,13 @@ import { audit } from "@/lib/audit-server";
 //
 //   When `ALLOWED_INVITE_HOSTS` is set (comma-separated hostnames),
 //   we validate the derived host against the list. Anything not
-//   on the list falls through to the wacrm.tech fallback with a
-//   loud console.warn. Operators who care about this attack
+//   on the list falls through to the first allow-listed host with
+//   a loud console.warn. Operators who care about this attack
 //   surface should set this to their canonical hostnames; everyone
 //   else gets today's permissive behavior.
 //
-// Previous implementation hard-defaulted to `https://wacrm.tech`
-// (the docs/marketing site, a different repo). Forks that didn't
+// The upstream project hard-defaulted to its own marketing site
+// (a different repo). Forks that didn't
 // set `NEXT_PUBLIC_SITE_URL` got invite links pointing at the
 // marketing site, which 404s on `/join/<token>`. This resolution
 // chain removes the foot-gun.
@@ -134,12 +134,12 @@ function getBaseUrl(request: Request): string {
       "[POST /api/account/invitations] rejected non-allow-listed host:",
       { forwardedHost, host, allowList },
     );
-  } else {
-    console.warn(
-      "[POST /api/account/invitations] could not derive base URL from request; falling back to marketing domain",
-    );
+    return `https://${allowList[0]}`;
   }
-  return "https://wacrm.tech";
+  console.warn(
+    "[POST /api/account/invitations] could not derive base URL from request; falling back to the request origin",
+  );
+  return new URL(request.url).origin;
 }
 
 const MAX_LABEL_LEN = 80;
