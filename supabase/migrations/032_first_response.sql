@@ -2,7 +2,7 @@
 -- 032_first_response.sql — first response per conversation
 -- (team metrics, "Métricas por atendente").
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round2-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round2-design.md
 --       section "1. Métricas por atendente"
 --
 -- What this migration does

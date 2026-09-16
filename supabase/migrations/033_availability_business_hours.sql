@@ -2,7 +2,7 @@
 -- 033_availability_business_hours.sql — agent availability, business
 -- hours / out-of-hours auto-reply and round-robin bookkeeping.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round2-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round2-design.md
 --       section "2. Horário de atendimento e disponibilidade"
 --
 -- What this migration does

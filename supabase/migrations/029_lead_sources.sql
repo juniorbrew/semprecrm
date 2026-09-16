@@ -4,7 +4,7 @@
 -- (landing page, form, Zapier, n8n…) that turns a payload into
 -- contact + deal + tags and fires automations.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round1-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round1-design.md
 --       section "2. Captura de leads por webhook"
 --
 -- What this migration does

@@ -2,7 +2,7 @@
 -- 028_quick_replies.sql — Quick replies (canned responses) per
 -- account, inserted from the inbox composer via "/atalho".
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round1-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round1-design.md
 --       section "1. Respostas rápidas"
 --
 -- What this migration does

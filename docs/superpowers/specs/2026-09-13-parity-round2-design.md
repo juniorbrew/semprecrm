@@ -1,7 +1,7 @@
-# Paridade com o DeskcommCRM — rodada 2
+# SempreCRM — paridade de funcionalidades, rodada 2
 
 Data: 2026-09-13. Aprovado em conversa ("vamos seguir sua sugestão"). Continua a rodada 1
-(`2026-09-13-deskcomm-parity-round1-design.md`); mesmas convenções (migrations idempotentes, RLS por
+(`2026-09-13-parity-round1-design.md`); mesmas convenções (migrations idempotentes, RLS por
 `is_account_member()`, `t()` com pt-BR/en-US em `i18n-extra.ts`, vitest na lógica pura, verificação no navegador).
 
 Sete peças: métricas por atendente, horário de atendimento + disponibilidade (com round-robin de verdade),

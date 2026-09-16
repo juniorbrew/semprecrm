@@ -522,7 +522,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'number. Set it in': 'número. Configure-o em',
   'Meta Business Manager → WhatsApp Accounts → Phone Numbers → Two-step verification':
     'Gerenciador de Negócios da Meta → Contas do WhatsApp → Números de telefone → Verificação em duas etapas',
-  ', then paste it here so wacrm can subscribe the number — otherwise Meta routes inbound events to whichever app last claimed it (the symptom that hits second numbers under a shared WABA).':
+  ', then paste it here so SempreCRM can subscribe the number — otherwise Meta routes inbound events to whichever app last claimed it (the symptom that hits second numbers under a shared WABA).':
     ', depois cole-o aqui para que o CRM assine o número. Caso contrário, a Meta encaminhará os eventos ao último aplicativo que reivindicou o número.',
   'have no PIN and are pre-registered — leave this blank for them. Leaving it blank also keeps an existing registration untouched.':
     'não possuem PIN e já vêm registrados — deixe este campo vazio nesses casos. Deixá-lo vazio também preserva um registro existente.',
@@ -759,7 +759,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
     'Acesso somente leitura em todas as páginas. Não pode enviar nem editar.',
   'Failed to create invitation': 'Falha ao criar o convite',
   'Invite link copied': 'Link do convite copiado',
-  'our wacrm account': 'nossa conta do CRM',
+  'our SempreCRM account': 'nossa conta do SempreCRM',
   'Invite link': 'Link do convite',
   'Invite a teammate': 'Convidar um membro',
   'Signing out…': 'Saindo…',
@@ -860,7 +860,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Reset Configuration': 'Redefinir configuração',
   'Your access token authenticates with Meta. See Registration status below for whether webhooks are actually wired.':
     'Seu token de acesso autentica na Meta. Veja o status do registro abaixo para confirmar se os webhooks estão conectados.',
-  'Registered — Meta will deliver events to wacrm':
+  'Registered — Meta will deliver events to SempreCRM':
     'Registrado — a Meta entregará eventos ao CRM',
   'Not registered — Meta will not deliver events':
     'Não registrado — a Meta não entregará eventos',
