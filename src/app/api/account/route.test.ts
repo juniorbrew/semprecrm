@@ -15,6 +15,9 @@ const h = vi.hoisted(() => ({
       person_type: "pf",
       tax_id: null as string | null,
       legal_name: null as string | null,
+      phone: null as string | null,
+      email: null as string | null,
+      address: {} as Record<string, unknown>,
     },
     updates: [] as Record<string, unknown>[],
     audits: [] as Record<string, unknown>[],
@@ -75,7 +78,7 @@ function patch(body: unknown) {
 }
 
 beforeEach(() => {
-  h.state.account = { id: "acct-1", name: "Acme", person_type: "pf", tax_id: null, legal_name: null };
+  h.state.account = { id: "acct-1", name: "Acme", person_type: "pf", tax_id: null, legal_name: null, phone: null, email: null, address: {} };
   h.state.updates = [];
   h.state.audits = [];
 });
@@ -133,6 +136,38 @@ describe("PATCH /api/account", () => {
     const res = await patch({ person_type: "pf", tax_id: "529.982.247-25" });
     expect(res.status).toBe(200);
     expect(h.state.audits).toEqual([]);
+  });
+
+  it("stores a normalised contact block and audits it", async () => {
+    const res = await patch({
+      phone: "(51) 3635-4333",
+      email: " Contato@Padaria.com ",
+      address: { cep: "90000-000", street: "Rua Garibaldi", number: "70", complement: "", neighborhood: "Centro", city: "Porto Alegre", state: "rs" },
+    });
+    expect(res.status).toBe(200);
+    expect(h.state.updates).toEqual([
+      {
+        phone: "5136354333",
+        email: "contato@padaria.com",
+        address: { cep: "90000000", street: "Rua Garibaldi", number: "70", complement: "", neighborhood: "Centro", city: "Porto Alegre", state: "RS" },
+      },
+    ]);
+    expect(h.state.audits.map((a) => a.action)).toEqual(["account.contact_updated"]);
+  });
+
+  it("clears the contact block with nulls / an empty address", async () => {
+    h.state.account.phone = "5136354333";
+    h.state.account.address = { cep: "90000000", city: "Porto Alegre" };
+    const res = await patch({ phone: "", email: null, address: {} });
+    expect(res.status).toBe(200);
+    expect(h.state.updates).toEqual([{ phone: null, email: null, address: {} }]);
+  });
+
+  it("rejects an invalid phone / cep with per-field codes", async () => {
+    const res = await patch({ phone: "123", address: { cep: "12" } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid contact data", errors: { phone: "invalid", cep: "invalid" } });
+    expect(h.state.updates).toEqual([]);
   });
 
   it("rejects an empty body", async () => {

@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+import { MessageSquare, CheckCircle, ChevronDown, UsersRound } from "lucide-react";
 import {
   FieldError,
   PersonTypeToggle,
@@ -22,12 +23,19 @@ import {
   registrationErrorMessage,
   type RegistrationFieldValues,
 } from "@/components/account/registration-fields";
+import {
+  AddressFields,
+  ContactFields,
+  EMPTY_CONTACT,
+  type ContactFormValues,
+} from "@/components/account/contact-fields";
 import { useLanguage } from "@/hooks/use-language";
 import {
   validateAccountRegistration,
   type PersonType,
   type RegistrationErrors,
 } from "@/lib/br/documents";
+import { validateAccountContact, type ContactErrors } from "@/lib/br/lookup";
 
 const INPUT_CLASS =
   "border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20";
@@ -62,6 +70,11 @@ function SignupPageInner() {
     tradeName: "",
   });
   const [fieldErrors, setFieldErrors] = useState<RegistrationErrors>({});
+  // Phone, e-mail and address — optional, auto-filled from the CNPJ
+  // for companies and from the CEP for everyone.
+  const [contact, setContact] = useState<ContactFormValues>(EMPTY_CONTACT);
+  const [contactErrors, setContactErrors] = useState<ContactErrors>({});
+  const [contactOpen, setContactOpen] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -76,6 +89,7 @@ function SignupPageInner() {
     e.preventDefault();
     setError(null);
     setFieldErrors({});
+    setContactErrors({});
 
     // Registration is validated before the password so the user sees
     // every problem on the form at once, not one per submit.
@@ -88,8 +102,13 @@ function SignupPageInner() {
           tradeName: registration.tradeName,
           fullName,
         });
-    if (reg && !reg.ok) {
-      setFieldErrors(reg.errors);
+    const con = inviteToken ? null : validateAccountContact(contact);
+    if ((reg && !reg.ok) || (con && !con.ok)) {
+      if (reg && !reg.ok) setFieldErrors(reg.errors);
+      if (con && !con.ok) {
+        setContactErrors(con.errors);
+        setContactOpen(true);
+      }
       return;
     }
 
@@ -126,6 +145,14 @@ function SignupPageInner() {
                 tax_id: reg.value.taxId,
                 legal_name: reg.value.legalName,
                 account_name: reg.value.accountName,
+              }
+            : {}),
+          // Read by handle_new_user (migration 043). Only set keys are sent.
+          ...(con?.ok
+            ? {
+                ...(con.value.phone ? { phone: con.value.phone } : {}),
+                ...(con.value.email ? { email: con.value.email } : {}),
+                ...(con.value.address ? { address: con.value.address } : {}),
               }
             : {}),
         },
@@ -183,7 +210,7 @@ function SignupPageInner() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
+      <Card className={cn("w-full border-border bg-card", inviteToken ? "max-w-md" : "max-w-lg")}>
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             {inviteToken ? (
@@ -215,18 +242,29 @@ function SignupPageInner() {
                 onChange={(next) => {
                   setPersonType(next);
                   setRegistration({ taxId: "", legalName: "", tradeName: "" });
+                  setContact(EMPTY_CONTACT);
                   setFieldErrors({});
+                  setContactErrors({});
                 }}
                 disabled={loading}
               />
             ) : null}
 
-            {!inviteToken && personType === "pj" ? (
+            {!inviteToken ? (
               <RegistrationFields
                 personType={personType}
                 values={registration}
                 errors={fieldErrors}
                 onChange={(patch) => setRegistration((prev) => ({ ...prev, ...patch }))}
+                onCompany={(company) => {
+                  setContact((prev) => ({
+                    phone: prev.phone || company.phone,
+                    email: prev.email || company.email,
+                    address: company.address.cep ? company.address : prev.address,
+                  }));
+                  // Show what was filled in so the user can check it.
+                  if (company.address.cep || company.phone || company.email) setContactOpen(true);
+                }}
                 disabled={loading}
                 inputClassName={INPUT_CLASS}
               />
@@ -257,15 +295,37 @@ function SignupPageInner() {
               />
             </div>
 
-            {!inviteToken && personType === "pf" ? (
-              <RegistrationFields
-                personType={personType}
-                values={registration}
-                errors={fieldErrors}
-                onChange={(patch) => setRegistration((prev) => ({ ...prev, ...patch }))}
-                disabled={loading}
-                inputClassName={INPUT_CLASS}
-              />
+            {!inviteToken ? (
+              <details
+                className="group rounded-lg border border-border bg-muted/30"
+                open={contactOpen}
+                onToggle={(e) => setContactOpen((e.target as HTMLDetailsElement).open)}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-medium text-foreground">
+                  <span>
+                    {personType === "pj" ? "Contato e endereço da empresa" : "Contato e endereço"}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">opcional</span>
+                  </span>
+                  <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
+                  <ContactFields
+                    values={contact}
+                    errors={contactErrors}
+                    onChange={(patch) => setContact((prev) => ({ ...prev, ...patch }))}
+                    disabled={loading}
+                    inputClassName={INPUT_CLASS}
+                    emailLabel={personType === "pj" ? "Company e-mail" : "Contact e-mail"}
+                  />
+                  <AddressFields
+                    address={contact.address}
+                    errors={contactErrors}
+                    onChange={(address) => setContact((prev) => ({ ...prev, address }))}
+                    disabled={loading}
+                    inputClassName={INPUT_CLASS}
+                  />
+                </div>
+              </details>
             ) : null}
 
             <div className="flex flex-col gap-2">

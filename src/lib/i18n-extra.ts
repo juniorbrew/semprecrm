@@ -31,6 +31,37 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Company registration saved': 'Cadastro da empresa salvo',
   'Could not save the company registration': 'Não foi possível salvar o cadastro da empresa',
   'Add your CPF or CNPJ': 'Adicione seu CPF ou CNPJ',
+  // Company / address lookup (CNPJ → Receita Federal, CEP → address)
+  'Looking the CNPJ up at the Receita Federal…': 'Consultando o CNPJ na Receita Federal…',
+  'Company data filled in from the Receita Federal — check it before continuing':
+    'Dados da empresa preenchidos pela Receita Federal — confira antes de continuar',
+  'Company found, but its registration is not active at the Receita Federal — check the data':
+    'Empresa encontrada, mas com situação cadastral não ativa na Receita Federal — confira os dados',
+  'CNPJ not found at the Receita Federal — fill in the company data by hand':
+    'CNPJ não encontrado na Receita Federal — preencha os dados da empresa manualmente',
+  'Could not reach the Receita Federal — fill in the company data by hand':
+    'Não foi possível consultar a Receita Federal — preencha os dados da empresa manualmente',
+  'Looking up the CEP…': 'Consultando o CEP…',
+  'Address found — add the number and check the rest': 'Endereço encontrado — informe o número e confira o restante',
+  'CEP not found — fill in the address by hand': 'CEP não encontrado — preencha o endereço manualmente',
+  'Could not reach the CEP service — fill in the address by hand':
+    'Não foi possível consultar o CEP — preencha o endereço manualmente',
+  'Contact and address': 'Contato e endereço',
+  'Type the CEP to fill in the street, neighbourhood, city and state.':
+    'Digite o CEP para preencher rua, bairro, cidade e estado.',
+  'Phone': 'Telefone',
+  'Company e-mail': 'E-mail da empresa',
+  'Contact e-mail': 'E-mail de contato',
+  'Street': 'Logradouro',
+  'Number': 'Número',
+  'Complement': 'Complemento',
+  'Neighbourhood': 'Bairro',
+  'City': 'Cidade',
+  'Invalid e-mail': 'E-mail inválido',
+  'Invalid CEP': 'CEP inválido',
+  'Choose a state': 'Escolha o estado',
+  'Invalid value': 'Valor inválido',
+  'Use at most 120 characters': 'Use no máximo 120 caracteres',
   // WhatsApp connection and setup
   'WhatsApp connection': 'Conexão com o WhatsApp',
   'Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here.':

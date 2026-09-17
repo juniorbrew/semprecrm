@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, Check, Loader2 } from 'lucide-react';
+import { Building2, Check, Loader2, MapPin } from 'lucide-react';
 
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
@@ -17,12 +17,19 @@ import {
   type RegistrationFieldValues,
 } from '@/components/account/registration-fields';
 import {
+  AddressFields,
+  ContactFields,
+  EMPTY_CONTACT,
+  type ContactFormValues,
+} from '@/components/account/contact-fields';
+import {
   formatTaxId,
   MAX_NAME_LEN,
   validateAccountDocument,
   type PersonType,
   type RegistrationErrors,
 } from '@/lib/br/documents';
+import { EMPTY_ADDRESS, validateAccountContact, type ContactErrors } from '@/lib/br/lookup';
 import { SettingsPanelHead } from './settings-panel-head';
 
 /** Wire keys from PATCH /api/account → field names used by the shared inputs. */
@@ -31,6 +38,15 @@ const WIRE_TO_FIELD: Record<string, keyof RegistrationErrors> = {
   tax_id: 'taxId',
   legal_name: 'legalName',
 };
+
+function contactFromAccount(account: { phone?: string | null; email?: string | null; address?: Record<string, unknown> | null }): ContactFormValues {
+  const raw = (account.address ?? {}) as Partial<Record<keyof typeof EMPTY_ADDRESS, unknown>>;
+  const address = { ...EMPTY_ADDRESS };
+  for (const key of Object.keys(EMPTY_ADDRESS) as (keyof typeof EMPTY_ADDRESS)[]) {
+    if (typeof raw[key] === 'string') address[key] = raw[key] as string;
+  }
+  return { phone: account.phone ?? '', email: account.email ?? '', address };
+}
 
 /**
  * Settings → Empresa: the account's registration — pessoa física
@@ -45,6 +61,8 @@ export function CompanySettings() {
   const [name, setName] = useState('');
   const [values, setValues] = useState<RegistrationFieldValues>({ taxId: '', legalName: '', tradeName: '' });
   const [errors, setErrors] = useState<RegistrationErrors>({});
+  const [contact, setContact] = useState<ContactFormValues>(EMPTY_CONTACT);
+  const [contactErrors, setContactErrors] = useState<ContactErrors>({});
   const [saving, setSaving] = useState(false);
 
   // Seed from the account row (and re-seed after a successful save).
@@ -59,6 +77,8 @@ export function CompanySettings() {
       tradeName: '',
     });
     setErrors({});
+    setContact(contactFromAccount(account));
+    setContactErrors({});
   }, [account]);
 
   const trimmedName = name.trim();
@@ -70,9 +90,11 @@ export function CompanySettings() {
         : null;
 
   const savedTaxId = account?.tax_id ? formatTaxId(personType, account.tax_id) : '';
+  const contactDirty = !!account && JSON.stringify(contact) !== JSON.stringify(contactFromAccount(account));
   const dirty =
     !!account &&
-    (personType !== (account.person_type ?? 'pf') ||
+    (contactDirty ||
+      personType !== (account.person_type ?? 'pf') ||
       trimmedName !== account.name ||
       formatTaxId(personType, values.taxId) !== savedTaxId ||
       (personType === 'pj' && values.legalName.trim() !== (account.legal_name ?? '')));
@@ -80,11 +102,14 @@ export function CompanySettings() {
   async function save() {
     if (!account || nameError) return;
     const doc = validateAccountDocument({ personType, taxId: values.taxId, legalName: values.legalName });
-    if (!doc.ok) {
-      setErrors(doc.errors);
+    const con = validateAccountContact(contact);
+    if (!doc.ok || !con.ok) {
+      setErrors(doc.ok ? {} : doc.errors);
+      setContactErrors(con.ok ? {} : con.errors);
       return;
     }
     setErrors({});
+    setContactErrors({});
     setSaving(true);
     try {
       const res = await fetch('/api/account', {
@@ -95,6 +120,9 @@ export function CompanySettings() {
           person_type: doc.value.personType,
           tax_id: doc.value.taxId,
           legal_name: doc.value.legalName ?? '',
+          phone: con.value.phone ?? '',
+          email: con.value.email ?? '',
+          address: con.value.address ?? {},
         }),
       });
       if (!res.ok) {
@@ -103,11 +131,14 @@ export function CompanySettings() {
           | null;
         if (payload?.errors) {
           const mapped: RegistrationErrors = {};
+          const mappedContact: ContactErrors = {};
           for (const [wire, code] of Object.entries(payload.errors)) {
             const field = WIRE_TO_FIELD[wire];
             if (field) mapped[field] = code as RegistrationErrors[keyof RegistrationErrors];
+            else mappedContact[wire as keyof ContactErrors] = code as ContactErrors[keyof ContactErrors];
           }
           setErrors(mapped);
+          setContactErrors(mappedContact);
           return;
         }
         throw new Error(payload?.error ?? `HTTP ${res.status}`);
@@ -199,6 +230,13 @@ export function CompanySettings() {
             onChange={(patch) => setValues((prev) => ({ ...prev, ...patch }))}
             disabled={disabled}
             showTradeName={false}
+            onCompany={(company) =>
+              setContact((prev) => ({
+                phone: prev.phone || company.phone,
+                email: prev.email || company.email,
+                address: company.address.cep ? company.address : prev.address,
+              }))
+            }
           />
 
           <div className="flex flex-col gap-2">
@@ -218,6 +256,31 @@ export function CompanySettings() {
             </p>
             <FieldError message={name.length > 0 ? nameError : null} />
           </div>
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-border bg-card p-5">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
+          <MapPin className="size-4 text-muted-foreground" />
+          {t('Contact and address')}
+        </h3>
+        <p className="mb-4 text-xs text-muted-foreground">
+          {t('Type the CEP to fill in the street, neighbourhood, city and state.')}
+        </p>
+        <div className="grid max-w-2xl gap-4">
+          <ContactFields
+            values={contact}
+            errors={contactErrors}
+            onChange={(patch) => setContact((prev) => ({ ...prev, ...patch }))}
+            disabled={disabled}
+            emailLabel={personType === 'pj' ? 'Company e-mail' : 'Contact e-mail'}
+          />
+          <AddressFields
+            address={contact.address}
+            errors={contactErrors}
+            onChange={(address) => setContact((prev) => ({ ...prev, address }))}
+            disabled={disabled}
+          />
         </div>
       </div>
     </section>

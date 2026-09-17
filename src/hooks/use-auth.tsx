@@ -75,11 +75,15 @@ interface AccountSummary extends PlanAccountFields {
   tax_id?: string | null;
   /** Razão social — pessoa jurídica only. */
   legal_name?: string | null;
+  /** Contact block (migration 043). `address` is the raw jsonb; parse with `validateAccountContact`. */
+  phone?: string | null;
+  email?: string | null;
+  address?: Record<string, unknown> | null;
 }
 
 /** Columns the auth provider selects off `accounts`. */
 const ACCOUNT_SELECT =
-  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name";
+  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name, phone, email, address";
 
 interface AuthContextValue {
   user: User | null;
@@ -298,6 +302,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               person_type: accountRaw.person_type ?? null,
               tax_id: accountRaw.tax_id ?? null,
               legal_name: accountRaw.legal_name ?? null,
+              phone: accountRaw.phone ?? null,
+              email: accountRaw.email ?? null,
+              address: accountRaw.address ?? null,
             }
           : null;
 
@@ -491,6 +498,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             person_type: row.person_type ?? prev.person_type,
             tax_id: row.tax_id ?? null,
             legal_name: row.legal_name ?? null,
+            phone: row.phone ?? null,
+            email: row.email ?? null,
+            address: row.address ?? null,
           }
         : prev,
     );
