@@ -9,7 +9,7 @@ function res(status: number, body: unknown) {
 const cnpjBody = {
   cnpj: '11222333000181', razao_social: 'PADARIA SOL LTDA', nome_fantasia: 'PADARIA DO SOL',
   descricao_tipo_de_logradouro: 'RUA', logradouro: 'GARIBALDI', numero: '70', complemento: '', bairro: 'CENTRO',
-  municipio: 'PORTO ALEGRE', uf: 'RS', cep: '90000000', ddd_telefone_1: '5136354333', email: null,
+  municipio: 'PORTO ALEGRE', uf: 'RS', cep: '90000000', ddd_telefone_1: '5136354333', email: 'sol@padaria.com.br',
   descricao_situacao_cadastral: 'ATIVA',
 }
 
@@ -24,6 +24,30 @@ describe('lookupCnpj', () => {
     expect(b).toEqual(a)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(String(fetchMock.mock.calls[0][0])).toBe('https://brasilapi.com.br/api/cnpj/v1/11222333000181')
+  })
+
+  it('fills a missing e-mail from cnpj.ws when BrasilAPI has none, without failing when cnpj.ws does', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('cnpj.ws')
+        ? res(200, { razao_social: 'PADARIA SOL LTDA', estabelecimento: { email: 'Contato@Padaria.com.br' } })
+        : res(200, { ...cnpjBody, email: null }),
+    )
+    const out = await lookupCnpj('11222333000181', fetchMock)
+    expect(out).toMatchObject({ ok: true, company: { email: 'contato@padaria.com.br' } })
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      'https://brasilapi.com.br/api/cnpj/v1/11222333000181',
+      'https://publica.cnpj.ws/cnpj/11222333000181',
+    ])
+
+    __resetLookupCacheForTests()
+    const limited = vi.fn(async (url: string) => (url.includes('cnpj.ws') ? res(429, {}) : res(200, { ...cnpjBody, email: null })))
+    expect(await lookupCnpj('11222333000181', limited)).toMatchObject({ ok: true, company: { email: '' } })
+  })
+
+  it('does not call cnpj.ws when BrasilAPI already has the e-mail', async () => {
+    const fetchMock = vi.fn(async () => res(200, { ...cnpjBody, email: 'X@Y.COM' }))
+    expect(await lookupCnpj('11222333000181', fetchMock)).toMatchObject({ ok: true, company: { email: 'x@y.com' } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('reports not_found for a 404/400 upstream and invalid for a bad document without fetching', async () => {

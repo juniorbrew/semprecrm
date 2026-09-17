@@ -157,9 +157,11 @@ function str(v: unknown): string {
 
 /** https://brasilapi.com.br/api/cnpj/v1/{cnpj} */
 export function mapBrasilApiCnpj(json: Json): CompanyLookup {
-  const streetType = titleCasePtBr(str(json.descricao_tipo_de_logradouro))
-  const streetName = titleCasePtBr(str(json.logradouro))
-  const street = [streetType, streetName].filter(Boolean).join(' ')
+  const number = stripLeadingZeros(str(json.numero))
+  let streetName = str(json.logradouro)
+  // The Receita sometimes repeats the number at the end of the street.
+  if (number && streetName.endsWith(' ' + number)) streetName = streetName.slice(0, -number.length).trimEnd()
+  const street = titleCasePtBr([str(json.descricao_tipo_de_logradouro), streetName].filter(Boolean).join(' '))
   return {
     taxId: str(json.cnpj).replace(/[^0-9A-Za-z]/g, '').toUpperCase(),
     legalName: titleCasePtBr(str(json.razao_social)),
@@ -167,7 +169,7 @@ export function mapBrasilApiCnpj(json: Json): CompanyLookup {
     address: {
       cep: normalizeCep(str(json.cep)),
       street,
-      number: stripLeadingZeros(str(json.numero)),
+      number,
       complement: titleCasePtBr(str(json.complemento)),
       neighborhood: titleCasePtBr(str(json.bairro)),
       city: titleCasePtBr(str(json.municipio)),

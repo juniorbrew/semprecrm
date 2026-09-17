@@ -268,11 +268,9 @@ function SignupPageInner() {
                 errors={fieldErrors}
                 onChange={(patch) => setRegistration((prev) => ({ ...prev, ...patch }))}
                 onCompany={(company) => {
-                  setContact((prev) => ({
-                    phone: prev.phone || company.phone,
-                    email: prev.email || company.email,
-                    address: company.address.cep ? company.address : prev.address,
-                  }));
+                  // A new CNPJ is a new company: its contact block replaces
+                  // whatever was there, even with blanks.
+                  setContact({ phone: company.phone, email: company.email, address: company.address });
                   // Show what was filled in so the user can check it.
                   if (company.address.cep || company.phone || company.email) setContactOpen(true);
                 }}

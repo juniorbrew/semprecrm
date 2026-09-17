@@ -172,7 +172,11 @@ export function AddressFields({
   const prev = prevAddressRef.current;
   if (prev !== address) {
     const cepChanged = normalizeCep(prev.cep) !== cepDigits;
-    const bodyChanged = prev.street !== address.street || prev.city !== address.city;
+    const bodyChanged =
+      prev.street !== address.street ||
+      prev.city !== address.city ||
+      prev.neighborhood !== address.neighborhood ||
+      prev.state !== address.state;
     if (cepChanged && bodyChanged) filledFromCepRef.current = cepDigits;
     prevAddressRef.current = address;
   }
@@ -186,8 +190,8 @@ export function AddressFields({
       return;
     }
     if (cepState.key === cepDigits && cepState.status !== 'idle') return;
-    // Same CEP that produced the current street/city — nothing to fetch.
-    if (cepDigits === filledFromCepRef.current && addressRef.current.street && addressRef.current.city) return;
+    // Same CEP that produced the current address — nothing to fetch.
+    if (cepDigits === filledFromCepRef.current) return;
     void lookup(cepDigits).then((found) => {
       if (!found) {
         // Not found / unreachable: hand the user the street field.

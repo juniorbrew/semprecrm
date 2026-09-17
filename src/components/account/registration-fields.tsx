@@ -12,6 +12,7 @@ import {
   CPF_LENGTH,
   formatTaxId,
   isValidCnpj,
+  isValidCpf,
   normalizeTaxId,
   type PersonType,
   type RegistrationErrorCode,
@@ -159,16 +160,20 @@ export function RegistrationFields({
     if (cnpjState.key === cnpjDigits && cnpjState.status !== 'idle') return;
     void lookup(cnpjDigits).then((company) => {
       if (!company) return;
-      onChange({
-        legalName: company.legalName || valuesRef.current.legalName,
-        tradeName: valuesRef.current.tradeName || company.tradeName,
-      });
+      // A new CNPJ is a new company: everything the Receita defines is
+      // replaced, including clearing a fantasia it does not have.
+      onChange({ legalName: company.legalName, tradeName: company.tradeName });
       onCompanyRef.current?.(company);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPj, cnpjDigits]);
 
   const hint = isPj && cnpjState.key === cnpjDigits ? cnpjHint(cnpjState.status, cnpjState.data) : null;
+
+  // Live check-digit feedback once the document is complete, before submit.
+  const docDigits = normalizeTaxId(values.taxId);
+  const docComplete = docDigits.length === (isPj ? CNPJ_LENGTH : CPF_LENGTH);
+  const liveInvalid = docComplete && !(isPj ? isValidCnpj(docDigits) : isValidCpf(docDigits));
   const docLabel = isPj ? 'CNPJ' : 'CPF';
   const docMaxLen = isPj ? CNPJ_LENGTH + 4 : CPF_LENGTH + 3; // masked length
 
@@ -191,7 +196,7 @@ export function RegistrationFields({
             placeholder={isPj ? '00.000.000/0000-00' : '000.000.000-00'}
             maxLength={docMaxLen}
             disabled={disabled}
-            aria-invalid={!!errors.taxId}
+            aria-invalid={!!errors.taxId || liveInvalid}
             aria-busy={hint?.tone === 'muted'}
             className={cn(inputClassName, isPj && 'pr-8')}
           />
@@ -203,8 +208,10 @@ export function RegistrationFields({
             </span>
           ) : null}
         </div>
-        <FieldError message={fieldError('taxId')} />
-        {hint && !errors.taxId ? (
+        <FieldError
+          message={fieldError('taxId') ?? (liveInvalid ? t(registrationErrorMessage('taxId', 'invalid', personType)) : null)}
+        />
+        {hint && !errors.taxId && !liveInvalid ? (
           <p
             role="status"
             className={cn(

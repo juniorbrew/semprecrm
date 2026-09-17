@@ -29,6 +29,7 @@ export type CepLookupResult = { ok: true; address: AddressLookup } | { ok: false
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 const UPSTREAM_TIMEOUT_MS = 6_000
+const EMAIL_LOOKUP_TIMEOUT_MS = 2_500
 const CNPJ_TTL_MS = 24 * 60 * 60 * 1000
 const CEP_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_CACHE_ENTRIES = 5_000
@@ -62,9 +63,10 @@ export function __resetLookupCacheForTests() {
 async function getJson(
   fetchImpl: FetchLike,
   url: string,
+  timeoutMs = UPSTREAM_TIMEOUT_MS,
 ): Promise<{ status: number; json: Record<string, unknown> | null }> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetchImpl(url, {
       headers: { accept: 'application/json', 'user-agent': 'SempreCRM/1.0 (+lookup)' },
@@ -99,7 +101,18 @@ export async function lookupCnpj(
   }
   if (r.status !== 200) return { ok: false, reason: 'upstream_error' }
 
-  const hit: CnpjLookupResult = { ok: true, company: mapBrasilApiCnpj(r.json) }
+  const company = mapBrasilApiCnpj(r.json)
+  // BrasilAPI usually omits the e-mail the Receita holds; cnpj.ws has
+  // it. Best effort, short budget, silently skipped when rate-limited
+  // (its free tier allows 3 calls a minute).
+  if (!company.email) {
+    const extra = await getJson(fetchImpl, `https://publica.cnpj.ws/cnpj/${cnpj}`, EMAIL_LOOKUP_TIMEOUT_MS)
+    const est = extra.status === 200 && extra.json ? (extra.json.estabelecimento as Record<string, unknown> | undefined) : undefined
+    const email = typeof est?.email === 'string' ? est.email.trim().toLowerCase() : ''
+    if (email) company.email = email
+  }
+
+  const hit: CnpjLookupResult = { ok: true, company }
   cacheSet(key, hit, CNPJ_TTL_MS)
   return hit
 }

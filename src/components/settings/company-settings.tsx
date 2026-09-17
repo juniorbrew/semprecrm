@@ -231,11 +231,7 @@ export function CompanySettings() {
             disabled={disabled}
             showTradeName={false}
             onCompany={(company) =>
-              setContact((prev) => ({
-                phone: prev.phone || company.phone,
-                email: prev.email || company.email,
-                address: company.address.cep ? company.address : prev.address,
-              }))
+              setContact({ phone: company.phone, email: company.email, address: company.address })
             }
           />
 

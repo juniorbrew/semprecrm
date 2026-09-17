@@ -45,6 +45,7 @@ describe('titleCasePtBr', () => {
     expect(titleCasePtBr('ITAU UNIBANCO S.A.')).toBe('Itau Unibanco S.A.')
     expect(titleCasePtBr('MAGAZINE LUIZA S/A')).toBe('Magazine Luiza S/A')
     expect(titleCasePtBr('IFOOD.COM AGENCIA DE RESTAURANTES ONLINE S.A.')).toBe('Ifood.com Agencia de Restaurantes Online S.A.')
+    expect(titleCasePtBr('AVENIDA DOS AUTONOMISTAS')).toBe('Avenida dos Autonomistas')
   })
 })
 
@@ -85,6 +86,12 @@ describe('mapBrasilApiCnpj', () => {
       email: 'contato@exemplo.com.br',
       status: 'ATIVA',
     })
+  })
+
+  it('title-cases the street as one phrase and drops a number the Receita repeated in it', () => {
+    const out = mapBrasilApiCnpj({ ...payload, descricao_tipo_de_logradouro: 'AVENIDA', logradouro: 'DOS AUTONOMISTAS 1496', numero: '1496' })
+    expect(out.address.street).toBe('Avenida dos Autonomistas')
+    expect(out.address.number).toBe('1496')
   })
 
   it('tolerates missing optional fields', () => {
