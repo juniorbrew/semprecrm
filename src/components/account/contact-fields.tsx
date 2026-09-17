@@ -194,8 +194,15 @@ export function AddressFields({
     if (cepDigits === filledFromCepRef.current) return;
     void lookup(cepDigits).then((found) => {
       if (!found) {
-        // Not found / unreachable: hand the user the street field.
-        if (normalizeCep(addressRef.current.cep) === cepDigits) setTimeout(() => streetRef.current?.focus(), 0);
+        if (normalizeCep(addressRef.current.cep) !== cepDigits) return; // user moved on
+        // Not found / unreachable: drop what an earlier lookup filled (a
+        // mistyped CEP must not ship with another city's street), keep
+        // número / complemento, and hand the user the street field.
+        if (filledFromCepRef.current && filledFromCepRef.current !== initialCepRef.current) {
+          filledFromCepRef.current = '';
+          onChange({ ...addressRef.current, street: '', neighborhood: '', city: '', state: '' });
+        }
+        setTimeout(() => streetRef.current?.focus(), 0);
         return;
       }
       if (normalizeCep(addressRef.current.cep) !== cepDigits) return; // user moved on
@@ -302,8 +309,7 @@ export function AddressFields({
 
       <div className="flex flex-col gap-2 @md:col-span-4">
         <Label htmlFor="address-complement" className="text-muted-foreground">
-          {t('Complement')}
-          <span className="ml-1 text-xs whitespace-nowrap">— {t('optional')}</span>
+          {t('Complement')} <span className="text-xs">— {t('optional')}</span>
         </Label>
         <Input
           id="address-complement"
