@@ -2,7 +2,7 @@
 -- 030_radar_followup_optout.sql — Radar (conversations at risk),
 -- inactivity follow-up trigger and contact opt-out.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round1-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round1-design.md
 --       sections "3. Radar e follow-up" and "5. Opt-out"
 --
 -- What this migration does

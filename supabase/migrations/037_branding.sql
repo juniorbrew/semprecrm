@@ -3,7 +3,7 @@
 -- `white_label`): the account's own app name, logo and primary
 -- colour applied to the sidebar, header, document title and theme.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round2-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round2-design.md
 --       section "6. Marca própria — white-label"
 --
 -- What this migration does

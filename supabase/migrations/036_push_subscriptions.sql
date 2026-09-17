@@ -2,7 +2,7 @@
 -- 036_push_subscriptions.sql — Browser push notifications
 -- (Web Push / VAPID).
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round2-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round2-design.md
 --       section "5. Notificações push no navegador"
 --
 -- What this migration does

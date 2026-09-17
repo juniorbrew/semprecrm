@@ -1,8 +1,8 @@
-# Paridade com o DeskcommCRM — rodada 1
+# SempreCRM — paridade de funcionalidades, rodada 1
 
 Data: 2026-09-13. Aprovado em conversa ("autorizo fazer o que vc recomendar").
 
-Origem: análise do repositório melgarafael/DeskcommCRM (CRM open-source para vendas via WhatsApp, mesma base
+Origem: análise de um CRM open-source de referência para vendas via WhatsApp (mesma base
 técnica). O SempreCRM já cobre inbox, contatos, funis, automações, disparos, flows, dois canais WhatsApp,
 planos/painel master e tarefas. Esta rodada traz as seis peças que faltam e cabem na arquitetura atual.
 Rodada 2 (spec separado, depois): auditoria de ações administrativas, LGPD (exportar/anonimizar contato),

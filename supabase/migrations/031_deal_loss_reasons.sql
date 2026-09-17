@@ -1,7 +1,7 @@
 -- ============================================================
 -- 031_deal_loss_reasons.sql — "Motivo de perda" for deals.
 --
--- Spec: docs/superpowers/specs/2026-09-13-deskcomm-parity-round1-design.md
+-- Spec: docs/superpowers/specs/2026-09-13-parity-round1-design.md
 --       (section 6)
 --
 -- What this migration does
