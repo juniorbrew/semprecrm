@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 
 import { useLanguage } from '@/hooks/use-language';
@@ -157,27 +157,51 @@ export function AddressFields({
   // The CEP the field mounted with (Settings loads a saved address) is
   // never looked up — it would overwrite hand-edited street/city.
   const initialCepRef = useRef(normalizeCep(address.cep));
+  // The CEP that produced the current street/city — from our own lookup
+  // or from an address that arrived whole (CNPJ). A different 8-digit
+  // CEP always triggers a fresh lookup, even over a filled address.
+  const filledFromCepRef = useRef(normalizeCep(address.cep));
+  const prevAddressRef = useRef(address);
+  const streetRef = useRef<HTMLInputElement>(null);
+  const [incomplete, setIncomplete] = useState(false);
 
   const cepDigits = normalizeCep(address.cep);
+
+  // An update that changes the CEP *and* the street/city in one go came
+  // from outside (CNPJ lookup, reset) — treat it as already filled.
+  const prev = prevAddressRef.current;
+  if (prev !== address) {
+    const cepChanged = normalizeCep(prev.cep) !== cepDigits;
+    const bodyChanged = prev.street !== address.street || prev.city !== address.city;
+    if (cepChanged && bodyChanged) filledFromCepRef.current = cepDigits;
+    prevAddressRef.current = address;
+  }
 
   // Fire the lookup once per complete, plausible CEP; anything shorter
   // resets so a stale "found" never lingers under a half-typed value.
   useEffect(() => {
+    if (cepDigits.length === CEP_LENGTH) setIncomplete(false);
     if (cepDigits.length !== CEP_LENGTH || !isValidCep(cepDigits) || cepDigits === initialCepRef.current) {
       reset();
       return;
     }
     if (cepState.key === cepDigits && cepState.status !== 'idle') return;
-    // Street and city already there when the CEP completes means the
-    // address arrived whole (CNPJ lookup, or typed by hand) — nothing to fetch.
-    if (addressRef.current.street && addressRef.current.city) return;
+    // Same CEP that produced the current street/city — nothing to fetch.
+    if (cepDigits === filledFromCepRef.current && addressRef.current.street && addressRef.current.city) return;
     void lookup(cepDigits).then((found) => {
-      if (!found) return;
+      if (!found) {
+        // Not found / unreachable: hand the user the street field.
+        if (normalizeCep(addressRef.current.cep) === cepDigits) setTimeout(() => streetRef.current?.focus(), 0);
+        return;
+      }
+      if (normalizeCep(addressRef.current.cep) !== cepDigits) return; // user moved on
+      filledFromCepRef.current = cepDigits;
+      // Replace what the CEP defines; keep número / complemento.
       onChange({
         ...addressRef.current,
         cep: cepDigits,
-        street: found.street || addressRef.current.street,
-        neighborhood: found.neighborhood || addressRef.current.neighborhood,
+        street: found.street,
+        neighborhood: found.neighborhood,
         city: found.city,
         state: found.state,
       });
@@ -205,7 +229,8 @@ export function AddressFields({
             placeholder="00000-000"
             maxLength={9}
             disabled={disabled}
-            aria-invalid={!!errors.cep}
+            onBlur={() => setIncomplete(cepDigits.length > 0 && cepDigits.length < CEP_LENGTH)}
+            aria-invalid={!!errors.cep || incomplete}
             aria-busy={cepState.status === 'loading' && cepState.key === cepDigits}
             className={cn(inputClassName, 'pr-8')}
           />
@@ -215,20 +240,11 @@ export function AddressFields({
             {hint?.tone === 'warn' ? <AlertCircle className="size-4 text-amber-500" /> : null}
           </span>
         </div>
-        <FieldError message={errors.cep ? t(contactErrorMessage('cep', errors.cep)) : null} />
-        {hint && !errors.cep ? (
-          <p
-            role="status"
-            className={cn(
-              'text-xs',
-              hint.tone === 'ok' && 'text-emerald-600 dark:text-emerald-400',
-              hint.tone === 'warn' && 'text-amber-600 dark:text-amber-400',
-              hint.tone === 'muted' && 'text-muted-foreground',
-            )}
-          >
-            {t(hint.text)}
-          </p>
-        ) : null}
+        <FieldError
+          message={
+            errors.cep ? t(contactErrorMessage('cep', errors.cep)) : incomplete ? t('Incomplete CEP — 8 digits') : null
+          }
+        />
       </div>
 
       <div className="col-span-2 flex flex-col gap-2 @md:col-span-4">
@@ -237,6 +253,7 @@ export function AddressFields({
         </Label>
         <Input
           id="address-street"
+          ref={streetRef}
           autoComplete="address-line1"
           value={address.street}
           onChange={(e) => set({ street: e.target.value })}
@@ -248,6 +265,20 @@ export function AddressFields({
         />
       </div>
 
+      {hint && !errors.cep && !incomplete ? (
+        <p
+          role="status"
+          className={cn(
+            'col-span-2 -mt-2 text-xs @md:col-span-6',
+            hint.tone === 'ok' && 'text-emerald-600 dark:text-emerald-400',
+            hint.tone === 'warn' && 'text-amber-600 dark:text-amber-400',
+            hint.tone === 'muted' && 'text-muted-foreground',
+          )}
+        >
+          {t(hint.text)}
+        </p>
+      ) : null}
+
       <div className="flex flex-col gap-2 @md:col-span-2">
         <Label htmlFor="address-number" className="text-muted-foreground">
           {t('Number')}
@@ -255,6 +286,7 @@ export function AddressFields({
         <Input
           id="address-number"
           ref={numberRef}
+          inputMode="numeric"
           value={address.number}
           onChange={(e) => set({ number: e.target.value })}
           placeholder="123"
@@ -266,7 +298,8 @@ export function AddressFields({
 
       <div className="flex flex-col gap-2 @md:col-span-4">
         <Label htmlFor="address-complement" className="text-muted-foreground">
-          {t('Complement')} <span className="text-xs">— {t('optional')}</span>
+          {t('Complement')}
+          <span className="ml-1 text-xs whitespace-nowrap">— {t('optional')}</span>
         </Label>
         <Input
           id="address-complement"

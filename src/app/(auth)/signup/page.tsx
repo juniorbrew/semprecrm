@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -36,6 +36,8 @@ import {
   type RegistrationErrors,
 } from "@/lib/br/documents";
 import { validateAccountContact, type ContactErrors } from "@/lib/br/lookup";
+
+const subscribeNoop = () => () => {};
 
 const INPUT_CLASS =
   "border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20";
@@ -75,6 +77,15 @@ function SignupPageInner() {
   const [contact, setContact] = useState<ContactFormValues>(EMPTY_CONTACT);
   const [contactErrors, setContactErrors] = useState<ContactErrors>({});
   const [contactOpen, setContactOpen] = useState(false);
+  // The contact block is mounted after hydration: it is optional and
+  // collapsed by default, and keeping it out of the server-rendered
+  // tree keeps the signup boundary hydrating instantly (the block's
+  // inputs stalled the boundary's lazy hydration in the dev server).
+  const contactReady = useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -295,20 +306,32 @@ function SignupPageInner() {
               />
             </div>
 
-            {!inviteToken ? (
-              <details
-                className="group rounded-lg border border-border bg-muted/30"
-                open={contactOpen}
-                onToggle={(e) => setContactOpen((e.target as HTMLDetailsElement).open)}
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-medium text-foreground">
+            {!inviteToken && contactReady ? (
+              <div className="rounded-lg border border-border bg-muted/30">
+                <button
+                  type="button"
+                  id="contact-section-toggle"
+                  aria-expanded={contactOpen}
+                  aria-controls="contact-section"
+                  onClick={() => setContactOpen((open) => !open)}
+                  className="flex w-full cursor-pointer items-center justify-between px-4 py-3 text-left text-sm font-medium text-foreground"
+                >
                   <span>
                     {personType === "pj" ? "Contato e endereço da empresa" : "Contato e endereço"}
                     <span className="ml-2 text-xs font-normal text-muted-foreground">opcional</span>
                   </span>
-                  <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-                </summary>
-                <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
+                  <ChevronDown
+                    className={cn(
+                      "size-4 text-muted-foreground transition-transform",
+                      contactOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+                <div
+                  id="contact-section"
+                  hidden={!contactOpen}
+                  className="flex flex-col gap-4 border-t border-border px-4 py-4"
+                >
                   <ContactFields
                     values={contact}
                     errors={contactErrors}
@@ -325,7 +348,7 @@ function SignupPageInner() {
                     inputClassName={INPUT_CLASS}
                   />
                 </div>
-              </details>
+              </div>
             ) : null}
 
             <div className="flex flex-col gap-2">

@@ -59,6 +59,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'City': 'Cidade',
   'Invalid e-mail': 'E-mail inválido',
   'Invalid CEP': 'CEP inválido',
+  'Incomplete CEP — 8 digits': 'CEP incompleto — são 8 dígitos',
   'Choose a state': 'Escolha o estado',
   'Invalid value': 'Valor inválido',
   'Use at most 120 characters': 'Use no máximo 120 caracteres',
