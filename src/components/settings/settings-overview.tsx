@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
+import { formatTaxId } from '@/lib/br/documents';
 import { SECTION_META, type SettingsSection } from './settings-sections';
 import { SettingsChip, StatusDot } from './settings-chip';
 import { ROLE_META } from './role-meta';
@@ -40,6 +41,7 @@ export function SettingsOverview({
   const {
     user,
     profile,
+    account,
     accountId,
     accountRole,
     defaultCurrency,
@@ -244,6 +246,13 @@ export function SettingsOverview({
             subtitle: entitlements.modules.white_label
               ? t('Your name, logo and colour')
               : t('Not included in your plan'),
+          },
+          {
+            section: 'company' as const,
+            loading: false,
+            subtitle: account?.tax_id
+              ? `${account.person_type === 'pj' ? 'CNPJ' : 'CPF'} ${formatTaxId(account.person_type === 'pj' ? 'pj' : 'pf', account.tax_id)}`
+              : t('Add your CPF or CNPJ'),
           },
         ]
       : []),

@@ -1,5 +1,36 @@
 /** Additional app-owned UI copy kept separate so the core locale file stays navigable. */
 export const EN_TO_PT_EXTRA: Record<string, string> = {
+  // Account registration — pessoa física / jurídica (signup + Settings → Empresa)
+  'Account type': 'Tipo de conta',
+  'Pessoa física': 'Pessoa física',
+  'Pessoa jurídica': 'Pessoa jurídica',
+  'Individual — signs up with a CPF': 'Pessoa — cadastro com CPF',
+  'Company — signs up with a CNPJ': 'Empresa — cadastro com CNPJ',
+  'Legal name (razão social)': 'Razão social',
+  'Trade name (nome fantasia)': 'Nome fantasia',
+  'Display name (nome fantasia)': 'Nome de exibição (nome fantasia)',
+  'optional': 'opcional',
+  'Enter the CPF': 'Informe o CPF',
+  'Enter the CNPJ': 'Informe o CNPJ',
+  'Invalid CPF': 'CPF inválido',
+  'Invalid CNPJ': 'CNPJ inválido',
+  'Enter the legal name': 'Informe a razão social',
+  'Enter your full name': 'Informe o nome completo',
+  'Invalid trade name': 'Nome fantasia inválido',
+  'Use at most 80 characters': 'Use no máximo 80 caracteres',
+  'Choose pessoa física or pessoa jurídica': 'Escolha pessoa física ou pessoa jurídica',
+  'Company': 'Empresa',
+  'Who this account belongs to: a person (CPF) or a company (CNPJ). Every member works inside this registration.':
+    'A quem esta conta pertence: uma pessoa (CPF) ou uma empresa (CNPJ). Todos os membros trabalham dentro deste cadastro.',
+  'Only account admins can change the company registration.':
+    'Somente administradores da conta podem alterar o cadastro da empresa.',
+  'Account name': 'Nome da conta',
+  'Enter the account name': 'Informe o nome da conta',
+  'Shown in the sidebar, invitations and reports for every member.':
+    'Aparece na barra lateral, nos convites e nos relatórios para todos os membros.',
+  'Company registration saved': 'Cadastro da empresa salvo',
+  'Could not save the company registration': 'Não foi possível salvar o cadastro da empresa',
+  'Add your CPF or CNPJ': 'Adicione seu CPF ou CNPJ',
   // WhatsApp connection and setup
   'WhatsApp connection': 'Conexão com o WhatsApp',
   'Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here.':

@@ -52,8 +52,9 @@ describe('audit catalogue', () => {
     expect(Object.keys(AUDIT_ACTION_LABELS['pt-BR'])).toHaveLength(AUDIT_ACTION_LIST.length)
   })
 
-  it('contains the 22 spec actions', () => {
-    expect(AUDIT_ACTION_LIST).toHaveLength(22)
+  it('contains the 22 spec actions plus account.registration_updated (042)', () => {
+    expect(AUDIT_ACTION_LIST).toHaveLength(23)
+    expect(AUDIT_ACTION_LIST).toContain('account.registration_updated')
     expect(AUDIT_ACTION_LIST).toContain('member.role_changed')
     expect(AUDIT_ACTION_LIST).toContain('plan.changed')
     expect(AUDIT_ACTION_LIST).toContain('mfa.disabled')

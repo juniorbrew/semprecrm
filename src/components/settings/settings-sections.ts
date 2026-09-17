@@ -1,5 +1,6 @@
 import {
   Bell,
+  Building2,
   CalendarDays,
   CheckSquare,
   Coins,
@@ -47,6 +48,7 @@ export const SETTINGS_SECTIONS = [
   'integrations',
   'audit',
   'branding',
+  'company',
   'members',
   'plan',
 ] as const;
@@ -84,6 +86,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   integrations: { id: 'integrations', label: 'Integrações', icon: Webhook, group: 'workspace', adminOnly: true },
   audit: { id: 'audit', label: 'Auditoria', icon: ScrollText, group: 'workspace', adminOnly: true },
   branding: { id: 'branding', label: 'Marca', icon: Paintbrush, group: 'workspace', adminOnly: true },
+  company: { id: 'company', label: 'Empresa', icon: Building2, group: 'workspace', adminOnly: true },
   members: { id: 'members', label: 'Membros da equipe', icon: UsersRound, group: 'workspace' },
   plan: { id: 'plan', label: 'Plano', icon: CreditCard, group: 'workspace' },
 };

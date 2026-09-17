@@ -57,6 +57,12 @@ export interface Account {
   owner_user_id: string;
   /** Default deal currency (ISO-4217). Migration 021. */
   default_currency?: string;
+  /** Registration (042): 'pf' = pessoa física (CPF), 'pj' = pessoa jurídica (CNPJ). */
+  person_type?: 'pf' | 'pj';
+  /** CPF (11 digits) or CNPJ (14 alphanumerics), no mask. */
+  tax_id?: string | null;
+  /** Razão social — pessoa jurídica only. */
+  legal_name?: string | null;
   // ---- Plan / platform fields (025_plans_and_platform_admin.sql) ----
   /** Catalogue key — see `PLAN_CATALOG` in `@/lib/plans`. */
   plan: Plan;

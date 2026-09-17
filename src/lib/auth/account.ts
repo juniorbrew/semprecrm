@@ -32,6 +32,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadAccountEntitlements } from "@/lib/plans-server";
 import { resolveEntitlements, type Entitlements, type Module } from "@/lib/plans";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
+import { isPersonType, type PersonType } from "@/lib/br/documents";
 
 // ------------------------------------------------------------
 // Errors
@@ -114,6 +115,14 @@ export function toErrorResponse(err: unknown): NextResponse {
 // Account context
 // ------------------------------------------------------------
 
+export interface AccountMeta {
+  id: string;
+  name: string;
+  person_type: PersonType;
+  tax_id: string | null;
+  legal_name: string | null;
+}
+
 export interface AccountContext {
   /** Supabase SSR client, RLS scoped to the calling user. */
   supabase: SupabaseClient;
@@ -123,8 +132,8 @@ export interface AccountContext {
   accountId: string;
   /** Caller's role within their account. */
   role: AccountRole;
-  /** Lightweight account meta — id + name. */
-  account: { id: string; name: string };
+  /** Lightweight account meta — id + name + registration (042). */
+  account: AccountMeta;
 }
 
 /**
@@ -157,7 +166,7 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   // rather than silently returning a half-populated profile.
   const { data, error } = await supabase
     .from("profiles")
-    .select("account_id, account_role, account:accounts!inner(id, name)")
+    .select("account_id, account_role, account:accounts!inner(id, name, person_type, tax_id, legal_name)")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -187,7 +196,13 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     userId: user.id,
     accountId: data.account_id,
     role: data.account_role,
-    account: { id: accountRow.id, name: accountRow.name },
+    account: {
+      id: accountRow.id,
+      name: accountRow.name,
+      person_type: isPersonType(accountRow.person_type) ? accountRow.person_type : "pf",
+      tax_id: accountRow.tax_id ?? null,
+      legal_name: accountRow.legal_name ?? null,
+    },
   };
 }
 

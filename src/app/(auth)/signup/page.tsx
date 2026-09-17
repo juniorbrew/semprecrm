@@ -15,6 +15,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+import {
+  FieldError,
+  PersonTypeToggle,
+  RegistrationFields,
+  registrationErrorMessage,
+  type RegistrationFieldValues,
+} from "@/components/account/registration-fields";
+import { useLanguage } from "@/hooks/use-language";
+import {
+  validateAccountRegistration,
+  type PersonType,
+  type RegistrationErrors,
+} from "@/lib/br/documents";
+
+const INPUT_CLASS =
+  "border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -34,6 +50,18 @@ function SignupPageInner() {
   // points back at /join/<token> so the user lands on the redeem
   // step after verifying instead of being dropped on /dashboard.
   const inviteToken = searchParams.get("invite");
+  const { t } = useLanguage();
+
+  // Pessoa física (CPF) or pessoa jurídica (CNPJ). The trigger stores
+  // it on the new account so every member's data stays scoped to that
+  // company. Invitees join an existing account, so they skip this.
+  const [personType, setPersonType] = useState<PersonType>("pf");
+  const [registration, setRegistration] = useState<RegistrationFieldValues>({
+    taxId: "",
+    legalName: "",
+    tradeName: "",
+  });
+  const [fieldErrors, setFieldErrors] = useState<RegistrationErrors>({});
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -47,6 +75,23 @@ function SignupPageInner() {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setFieldErrors({});
+
+    // Registration is validated before the password so the user sees
+    // every problem on the form at once, not one per submit.
+    const reg = inviteToken
+      ? null
+      : validateAccountRegistration({
+          personType,
+          taxId: registration.taxId,
+          legalName: registration.legalName,
+          tradeName: registration.tradeName,
+          fullName,
+        });
+    if (reg && !reg.ok) {
+      setFieldErrors(reg.errors);
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError("As senhas não coincidem");
@@ -74,6 +119,15 @@ function SignupPageInner() {
       options: {
         data: {
           full_name: fullName,
+          // Read by handle_new_user (migration 042). Absent for invitees.
+          ...(reg?.ok
+            ? {
+                person_type: reg.value.personType,
+                tax_id: reg.value.taxId,
+                legal_name: reg.value.legalName,
+                account_name: reg.value.accountName,
+              }
+            : {}),
         },
         ...(emailRedirectTo ? { emailRedirectTo } : {}),
       },
@@ -155,9 +209,34 @@ function SignupPageInner() {
               </div>
             )}
 
+            {!inviteToken ? (
+              <PersonTypeToggle
+                value={personType}
+                onChange={(next) => {
+                  setPersonType(next);
+                  setRegistration({ taxId: "", legalName: "", tradeName: "" });
+                  setFieldErrors({});
+                }}
+                disabled={loading}
+              />
+            ) : null}
+
+            {!inviteToken && personType === "pj" ? (
+              <RegistrationFields
+                personType={personType}
+                values={registration}
+                errors={fieldErrors}
+                onChange={(patch) => setRegistration((prev) => ({ ...prev, ...patch }))}
+                disabled={loading}
+                inputClassName={INPUT_CLASS}
+              />
+            ) : null}
+
             <div className="flex flex-col gap-2">
               <Label htmlFor="fullName" className="text-muted-foreground">
-                Nome completo
+                {!inviteToken && personType === "pj"
+                  ? "Nome do responsável"
+                  : "Nome completo"}
               </Label>
               <Input
                 id="fullName"
@@ -166,9 +245,28 @@ function SignupPageInner() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                aria-invalid={!!fieldErrors.fullName}
+                className={INPUT_CLASS}
+              />
+              <FieldError
+                message={
+                  fieldErrors.fullName
+                    ? t(registrationErrorMessage("fullName", fieldErrors.fullName, personType))
+                    : null
+                }
               />
             </div>
+
+            {!inviteToken && personType === "pf" ? (
+              <RegistrationFields
+                personType={personType}
+                values={registration}
+                errors={fieldErrors}
+                onChange={(patch) => setRegistration((prev) => ({ ...prev, ...patch }))}
+                disabled={loading}
+                inputClassName={INPUT_CLASS}
+              />
+            ) : null}
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-muted-foreground">
@@ -181,7 +279,7 @@ function SignupPageInner() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className={INPUT_CLASS}
               />
             </div>
 
@@ -196,7 +294,7 @@ function SignupPageInner() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className={INPUT_CLASS}
               />
             </div>
 
@@ -211,7 +309,7 @@ function SignupPageInner() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className={INPUT_CLASS}
               />
             </div>
 
