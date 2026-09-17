@@ -25,6 +25,7 @@ import {
   type PlanAccountFields,
 } from "@/lib/plans";
 import { parseAccountPreferences } from "@/lib/account-preferences";
+import type { PersonType } from "@/lib/br/documents";
 import { parseBranding, type Branding } from "@/lib/branding";
 import { hasVerifiedTotp } from "@/lib/auth/mfa";
 import type { AccountPreferences, Availability } from "@/types";
@@ -69,11 +70,16 @@ interface AccountSummary extends PlanAccountFields {
   /** Raw `accounts.branding` jsonb (migration 037). Read the parsed
    *  `branding` off the auth context instead of indexing this. */
   branding?: Record<string, unknown> | null;
+  /** Registration (migration 042): pessoa física (CPF) or jurídica (CNPJ). */
+  person_type?: PersonType | null;
+  tax_id?: string | null;
+  /** Razão social — pessoa jurídica only. */
+  legal_name?: string | null;
 }
 
 /** Columns the auth provider selects off `accounts`. */
 const ACCOUNT_SELECT =
-  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding";
+  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name";
 
 interface AuthContextValue {
   user: User | null;
@@ -289,6 +295,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               limit_overrides: accountRaw.limit_overrides ?? null,
               preferences: accountRaw.preferences ?? null,
               branding: accountRaw.branding ?? null,
+              person_type: accountRaw.person_type ?? null,
+              tax_id: accountRaw.tax_id ?? null,
+              legal_name: accountRaw.legal_name ?? null,
             }
           : null;
 
@@ -479,6 +488,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             limit_overrides: row.limit_overrides ?? prev.limit_overrides,
             preferences: row.preferences ?? null,
             branding: row.branding ?? null,
+            person_type: row.person_type ?? prev.person_type,
+            tax_id: row.tax_id ?? null,
+            legal_name: row.legal_name ?? null,
           }
         : prev,
     );

@@ -19,6 +19,7 @@ async function main(): Promise<void> {
   const appClient = new AppClient({ appUrl: config.appUrl, secret: config.secret, logger });
   const mediaStore = new MediaStore({
     supabaseUrl: config.supabaseUrl,
+    supabasePublicUrl: config.supabasePublicUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
     logger,
   });

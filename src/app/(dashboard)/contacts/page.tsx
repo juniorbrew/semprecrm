@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { AUDIT_ACTIONS } from '@/lib/audit';
 import { recordAudit } from '@/lib/audit-client';
@@ -70,6 +70,7 @@ interface ContactWithTags extends Contact {
 export default function ContactsPage() {
   const supabase = createClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useLanguage();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
@@ -208,6 +209,16 @@ export default function ContactsPage() {
     setDetailContactId(contactId);
     setDetailOpen(true);
   }
+
+  // `?contact=<id>` (calendar links, push clicks) opens that contact's
+  // detail sheet on arrival. Applied once so closing the sheet sticks.
+  const deepLinkContactId = searchParams.get('contact');
+  useEffect(() => {
+    if (!deepLinkContactId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDetailContactId(deepLinkContactId);
+    setDetailOpen(true);
+  }, [deepLinkContactId]);
 
   /**
    * Row shortcut to the contact's WhatsApp thread. Uses the same

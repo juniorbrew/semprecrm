@@ -15,6 +15,8 @@
 
 import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
 
+import { resolveSupabasePublicUrl } from '@/lib/supabase/public-url'
+
 /** Key for the probe's (in-memory) auth storage; must not collide with the shared client. */
 export const REAUTH_STORAGE_KEY = 'sb-reauth'
 
@@ -24,7 +26,7 @@ export const REAUTH_STORAGE_KEY = 'sb-reauth'
  */
 export async function verifyPassword(email: string, password: string): Promise<boolean> {
   const probe = createSupabaseJsClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    resolveSupabasePublicUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       auth: {

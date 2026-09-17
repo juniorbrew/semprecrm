@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { FOCUS_TTL_MS, _resetFocusForTests, isFocusedOn, setConversationFocus } from './focus'
+import {
+  FOCUS_TTL_MS,
+  _resetFocusForTests,
+  isFocusedOn,
+  isFocusedOnChatThread,
+  setChatThreadFocus,
+  setConversationFocus,
+} from './focus'
 import { DEFAULT_NOTIFICATION_PREFS, parseNotificationPrefs, prefAllows } from './prefs'
 
 describe('parseNotificationPrefs', () => {
@@ -18,6 +25,8 @@ describe('parseNotificationPrefs', () => {
     expect(p.task_assigned).toBe(true)
     expect(prefAllows({ task_due: false }, 'task_due')).toBe(false)
     expect(prefAllows({ task_due: false }, 'conversation_assigned')).toBe(true)
+    expect(prefAllows({ chat_message: false }, 'chat_message')).toBe(false)
+    expect(prefAllows({}, 'chat_message')).toBe(true)
   })
 })
 
@@ -40,5 +49,21 @@ describe('conversation focus map', () => {
     expect(isFocusedOn('u1', 'c2', 20)).toBe(true)
     setConversationFocus('u1', null, 30)
     expect(isFocusedOn('u1', 'c2', 40)).toBe(false)
+  })
+
+  it('tracks internal chat thread focus separately from the inbox conversation', () => {
+    _resetFocusForTests()
+    setConversationFocus('u1', 'c1', 0)
+    setChatThreadFocus('u1', 't1', 0)
+    expect(isFocusedOn('u1', 'c1', 10)).toBe(true)
+    expect(isFocusedOnChatThread('u1', 't1', 10)).toBe(true)
+    expect(isFocusedOnChatThread('u1', 'c1', 10)).toBe(false)
+    expect(isFocusedOnChatThread('u2', 't1', 10)).toBe(false)
+    setChatThreadFocus('u1', null, 20)
+    expect(isFocusedOnChatThread('u1', 't1', 30)).toBe(false)
+    // Clearing the chat focus leaves the inbox focus alone.
+    expect(isFocusedOn('u1', 'c1', 30)).toBe(true)
+    setChatThreadFocus('u1', 't1', 100)
+    expect(isFocusedOnChatThread('u1', 't1', 100 + FOCUS_TTL_MS)).toBe(false)
   })
 })

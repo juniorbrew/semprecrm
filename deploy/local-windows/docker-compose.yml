@@ -1,0 +1,94 @@
+# SempreCRM local test server — everything as Docker containers that come
+# back on their own whenever Docker Desktop starts (restart: unless-stopped),
+# exactly like the Supabase CLI stack it talks to.
+#
+# From the repo root:
+#   docker compose --env-file .env.local -f deploy/local-windows/docker-compose.yml up -d --build
+# After code changes (rebuilds only what changed, ~3-5 min for the app):
+#   docker compose --env-file .env.local -f deploy/local-windows/docker-compose.yml up -d --build semprecrm
+# Logs:  docker compose -f deploy/local-windows/docker-compose.yml logs -f semprecrm
+#
+# --env-file .env.local feeds the ${...} build args below; the same file is
+# mounted as runtime env via env_file. Values that must differ inside the
+# Docker network (service names instead of localhost) are overridden in
+# `environment`.
+name: semprecrm
+
+services:
+  # Single entry point on 3101: proxies /supabase/* to the host's Supabase
+  # (WebSocket included) and everything else to the app. See nginx.conf.
+  edge:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3101:3101"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - semprecrm
+    restart: unless-stopped
+
+  semprecrm:
+    build:
+      context: ../..
+      dockerfile: deploy/local-windows/Dockerfile.app
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3101}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+    image: semprecrm/app:local
+    env_file: ../../.env.local
+    environment:
+      WA_GATEWAY_URL: http://wa-gateway:3201
+      # The browser uses NEXT_PUBLIC_SUPABASE_URL="/supabase" (same origin,
+      # via the edge proxy); the server side talks to Supabase directly
+      # through host.docker.internal.
+      SUPABASE_INTERNAL_URL: http://host.docker.internal:56021
+      # Node's 16 KB header limit trips on dev machines where "localhost"
+      # carries cookies from several apps (431). nginx is raised to match.
+      NODE_OPTIONS: --max-http-header-size=65536
+    expose:
+      - "3101"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - wa-gateway
+    restart: unless-stopped
+
+  wa-gateway:
+    build:
+      context: ../../services/wa-gateway
+      dockerfile: Dockerfile
+    image: semprecrm/wa-gateway:local
+    env_file: ../../services/wa-gateway/.env
+    environment:
+      APP_URL: http://semprecrm:3101
+      WA_DATA_DIR: /data
+      WA_GATEWAY_PORT: "3201"
+      # Same split as the app: reach Supabase via the host gateway, but stamp
+      # media URLs with the browser-facing base ("/supabase" → relative URLs
+      # that work from any address the app is opened on).
+      SUPABASE_URL: http://host.docker.internal:56021
+      SUPABASE_PUBLIC_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+    volumes:
+      # WhatsApp session credentials (one folder per account) — survive rebuilds.
+      - ../../services/wa-gateway/data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  cron-tick:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["node", "scripts/cron-tick.mjs"]
+    env_file: ../../.env.local
+    environment:
+      APP_URL: http://semprecrm:3101
+      CRON_HEALTH_PORT: ""
+    volumes:
+      - ../../scripts/cron-tick.mjs:/app/scripts/cron-tick.mjs:ro
+    depends_on:
+      - semprecrm
+    restart: unless-stopped

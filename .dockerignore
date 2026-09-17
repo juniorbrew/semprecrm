@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.claude
+out
+coverage
+services/wa-gateway/node_modules
+services/wa-gateway/dist
+services/wa-gateway/data
+.env*
+!.env.local.example
+supabase/.temp
+docs

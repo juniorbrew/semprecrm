@@ -32,6 +32,7 @@
 
 import type { MessageTemplate, TemplateButton } from '@/types';
 import { extractVariableIndices } from './template-validators';
+import { mediaUrlForPublic } from '@/lib/storage/media-url';
 
 export interface SendTimeParams {
   /** Values for body {{1}}, {{2}}, … indexed by variable position. */
@@ -103,7 +104,10 @@ function buildHeaderComponent(
   // sample (`example.header_handle`); it is NOT a reusable send-time
   // media id, and passing it as `{ id }` makes Meta reject the send. Only
   // an explicit `headerMediaId` (a real /media upload id) is honored.
-  const link = params.headerMediaUrl ?? template.header_media_url;
+  // Stored URLs may be origin-relative (`/supabase/storage/...`); Meta
+  // fetches the link from the outside, so absolutise against the site URL.
+  const rawLink = params.headerMediaUrl ?? template.header_media_url;
+  const link = rawLink ? mediaUrlForPublic(rawLink) : rawLink;
   const id = params.headerMediaId;
   if (!link && !id) {
     throw new Error(

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { toStoredMediaUrl } from "./media-url";
 
 /**
  * Shared media-upload helper for Supabase Storage buckets that use the
@@ -62,7 +63,12 @@ export function buildMediaPath(
 }
 
 export interface UploadAccountMediaResult {
-  /** Public URL Meta can fetch at send time. */
+  /**
+   * Public URL to persist. Origin-relative (`/supabase/storage/...`) when
+   * Supabase is reached through the app's own origin; server code that
+   * hands it to Meta / the gateway absolutises it (`mediaUrlForPublic` /
+   * `mediaUrlForServer`).
+   */
   publicUrl: string;
   /** Storage object path (account-scoped). */
   path: string;
@@ -114,7 +120,10 @@ export async function uploadAccountMedia(
     data: { publicUrl },
   } = supabase.storage.from(bucket).getPublicUrl(path);
 
-  return { publicUrl, path };
+  // Same-origin proxy setups yield `http://<page origin>/supabase/...`;
+  // persist the origin-relative path so the row isn't pinned to whichever
+  // hostname the uploader happened to open the app from.
+  return { publicUrl: toStoredMediaUrl(publicUrl), path };
 }
 
 /**

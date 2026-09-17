@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WhatsAppChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
 import { sendViaGateway, type GatewayMedia } from './qr-gateway'
+import { mediaUrlForServer } from '@/lib/storage/media-url'
 
 /** `official` for rows that predate migration 026 or can't be read. */
 export async function conversationChannel(
@@ -69,6 +70,12 @@ export interface EngineQrSendInput {
   contactId: string
   /** Plain text to deliver (already rendered). */
   text?: string
+  /**
+   * Media as stored in the DB (`url` may be origin-relative, e.g.
+   * `/supabase/storage/...`). The gateway fetches the bytes itself, so the
+   * URL is absolutised (`mediaUrlForServer`) for the send only — the row
+   * keeps the stored form.
+   */
   media?: GatewayMedia
   /** What to persist on `messages.content_type`. */
   contentType: 'text' | 'template' | 'image' | 'video' | 'document' | 'audio'
@@ -104,7 +111,7 @@ export async function engineSendViaQr(
     accountId: input.accountId,
     to,
     ...(input.text !== undefined ? { text: input.text } : {}),
-    ...(input.media ? { media: input.media } : {}),
+    ...(input.media ? { media: { ...input.media, url: mediaUrlForServer(input.media.url) } } : {}),
   })
 
   const { error: msgErr } = await db.from('messages').insert({

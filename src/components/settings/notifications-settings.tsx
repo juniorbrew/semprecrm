@@ -5,7 +5,7 @@ import { Bell, BellOff, BellRing, Laptop, Loader2, Smartphone, Trash2 } from 'lu
 import { toast } from 'sonner';
 
 import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth, useEntitlements } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
 import {
   getCurrentSubscription,
@@ -65,6 +65,14 @@ export function NotificationsSettings() {
   const supabase = useMemo(() => createClient(), []);
   const { t, language } = useLanguage();
   const { user, profile, profileLoading, refreshProfile } = useAuth();
+  // The internal-chat toggle only makes sense when the module is on.
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const visibleKinds = PUSH_EVENT_KINDS.filter((kind) => {
+    if (!entitlementsReady) return true;
+    if (kind === 'chat_message') return modules.internal_chat;
+    if (kind === 'calendar_reminder') return modules.calendar;
+    return true;
+  });
 
   const [permission, setPermission] = useState<PushPermission>('unsupported');
   const [thisBrowserEndpoint, setThisBrowserEndpoint] = useState<string | null>(null);
@@ -348,7 +356,7 @@ export function NotificationsSettings() {
           </CardHeader>
           <CardContent>
             <ul className="divide-y divide-border">
-              {PUSH_EVENT_KINDS.map((kind) => {
+              {visibleKinds.map((kind) => {
                 const meta = PUSH_EVENT_LABELS[kind];
                 return (
                   <li key={kind} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
+import { toStoredMediaUrl } from '@/lib/storage/media-url';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -132,7 +133,7 @@ export function ProfileForm() {
         const {
           data: { publicUrl },
         } = supabase.storage.from('avatars').getPublicUrl(path);
-        nextAvatarUrl = publicUrl;
+        nextAvatarUrl = toStoredMediaUrl(publicUrl);
       } else if (removeAvatar) {
         nextAvatarUrl = null;
       }

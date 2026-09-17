@@ -20,6 +20,7 @@ import type {
   TemplateButton,
   TemplateSampleValues,
 } from '@/types';
+import { isRelativeMediaUrl } from '@/lib/storage/media-url';
 
 export const TEMPLATE_LIMITS = {
   bodyMaxLength: 1024,
@@ -153,7 +154,10 @@ export function validateHeader(
       `${header_type} header requires either a public sample URL (header_media_url) or a Resumable Upload handle (header_handle).`,
     );
   }
-  if (header_media_url) {
+  // Origin-relative paths (`/supabase/storage/...`, produced by the
+  // same-origin upload flow) are absolutised at send time
+  // (`mediaUrlForPublic`), so they pass here as-is.
+  if (header_media_url && !isRelativeMediaUrl(header_media_url)) {
     try {
       const u = new URL(header_media_url);
       if (u.protocol !== 'https:' && u.protocol !== 'http:') {

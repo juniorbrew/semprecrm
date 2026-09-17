@@ -15,6 +15,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { mediaUrlForPublic } from '@/lib/storage/media-url'
 import {
   conversationChannel,
   engineSendViaQr,
@@ -237,7 +238,8 @@ export async function engineSendMedia(
       accessToken,
       to: phone,
       kind: args.kind,
-      link: args.link,
+      // Meta fetches the link from the outside → public site origin.
+      link: mediaUrlForPublic(args.link),
       caption: args.caption,
       filename: args.filename,
     })

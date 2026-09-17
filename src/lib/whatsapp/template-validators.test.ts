@@ -107,6 +107,14 @@ describe('validateHeader', () => {
       }),
     ).not.toThrow();
   });
+  it('image header accepts an origin-relative storage path', () => {
+    expect(() =>
+      validateHeader({
+        header_type: 'image',
+        header_media_url: '/supabase/storage/v1/object/public/chat-media/account-1/h.jpg',
+      }),
+    ).not.toThrow();
+  });
   it('image header rejects a non-URL string', () => {
     expect(() =>
       validateHeader({

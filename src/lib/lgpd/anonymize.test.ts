@@ -133,6 +133,11 @@ describe('extractChatMediaPath', () => {
       ),
     ).toBe('account-1/a b.pdf')
   })
+  it('extracts the path from an origin-relative URL (same-origin proxy)', () => {
+    expect(
+      extractChatMediaPath('/supabase/storage/v1/object/public/chat-media/account-abc/1-foto.jpg'),
+    ).toBe('account-abc/1-foto.jpg')
+  })
   it('ignores foreign URLs and other buckets', () => {
     expect(extractChatMediaPath('https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1')).toBeNull()
     expect(extractChatMediaPath('https://x.supabase.co/storage/v1/object/public/flow-media/account-1/x.png')).toBeNull()

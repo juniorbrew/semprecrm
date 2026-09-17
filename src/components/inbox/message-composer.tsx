@@ -46,6 +46,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
+import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 import { createClient } from "@/lib/supabase/client";
 import {
   findSlashToken,
@@ -277,11 +278,6 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** Worker that encodes mic input to Ogg/Opus entirely in the browser
- *  (vendored from opus-recorder into /public). Recording client-side in a
- *  Meta-accepted format means no server ffmpeg / transcode step. */
-const OPUS_ENCODER_PATH = "/opus/encoderWorker.min.js";
-
 export function MessageComposer({
   conversationId,
   sessionExpired,
@@ -392,14 +388,9 @@ export function MessageComposer({
     void deleteAccountMedia(CHAT_MEDIA_BUCKET, path).catch(() => {});
   }, []);
 
-  // Voice recording state. The recorder encodes Ogg/Opus in-browser
-  // (opus-recorder) so there's no server-side transcode.
-  const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
-  const recorderRef = useRef<import("opus-recorder").default | null>(null);
-  const cancelledRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
+  // Voice recording lives in the shared hook (src/hooks/use-voice-recorder.ts,
+  // also used by the internal chat); the finished Ogg/Opus file is staged
+  // as an audio draft in `finalizeRecording` below.
   // Viewers (read-only role) can browse the inbox but never send.
   // For solo users this is always true — single-owner accounts pass
   // every capability — so the disabled branch is a no-op there.
@@ -408,25 +399,13 @@ export function MessageComposer({
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
 
-  const clearTimer = useCallback(() => {
-    if (timerRef.current !== null) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  // Tear down any live recording + timer on unmount so a mid-record
-  // navigation doesn't leak the mic, and GC a staged-but-unsent
-  // attachment so it doesn't orphan in the bucket.
+  // GC a staged-but-unsent attachment on unmount so it doesn't orphan
+  // in the bucket (the recorder hook releases the mic on its own).
   useEffect(() => {
     return () => {
-      clearTimer();
-      cancelledRef.current = true;
-      // stop() releases the mic stream + audio context inside opus-recorder.
-      void recorderRef.current?.stop().catch(() => {});
       removeStaged(draftRef.current?.path);
     };
-  }, [clearTimer, removeStaged]);
+  }, [removeStaged]);
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -669,16 +648,10 @@ export function MessageComposer({
 
   // ---- Voice recording (client-side Ogg/Opus, no server transcode) ---
 
-  // The encoded Ogg/Opus file from opus-recorder → upload as an audio
+  // The encoded Ogg/Opus file from the recorder → upload as an audio
   // draft. WhatsApp renders Ogg/Opus as a playable voice note.
   const finalizeRecording = useCallback(
-    async (bytes: Uint8Array) => {
-      // Uint8Array is a valid BlobPart at runtime; the cast sidesteps the
-      // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
-      const file = new File([bytes as unknown as BlobPart], `voice-${Date.now()}.ogg`, {
-        type: "audio/ogg",
-      });
-      if (file.size === 0) return; // cancelled / empty take
+    async (file: File) => {
       if (file.size > MEDIA_MAX_BYTES_BY_KIND.audio) {
         toast.error("Recording is too long (over 16 MB).");
         return;
@@ -697,60 +670,22 @@ export function MessageComposer({
     [removeStaged],
   );
 
+  const recorder = useVoiceRecorder({
+    onRecorded: (file) => void finalizeRecording(file),
+    onError: (reason) =>
+      toast.error(
+        reason === "unsupported"
+          ? "Voice recording isn't supported in this browser."
+          : "Microphone access denied or unavailable.",
+      ),
+    maxSeconds: MAX_RECORDING_SECONDS,
+  });
+  const { recording, seconds: recordSeconds, stop: stopRecording, cancel: cancelRecording } = recorder;
+
   const startRecording = useCallback(async () => {
     if (inputsDisabled || busy || recording) return;
-    if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") {
-      toast.error("Voice recording isn't supported in this browser.");
-      return;
-    }
-    try {
-      // Lazy-load the encoder (≈400 KB worker) only when the user records,
-      // keeping it out of the main bundle.
-      const { default: Recorder } = await import("opus-recorder");
-      const recorder = new Recorder({
-        encoderPath: OPUS_ENCODER_PATH,
-        numberOfChannels: 1,
-        encoderApplication: 2048, // VOIP — tuned for speech
-        encoderSampleRate: 48000,
-        streamPages: false, // one callback with the complete file on stop
-      });
-      cancelledRef.current = false;
-      recorder.ondataavailable = (bytes) => {
-        if (cancelledRef.current) return;
-        void finalizeRecording(bytes);
-      };
-      recorderRef.current = recorder;
-      await recorder.start();
-      setRecording(true);
-      setRecordSeconds(0);
-      timerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
-    } catch {
-      void recorderRef.current?.stop().catch(() => {});
-      recorderRef.current = null;
-      toast.error("Microphone access denied or unavailable.");
-    }
-  }, [inputsDisabled, busy, recording, finalizeRecording]);
-
-  const stopRecording = useCallback(() => {
-    clearTimer();
-    setRecording(false);
-    void recorderRef.current?.stop().catch(() => {});
-  }, [clearTimer]);
-
-  const cancelRecording = useCallback(() => {
-    cancelledRef.current = true;
-    clearTimer();
-    setRecording(false);
-    void recorderRef.current?.stop().catch(() => {});
-  }, [clearTimer]);
-
-  // Auto-stop at the cap so a forgotten recording can't blow the
-  // upload size limit.
-  useEffect(() => {
-    if (recording && recordSeconds >= MAX_RECORDING_SECONDS) {
-      stopRecording();
-    }
-  }, [recording, recordSeconds, stopRecording]);
+    await recorder.start();
+  }, [inputsDisabled, busy, recording, recorder]);
 
   // ---- Draft send / discard -----------------------------------------
 

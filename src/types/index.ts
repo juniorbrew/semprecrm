@@ -57,6 +57,12 @@ export interface Account {
   owner_user_id: string;
   /** Default deal currency (ISO-4217). Migration 021. */
   default_currency?: string;
+  /** Registration (042): 'pf' = pessoa física (CPF), 'pj' = pessoa jurídica (CNPJ). */
+  person_type?: 'pf' | 'pj';
+  /** CPF (11 digits) or CNPJ (14 alphanumerics), no mask. */
+  tax_id?: string | null;
+  /** Razão social — pessoa jurídica only. */
+  legal_name?: string | null;
   // ---- Plan / platform fields (025_plans_and_platform_admin.sql) ----
   /** Catalogue key — see `PLAN_CATALOG` in `@/lib/plans`. */
   plan: Plan;
@@ -850,4 +856,234 @@ export interface LeadSourceEvent {
   payload: Record<string, unknown>;
   created_at: string;
   contact?: Pick<Contact, 'id' | 'name' | 'phone'> | null;
+}
+
+// ============================================================
+// Internal team chat (migrations 038 + 039) — direct and group
+// threads between members of the same account, with delivery /
+// read receipts (per member on groups), presence, attachments,
+// reactions and edit / delete. Logic in src/lib/chat/.
+// ============================================================
+
+export type ChatThreadKind = 'direct' | 'group';
+
+/** `text` = a person wrote it; `system` = group event (JSON body, see ChatSystemEvent). */
+export type ChatMessageKind = 'text' | 'system';
+
+/** Attachment stored on a message (object in the private `chat-internal` bucket). */
+export interface ChatAttachment {
+  /** Object path: `account-<id>/chat/<thread>/<uuid>-<name>`. */
+  path: string;
+  /** Original file name (shown on the document chip / download). */
+  name: string;
+  mime: string;
+  /** Bytes. */
+  size: number;
+  width?: number;
+  height?: number;
+  /** Seconds (audio / video). */
+  duration?: number;
+}
+
+/** Body of a `kind: 'system'` message, stored as JSON text. */
+export type ChatSystemEvent =
+  | { event: 'created' }
+  | { event: 'added'; users: string[] }
+  | { event: 'removed'; users: string[] }
+  | { event: 'left' };
+
+/** Per-member receipt on a group message (`chat_message_receipts`). */
+export interface ChatMessageReceipt {
+  message_id: string;
+  user_id: string;
+  thread_id: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+}
+
+/** One emoji from one user on one message (`chat_message_reactions`). */
+export interface ChatMessageReaction {
+  message_id: string;
+  user_id: string;
+  emoji: string;
+  thread_id: string | null;
+  created_at: string;
+}
+
+export interface ChatThread {
+  id: string;
+  account_id: string;
+  kind: ChatThreadKind;
+  /** Groups only (phase 2). */
+  title: string | null;
+  created_by: string | null;
+  /** Ordered pair (a < b) on direct threads; null on groups. */
+  direct_user_a: string | null;
+  direct_user_b: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string | null;
+  last_message_preview: string | null;
+  /** Embedded `chat_thread_members` rows when selected with the thread. */
+  members?: ChatThreadMember[];
+}
+
+export interface ChatThreadMember {
+  thread_id: string;
+  user_id: string;
+  joined_at: string;
+  last_read_at: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  account_id: string;
+  thread_id: string;
+  sender_id: string;
+  /** Empty when the message is only an attachment or was deleted. */
+  body: string;
+  kind: ChatMessageKind;
+  created_at: string;
+  /** Direct threads: stamped by the recipient's client when the row reaches it. */
+  delivered_at: string | null;
+  /** Direct threads: stamped by the recipient when the thread is open and visible. */
+  read_at: string | null;
+  /** Set by the sender's edit (allowed for 15 minutes after `created_at`). */
+  edited_at: string | null;
+  /** Set by the sender's delete — body emptied, attachment removed. */
+  deleted_at: string | null;
+  attachment: ChatAttachment | null;
+}
+
+/** Sent → delivered → read, derived from the receipt columns. */
+export type ChatMessageStatus = 'sent' | 'delivered' | 'read';
+
+/** An account member as the chat lists them (profiles projection). */
+export interface ChatMember {
+  user_id: string;
+  full_name: string | null;
+  email: string;
+  avatar_url: string | null;
+  /** Presence heartbeat fallback — "last seen X ago" when offline. */
+  last_seen_at: string | null;
+}
+
+// ============================================================
+// Calendar (migration 040, module `calendar`) — appointments owned
+// by a member, with attendees and optional links to a contact, an
+// inbox conversation, a deal, a task and an internal chat thread.
+// Everything is stored in UTC; the account timezone
+// (`preferences.business_hours.timezone`) is applied by the UI.
+// Logic in src/lib/calendar/.
+// ============================================================
+
+export type CalendarEventStatus = 'confirmed' | 'cancelled';
+
+/** Where an event came from: created here, or imported from a provider (migration 041). */
+export type CalendarEventSource = 'internal' | 'google' | 'microsoft';
+
+/** External calendar providers (migration 041). */
+export type CalendarProvider = 'google' | 'microsoft';
+
+export type CalendarConnectionStatus = 'active' | 'error' | 'revoked';
+
+/**
+ * `calendar_connections_public` — one row per (user, provider) as the
+ * owner sees it (no tokens). The base table holds the encrypted
+ * tokens and is only reachable with the service role.
+ */
+export interface CalendarConnectionPublic {
+  id: string;
+  account_id: string;
+  user_id: string;
+  provider: CalendarProvider;
+  email: string | null;
+  external_calendar_id: string | null;
+  token_expires_at: string | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+  status: CalendarConnectionStatus;
+  /** Also mirror appointments where the user is an attendee. */
+  mirror_attending: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Full `calendar_connections` row — service role only (sync engine, OAuth routes). */
+export interface CalendarConnection extends CalendarConnectionPublic {
+  access_token_enc: string | null;
+  refresh_token_enc: string | null;
+  /** Google `syncToken` / Graph `deltaLink` (see migration 041). */
+  sync_cursor: string | null;
+}
+
+export type CalendarAttendeeResponse = 'needs_action' | 'accepted' | 'declined';
+
+export interface CalendarEventAttendee {
+  event_id: string;
+  user_id: string;
+  response: CalendarAttendeeResponse;
+}
+
+/** Minimal projections embedded on an event row. */
+export interface CalendarContactRef {
+  id: string;
+  name: string | null;
+  phone: string;
+  avatar_url: string | null;
+}
+
+export interface CalendarDealRef {
+  id: string;
+  title: string;
+  pipeline_id: string;
+}
+
+export interface CalendarTaskRef {
+  id: string;
+  title: string;
+}
+
+export interface CalendarChatThreadRef {
+  id: string;
+  kind: ChatThreadKind;
+  title: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  account_id: string;
+  owner_user_id: string | null;
+  title: string;
+  description: string | null;
+  location: string | null;
+  /** Hex colour chosen on the event; null = the owner's palette colour. */
+  color: string | null;
+  starts_at: string;
+  ends_at: string;
+  all_day: boolean;
+  status: CalendarEventStatus;
+  /** 5, 10, 15, 30, 60 or 1440 — null = no reminder. */
+  reminder_minutes: number | null;
+  reminded_at: string | null;
+  contact_id: string | null;
+  conversation_id: string | null;
+  deal_id: string | null;
+  task_id: string | null;
+  chat_thread_id: string | null;
+  source: CalendarEventSource;
+  external_connection_id: string | null;
+  external_id: string | null;
+  external_etag: string | null;
+  external_updated_at: string | null;
+  sync_hash: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Embedded by `EVENT_SELECT` (src/lib/calendar/queries.ts). */
+  attendees?: CalendarEventAttendee[];
+  contact?: CalendarContactRef | null;
+  deal?: CalendarDealRef | null;
+  task?: CalendarTaskRef | null;
+  chat_thread?: CalendarChatThreadRef | null;
 }

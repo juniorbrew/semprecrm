@@ -10,6 +10,8 @@
 //   getCurrentSubscription() — the browser's active subscription, if any
 //   reportConversationFocus() — POST /api/push/seen (the "I'm looking at
 //                           this conversation" hint the sender honours)
+//   reportChatThreadFocus() — same for an internal chat thread
+//   notifyPushEvent()     — POST /api/push/notify (client-raised kinds)
 //
 // Everything is a no-op outside the browser or without the VAPID public
 // key, so callers can invoke these unconditionally.
@@ -161,14 +163,36 @@ export function reportConversationFocus(conversationId: string | null): void {
 }
 
 /**
- * Raise a client-originated push trigger (task / conversation assigned).
+ * Internal chat counterpart of `reportConversationFocus`: the thread the
+ * user has open and visible, so `chat_message` pushes for it are skipped.
+ * Tracked separately from the inbox focus (see src/lib/push/focus.ts).
+ */
+export function reportChatThreadFocus(threadId: string | null): void {
+  if (typeof window === 'undefined') return;
+  const body = JSON.stringify({ chat_thread_id: threadId });
+  try {
+    fetch('/api/push/seen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Raise a client-originated push trigger (task / conversation assigned,
+ * internal chat message).
  * The server resolves the recipient from the row and skips the caller,
  * so this can be called on every assignment change. Fire-and-forget.
  */
 export function notifyPushEvent(
   event:
     | { kind: 'task_assigned'; task_id: string }
-    | { kind: 'conversation_assigned'; conversation_id: string },
+    | { kind: 'conversation_assigned'; conversation_id: string }
+    | { kind: 'chat_message'; message_id: string },
 ): void {
   if (typeof window === 'undefined') return;
   fetch('/api/push/notify', {

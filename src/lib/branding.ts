@@ -20,6 +20,8 @@ export interface Branding {
   primary_color: string | null;
 }
 
+import { isRelativeMediaUrl } from '@/lib/storage/media-url';
+
 export const DEFAULT_APP_NAME = 'SempreCRM';
 
 export const DEFAULT_BRANDING: Branding = {
@@ -59,8 +61,14 @@ export function normalizeHexColor(value: unknown): string | null {
   return HEX_RE.test(v) ? v.toLowerCase() : null;
 }
 
+/**
+ * http(s) URL, or an origin-relative path (`/supabase/storage/...`) — the
+ * latter is what the branding uploader stores when Supabase is reached
+ * through the app's own origin (see `toStoredMediaUrl`).
+ */
 function isHttpUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
+  if (isRelativeMediaUrl(value)) return true;
   try {
     const u = new URL(value);
     return u.protocol === 'https:' || u.protocol === 'http:';
@@ -133,7 +141,7 @@ export function validateBrandingPatch(
   let logo: string | null = base.logo_url;
   if ('logo_url' in p) {
     if (p.logo_url === null || p.logo_url === '') logo = null;
-    else if (!isHttpUrl(p.logo_url)) return { ok: false, error: 'logo_url must be an http(s) URL' };
+    else if (!isHttpUrl(p.logo_url)) return { ok: false, error: 'logo_url must be an http(s) URL or an origin-relative path' };
     else logo = p.logo_url;
   }
   if (logo) out.logo_url = logo;

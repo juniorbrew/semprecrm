@@ -11,6 +11,7 @@ import { loadAccountEntitlements, countConnectedChannels } from '@/lib/plans-ser
 import { canAddChannel } from '@/lib/plans'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
+import { supabaseServerUrl } from '@/lib/supabase/url'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -44,7 +45,7 @@ let _adminClient: any = null
 function supabaseAdmin() {
   if (!_adminClient) {
     _adminClient = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      supabaseServerUrl(),
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
   }

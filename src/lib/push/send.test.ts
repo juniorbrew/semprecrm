@@ -118,6 +118,21 @@ describe('buildPushMessage / truncateBody', () => {
     expect('icon' in msg).toBe(false)
   })
 
+  it('absolutises an origin-relative icon for the service worker', () => {
+    const prev = process.env.NEXT_PUBLIC_SITE_URL
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://crm.example.com/'
+    try {
+      const msg = JSON.parse(
+        buildPushMessage({ ...PAYLOAD, icon: '/supabase/storage/v1/object/public/avatars/u/a.png' }),
+      )
+      expect(msg.icon).toBe('https://crm.example.com/supabase/storage/v1/object/public/avatars/u/a.png')
+      expect(JSON.parse(buildPushMessage({ ...PAYLOAD, icon: 'https://cdn/x.png' })).icon).toBe('https://cdn/x.png')
+    } finally {
+      if (prev === undefined) delete process.env.NEXT_PUBLIC_SITE_URL
+      else process.env.NEXT_PUBLIC_SITE_URL = prev
+    }
+  })
+
   it('truncates long bodies with an ellipsis', () => {
     const long = 'x'.repeat(500)
     const out = truncateBody(long)

@@ -18,7 +18,7 @@ import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
 import { notifyPushEvent } from "@/lib/push/client";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import { relativeTime, longDateTime } from "@/lib/pipelines/deal-dates";
@@ -51,6 +51,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { LinkedEvents, ScheduleButton } from "@/components/calendar";
 import { cn } from "@/lib/utils";
 
 import { useTaskMembers, useTaskStatuses } from "./hooks";
@@ -152,6 +153,9 @@ function TaskDrawerBody({
   const supabase = useMemo(() => createClient(), []);
   const { t, language } = useLanguage();
   const { accountId, user, canSendMessages } = useAuth();
+  // "Agendar" + the task's appointments (calendar module).
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const calendarEnabled = !entitlementsReady || modules.calendar;
   const isEdit = !!task;
   const readOnly = !canSendMessages;
   const sorted = useMemo(() => sortStatuses(statuses), [statuses]);
@@ -581,6 +585,38 @@ function TaskDrawerBody({
             </div>
           )}
         </div>
+
+        {/* Calendar — schedule from this task (prefilled with the task,
+            its title and contact; optionally sets the due date to the
+            appointment start) and the task's upcoming appointments. */}
+        {calendarEnabled && isEdit && task && (
+          <div className="grid gap-2 rounded-lg border border-border/60 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {t("Calendar")}
+              </p>
+              {!readOnly && (
+                <ScheduleButton
+                  size="xs"
+                  defaults={{
+                    task_id: task.id,
+                    title: task.title,
+                    contact_id: contactId || undefined,
+                    conversation_id: conversationId || undefined,
+                    deal_id: dealId || undefined,
+                  }}
+                  offerTaskDue
+                  onCreated={(ev, extras) => {
+                    if (!extras.setTaskDue) return;
+                    setDueLocal(toDateTimeLocal(ev.starts_at));
+                    void persist({ due_at: ev.starts_at });
+                  }}
+                />
+              )}
+            </div>
+            <LinkedEvents taskId={task.id} withHeader={false} readOnly />
+          </div>
+        )}
 
         {/* Comments */}
         {isEdit && task && (

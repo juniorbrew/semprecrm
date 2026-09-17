@@ -12,13 +12,19 @@
 //   (c) notifyTasksDueSoon          — /api/automations/cron
 //   (d) notifyConversationAssigned  — POST /api/push/notify
 //                                     (conversation_assigned)
+//   (e) notifyChatMessage           — POST /api/push/notify (chat_message)
+//                                     internal team chat, migration 038
+//   (f) notifyCalendarReminders     — /api/automations/cron
+//                                     agenda reminders, migration 040
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { eventHref } from '@/lib/calendar/links'
+import { asChatAttachment, attachmentPreview } from '@/lib/chat/attachments'
 import { DEFAULT_LANGUAGE, translateLiteral } from '@/lib/i18n'
 
-import { isFocusedOn } from './focus'
+import { isFocusedOn, isFocusedOnChatThread } from './focus'
 import { parseNotificationPrefs, type PushEventKind } from './prefs'
 import { sendPushToUsers, type SendPushResult } from './send'
 
@@ -77,6 +83,11 @@ export function conversationUrl(conversationId: string): string {
 
 export function taskUrl(taskId: string): string {
   return `/tasks?task=${encodeURIComponent(taskId)}`
+}
+
+/** Internal chat deep link (`/chat?t=<thread id>`). */
+export function chatThreadUrl(threadId: string): string {
+  return `/chat?t=${encodeURIComponent(threadId)}`
 }
 
 // ------------------------------------------------------------
@@ -297,6 +308,209 @@ export async function notifyConversationAssigned(
   } catch (err) {
     console.error('[push] notifyConversationAssigned threw:', err)
     return { ...NOOP }
+  }
+}
+
+// ------------------------------------------------------------
+// (e) Internal chat message
+// ------------------------------------------------------------
+
+export interface ChatMessageNotice {
+  accountId: string
+  messageId: string
+  /** The sender — never notified. */
+  actorUserId: string
+}
+
+/** Cap on the push body so a long message stays a notification. */
+const CHAT_PREVIEW_MAX = 140
+
+/**
+ * Every other member of the message's thread (in phase 1: the one other
+ * person) gets a push unless their prefs turned `chat_message` off or
+ * they reported the thread as open (POST /api/push/seen with
+ * `chat_thread_id`). The message is re-read server-side and must belong
+ * to the caller's account and be authored by the caller.
+ */
+export async function notifyChatMessage(
+  admin: SupabaseClient,
+  notice: ChatMessageNotice,
+): Promise<SendPushResult> {
+  try {
+    const { data: message, error } = await admin
+      .from('chat_messages')
+      .select('id, account_id, thread_id, sender_id, body, kind, attachment, deleted_at')
+      .eq('id', notice.messageId)
+      .eq('account_id', notice.accountId)
+      .maybeSingle()
+    if (error || !message) return { ...NOOP }
+    if (message.sender_id !== notice.actorUserId) return { ...NOOP }
+    // System lines (group events) and already-deleted rows never push.
+    if ((message.kind ?? 'text') !== 'text' || message.deleted_at) return { ...NOOP }
+
+    const { data: members, error: membersError } = await admin
+      .from('chat_thread_members')
+      .select('user_id')
+      .eq('thread_id', message.thread_id)
+    if (membersError) return { ...NOOP }
+    const others = ((members ?? []) as { user_id: string }[])
+      .map((m) => m.user_id)
+      .filter((uid) => uid !== notice.actorUserId)
+    if (others.length === 0) return { ...NOOP }
+
+    const [profiles, actor, thread] = await Promise.all([
+      loadProfiles(admin, notice.accountId, others),
+      actorName(admin, notice.actorUserId),
+      admin
+        .from('chat_threads')
+        .select('kind, title')
+        .eq('id', message.thread_id)
+        .maybeSingle()
+        .then((r) => (r.data as { kind?: string; title?: string | null } | null) ?? null),
+    ])
+    const recipients = allowed(profiles, 'chat_message').filter(
+      (uid) => !isFocusedOnChatThread(uid, message.thread_id as string),
+    )
+    if (recipients.length === 0) return { ...NOOP }
+
+    const body = chatPushBody(message.body, message.attachment)
+    // Groups: "Ana · Vendas" so the recipient knows where it landed.
+    const groupTitle = thread?.kind === 'group' ? thread.title?.trim() : ''
+    const who = actor ?? tr('New chat message')
+    return await sendPushToUsers(admin, recipients, {
+      title: groupTitle ? `${who} · ${groupTitle}` : who,
+      body: body.length > CHAT_PREVIEW_MAX ? `${body.slice(0, CHAT_PREVIEW_MAX - 1)}…` : body,
+      url: chatThreadUrl(message.thread_id as string),
+      tag: `chat:${message.thread_id}`,
+    })
+  } catch (err) {
+    console.error('[push] notifyChatMessage threw:', err)
+    return { ...NOOP }
+  }
+}
+
+/**
+ * Push body for a chat message: the text, else a placeholder for the
+ * attachment ("🎤 Áudio" for voice notes, "📎 Anexo" otherwise) — the
+ * same wording the thread preview trigger uses (migration 039).
+ */
+export function chatPushBody(body: unknown, attachment: unknown): string {
+  const text = String(body ?? '').replace(/\s+/g, ' ').trim()
+  if (text) return text
+  const att = asChatAttachment(attachment)
+  if (!att) return ''
+  const { emoji, label } = attachmentPreview(att.mime)
+  return `${emoji} ${tr(label)}`
+}
+
+// ------------------------------------------------------------
+// (f) Calendar reminders (cron)
+// ------------------------------------------------------------
+
+/** Largest reminder offset the DB accepts (one day), in minutes. */
+const CALENDAR_MAX_REMINDER_MIN = 1440
+
+export interface CalendarRemindersResult {
+  scanned: number
+  notified: number
+}
+
+/**
+ * Confirmed events with a reminder whose `starts_at - reminder_minutes`
+ * is now or past, not reminded yet (`reminded_at IS NULL`; the DB
+ * trigger clears it when the start or the reminder changes). The
+ * owner and every attendee get the push unless their prefs turned
+ * `calendar_reminder` off. Each row is claimed (stamped) before the
+ * push so a slow tick never reminds twice; rows whose window closed
+ * more than an hour ago are left alone.
+ */
+export async function notifyCalendarReminders(
+  admin: SupabaseClient,
+  now: Date = new Date(),
+): Promise<CalendarRemindersResult> {
+  const result: CalendarRemindersResult = { scanned: 0, notified: 0 }
+  try {
+    const floor = new Date(now.getTime() - 60 * 60_000).toISOString()
+    const horizon = new Date(now.getTime() + CALENDAR_MAX_REMINDER_MIN * 60_000).toISOString()
+    const { data, error } = await admin
+      .from('calendar_events')
+      .select('id, account_id, title, owner_user_id, starts_at, ends_at, all_day, reminder_minutes, location')
+      .eq('status', 'confirmed')
+      .is('reminded_at', null)
+      .not('reminder_minutes', 'is', null)
+      .gte('starts_at', floor)
+      .lte('starts_at', horizon)
+      .order('starts_at', { ascending: true })
+      .limit(500)
+    if (error) {
+      // Missing table (pre-040 schema) → skip silently.
+      if (!/42P01|42703|PGRST|does not exist|schema cache/i.test(`${error.code} ${error.message}`)) {
+        console.error('[push] calendar reminder scan failed:', error.message)
+      }
+      return result
+    }
+    const rows = (data ?? []) as {
+      id: string
+      account_id: string
+      title: string
+      owner_user_id: string | null
+      starts_at: string
+      ends_at: string
+      all_day: boolean
+      reminder_minutes: number
+      location: string | null
+    }[]
+    // `starts_at - reminder_minutes <= now` cannot be expressed as a
+    // PostgREST filter, so the window is applied here.
+    const due = rows.filter(
+      (r) => new Date(r.starts_at).getTime() - r.reminder_minutes * 60_000 <= now.getTime(),
+    )
+    result.scanned = due.length
+    if (due.length === 0) return result
+
+    const stamp = now.toISOString()
+    for (const ev of due) {
+      const { data: claimed } = await admin
+        .from('calendar_events')
+        .update({ reminded_at: stamp })
+        .eq('id', ev.id)
+        .is('reminded_at', null)
+        .select('id')
+        .maybeSingle()
+      if (!claimed) continue
+
+      const { data: att } = await admin
+        .from('calendar_event_attendees')
+        .select('user_id')
+        .eq('event_id', ev.id)
+      const userIds = new Set<string>()
+      if (ev.owner_user_id) userIds.add(ev.owner_user_id)
+      for (const a of (att ?? []) as { user_id: string }[]) userIds.add(a.user_id)
+      if (userIds.size === 0) continue
+
+      const profiles = await loadProfiles(admin, ev.account_id, [...userIds])
+      const recipients = allowed(profiles, 'calendar_reminder')
+      if (recipients.length === 0) continue
+
+      const minutes = Math.max(0, Math.round((new Date(ev.starts_at).getTime() - now.getTime()) / 60_000))
+      const title = ev.all_day
+        ? tr('Appointment today')
+        : minutes > 0
+          ? `${tr('Appointment in')} ${minutes} min`
+          : tr('Appointment starting now')
+      const body = ev.location ? `${ev.title} · ${ev.location}` : ev.title
+      const res = await sendPushToUsers(admin, recipients, {
+        title,
+        body,
+        url: eventHref(ev.id),
+        tag: `calendar:${ev.id}`,
+      })
+      if (res.sent > 0) result.notified++
+    }
+    return result
+  } catch (err) {
+    console.error('[push] notifyCalendarReminders threw:', err)
+    return result
   }
 }
 
