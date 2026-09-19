@@ -115,8 +115,12 @@ Reaproveita 100% os tokens reais do produto (`src/app/globals.css`, `src/lib/the
 paleta nova:
 - Tema Violeta (`oklch(0.526 0.247 293)`) como acento — default do produto, tagline do próprio
   código "confident, slightly playful".
-- Modo claro por padrão no site público (site de marketing costuma converter melhor em claro;
-  o app continua com dark como default próprio) — toggle de tema não é necessário aqui.
+- `data-mode` (claro/escuro) é global no `<html>`, decidido pelo boot script do layout raiz a
+  partir do `localStorage` (padrão: escuro, "a identidade do app" segundo o próprio código). O
+  site de marketing **herda esse mecanismo sem alterá-lo** — nada de forçar modo claro por rota,
+  o que exigiria tocar num sistema compartilhado com o produto autenticado. As seções do site
+  usam só tokens (`bg-background`, `text-foreground`, `bg-card`, `border-border`, etc.), então
+  funcionam corretamente em ambos os modos automaticamente.
 - Fonte Inter (`--font-sans`), mesma escala de radius (`--radius: 0.625rem` e derivados).
 - Componentes shadcn/ui já existentes (`Button`, `Card`, `Accordion` p/ FAQ, `Input`,
   `Textarea`, `Label`) — sem biblioteca nova.
