@@ -63,6 +63,10 @@ export interface Account {
   tax_id?: string | null;
   /** Razão social — pessoa jurídica only. */
   legal_name?: string | null;
+  /** Contact block (043): digits-only phone, company e-mail, address jsonb. */
+  phone?: string | null;
+  email?: string | null;
+  address?: Record<string, unknown> | null;
   // ---- Plan / platform fields (025_plans_and_platform_admin.sql) ----
   /** Catalogue key — see `PLAN_CATALOG` in `@/lib/plans`. */
   plan: Plan;

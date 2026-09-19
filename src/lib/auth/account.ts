@@ -121,6 +121,9 @@ export interface AccountMeta {
   person_type: PersonType;
   tax_id: string | null;
   legal_name: string | null;
+  phone: string | null;
+  email: string | null;
+  address: Record<string, unknown> | null;
 }
 
 export interface AccountContext {
@@ -166,7 +169,7 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   // rather than silently returning a half-populated profile.
   const { data, error } = await supabase
     .from("profiles")
-    .select("account_id, account_role, account:accounts!inner(id, name, person_type, tax_id, legal_name)")
+    .select("account_id, account_role, account:accounts!inner(id, name, person_type, tax_id, legal_name, phone, email, address)")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -202,6 +205,9 @@ export async function getCurrentAccount(): Promise<AccountContext> {
       person_type: isPersonType(accountRow.person_type) ? accountRow.person_type : "pf",
       tax_id: accountRow.tax_id ?? null,
       legal_name: accountRow.legal_name ?? null,
+      phone: accountRow.phone ?? null,
+      email: accountRow.email ?? null,
+      address: accountRow.address ?? null,
     },
   };
 }

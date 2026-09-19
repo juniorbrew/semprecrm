@@ -2,8 +2,9 @@
 // /api/account
 //
 //   GET   — current caller's account + role. Any member.
-//   PATCH — rename the account and/or update its pessoa
-//           física / jurídica registration.       Admin+.
+//   PATCH — rename the account, update its pessoa física /
+//           jurídica registration and/or its contact block
+//           (phone, e-mail, address).             Admin+.
 //
 // Why both verbs share a route file
 //   They speak about the same singular resource (the caller's
@@ -31,6 +32,7 @@ import {
   validateAccountDocument,
   type RegistrationErrors,
 } from "@/lib/br/documents";
+import { validateAccountContact, type ContactErrors } from "@/lib/br/lookup";
 
 export async function GET() {
   try {
@@ -75,7 +77,15 @@ export async function PATCH(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { name?: unknown; person_type?: unknown; tax_id?: unknown; legal_name?: unknown }
+      | {
+          name?: unknown;
+          person_type?: unknown;
+          tax_id?: unknown;
+          legal_name?: unknown;
+          phone?: unknown;
+          email?: unknown;
+          address?: unknown;
+        }
       | null;
 
     const wantsName = body?.name !== undefined;
@@ -87,7 +97,12 @@ export async function PATCH(request: Request) {
       body?.tax_id !== undefined ||
       body?.legal_name !== undefined;
 
-    if (!body || (!wantsName && !wantsRegistration)) {
+    // Contact keys are independent of each other; each one sent is
+    // validated and written, the others are left alone.
+    const wantsContact =
+      body?.phone !== undefined || body?.email !== undefined || body?.address !== undefined;
+
+    if (!body || (!wantsName && !wantsRegistration && !wantsContact)) {
       return NextResponse.json(
         { error: "Nothing to update" },
         { status: 400 },
@@ -99,6 +114,9 @@ export async function PATCH(request: Request) {
       person_type?: string;
       tax_id?: string;
       legal_name?: string | null;
+      phone?: string | null;
+      email?: string | null;
+      address?: Record<string, unknown>;
     } = {};
 
     if (wantsName) {
@@ -141,6 +159,26 @@ export async function PATCH(request: Request) {
       patch.legal_name = doc.value.legalName;
     }
 
+    if (wantsContact) {
+      const contact = validateAccountContact({
+        phone: body.phone === undefined ? undefined : asString(body.phone),
+        email: body.email === undefined ? undefined : asString(body.email),
+        address:
+          body.address && typeof body.address === "object" && !Array.isArray(body.address)
+            ? (body.address as Record<string, string>)
+            : undefined,
+      });
+      if (!contact.ok) {
+        return NextResponse.json(
+          { error: "Invalid contact data", errors: contact.errors satisfies ContactErrors },
+          { status: 400 },
+        );
+      }
+      if (body.phone !== undefined) patch.phone = contact.value.phone;
+      if (body.email !== undefined) patch.email = contact.value.email;
+      if (body.address !== undefined) patch.address = { ...(contact.value.address ?? {}) };
+    }
+
     // RLS allows this UPDATE because accounts_update requires
     // `is_account_member(id, 'admin')`, and requireRole already
     // guaranteed the caller is admin+.
@@ -148,7 +186,7 @@ export async function PATCH(request: Request) {
       .from("accounts")
       .update(patch)
       .eq("id", ctx.accountId)
-      .select("id, name, person_type, tax_id, legal_name")
+      .select("id, name, person_type, tax_id, legal_name, phone, email, address")
       .single();
 
     if (error) {
@@ -186,6 +224,21 @@ export async function PATCH(request: Request) {
           accountId: ctx.accountId,
           actorUserId: ctx.userId,
           action: AUDIT_ACTIONS.ACCOUNT_REGISTRATION_UPDATED,
+          entityType: "account",
+          entityId: ctx.accountId,
+          metadata: { from: before, to: after },
+        });
+      }
+    }
+
+    if (wantsContact) {
+      const before = { phone: ctx.account.phone, email: ctx.account.email, address: ctx.account.address ?? {} };
+      const after = { phone: data.phone, email: data.email, address: data.address ?? {} };
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
+        await audit({
+          accountId: ctx.accountId,
+          actorUserId: ctx.userId,
+          action: AUDIT_ACTIONS.ACCOUNT_CONTACT_UPDATED,
           entityType: "account",
           entityId: ctx.accountId,
           metadata: { from: before, to: after },
