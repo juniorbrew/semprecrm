@@ -444,6 +444,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   render={
                     <Link
                       href="/platform"
+                      prefetch={false}
                       onClick={onClose}
                       className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
                     />
