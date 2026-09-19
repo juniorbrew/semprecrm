@@ -141,6 +141,10 @@ export const RATE_LIMITS = {
    *  while still bounding accidental abuse from a script run in a
    *  loop or a compromised admin session spamming role flips. */
   adminAction: { limit: 30, windowMs: 60_000 },
+  /** Marketing contact form (public, per-IP). 5/min is generous for
+   *  a real visitor filling one form and tight enough to blunt a
+   *  scripted flood at the unauthenticated /contato endpoint. */
+  marketingContact: { limit: 5, windowMs: 60_000 },
   /** CNPJ / CEP lookup (public, per-IP, one bucket per kind). The form
    *  fires one call per completed document, so 60/min is generous for a
    *  human — and for an office behind one NAT address — while still
