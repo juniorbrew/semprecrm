@@ -6,9 +6,10 @@
 
 import { notFound, redirect } from "next/navigation";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
+import { cache } from 'react';
 
-import { createClient } from "@/lib/supabase/server";
-import type { PlatformAccountRow } from "@/types";
+import { createClient } from '@/lib/supabase/server';
+import type { PlatformAccountRow } from '@/types';
 
 import {
   GATE_LOGIN_PATH,
@@ -54,25 +55,25 @@ export async function getPlatformAdmin(): Promise<PlatformAdminContext | null> {
  * advertised; admins without an open gate (no username/password yet,
  * or cookie missing/expired) are sent to /platform/login.
  */
-export async function requirePlatformAdminContext(): Promise<PlatformAdminContext> {
+export const requirePlatformAdminContext = cache(async (): Promise<PlatformAdminContext> => {
   const ctx = await getPlatformAdmin();
   if (!ctx) notFound();
   if (!ctx.gateOpen) redirect(GATE_LOGIN_PATH);
   return ctx;
-}
+});
 
-export async function requirePlatformAdmin(): Promise<SupabaseClient> {
+export const requirePlatformAdmin = cache(async (): Promise<SupabaseClient> => {
   return (await requirePlatformAdminContext()).supabase;
-}
+});
 
 /** Every account with owner + counts, newest first. */
 export async function listPlatformAccounts(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient
 ): Promise<PlatformAccountRow[]> {
-  const { data, error } = await supabase.rpc("platform_list_accounts");
+  const { data, error } = await supabase.rpc('platform_list_accounts');
   if (error) {
-    console.error("[platform] platform_list_accounts failed:", error.message);
-    throw new Error("Failed to load accounts");
+    console.error('[platform] platform_list_accounts failed:', error.message);
+    throw new Error('Failed to load accounts');
   }
   return (data ?? []) as PlatformAccountRow[];
 }
@@ -80,7 +81,7 @@ export async function listPlatformAccounts(
 /** One account by id (via the same RPC so the counts come along). */
 export async function getPlatformAccount(
   supabase: SupabaseClient,
-  accountId: string,
+  accountId: string
 ): Promise<PlatformAccountRow | null> {
   const rows = await listPlatformAccounts(supabase);
   return rows.find((r) => r.id === accountId) ?? null;

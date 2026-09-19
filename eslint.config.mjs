@@ -9,6 +9,8 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    // Agent worktrees contain independent checkouts and generated bundles.
+    ".claude/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

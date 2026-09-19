@@ -28,6 +28,8 @@ import { isFocusedOn, isFocusedOnChatThread } from './focus'
 import { parseNotificationPrefs, type PushEventKind } from './prefs'
 import { sendPushToUsers, type SendPushResult } from './send'
 
+export { notifyNewLeads } from './leads'
+
 const NOOP: SendPushResult = { users: 0, sent: 0, failed: 0, removed: 0, configured: true }
 
 /**
