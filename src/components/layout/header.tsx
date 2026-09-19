@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { useBranding } from "@/hooks/use-branding";
+import { useLanguage } from "@/hooks/use-language";
+import { translateLiteral, type Language } from "@/lib/i18n";
 import {
   LogOut,
   Menu,
@@ -29,26 +31,28 @@ import {
   AvailabilityToggle,
 } from "@/components/layout/availability-toggle";
 
+// English keys; rendered through the dictionary so `document.title`
+// (set from JS, out of the DOM translator's reach) follows the language.
 const pageTitles: Record<string, string> = {
-  "/dashboard": "Painel",
-  "/inbox": "Caixa de entrada",
-  "/contacts": "Contatos",
-  "/pipelines": "Funis",
-  "/tasks": "Tarefas",
+  "/dashboard": "Dashboard",
+  "/inbox": "Inbox",
+  "/contacts": "Contacts",
+  "/pipelines": "Pipelines",
+  "/tasks": "Tasks",
   "/chat": "Chat",
-  "/agenda": "Agenda",
-  "/broadcasts": "Disparos",
-  "/automations": "Automações",
-  "/flows": "Fluxos",
-  "/settings": "Configurações",
+  "/agenda": "Calendar",
+  "/broadcasts": "Broadcasts",
+  "/automations": "Automations",
+  "/flows": "Flows",
+  "/settings": "Settings",
 };
 
-export function getPageTitle(pathname: string): string {
-  if (pageTitles[pathname]) return pageTitles[pathname];
-  const match = Object.entries(pageTitles).find(([path]) =>
-    pathname.startsWith(path),
-  );
-  return match ? match[1] : "Painel";
+export function getPageTitle(pathname: string, language: Language = "pt-BR"): string {
+  const key =
+    pageTitles[pathname] ??
+    Object.entries(pageTitles).find(([path]) => pathname.startsWith(path))?.[1] ??
+    "Dashboard";
+  return translateLiteral(key, language);
 }
 
 interface HeaderProps {
@@ -61,7 +65,8 @@ export function Header({ onOpenSidebar }: HeaderProps) {
   const pathname = usePathname();
   const { profile, signOut, isPlatformAdmin } = useAuth();
   const branding = useBranding();
-  const title = getPageTitle(pathname);
+  const { language } = useLanguage();
+  const title = getPageTitle(pathname, language);
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??

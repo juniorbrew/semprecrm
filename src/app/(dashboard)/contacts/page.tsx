@@ -71,7 +71,7 @@ export default function ContactsPage() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -582,7 +582,7 @@ export default function ContactsPage() {
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
-                    {new Date(contact.created_at).toLocaleDateString('pt-BR', {
+                    {new Date(contact.created_at).toLocaleDateString(language, {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
