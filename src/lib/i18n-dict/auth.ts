@@ -41,4 +41,5 @@ export const DICT_AUTH: Record<string, string> = {
     ', saia e cadastre-se novamente com outro e-mail. O link do convite continua válido até expirar.',
   'Unable to join': 'Não é possível entrar em',
   'with this account': 'com esta conta',
+  'Password must be at least 8 characters': 'A senha deve ter no mínimo 8 caracteres',
 };
