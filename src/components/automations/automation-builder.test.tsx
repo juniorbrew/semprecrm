@@ -72,8 +72,9 @@ describe("AutomationBuilder (server render)", () => {
     })
     expect(html).toContain("Olá! Obrigado por entrar em contato. Já respondemos.")
     expect(html).toContain("Aguardar 2 horas")
-    // No tags loaded server-side → raw id is still shown rather than nothing.
-    expect(html).toContain("Etiqueta: tag-uuid")
+    // No tags loaded server-side → a neutral label, never the raw id.
+    expect(html).toContain("Etiqueta selecionada")
+    expect(html).not.toContain("tag-uuid")
     expect(html).toContain("Distribuição circular entre os responsáveis")
     // Cards are numbered and selectable.
     expect(html).toContain("Ação 1")

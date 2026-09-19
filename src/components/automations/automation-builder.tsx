@@ -823,8 +823,9 @@ function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language
     case "add_tag":
     case "remove_tag": {
       const tag = res.tags.find((t) => t.id === c.tag_id)
-      const name = tag?.name || (c.tag_id ? String(c.tag_id) : "")
-      return name ? `${pt ? "Etiqueta" : "Tag"}: ${name}` : pt ? "Escolha uma etiqueta" : "Pick a tag"
+      if (tag?.name) return `${pt ? "Etiqueta" : "Tag"}: ${tag.name}`
+      // Unknown or not-yet-loaded tag: never surface the database id.
+      return c.tag_id ? (pt ? "Etiqueta selecionada" : "Selected tag") : pt ? "Escolha uma etiqueta" : "Pick a tag"
     }
     case "assign_conversation": {
       if (c.mode === "specific") {
@@ -899,8 +900,8 @@ function triggerSummary(
     }
     case "tag_added": {
       const tag = res.tags.find((t) => t.id === cfg.tag_id)
-      const name = tag?.name || (cfg.tag_id ? String(cfg.tag_id) : "")
-      return name ? `${pt ? "Etiqueta" : "Tag"}: ${name}` : pt ? "Escolha uma etiqueta" : "Pick a tag"
+      if (tag?.name) return `${pt ? "Etiqueta" : "Tag"}: ${tag.name}`
+      return cfg.tag_id ? (pt ? "Etiqueta selecionada" : "Selected tag") : pt ? "Escolha uma etiqueta" : "Pick a tag"
     }
     case "time_based":
       return cfg.schedule ? `${pt ? "Agenda" : "Schedule"}: ${String(cfg.schedule)}` : pt ? "Defina o horário" : "Set a schedule"

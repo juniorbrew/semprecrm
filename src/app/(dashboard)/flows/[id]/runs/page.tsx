@@ -278,7 +278,7 @@ function RunCard({
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <span>
               {t("Started")}{" "}
-              {format(new Date(run.started_at), "PP p", { locale: dateLocale })}
+              {new Date(run.started_at).toLocaleString(language, { dateStyle: "medium", timeStyle: "short" })}
             </span>
             {run.reprompt_count > 0 && (
               <span>

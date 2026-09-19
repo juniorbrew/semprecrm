@@ -147,7 +147,7 @@ export const AUDIT_FIELD_LABELS: Record<Language, Record<string, string>> = {
     out_of_hours_enabled: 'Resposta fora do horário',
     out_of_hours_message: 'Mensagem fora do horário',
     auto_assign_enabled: 'Atribuição automática',
-    require_mfa_admins: 'Exigir MFA para administradores',
+    require_mfa_admins: 'Exigir verificação em duas etapas para administradores',
     // company registration / contact
     person_type: 'Tipo de conta',
     tax_id: 'CPF/CNPJ',

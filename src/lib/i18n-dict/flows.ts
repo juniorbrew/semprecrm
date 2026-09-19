@@ -276,7 +276,7 @@ export const DICT_FLOWS: Record<string, string> = {
   'Select a stage…': 'Selecione uma etapa…',
   'Specific assignee': 'Responsável específico',
   'The assignee (customer went quiet)': 'O responsável (cliente ficou em silêncio)',
-  'Active rule': 'Regra ativa',
+  'Active rule': 'Automação ativa',
   'Conversation Inactive': 'Conversa sem resposta',
   'Check the highlighted step and try again.': 'Verifique a etapa destacada e tente novamente.',
   'Hi! Thanks for getting in touch…': 'Olá! Agradecemos o contato…',

@@ -82,6 +82,7 @@ export const EN_TO_PT: Record<string, string> = {
   'Create a new account instead': 'Criar uma nova conta',
   'Enter your password': 'Digite sua senha',
   'At least 6 characters': 'No mínimo 6 caracteres',
+  'At least 8 characters': 'No mínimo 8 caracteres',
   'Repeat your password': 'Repita sua senha',
   'Passwords do not match': 'As senhas não coincidem',
   'Password must be at least 6 characters':
@@ -302,7 +303,7 @@ export const EN_TO_PT: Record<string, string> = {
   'Warm and friendly — feels good for SMB teams.':
     'Quente e amigável — ótimo para equipes de pequenas empresas.',
   'Bold and modern — D2C, creator-economy, lifestyle.':
-    'Ousado e moderno — D2C, economia criativa e lifestyle.',
+    'Ousado e moderno — marcas digitais, criadores de conteúdo e estilo de vida.',
   Violet: 'Violeta',
   Emerald: 'Esmeralda',
   Cobalt: 'Cobalto',
