@@ -118,6 +118,11 @@ export async function sendPushToUsers(
   admin: SupabaseClient,
   userIds: readonly string[],
   payload: PushPayload,
+  delivery?: {
+    /** Durable receipts let a caller retry only unsuccessful subscriptions. */
+    excludeSubscriptionIds: readonly string[]
+    onDelivered: (subscriptionId: string) => Promise<void>
+  },
 ): Promise<SendPushResult> {
   const ids = Array.from(new Set(userIds.filter(Boolean)))
   if (ids.length === 0) return { ...EMPTY }
@@ -129,9 +134,10 @@ export async function sendPushToUsers(
     .in('user_id', ids)
   if (error) {
     console.error('[push] failed to load subscriptions:', error.message)
-    return { ...EMPTY }
+    return { ...EMPTY, failed: 1 }
   }
-  const rows = (data ?? []) as PushSubscriptionRow[]
+  const excluded = new Set(delivery?.excludeSubscriptionIds ?? [])
+  const rows = ((data ?? []) as PushSubscriptionRow[]).filter((row) => !excluded.has(row.id))
   if (rows.length === 0) return { ...EMPTY }
 
   const message = buildPushMessage(payload)
@@ -142,7 +148,8 @@ export async function sendPushToUsers(
   await Promise.all(
     rows.map(async (row) => {
       try {
-        await webpush.sendNotification(toWebPushSubscription(row), message, { TTL: 60 * 60 })
+        await webpush.sendNotification(toWebPushSubscription(row), message, { TTL: 60 * 60, timeout: 10_000 })
+        await delivery?.onDelivered(row.id)
         ok.push(row.id)
       } catch (err) {
         if (isGoneError(err)) {
