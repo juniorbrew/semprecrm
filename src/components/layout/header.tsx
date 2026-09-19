@@ -171,6 +171,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
               render={
                 <Link
                   href="/platform"
+                  prefetch={false}
                   className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
                 />
               }
