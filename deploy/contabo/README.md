@@ -69,6 +69,12 @@ insert into platform_admins (user_id) values ('<uuid-do-usuario>');
 Depois disso o item "Plataforma" aparece no menu do usuário e `/platform` passa a responder
 (para qualquer outro usuário a rota devolve 404). Para revogar: `delete from platform_admins where user_id = '<uuid>'`.
 
+Na primeira visita a `/platform` o admin define um **usuário e senha do painel** (migration 045),
+separados do login do CRM; depois disso a tela `/platform/login` pede os dois a cada 8 horas e
+eles podem ser trocados em `/platform/acesso`. Opcional: `PLATFORM_GATE_SECRET` no
+`.env.production` (16+ caracteres) para assinar o cookie do painel — sem ele, a chave é derivada
+da `SUPABASE_SERVICE_ROLE_KEY`. Não é preciso `auth_basic` no Nginx.
+
 ## 4. Primeira subida
 
 ```bash

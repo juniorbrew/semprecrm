@@ -238,6 +238,39 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Search accounts': 'Pesquisar contas',
   'Search by name or e-mail': 'Pesquisar por nome ou e-mail',
 
+  // ---- Platform gate (/platform/login, /platform/acesso) ------------
+  'Master panel': 'Painel master',
+  'Set up panel access': 'Definir acesso ao painel',
+  'Choose the username and password that will unlock the platform panel.':
+    'Escolha o usuário e a senha que vão destravar o painel da plataforma.',
+  'Enter the panel username and password to continue.':
+    'Informe o usuário e a senha do painel para continuar.',
+  Username: 'Usuário',
+  'At least 8 characters. You can change it later in the panel.':
+    'Pelo menos 8 caracteres. Você pode alterar depois dentro do painel.',
+  'Checking...': 'Verificando…',
+  'Save and open panel': 'Salvar e abrir o painel',
+  'Open panel': 'Abrir painel',
+  'Too many attempts. Wait a minute and try again.':
+    'Muitas tentativas. Aguarde um minuto e tente de novo.',
+  'Incorrect username or password': 'Usuário ou senha incorretos',
+  'Set up the panel access first': 'Defina o acesso ao painel primeiro',
+  'Panel access is already set up': 'O acesso ao painel já foi definido',
+  'Username must have 3 to 40 characters (letters, numbers, . _ - @)':
+    'O usuário precisa ter de 3 a 40 caracteres (letras, números, . _ - @)',
+  'Password must have at least 8 characters': 'A senha precisa ter pelo menos 8 caracteres',
+  'Current password is incorrect': 'A senha atual está incorreta',
+  'Nothing to change': 'Nada para alterar',
+  'Panel access': 'Acesso ao painel',
+  'Lock panel': 'Bloquear painel',
+  'Username and password asked on the master panel. They are separate from your CRM login.':
+    'Usuário e senha pedidos no painel master. São separados do seu login no CRM.',
+  'Leave blank to keep': 'Deixe em branco para manter',
+  'Confirm new password': 'Confirmar nova senha',
+  'At least 8 characters. Changing the password signs the panel out on other devices.':
+    'Pelo menos 8 caracteres. Trocar a senha desconecta o painel nos outros dispositivos.',
+  'Panel access updated': 'Acesso ao painel atualizado',
+
   // ---- Company / account fields ------------------------------------
   'Legal name': 'Razão social',
   'Acme Bakery Ltd.': 'Padaria Sol Ltda',
