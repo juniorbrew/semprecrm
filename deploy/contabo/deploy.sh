@@ -10,6 +10,8 @@ git fetch --prune origin
 git checkout -q "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
+npx supabase db push           # applies any new migrations before the build ships code that depends on them
+
 npm ci --include=dev            # build needs devDependencies even if NODE_ENV=production
 npm run build                  # .env.production is read at build time for NEXT_PUBLIC_*
 pm2 reload semprecrm --update-env || pm2 start deploy/contabo/ecosystem.config.cjs --only semprecrm

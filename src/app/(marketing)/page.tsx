@@ -9,10 +9,12 @@ import { DemoShowcase } from "./_components/demo-showcase";
 import { Faq } from "./_components/faq";
 import { CtaBanner } from "./_components/cta-banner";
 
+const DESCRIPTION =
+  "SempreCRM centraliza o WhatsApp da sua empresa: caixa de entrada compartilhada, funil de vendas, tarefas e automação em um só lugar.";
+
 export const metadata: Metadata = {
   title: "CRM para WhatsApp que sua equipe vai usar de verdade",
-  description:
-    "SempreCRM centraliza o WhatsApp da sua empresa: caixa de entrada compartilhada, funil de vendas, tarefas e automação em um só lugar.",
+  description: DESCRIPTION,
   alternates: { canonical: "/" },
   openGraph: {
     title: "SempreCRM — CRM para WhatsApp",
@@ -23,9 +25,22 @@ export const metadata: Metadata = {
   },
 };
 
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "SempreCRM",
+  description: DESCRIPTION,
+  applicationCategory: "BusinessApplication",
+  url: process.env.NEXT_PUBLIC_SITE_URL || "https://www.semprecrm.com.br",
+};
+
 export default function HomePage() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <Hero />
       <Benefits />
       <HowItWorks />
