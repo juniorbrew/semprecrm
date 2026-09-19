@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { PLAN_CATALOG, PLAN_LABELS, type Module, type Plan } from "@/lib/plans";
+import { PLAN_CATALOG, type Module, type Plan } from "@/lib/plans";
 
 export const metadata: Metadata = {
   title: "Preços",
@@ -14,6 +14,18 @@ export const metadata: Metadata = {
 };
 
 const PLAN_ORDER: Plan[] = ["trial", "basico", "pro", "empresa"];
+
+// pt-BR plan names for the marketing site — src/lib/plans.ts's own
+// PLAN_LABELS are English (they feed the in-app i18n catalogue via
+// the global useLanguage()/EN_TO_PT translator, not this page), so
+// this page keeps its own hardcoded translation rather than relying
+// on the runtime translator rewriting matching text nodes.
+const PLAN_LABELS_PT: Record<Plan, string> = {
+  trial: "Teste",
+  basico: "Básico",
+  pro: "Pro",
+  empresa: "Empresa",
+};
 
 const PLAN_TAGLINES: Record<Plan, string> = {
   trial: "Para testar tudo antes de decidir.",
@@ -65,7 +77,7 @@ export default function PricingPage() {
           return (
             <Card key={plan} className={isEmpresa ? "ring-2 ring-primary" : undefined}>
               <CardHeader>
-                <CardTitle className="text-lg">{PLAN_LABELS[plan]}</CardTitle>
+                <CardTitle className="text-lg">{PLAN_LABELS_PT[plan]}</CardTitle>
                 <CardDescription>{PLAN_TAGLINES[plan]}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
