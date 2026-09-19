@@ -90,8 +90,13 @@ cd /var/www/semprecrm
 npx supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:5432/postgres"
 ```
 
-A porta 5432 do container só é acessível de dentro da VPS. Repita este comando a cada deploy que trouxer
-migration nova (o `deploy.sh` não faz isso sozinho, de propósito).
+A porta 5432 do host é o Supavisor (usuário `postgres.<POOLER_TENANT_ID>`); se ele recusar, aponte para
+o IP do container do banco: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' supabase-db`
+e acrescente `?sslmode=disable` na URL.
+
+Para o `deploy.sh` aplicar as migrations sozinho a cada deploy, grave a mesma URL em
+`/var/www/semprecrm/.env.production` como `SUPABASE_DB_URL=...` (o arquivo já é `chmod 600`). Sem a
+variável o deploy avisa e segue sem migrar.
 
 #### Primeiro admin da plataforma (`/platform`)
 
