@@ -4,13 +4,17 @@
 // Public — no auth required. Backs the /contato form on the
 // marketing site. Writes straight to `contact_submissions` via
 // the service-role client (RLS on that table denies anon/authed
-// writes entirely — this route is the only writer) and never
-// sends email; someone checks the table directly for now.
+// writes entirely — this route is the only writer), then e-mails
+// the owner (CONTACT_NOTIFY_TO, via src/lib/mail/smtp.ts) when SMTP
+// is configured. The row is the source of truth; a failed e-mail
+// is logged, never surfaced to the visitor.
 // ============================================================
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+import { sendMail } from "@/lib/mail/smtp";
+import { buildContactNotification, contactNotifyRecipient } from "@/lib/marketing/notify";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { supabaseServerUrl } from "@/lib/supabase/url";
 import { validateContactSubmission } from "@/lib/marketing/contact";
@@ -97,6 +101,9 @@ export async function POST(request: Request) {
     console.error("[marketing/contact] insert error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+
+  const to = contactNotifyRecipient();
+  if (to) await sendMail(buildContactNotification(to, result.data));
 
   return NextResponse.json({ ok: true });
 }
