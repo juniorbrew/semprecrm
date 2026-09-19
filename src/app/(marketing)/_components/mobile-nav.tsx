@@ -21,7 +21,7 @@ export function MobileNav({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="relative md:hidden">
+    <div className="md:hidden">
       <Button
         variant="ghost"
         size="icon"
