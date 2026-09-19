@@ -44,6 +44,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useLanguage } from "@/hooks/use-language";
 
 import {
   validateFlowForActivation,
@@ -133,7 +134,15 @@ export function uniqueNodeKey(base: string, existing: BuilderNode[]): string {
   return `${base}_${i}`;
 }
 
-export function defaultConfigFor(type: NodeType): Record<string, unknown> {
+/**
+ * `t` localises the placeholder copy a customer could end up seeing
+ * ("Yes" button, "See options" label, "Option 1" row). Identity by
+ * default so tests and non-UI callers get the English seed.
+ */
+export function defaultConfigFor(
+  type: NodeType,
+  t: (english: string) => string = (s) => s,
+): Record<string, unknown> {
   switch (type) {
     case "start":
       return { next_node_key: "" };
@@ -142,17 +151,17 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
     case "send_buttons":
       return {
         text: "",
-        buttons: [{ reply_id: "yes", title: "Sim", next_node_key: "" }],
+        buttons: [{ reply_id: "yes", title: t("Yes"), next_node_key: "" }],
       };
     case "send_list":
       return {
         text: "",
-        button_label: "View options",
+        button_label: t("See options"),
         sections: [
           {
             title: "",
             rows: [
-              { reply_id: "row_1", title: "Option 1", next_node_key: "" },
+              { reply_id: "row_1", title: t("Option 1"), next_node_key: "" },
             ],
           },
         ],
@@ -237,6 +246,7 @@ export function FlowEditorProvider({
   children,
 }: ProviderProps) {
   const router = useRouter();
+  const { t } = useLanguage();
 
   const [state, setStateRaw] = useState<BuilderState>(() => ({
     name: initialFlow.name,
@@ -347,20 +357,20 @@ export function FlowEditorProvider({
         throw new Error(json.error ?? `Save failed: ${res.status}`);
       }
       setDirty(false);
-      toast.success("Saved.");
+      toast.success(t("Saved."));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Save failed";
+      const msg = err instanceof Error ? err.message : t("Save failed");
       toast.error(msg);
     } finally {
       setSaving(false);
     }
-  }, [initialFlow.id, state]);
+  }, [initialFlow.id, state, t]);
 
   // ---- Activate / Pause / Archive ----
   const setStatus = useCallback(
     async (next: BuilderState["status"]) => {
       if (next === "active" && !canActivate) {
-        toast.error("Fix the issues below before activating.");
+        toast.error(t("Fix the issues below before activating."));
         return;
       }
       setActivating(true);
@@ -382,39 +392,44 @@ export function FlowEditorProvider({
         }
         setStateRaw((s) => ({ ...s, status: next }));
         toast.success(
-          next === "active"
-            ? "Flow activated."
-            : next === "archived"
-              ? "Archived."
-              : "Saved as draft.",
+          t(
+            next === "active"
+              ? "Flow activated."
+              : next === "archived"
+                ? "Flow archived."
+                : "Saved as draft.",
+          ),
         );
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Status update failed";
+        const msg =
+          err instanceof Error ? err.message : t("Status update failed");
         toast.error(msg);
       } finally {
         setActivating(false);
       }
     },
-    [canActivate, save, initialFlow.id],
+    [canActivate, save, initialFlow.id, t],
   );
 
   // ---- Delete ----
   const deleteFlow = useCallback(async () => {
+    // window.confirm is native UI — the DOM translator never sees it,
+    // so the pieces are translated by hand around the flow name.
     const yes = window.confirm(
-      `Delete "${state.name}"? Any active runs end immediately. This can't be undone.`,
+      `${t("Delete")} "${state.name}"? ${t("Any active runs end immediately. This can't be undone.")}`,
     );
     if (!yes) return;
     try {
       const res = await fetch(`/api/flows/${initialFlow.id}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+      if (!res.ok) throw new Error(`${t("Delete failed")}: ${res.status}`);
       router.push("/flows");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Delete failed";
+      const msg = err instanceof Error ? err.message : t("Delete failed");
       toast.error(msg);
     }
-  }, [initialFlow.id, router, state.name]);
+  }, [initialFlow.id, router, state.name, t]);
 
   // ---- Node mutations ----
   const updateNode = useCallback(
@@ -481,7 +496,7 @@ export function FlowEditorProvider({
         const next: BuilderNode = {
           node_key,
           node_type: type,
-          config: defaultConfigFor(type),
+          config: defaultConfigFor(type, t),
         };
         return {
           ...s,
@@ -495,7 +510,7 @@ export function FlowEditorProvider({
       });
       return createdKey;
     },
-    [setState],
+    [setState, t],
   );
 
   const removeNode = useCallback(

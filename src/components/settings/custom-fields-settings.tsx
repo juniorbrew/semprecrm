@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { CustomFieldsPanel } from '@/components/contacts/custom-fields-manager';
+import { useLanguage } from '@/hooks/use-language';
 import { SettingsChip } from './settings-chip';
 
 /**
@@ -19,15 +20,16 @@ import { SettingsChip } from './settings-chip';
  * `custom_fields` RLS.
  */
 export function CustomFieldsSettings() {
+  const { t } = useLanguage();
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-foreground">
           <SlidersHorizontal className="size-4 text-primary" />
-          Campos personalizados
+          {t('Custom fields')}
           <SettingsChip variant="admin" className="font-medium">
             <Shield />
-            Administrador
+            {t('Admin')}
           </SettingsChip>
         </CardTitle>
         <CardDescription className="text-muted-foreground">

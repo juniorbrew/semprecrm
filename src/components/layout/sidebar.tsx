@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
+import { useLanguage } from "@/hooks/use-language";
 import { useBranding } from "@/hooks/use-branding";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useOverdueTasks } from "@/hooks/use-overdue-tasks";
@@ -126,6 +127,7 @@ interface SidebarProps {
 
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const { t } = useLanguage();
   const { profile, profileLoading, account, accountRole, signOut, isPlatformAdmin } =
     useAuth();
   const { ready: entitlementsReady, modules } = useEntitlements();
@@ -211,7 +213,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           // Desktop: static, always visible — reset all the mobile framing.
           "lg:static lg:z-0 lg:w-60 lg:translate-x-0 lg:transition-none",
         )}
-        aria-label="Primary"
+        aria-label={t("Main navigation")}
       >
         {/* Logo row. On mobile we put a close button here; on desktop the
             close button is hidden since the sidebar is always-visible. */}
@@ -281,8 +283,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     )}
                     {showOverdueBadge && (
                       <span
-                        aria-label={`${overdueTasks} ${overdueTasks === 1 ? "tarefa atrasada" : "tarefas atrasadas"}`}
-                        title={`${overdueTasks} ${overdueTasks === 1 ? "tarefa atrasada" : "tarefas atrasadas"}`}
+                        aria-label={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
+                        title={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
                         className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400"
                       >
                         {overdueTasks > 99 ? "99+" : overdueTasks}
@@ -290,8 +292,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     )}
                     {showChatBadge && (
                       <span
-                        aria-label={`${chatUnread} ${chatUnread === 1 ? "mensagem não lida" : "mensagens não lidas"}`}
-                        title={`${chatUnread} ${chatUnread === 1 ? "mensagem não lida" : "mensagens não lidas"}`}
+                        aria-label={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
+                        title={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
                         className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
                       >
                         {chatUnread > 99 ? "99+" : chatUnread}
@@ -299,8 +301,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     )}
                     {showAgendaBadge && (
                       <span
-                        aria-label={`${upcomingEvents} ${upcomingEvents === 1 ? "compromisso nas próximas 2 h" : "compromissos nas próximas 2 h"}`}
-                        title={`${upcomingEvents} ${upcomingEvents === 1 ? "compromisso nas próximas 2 h" : "compromissos nas próximas 2 h"}`}
+                        aria-label={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
+                        title={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
                         className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-amber-600 dark:text-amber-400"
                       >
                         {upcomingEvents > 99 ? "99+" : upcomingEvents}
@@ -308,7 +310,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     )}
                     {showUnreadDot && (
                       <span
-                        aria-label={`${totalUnread} unread conversation${totalUnread === 1 ? "" : "s"}`}
+                        aria-label={`${totalUnread} ${t(totalUnread === 1 ? "unread conversation" : "unread conversations")}`}
                         className="relative flex h-2 w-2"
                       >
                         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />

@@ -101,7 +101,7 @@ export async function POST(request: Request) {
     const VALID_MESSAGE_TYPES = ['text', 'template', ...MEDIA_KINDS] as const
     if (!(VALID_MESSAGE_TYPES as readonly string[]).includes(message_type)) {
       return NextResponse.json(
-        { error: `Unsupported message_type "${message_type}"` },
+        { error: 'Unsupported message type' },
         { status: 400 }
       )
     }
@@ -122,7 +122,7 @@ export async function POST(request: Request) {
 
     if (isMediaKind && !media_url) {
       return NextResponse.json(
-        { error: `media_url is required for ${message_type} messages` },
+        { error: 'media_url is required for media messages' },
         { status: 400 }
       )
     }
@@ -493,7 +493,7 @@ export async function POST(request: Request) {
     if (msgError) {
       console.error('Error inserting sent message:', msgError)
       return NextResponse.json(
-        { error: `Message sent to Meta but failed to save to DB: ${msgError.message}` },
+        { error: 'Message sent to Meta but failed to save locally' },
         { status: 500 }
       )
     }
@@ -518,7 +518,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Error in WhatsApp send POST:', error)
     return NextResponse.json(
-      { error: 'Falha ao enviar mensagem' },
+      { error: 'Failed to send message' },
       { status: 500 }
     )
   }

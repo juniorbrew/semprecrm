@@ -1,4 +1,5 @@
 import { EN_TO_PT_EXTRA } from './i18n-extra';
+import { EN_TO_PT_AREAS } from './i18n-dict';
 
 export const LANGUAGES = ['pt-BR', 'en-US'] as const;
 export type Language = (typeof LANGUAGES)[number];
@@ -17,6 +18,7 @@ export function isLanguage(value: unknown): value is Language {
  */
 export const EN_TO_PT: Record<string, string> = {
   ...EN_TO_PT_EXTRA,
+  ...EN_TO_PT_AREAS,
   Dashboard: 'Painel',
   Inbox: 'Caixa de entrada',
   Contacts: 'Contatos',
@@ -511,14 +513,28 @@ function translateDynamic(value: string, language: Language): string {
       return wrap(`${match[1]} atualizado para ${match[2]}`);
     if ((match = trimmed.match(/^File is (.+) MB — Meta's limit is 5 MB\.$/)))
       return wrap(`A imagem possui ${match[1]} MB — o limite da Meta é 5 MB.`);
+    // "<prefix>: <api error>" — the tail is usually an API message that
+    // has its own dictionary entry, so it goes through the lookup too.
+    const tail = (text: string) => EN_TO_PT[text.trim()] ?? text;
     if ((match = trimmed.match(/^Upload failed: (.+)$/)))
-      return wrap(`Falha no envio: ${match[1]}`);
+      return wrap(`Falha no envio: ${tail(match[1])}`);
     if ((match = trimmed.match(/^Failed to send: (.+)$/)))
-      return wrap(`Falha ao enviar: ${match[1]}`);
+      return wrap(`Falha ao enviar: ${tail(match[1])}`);
     if ((match = trimmed.match(/^Email change failed: (.+)$/)))
-      return wrap(`Falha ao alterar o e-mail: ${match[1]}`);
+      return wrap(`Falha ao alterar o e-mail: ${tail(match[1])}`);
     if ((match = trimmed.match(/^Sign-out failed: (.+)$/)))
-      return wrap(`Falha ao sair: ${match[1]}`);
+      return wrap(`Falha ao sair: ${tail(match[1])}`);
+    if ((match = trimmed.match(/^Password change failed: (.+)$/)))
+      return wrap(`Falha ao alterar a senha: ${tail(match[1])}`);
+    if ((match = trimmed.match(/^Meta API error: (.+)$/)))
+      return wrap(`Erro da API da Meta: ${match[1]}`);
+    if ((match = trimmed.match(/^Meta API rejected the credentials: (.+)$/)))
+      return wrap(`A Meta rejeitou as credenciais: ${match[1]}`);
+    if ((match = trimmed.match(/^(.+) must be (\d+) characters or fewer$/))) {
+      const subject = EN_TO_PT[match[1]] ?? match[1];
+      const lower = subject.charAt(0).toLowerCase() + subject.slice(1);
+      return wrap(`O ${lower} deve ter no máximo ${match[2]} caracteres`);
+    }
     if (
       (match = trimmed.match(
         /^Delete "(.+)"\? Any active runs will end immediately\.$/

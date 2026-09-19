@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Loader2, LogOut } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
+import { useLanguage } from '@/hooks/use-language';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -24,6 +25,7 @@ import {
 
 export function SessionsCard() {
   const supabase = createClient();
+  const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -35,7 +37,7 @@ export function SessionsCard() {
       // triggers the usual redirect.
       const { error } = await supabase.auth.signOut({ scope: 'global' });
       if (error) {
-        toast.error(`Sign-out failed: ${error.message}`);
+        toast.error(`${t('Sign-out failed')}: ${error.message}`);
         return;
       }
       window.location.href = '/login';
@@ -56,8 +58,9 @@ export function SessionsCard() {
             Active sessions
           </CardTitle>
           <CardDescription className="text-muted-foreground">
-            Sign out of every device where you&apos;re logged in — including
-            this one. Useful if you lost a laptop or shared your password.
+            {t(
+              "Sign out of every device where you're logged in — including this one. Useful if you lost a laptop or shared your password.",
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -229,13 +229,13 @@ export function RegistrationFields({
       {isPj ? (
         <div className="flex flex-col gap-2">
           <Label htmlFor="legal-name" className="text-muted-foreground">
-            {t('Legal name (razão social)')}
+            {t('Legal name')}
           </Label>
           <Input
             id="legal-name"
             value={values.legalName}
             onChange={(e) => onChange({ legalName: e.target.value })}
-            placeholder="Padaria Sol Ltda"
+            placeholder={t('Acme Bakery Ltd.')}
             autoComplete="organization"
             maxLength={80}
             disabled={disabled}
@@ -256,7 +256,7 @@ export function RegistrationFields({
             id="trade-name"
             value={values.tradeName}
             onChange={(e) => onChange({ tradeName: e.target.value })}
-            placeholder="Padaria do Sol"
+            placeholder={t('Acme Bakery')}
             maxLength={80}
             disabled={disabled}
             aria-invalid={!!errors.tradeName}

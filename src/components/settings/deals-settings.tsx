@@ -6,6 +6,7 @@ import { Coins, Loader2 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useLanguage } from "@/hooks/use-language";
 import { CURRENCIES } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -30,6 +31,7 @@ import { SettingsPanelHead } from "./settings-panel-head";
  */
 export function DealsSettings() {
   const supabase = createClient();
+  const { t } = useLanguage();
   const {
     accountId,
     defaultCurrency,
@@ -89,7 +91,7 @@ export function DealsSettings() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-2 sm:max-w-xs">
-              <Label className="text-muted-foreground">Moeda</Label>
+              <Label className="text-muted-foreground">{t("Currency")}</Label>
               <select
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}

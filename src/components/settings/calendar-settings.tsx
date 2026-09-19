@@ -192,6 +192,7 @@ export function CalendarSettings() {
           const loading = data === null;
           const label = PROVIDER_LABELS[provider];
           const connected = !!conn && conn.status !== 'revoked';
+          const connectHref = `/api/integrations/${provider}/connect`;
           return (
             <Card key={provider}>
               <CardHeader>
@@ -250,7 +251,7 @@ export function CalendarSettings() {
                       // A plain anchor: the connect route answers with a
                       // 302 to the provider's consent screen.
                       <a
-                        href={`/api/integrations/${provider}/connect`}
+                        href={connectHref}
                         className={buttonVariants({
                           size: 'sm',
                           className: 'bg-primary text-primary-foreground hover:bg-primary/90',

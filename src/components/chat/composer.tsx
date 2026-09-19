@@ -364,7 +364,7 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
               size="icon"
               disabled={!canSend}
               aria-label={t("Send")}
-              title={`${t("Send")} (Enter)`}
+              title={t("Send (Enter)")}
               className="size-10 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {sending ? <Loader2 className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}

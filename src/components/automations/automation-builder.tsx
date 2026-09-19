@@ -302,10 +302,11 @@ function TagSelect({
   onChange: (v: string) => void
 }) {
   const { tags } = useResources()
+  const { t } = useLanguage()
   if (tags.length === 0) {
     return (
       <Input
-        placeholder="Tag id"
+        placeholder={t("Tag id")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="bg-muted text-foreground"
@@ -325,16 +326,18 @@ function TagSelect({
         onChange={(e) => onChange(e.target.value)}
         className={SELECT_CLASS}
       >
-        <option value="">Select a tag…</option>
-        {tags.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
+        <option value="">{t("Select a tag…")}</option>
+        {tags.map((tag) => (
+          <option key={tag.id} value={tag.id}>
+            {tag.name}
           </option>
         ))}
         {/* Preserve a saved tag that's since been deleted so editing an
             existing automation doesn't silently drop it. */}
         {value && !selected && (
-          <option value={value}>{value} (unknown tag)</option>
+          <option value={value}>
+            {value} {t("(unknown tag)")}
+          </option>
         )}
       </select>
     </div>
@@ -356,6 +359,7 @@ function ContactFieldSelect({
   builtInOnly?: boolean
 }) {
   const { customFields } = useResources()
+  const { t } = useLanguage()
   const customValue = value.startsWith("custom:") ? value : ""
   const knownCustom =
     customValue && customFields.some((f) => `custom:${f.id}` === customValue)
@@ -365,11 +369,11 @@ function ContactFieldSelect({
       onChange={(e) => onChange(e.target.value)}
       className={SELECT_CLASS}
     >
-      <option value="name">Nome</option>
-      <option value="email">E-mail</option>
-      <option value="company">Empresa</option>
+      <option value="name">{t("Name")}</option>
+      <option value="email">{t("Email")}</option>
+      <option value="company">{t("Company")}</option>
       {!builtInOnly && customFields.length > 0 && (
-        <optgroup label="Campos personalizados">
+        <optgroup label={t("Custom fields")}>
           {customFields.map((f) => (
             <option key={f.id} value={`custom:${f.id}`}>
               {f.field_name}
@@ -378,7 +382,9 @@ function ContactFieldSelect({
         </optgroup>
       )}
       {customValue && !knownCustom && (
-        <option value={customValue}>{customValue} (unknown field)</option>
+        <option value={customValue}>
+          {customValue} {t("(unknown field)")}
+        </option>
       )}
     </select>
   )
@@ -394,10 +400,11 @@ function AgentSelect({
   onChange: (v: string) => void
 }) {
   const { members } = useResources()
+  const { t } = useLanguage()
   if (members.length === 0) {
     return (
       <Input
-        placeholder="Agent id"
+        placeholder={t("Agent id")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="bg-muted text-foreground"
@@ -411,14 +418,16 @@ function AgentSelect({
       onChange={(e) => onChange(e.target.value)}
       className={SELECT_CLASS}
     >
-      <option value="">Select an agent…</option>
+      <option value="">{t("Select an agent…")}</option>
       {members.map((m) => (
         <option key={m.user_id} value={m.user_id}>
           {m.full_name || m.email || m.user_id}
         </option>
       ))}
       {value && !selected && (
-        <option value={value}>{value} (unknown agent)</option>
+        <option value={value}>
+          {value} {t("(unknown agent)")}
+        </option>
       )}
     </select>
   )
@@ -482,18 +491,18 @@ function SendTemplateFields({
         }}
         className={SELECT_CLASS}
       >
-        <option value="">Select a template…</option>
-        {templates.map((t) => {
-          const lang = t.language ?? "en_US"
+        <option value="">{t("Select a template…")}</option>
+        {templates.map((tpl) => {
+          const lang = tpl.language ?? "en_US"
           return (
-            <option key={t.id} value={toValue(t.name, lang)}>
-              {t.name} ({lang})
+            <option key={tpl.id} value={toValue(tpl.name, lang)}>
+              {tpl.name} ({lang})
             </option>
           )
         })}
         {current && !hasMatch && (
           <option value={current}>
-            {templateName} ({language || "unknown"}) — not in approved list
+            {templateName} ({language || t("unknown")}) — {t("not in the approved list")}
           </option>
         )}
       </select>
@@ -2279,7 +2288,7 @@ function ConditionEditor({
           <Input
             value={value}
             onChange={(e) => set({ value: e.target.value, operand: e.target.value })}
-            placeholder="e.g. price"
+            placeholder={t("e.g. price")}
             className="bg-muted text-foreground"
           />
         </FieldBlock>

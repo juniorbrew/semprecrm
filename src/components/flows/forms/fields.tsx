@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 import { NODE_META, type BuilderNode } from "../shared";
 
 export function TextRow({
@@ -41,9 +42,10 @@ export function TextRow({
   onChange: (v: string) => void;
   rows?: number;
 }) {
+  const { t } = useLanguage();
   return (
     <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{t(label)}</label>
       {rows > 1 ? (
         <Textarea
           value={value}
@@ -75,15 +77,16 @@ export function NextNodeRow({
   onChange: (v: string) => void;
   label: string;
 }) {
+  const { t } = useLanguage();
   return (
     <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{t(label)}</label>
       <NodeKeySelect
         value={value || null}
         nodes={allNodes}
         excludeKey={currentKey}
         onChange={(v) => onChange(v ?? "")}
-        placeholder="Pick a next node…"
+        placeholder={t("Pick a next node…")}
       />
     </div>
   );
@@ -104,6 +107,7 @@ export function NodeKeySelect({
   placeholder?: string;
   className?: string;
 }) {
+  const { t } = useLanguage();
   const options = nodes.filter((n) => n.node_key !== excludeKey);
   return (
     <Select
@@ -114,7 +118,7 @@ export function NodeKeySelect({
         <SelectValue placeholder={placeholder ?? "—"} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">— None —</SelectItem>
+        <SelectItem value="__none__">{t("— None —")}</SelectItem>
         {options.map((n) => {
           const Icon = NODE_META[n.node_type].icon;
           return (

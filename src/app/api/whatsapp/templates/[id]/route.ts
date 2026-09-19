@@ -112,7 +112,7 @@ export async function PATCH(
     if (!EDITABLE_STATUSES.has(existing.status)) {
       return NextResponse.json(
         {
-          error: `Templates in status ${existing.status} cannot be edited. Allowed: APPROVED, REJECTED, PAUSED.`,
+          error: 'This template cannot be edited in its current status. Only APPROVED, REJECTED and PAUSED templates can be edited.',
         },
         { status: 400 },
       )
@@ -205,9 +205,10 @@ export async function PATCH(
       .single()
 
     if (updErr) {
+      console.error('[whatsapp/templates] edited on Meta but local save failed:', updErr.message)
       return NextResponse.json(
         {
-          error: `Edited on Meta but failed to save locally: ${updErr.message}. Run "Sync from Meta" to recover.`,
+          error: 'Edited on Meta but failed to save locally. Run "Sync from Meta" to recover.',
         },
         { status: 500 },
       )
@@ -308,9 +309,10 @@ export async function DELETE(
       .delete()
       .eq('id', id)
     if (delErr) {
+      console.error('[whatsapp/templates] deleted on Meta but local delete failed:', delErr.message)
       return NextResponse.json(
         {
-          error: `Deleted on Meta but failed to delete locally: ${delErr.message}.`,
+          error: 'Deleted on Meta but failed to delete locally. Run "Sync from Meta" to recover.',
         },
         { status: 500 },
       )

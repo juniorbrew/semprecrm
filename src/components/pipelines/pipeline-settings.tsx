@@ -224,14 +224,14 @@ export function PipelineSettings({
                 onClick={() => setShowDeleteConfirm(false)}
                 className="border-border bg-transparent text-muted-foreground hover:bg-muted"
               >
-                Cancelar
+                Cancel
               </Button>
               <Button
                 onClick={handleDeletePipeline}
                 disabled={deleting}
                 className="bg-red-600 text-white hover:bg-red-700"
               >
-                {deleting ? "Excluindo..." : "Excluir funil"}
+                {deleting ? "Deleting..." : "Delete pipeline"}
               </Button>
             </div>
           </div>
@@ -296,7 +296,8 @@ export function PipelineSettings({
                             ? "var(--foreground)"
                             : "transparent",
                       }}
-                      aria-label={`Pick color ${color}`}
+                      aria-label="Pick color"
+                      title={color}
                     />
                   ))}
                 </div>
@@ -346,7 +347,7 @@ export function PipelineSettings({
                 onClick={() => onOpenChange(false)}
                 className="border-border bg-transparent text-muted-foreground hover:bg-muted"
               >
-                Cancelar
+                Cancel
               </Button>
               <Button
                 onClick={handleSave}

@@ -6,6 +6,7 @@ import { Loader2, KeyRound } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
 import { verifyPassword } from '@/lib/auth/reauth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +23,7 @@ const MIN_PASSWORD = 8;
 
 export function PasswordForm() {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const supabase = createClient();
 
   const [current, setCurrent] = useState('');
@@ -61,7 +63,7 @@ export function PasswordForm() {
         password: next,
       });
       if (updateError) {
-        toast.error(`Password update failed: ${updateError.message}`);
+        toast.error(`${t('Password update failed')}: ${updateError.message}`);
         return;
       }
 
@@ -154,7 +156,7 @@ export function PasswordForm() {
               {saving ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Updating…
+                  {t('Updating…')}
                 </>
               ) : (
                 'Update password'

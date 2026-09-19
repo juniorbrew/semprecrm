@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     if (conversation.channel === 'qr') {
       return NextResponse.json(
         {
-          error: 'Reações ainda não estão disponíveis em conversas do canal QR.',
+          error: 'Reactions are not available in QR channel conversations yet.',
           code: 'unsupported_on_qr',
         },
         { status: 400 },

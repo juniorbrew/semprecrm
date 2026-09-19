@@ -150,7 +150,7 @@ export function SettingsOverview({
     };
   }, [user, accountId, canManageMembers]);
 
-  const displayName = profile?.full_name || profile?.email || 'Your account';
+  const displayName = profile?.full_name || profile?.email || t('Your account');
   const initial = (profile?.full_name || profile?.email || 'U').charAt(0).toUpperCase();
   const roleMeta = accountRole ? ROLE_META[accountRole] : null;
   const RoleIcon = roleMeta?.icon;
@@ -158,7 +158,6 @@ export function SettingsOverview({
   const currencyLabel =
     CURRENCIES.find((c) => c.code === defaultCurrency)?.label ?? defaultCurrency;
   const themeName = THEMES.find((t) => t.id === theme)?.name ?? theme;
-  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
   // Per-tile loading + subtitle. `null` counts render as a graceful
   // fallback so a single failed query never blanks a tile.
@@ -171,14 +170,14 @@ export function SettingsOverview({
       section: 'whatsapp',
       loading: whatsappLoading,
       subtitle: !whatsapp?.configured ? (
-        'Not set up yet'
+        t('Not set up yet')
       ) : whatsapp.connected ? (
         <>
-          <StatusDot tone="ok" /> Connected
+          <StatusDot tone="ok" /> {t('Connected')}
         </>
       ) : (
         <>
-          <StatusDot tone="muted" /> Needs reconnecting
+          <StatusDot tone="muted" /> {t('Needs reconnecting')}
         </>
       ),
     },
@@ -187,11 +186,11 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.members == null
-          ? 'View team members'
-          : `${counts.members} member${counts.members === 1 ? '' : 's'}${
+          ? t('View team members')
+          : `${counts.members} ${counts.members === 1 ? t('member') : t('members')}${
               counts.pendingInvites
-                ? ` · ${counts.pendingInvites} pending invite${
-                    counts.pendingInvites === 1 ? '' : 's'
+                ? ` · ${counts.pendingInvites} ${
+                    counts.pendingInvites === 1 ? t('pending invite') : t('pending invites')
                   }`
                 : ''
             }`,
@@ -201,10 +200,10 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.templates == null
-          ? 'Manage message templates'
-          : `${counts.templates} template${counts.templates === 1 ? '' : 's'}${
+          ? t('Manage message templates')
+          : `${counts.templates} ${counts.templates === 1 ? t('template') : t('templates')}${
               counts.templatesPending
-                ? ` · ${counts.templatesPending} pending review`
+                ? ` · ${counts.templatesPending} ${t('pending review')}`
                 : ''
             }`,
     },
@@ -261,15 +260,15 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.tags == null && counts?.customFields == null
-          ? 'Tags and custom fields'
-          : `${counts?.tags ?? 0} tag${counts?.tags === 1 ? '' : 's'} · ${
+          ? t('Tags and custom fields')
+          : `${counts?.tags ?? 0} ${counts?.tags === 1 ? t('tag') : t('tags')} · ${
               counts?.customFields ?? 0
-            } custom field${counts?.customFields === 1 ? '' : 's'}`,
+            } ${counts?.customFields === 1 ? t('custom field') : t('custom fields')}`,
     },
     {
       section: 'appearance',
       loading: false,
-      subtitle: `${cap(mode)} mode · ${themeName} accent`,
+      subtitle: `${mode === 'light' ? t('Light mode') : t('Dark mode')} · ${t('accent')} ${themeName}`,
     },
     {
       section: 'notifications',
@@ -347,7 +346,7 @@ export function SettingsOverview({
                 <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                   {loading ? (
                     <>
-                      <Loader2 className="size-3 animate-spin" /> Loading…
+                      <Loader2 className="size-3 animate-spin" /> {t('Loading…')}
                     </>
                   ) : (
                     subtitle

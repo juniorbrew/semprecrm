@@ -50,3 +50,21 @@ describe('translateLiteral', () => {
     );
   });
 });
+
+describe('translateDynamic — API error tails', () => {
+  it('translates the tail of prefixed errors through the dictionary', () => {
+    expect(translateLiteral('Failed to send: Unauthorized', 'pt-BR')).toBe('Falha ao enviar: Você precisa entrar para continuar');
+    expect(translateLiteral('Upload failed: Unauthorized', 'pt-BR')).toBe('Falha no envio: Você precisa entrar para continuar');
+  });
+
+  it('keeps an unknown tail verbatim', () => {
+    expect(translateLiteral('Failed to send: ECONNRESET', 'pt-BR')).toBe('Falha ao enviar: ECONNRESET');
+  });
+
+  it('handles Meta API errors and length limits', () => {
+    expect(translateLiteral('Meta API error: (#100) Invalid parameter', 'pt-BR')).toBe('Erro da API da Meta: (#100) Invalid parameter');
+    expect(translateLiteral('Meta API rejected the credentials: bad token', 'pt-BR')).toBe('A Meta rejeitou as credenciais: bad token');
+    expect(translateLiteral('Account name must be 80 characters or fewer', 'pt-BR')).toBe('O nome da conta deve ter no máximo 80 caracteres');
+    expect(translateLiteral('Label must be 40 characters or fewer', 'pt-BR')).toBe('O rótulo deve ter no máximo 40 caracteres');
+  });
+});

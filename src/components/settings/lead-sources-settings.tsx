@@ -1024,7 +1024,7 @@ function LeadSourceDialog({
             <div>
               <Label className="text-muted-foreground">{t('Field mapping')}</Label>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {t('CRM field ← payload key. Leave blank to use the default key (name/nome, phone/telefone, email, company/empresa). Dotted paths like lead.telefone work.')}
+                {t('CRM field ← payload key. Leave blank to use the default key (name, phone, email, company — Portuguese aliases work too). Dotted paths like lead.phone work.')}
               </p>
             </div>
             <div className="overflow-hidden rounded-lg border border-border">

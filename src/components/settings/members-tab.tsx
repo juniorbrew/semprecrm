@@ -82,39 +82,47 @@ interface Invitation {
 
 // Editable roles in the inline dropdown. Owner is never an option —
 // promotions go through the (deferred) Transfer Ownership flow.
+// Labels are English keys rendered through t().
 const EDITABLE_ROLES: { value: AccountRole; label: string; hint: string }[] = [
-  { value: 'admin', label: 'Administrador', hint: 'Manage members + everything' },
-  { value: 'agent', label: 'Agente', hint: 'Use features; no settings' },
-  { value: 'viewer', label: 'Visualizador', hint: 'Read-only across the app' },
+  { value: 'admin', label: 'Admin', hint: 'Manage members + everything' },
+  { value: 'agent', label: 'Agent', hint: 'Use features; no settings' },
+  { value: 'viewer', label: 'Viewer', hint: 'Read-only across the app' },
 ];
+
+const ROLE_LABELS: Record<AccountRole, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  agent: 'Agent',
+  viewer: 'Viewer',
+};
 
 // Per-role chip metadata (icon / label / colour) lives in the shared
 // ROLE_META module so this roster and the Overview identity chip can't
 // drift. The colour scale runs amber (owner — scarce, immutable) →
 // primary (admin) → muted (agent / viewer).
 
-function fmtDate(iso: string): string {
+function fmtDate(iso: string, locale: string): string {
   // Match the rest of the dashboard's locale-light formatting.
   const d = new Date(iso);
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString(locale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   });
 }
 
-function fmtExpiresIn(iso: string): string {
+function fmtExpiresIn(iso: string, t: (s: string) => string): string {
   const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return 'expired';
+  if (ms <= 0) return t('expired');
   const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-  if (days >= 1) return `expires in ${days} day${days === 1 ? '' : 's'}`;
+  if (days >= 1) return `${t('expires in')} ${days} ${days === 1 ? t('day') : t('days')}`;
   const hours = Math.max(1, Math.floor(ms / (60 * 60 * 1000)));
-  return `expires in ${hours} hour${hours === 1 ? '' : 's'}`;
+  return `${t('expires in')} ${hours} ${hours === 1 ? t('hour') : t('hours')}`;
 }
 
 export function MembersTab() {
   const { user, canManageMembers } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -137,7 +145,7 @@ export function MembersTab() {
 
       if (!mres.ok) {
         const payload = await mres.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to load members');
+        toast.error(payload.error || t('Failed to load members'));
         return;
       }
       const mdata = (await mres.json()) as { members: Member[] };
@@ -146,7 +154,7 @@ export function MembersTab() {
       if (ires) {
         if (!ires.ok) {
           const payload = await ires.json().catch(() => ({}));
-          toast.error(payload.error || 'Failed to load invitations');
+          toast.error(payload.error || t('Failed to load invitations'));
           return;
         }
         const idata = (await ires.json()) as { invitations: Invitation[] };
@@ -156,11 +164,11 @@ export function MembersTab() {
       }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
-      toast.error('Não foi possível acessar o servidor');
+      toast.error(t('Could not reach the server'));
     } finally {
       setLoading(false);
     }
-  }, [canManageMembers]);
+  }, [canManageMembers, t]);
 
   useEffect(() => {
     void loadEverything();
@@ -196,10 +204,12 @@ export function MembersTab() {
           ),
         );
         const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to update role');
+        toast.error(payload.error || t('Failed to update role'));
         return;
       }
-      toast.success(`Updated ${member.full_name || 'member'} to ${nextRole}`);
+      toast.success(
+        `${t('Role updated')}: ${member.full_name || t('member')} → ${t(ROLE_LABELS[nextRole])}`,
+      );
     } catch (err) {
       // Same revert on network failure.
       setMembers((prev) =>
@@ -208,7 +218,7 @@ export function MembersTab() {
         ),
       );
       console.error('[MembersTab] role change error:', err);
-      toast.error('Não foi possível acessar o servidor');
+      toast.error(t('Could not reach the server'));
     } finally {
       setPendingMemberAction(null);
     }
@@ -224,17 +234,17 @@ export function MembersTab() {
       );
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to remove member');
+        toast.error(payload.error || t('Failed to remove member'));
         return;
       }
-      toast.success(`Removed ${removingMember.full_name || 'member'}`);
+      toast.success(t('Member removed'));
       setMembers((prev) =>
         prev.filter((m) => m.user_id !== removingMember.user_id),
       );
       setRemovingMember(null);
     } catch (err) {
       console.error('[MembersTab] remove error:', err);
-      toast.error('Não foi possível acessar o servidor');
+      toast.error(t('Could not reach the server'));
     } finally {
       setPendingMemberAction(null);
     }
@@ -247,14 +257,14 @@ export function MembersTab() {
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to revoke invitation');
+        toast.error(payload.error || t('Failed to revoke invitation'));
         return;
       }
-      toast.success('Invitation revoked');
+      toast.success(t('Invitation revoked'));
       setInvitations((prev) => prev.filter((i) => i.id !== invite.id));
     } catch (err) {
       console.error('[MembersTab] revoke error:', err);
-      toast.error('Não foi possível acessar o servidor');
+      toast.error(t('Could not reach the server'));
     }
   }
 
@@ -269,13 +279,13 @@ export function MembersTab() {
   return (
     <section className="animate-in fade-in-50 space-y-6 duration-200">
       <SettingsPanelHead
-        title="Membros da equipe"
-        description="People with access to this account. Roles control what each teammate can do."
+        title={t('Team members')}
+        description={t('People with access to this account. Roles control what each teammate can do.')}
         action={
           <RequireRole min="admin">
             <Button onClick={() => setInviteOpen(true)}>
               <Plus className="size-4" />
-              Invite member
+              {t('Invite member')}
             </Button>
           </RequireRole>
         }
@@ -311,7 +321,7 @@ export function MembersTab() {
                         {member.avatar_url ? (
                           <AvatarImage
                             src={member.avatar_url}
-                            alt={member.full_name || 'Member'}
+                            alt={member.full_name || t('Member')}
                           />
                         ) : null}
                         <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
@@ -329,11 +339,11 @@ export function MembersTab() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-foreground">
-                          {member.full_name || 'Unnamed'}
+                          {member.full_name || t('Unnamed')}
                         </span>
                         {isSelf && (
                           <Badge className="bg-muted text-muted-foreground border-border text-[10px] uppercase tracking-wide">
-                            You
+                            {t('You')}
                           </Badge>
                         )}
                         {member.availability === 'away' && (
@@ -353,7 +363,7 @@ export function MembersTab() {
                   {/* Joined date stays desktop-only. The mobile row's
                       vertical density makes the joined date noise. */}
                   <div className="hidden sm:block text-right text-xs text-muted-foreground">
-                    Joined {fmtDate(member.joined_at)}
+                    {t('Joined')} {fmtDate(member.joined_at, language)}
                   </div>
 
                   {/* Actions cluster. On mobile this is its own row
@@ -384,7 +394,7 @@ export function MembersTab() {
                         <SelectContent>
                           {EDITABLE_ROLES.map((r) => (
                             <SelectItem key={r.value} value={r.value}>
-                              {r.label}
+                              {t(r.label)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -394,7 +404,7 @@ export function MembersTab() {
                         className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
                       >
                         <RoleIcon className="size-3.5" />
-                        {roleMeta.label}
+                        {t(ROLE_LABELS[member.role])}
                       </span>
                     )}
 
@@ -430,7 +440,7 @@ export function MembersTab() {
           <div className="mb-2 flex items-center gap-2">
             <UsersRound className="size-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold text-foreground">
-              Pending invitations
+              {t('Pending invitations')}
             </h3>
             <Badge className="bg-muted text-muted-foreground border-border">
               {invitations.length}
@@ -443,9 +453,9 @@ export function MembersTab() {
               looking for a button) keeps it from feeling like a bug. */}
           {invitations.length > 0 ? (
             <p className="mb-3 text-xs text-muted-foreground">
-              The plaintext invite URL is only shown once at creation
-              for security — to re-share, revoke the invite below and
-              create a new one.
+              {t(
+                'The plaintext invite URL is only shown once at creation for security — to re-share, revoke the invite below and create a new one.',
+              )}
             </p>
           ) : null}
 
@@ -454,11 +464,10 @@ export function MembersTab() {
               <CardContent className="flex flex-col items-center justify-center py-8 text-center">
                 <Mail className="size-6 text-muted-foreground" />
                 <p className="mt-2 text-sm text-muted-foreground">
-                  No pending invitations.
+                  {t('No pending invitations.')}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Click <span className="text-muted-foreground">Convidar membro</span>{' '}
-                  above to generate a shareable link.
+                  {t('Click "Invite member" above to generate a shareable link.')}
                 </p>
               </CardContent>
             </Card>
@@ -477,17 +486,17 @@ export function MembersTab() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground">
-                            {inv.label || 'Untitled invite'}
+                            {inv.label || t('Untitled invite')}
                           </span>
                           <span
                             className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
                           >
                             <InviteRoleIcon className="size-3" />
-                            {inviteRoleMeta.label}
+                            {t(ROLE_LABELS[inv.role])}
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          Created {fmtDate(inv.created_at)} · {fmtExpiresIn(inv.expires_at)}
+                          {t('Created')} {fmtDate(inv.created_at, language)} · {fmtExpiresIn(inv.expires_at, t)}
                         </p>
                       </div>
 
@@ -502,7 +511,7 @@ export function MembersTab() {
                         className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
                       >
                         <MailX className="size-4" />
-                        Revoke
+                        {t('Revoke')}
                       </Button>
                     </li>
                     );
@@ -540,16 +549,16 @@ export function MembersTab() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-popover-foreground">
               <AlertTriangle className="size-4 text-amber-400" />
-              Remove member
+              {t('Remove member')}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Remove{' '}
+              {t('Remove')}{' '}
               <span className="font-medium text-muted-foreground">
-                {removingMember?.full_name || 'this teammate'}
+                {removingMember?.full_name || t('this teammate')}
               </span>{' '}
-              from the account? They&apos;ll be signed out of this account
-              and given a fresh personal account on their next sign-in. Their
-              login isn&apos;t deleted.
+              {t(
+                'from the account? They will be signed out of this account and given a fresh personal account on their next sign-in. Their login is not deleted.',
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="bg-popover border-border">
@@ -558,7 +567,7 @@ export function MembersTab() {
               onClick={() => setRemovingMember(null)}
               className="border-border text-muted-foreground hover:bg-muted"
             >
-              Cancelar
+              {t('Cancel')}
             </Button>
             <Button
               onClick={handleRemove}
@@ -568,10 +577,10 @@ export function MembersTab() {
               {pendingMemberAction ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Removing...
+                  {t('Removing...')}
                 </>
               ) : (
-                'Remover membro'
+                t('Remove member')
               )}
             </Button>
           </DialogFooter>

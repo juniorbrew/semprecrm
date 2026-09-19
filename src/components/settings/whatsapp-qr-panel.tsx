@@ -55,7 +55,7 @@ const STATUS_CHIP: Record<WaQrSessionStatus, ChipVariant> = {
  * instead of a crash.
  */
 export function WhatsAppQrPanel() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   // Admin or owner — the API enforces the same rule (requireRole('admin')).
   const { canEditSettings: canManage } = useAuth();
 
@@ -290,7 +290,7 @@ export function WhatsAppQrPanel() {
                   </p>
                   {session?.connected_at && (
                     <p data-no-translate className="mt-0.5 text-xs text-muted-foreground">
-                      {t('Since')} {new Date(session.connected_at).toLocaleString()}
+                      {t('Since')} {new Date(session.connected_at).toLocaleString(language)}
                     </p>
                   )}
                 </div>

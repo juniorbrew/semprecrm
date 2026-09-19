@@ -22,6 +22,14 @@ import {
   Loader2,
 } from "lucide-react";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
+import { useLanguage } from "@/hooks/use-language";
+
+/** Meta category codes → dictionary keys (the DOM translator does pt-BR). */
+const CATEGORY_LABEL: Record<string, string> = {
+  MARKETING: "Marketing",
+  UTILITY: "Utility",
+  AUTHENTICATION: "Authentication",
+};
 
 export interface TemplateSendValues {
   body: string[];
@@ -78,6 +86,7 @@ export function TemplatePicker({
   onOpenChange,
   onSelect,
 }: TemplatePickerProps) {
+  const { t } = useLanguage();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
@@ -211,30 +220,30 @@ export function TemplatePicker({
                 </p>
               </div>
             ) : (
-              templates.map((t) => (
+              templates.map((tpl) => (
                 <button
-                  key={t.id}
+                  key={tpl.id}
                   type="button"
-                  onClick={() => pickTemplate(t)}
+                  onClick={() => pickTemplate(tpl)}
                   className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
                 >
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate text-sm font-medium text-popover-foreground">
-                          {t.name}
+                          {tpl.name}
                         </p>
                         <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
-                          {t.category}
+                          {CATEGORY_LABEL[tpl.category] ?? tpl.category}
                         </Badge>
-                        {t.language && (
+                        {tpl.language && (
                           <span className="text-[10px] uppercase text-muted-foreground">
-                            {t.language}
+                            {tpl.language}
                           </span>
                         )}
                       </div>
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {t.body_text}
+                        {tpl.body_text}
                       </p>
                     </div>
                     <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
@@ -259,7 +268,7 @@ export function TemplatePicker({
             {slots && slots.headerVarCount > 0 && (
               <div className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`Header {{1}}`}
+                  {t("Header")} {`{{1}}`}
                 </Label>
                 <Input
                   value={headerText}
@@ -271,7 +280,9 @@ export function TemplatePicker({
             )}
             {slots?.bodyVars.map((v, i) => (
               <div key={v} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">{`Body {{${v}}}`}</Label>
+                <Label className="text-xs text-popover-foreground">
+                  {t("Body")} {`{{${v}}}`}
+                </Label>
                 <Input
                   value={params[i] ?? ""}
                   onChange={(e) => {
@@ -279,7 +290,7 @@ export function TemplatePicker({
                     next[i] = e.target.value;
                     setParams(next);
                   }}
-                  placeholder={`Value for {{${v}}}`}
+                  placeholder={t("Variable value")}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
               </div>
@@ -287,7 +298,7 @@ export function TemplatePicker({
             {slots?.urlButtonSlots.map((slot) => (
               <div key={slot.index} className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`URL button "${slot.text}" — value for `}{`{{1}}`}
+                  {t("URL button")} “{slot.text}” — {`{{1}}`}
                 </Label>
                 <Input
                   value={buttonParams[slot.index] ?? ""}
@@ -301,7 +312,7 @@ export function TemplatePicker({
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
                 <p className="text-[10px] text-muted-foreground break-all">
-                  Final URL: {slot.url.replace(/\{\{1\}\}/g, buttonParams[slot.index] || "{{1}}")}
+                  {t("Final URL:")} {slot.url.replace(/\{\{1\}\}/g, buttonParams[slot.index] || "{{1}}")}
                 </p>
               </div>
             ))}
@@ -317,7 +328,7 @@ export function TemplatePicker({
                 className="border-border text-popover-foreground hover:bg-muted"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Voltar
+                {t("Back")}
               </Button>
               <Button
                 disabled={!canConfirm}
@@ -333,7 +344,7 @@ export function TemplatePicker({
               onClick={() => handleOpenChange(false)}
               className="border-border text-popover-foreground hover:bg-muted"
             >
-              Cancelar
+              {t("Cancel")}
             </Button>
           )}
         </DialogFooter>

@@ -434,7 +434,7 @@ function QuickReplyDialog({
                   id="qr-shortcut"
                   value={shortcut}
                   onChange={(e) => setShortcut(e.target.value.toLowerCase())}
-                  placeholder="boas-vindas"
+                  placeholder={t('e.g. welcome')}
                   maxLength={30}
                   autoFocus={!reply}
                   aria-invalid={submitted && !!shortcutError}

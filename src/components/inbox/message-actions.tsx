@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { CornerUpLeft, Copy, SmilePlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 import {
   Popover,
   PopoverContent,
@@ -36,6 +37,7 @@ export function MessageActions({
   // Touch devices have no hover. Long-press fires `contextmenu`; we capture
   // it, suppress the native menu, and pin the toolbar open until the user
   // interacts elsewhere.
+  const { t } = useLanguage();
   const [touchOpen, setTouchOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -50,14 +52,14 @@ export function MessageActions({
   const handleCopy = async () => {
     const text = message.content_text ?? "";
     if (!text) {
-      toast.error("Nothing to copy");
+      toast.error(t("Nothing to copy"));
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      toast.success("Copiado");
+      toast.success(t("Copied"));
     } catch {
-      toast.error("Copy failed");
+      toast.error(t("Copy failed"));
     }
     setTouchOpen(false);
   };
@@ -118,7 +120,7 @@ export function MessageActions({
                 type="button"
                 onClick={() => handlePickEmoji(e)}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-lg leading-none transition-transform hover:scale-125 hover:bg-muted"
-                aria-label={`React with ${e}`}
+                aria-label={`${t("React with")} ${e}`}
               >
                 {e}
               </button>
@@ -129,7 +131,7 @@ export function MessageActions({
           type="button"
           onClick={handleReply}
           className="flex h-5 w-5 items-center justify-center rounded-full text-popover-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Reply"
+          aria-label={t("Reply")}
         >
           <CornerUpLeft className="h-3.5 w-3.5" />
         </button>
@@ -137,7 +139,7 @@ export function MessageActions({
           type="button"
           onClick={handleCopy}
           className="flex h-5 w-5 items-center justify-center rounded-full text-popover-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Copiar"
+          aria-label={t("Copy")}
         >
           <Copy className="h-3.5 w-3.5" />
         </button>

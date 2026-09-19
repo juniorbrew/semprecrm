@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { FlowEditorShell } from "@/components/flows/flow-editor-shell";
+import { useLanguage } from "@/hooks/use-language";
 import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 
 /**
@@ -23,6 +24,7 @@ import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 export default function FlowEditorPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const { t } = useLanguage();
 
   const [flow, setFlow] = useState<FlowRow | null>(null);
   const [nodes, setNodes] = useState<FlowNodeRow[]>([]);
@@ -72,13 +74,13 @@ export default function FlowEditorPage() {
   if (notFound || !flow) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="text-sm text-muted-foreground">Flow not found.</p>
+        <p className="text-sm text-muted-foreground">{t("Flow not found.")}</p>
         <button
           type="button"
           onClick={() => router.push("/flows")}
           className="text-sm text-primary hover:opacity-80"
         >
-          ← Back to flows
+          {t("← Back to flows")}
         </button>
       </div>
     );

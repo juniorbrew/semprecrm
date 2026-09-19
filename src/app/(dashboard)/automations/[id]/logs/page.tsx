@@ -19,7 +19,7 @@ import type {
 } from '@/types';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { formatRelative } from '@/lib/automations/trigger-meta';
+import { formatRelative, triggerMeta } from '@/lib/automations/trigger-meta';
 import { useLanguage } from '@/hooks/use-language';
 
 export default function AutomationLogsPage({
@@ -29,7 +29,7 @@ export default function AutomationLogsPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
 
   const [automation, setAutomation] = useState<Automation | null>(null);
   const [logs, setLogs] = useState<AutomationLog[] | null>(null);
@@ -54,24 +54,18 @@ export default function AutomationLogsPage({
         setAutomation(autRes.data as Automation | null);
         setLogs((logRes.data ?? []) as AutomationLog[]);
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : language === 'pt-BR'
-              ? 'Falha ao carregar os registros'
-              : 'Failed to load logs'
-        );
+        setError(err instanceof Error ? err.message : t('Failed to load logs'));
       }
     }
     load();
-  }, [id, language]);
+  }, [id, t]);
 
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-3">
         <p className="text-sm text-red-400">{error}</p>
         <Button variant="outline" onClick={() => router.push('/automations')}>
-          Voltar
+          {t('Back')}
         </Button>
       </div>
     );
@@ -92,7 +86,7 @@ export default function AutomationLogsPage({
           type="button"
           onClick={() => router.push('/automations')}
           className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-8 w-8 items-center justify-center rounded-md transition-colors"
-          aria-label="Voltar"
+          aria-label={t('Back')}
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -101,7 +95,7 @@ export default function AutomationLogsPage({
             {automation.name}
           </h1>
           <p className="text-muted-foreground mt-0.5 text-sm">
-            Registros de execução
+            {t('Execution logs')}
           </p>
         </div>
       </div>
@@ -109,14 +103,10 @@ export default function AutomationLogsPage({
       {logs.length === 0 ? (
         <div className="border-border bg-card/40 flex h-48 flex-col items-center justify-center rounded-xl border border-dashed">
           <p className="text-foreground text-sm">
-            {language === 'pt-BR'
-              ? 'Ainda não há execuções'
-              : 'No executions yet'}
+            {t('No executions yet')}
           </p>
           <p className="text-muted-foreground mt-1 text-xs">
-            {language === 'pt-BR'
-              ? 'Acione esta automação para ver as execuções aqui.'
-              : 'Trigger this automation to see runs here.'}
+            {t('Trigger this automation to see runs here.')}
           </p>
         </div>
       ) : (
@@ -143,15 +133,12 @@ export default function AutomationLogsPage({
                     <div className="text-foreground truncate text-sm font-medium">
                       {log.contact?.name ??
                         log.contact?.phone ??
-                        (language === 'pt-BR'
-                          ? 'Contato desconhecido'
-                          : 'Unknown contact')}
+                        t('Unknown contact')}
                     </div>
                     <div className="text-muted-foreground truncate text-xs">
-                      {log.trigger_event} · {log.steps_executed?.length ?? 0}{' '}
-                      {language === 'pt-BR'
-                        ? `etapa${log.steps_executed?.length === 1 ? '' : 's'}`
-                        : `step${log.steps_executed?.length === 1 ? '' : 's'}`}
+                      {triggerMeta(log.trigger_event, language).label} ·{' '}
+                      {log.steps_executed?.length ?? 0}{' '}
+                      {t(log.steps_executed?.length === 1 ? 'step' : 'steps')}
                     </div>
                   </div>
                   <div className="text-muted-foreground text-xs">
@@ -171,9 +158,7 @@ export default function AutomationLogsPage({
                       ))}
                       {(log.steps_executed ?? []).length === 0 && (
                         <li className="text-muted-foreground text-xs">
-                          {language === 'pt-BR'
-                            ? 'Nenhuma etapa registrada.'
-                            : 'No steps recorded.'}
+                          {t('No steps recorded.')}
                         </li>
                       )}
                     </ul>

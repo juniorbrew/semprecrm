@@ -194,6 +194,17 @@ const COMPOSER_COPY: Record<
     quickRepliesNoMatch: string;
     quickRepliesManage: string;
     quickRepliesKeys: string;
+    /** Attach menu rows + the toolbar mic button. */
+    attachPhoto: string;
+    attachVideo: string;
+    attachDocument: string;
+    voiceMessage: string;
+    cancel: string;
+    closeQuickReplies: string;
+    /** Per-kind size gate; `kind` is already localized. */
+    fileTooLarge: (sizeMb: string, kind: string, limitMb: number) => string;
+    mediaKind: Record<ComposerMediaKind, string>;
+    recordingTooLong: string;
   }
 > = {
   "pt-BR": {
@@ -227,6 +238,16 @@ const COMPOSER_COPY: Record<
     quickRepliesNoMatch: "Nenhuma resposta rápida corresponde.",
     quickRepliesManage: "Gerenciar em Configurações",
     quickRepliesKeys: "↑↓ navegar · Enter inserir · Esc fechar",
+    attachPhoto: "Foto",
+    attachVideo: "Vídeo",
+    attachDocument: "Documento",
+    voiceMessage: "Mensagem de voz",
+    cancel: "Cancelar",
+    closeQuickReplies: "Fechar respostas rápidas",
+    fileTooLarge: (sizeMb, kind, limitMb) =>
+      `O arquivo possui ${sizeMb} MB — o limite para ${kind} é ${limitMb} MB.`,
+    mediaKind: { image: "imagem", video: "vídeo", document: "documento", audio: "áudio" },
+    recordingTooLong: "A gravação é longa demais (mais de 16 MB).",
   },
   "en-US": {
     reply: "Reply",
@@ -259,6 +280,16 @@ const COMPOSER_COPY: Record<
     quickRepliesNoMatch: "No quick reply matches.",
     quickRepliesManage: "Manage in Settings",
     quickRepliesKeys: "↑↓ navigate · Enter insert · Esc close",
+    attachPhoto: "Photo",
+    attachVideo: "Video",
+    attachDocument: "Document",
+    voiceMessage: "Voice message",
+    cancel: "Cancel",
+    closeQuickReplies: "Close quick replies",
+    fileTooLarge: (sizeMb, kind, limitMb) =>
+      `File is ${sizeMb} MB — ${kind} limit is ${limitMb} MB.`,
+    mediaKind: { image: "image", video: "video", document: "document", audio: "audio" },
+    recordingTooLong: "Recording is too long (over 16 MB).",
   },
 };
 
@@ -618,9 +649,11 @@ export function MessageComposer({
       const max = MEDIA_MAX_BYTES_BY_KIND[kind];
       if (file.size > max) {
         toast.error(
-          `File is ${(file.size / 1024 / 1024).toFixed(1)} MB — ${kind} limit is ${Math.round(
-            max / 1024 / 1024,
-          )} MB.`,
+          copy.fileTooLarge(
+            (file.size / 1024 / 1024).toFixed(1),
+            copy.mediaKind[kind],
+            Math.round(max / 1024 / 1024),
+          ),
         );
         return;
       }
@@ -636,7 +669,7 @@ export function MessageComposer({
         setBusy(false);
       }
     },
-    [removeStaged],
+    [removeStaged, copy],
   );
 
   const handlePicked = useCallback(
@@ -653,7 +686,7 @@ export function MessageComposer({
   const finalizeRecording = useCallback(
     async (file: File) => {
       if (file.size > MEDIA_MAX_BYTES_BY_KIND.audio) {
-        toast.error("Recording is too long (over 16 MB).");
+        toast.error(copy.recordingTooLong);
         return;
       }
       setBusy(true);
@@ -667,7 +700,7 @@ export function MessageComposer({
         setBusy(false);
       }
     },
-    [removeStaged],
+    [removeStaged, copy],
   );
 
   const recorder = useVoiceRecorder({
@@ -878,7 +911,7 @@ export function MessageComposer({
             onClick={cancelRecording}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-card hover:text-foreground"
           >
-            Cancelar
+            {copy.cancel}
           </button>
           <Button
             size="sm"
@@ -1061,22 +1094,22 @@ export function MessageComposer({
                   <Paperclip className="h-4 w-4" />
                 )}
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="border-border bg-popover">
+              <DropdownMenuContent align="start" data-no-translate className="border-border bg-popover">
                 <DropdownMenuItem onClick={() => imageInputRef.current?.click()}>
                   <ImageIcon className="mr-2 h-4 w-4" />
-                  Foto
+                  {copy.attachPhoto}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => videoInputRef.current?.click()}>
                   <Video className="mr-2 h-4 w-4" />
-                  Vídeo
+                  {copy.attachVideo}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
                   <FileText className="mr-2 h-4 w-4" />
-                  Documento
+                  {copy.attachDocument}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void startRecording()}>
                   <Mic className="mr-2 h-4 w-4" />
-                  Mensagem de voz
+                  {copy.voiceMessage}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1086,8 +1119,8 @@ export function MessageComposer({
               type="button"
               disabled={inputsDisabled || busy || isNote}
               onClick={() => void startRecording()}
-              aria-label="Mensagem de voz"
-              title={isNote ? copy.attachNotInNote : "Mensagem de voz"}
+              aria-label={copy.voiceMessage}
+              title={isNote ? copy.attachNotInNote : copy.voiceMessage}
               className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Mic className="h-4 w-4" />
@@ -1193,7 +1226,7 @@ function QuickReplyPopover({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Esc"
+          aria-label={copy.closeQuickReplies}
           className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <X className="h-3.5 w-3.5" />

@@ -56,6 +56,18 @@ const ENTITY_LABELS: Record<string, string> = {
   mfa: 'Two-step verification',
 };
 
+/** Role values stored in metadata (`role`, `from`, `to`) → English label keys. */
+const ROLE_LABELS: Record<string, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  agent: 'Agent',
+  viewer: 'Viewer',
+};
+
+function roleLabel(value: string, t: (s: string) => string): string {
+  return ROLE_LABELS[value] ? t(ROLE_LABELS[value]) : value;
+}
+
 function periodStart(period: Period): string | null {
   if (period === 'all') return null;
   const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
@@ -76,9 +88,9 @@ function summarize(row: AuditLogRow, t: (s: string) => string): string | null {
     (m.name as string | undefined);
   if (name) parts.push(name);
   if (typeof m.from === 'string' && typeof m.to === 'string') {
-    parts.push(`${m.from} → ${m.to}`);
+    parts.push(`${roleLabel(m.from, t)} → ${roleLabel(m.to, t)}`);
   } else if (m.role && typeof m.role === 'string') {
-    parts.push(m.role);
+    parts.push(roleLabel(m.role, t));
   }
   if (Array.isArray(m.keys) && m.keys.length > 0) {
     parts.push((m.keys as string[]).join(', '));
@@ -163,7 +175,7 @@ export function AuditLogSettings() {
         const body = (await res.json().catch(() => null)) as
           | { entries?: AuditLogRow[]; nextCursor?: string | null; error?: string }
           | null;
-        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (!res.ok) throw new Error(body?.error ?? `${t('Request failed')} (HTTP ${res.status})`);
         const page = body?.entries ?? [];
         setEntries((prev) => (cursor ? [...prev, ...page] : page));
         setNextCursor(body?.nextCursor ?? null);
@@ -174,7 +186,7 @@ export function AuditLogSettings() {
         setLoadingMore(false);
       }
     },
-    [buildUrl],
+    [buildUrl, t],
   );
 
   useEffect(() => {

@@ -25,6 +25,7 @@ import { FlowEditorProvider } from "./flow-editor-state";
 import { EditorHeader } from "./header";
 import { ValidationPanel } from "./validation-panel";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 
 /**
@@ -66,6 +67,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
   // again (e.g. rotating a tablet, resizing a window).
   const isMobile = useMatchMedia(MOBILE_BREAKPOINT);
   const effectiveView: View = isMobile ? "list" : view;
+  const { t } = useLanguage();
 
   const choose = (next: View) => {
     setView(next);
@@ -84,20 +86,20 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
           <div className="flex items-center justify-end">
             <div
               role="group"
-              aria-label="Editor view"
+              aria-label={t("Editor view")}
               className="inline-flex items-center gap-1 rounded-md border border-border bg-card p-0.5 text-xs"
             >
               <ToggleButton
                 active={effectiveView === "canvas"}
                 onClick={() => choose("canvas")}
                 icon={<LayoutGrid className="h-3 w-3" />}
-                label="Canvas"
+                label={t("Canvas")}
               />
               <ToggleButton
                 active={effectiveView === "list"}
                 onClick={() => choose("list")}
                 icon={<ListTree className="h-3 w-3" />}
-                label="List"
+                label={t("List")}
               />
             </div>
           </div>

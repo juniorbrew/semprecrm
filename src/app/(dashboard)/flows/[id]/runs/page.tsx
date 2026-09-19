@@ -16,9 +16,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 
 /**
  * Run history viewer.
@@ -62,12 +64,12 @@ const STATUS_META: Record<
   { label: string; classes: string; icon: typeof Clock }
 > = {
   active: {
-    label: "Ativo",
+    label: "Active",
     classes: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
     icon: PlayCircle,
   },
   completed: {
-    label: "Concluído",
+    label: "Completed",
     classes: "border-border bg-muted text-muted-foreground",
     icon: CircleCheck,
   },
@@ -87,7 +89,7 @@ const STATUS_META: Record<
     icon: PauseCircle,
   },
   failed: {
-    label: "Falhou",
+    label: "Failed",
     classes: "border-red-600/40 bg-red-500/10 text-red-300",
     icon: CircleAlert,
   },
@@ -96,6 +98,7 @@ const STATUS_META: Record<
 export default function FlowRunsPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const { t } = useLanguage();
 
   const [flow, setFlow] = useState<{ id: string; name: string } | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
@@ -158,13 +161,13 @@ export default function FlowRunsPage() {
   if (notFound || !flow) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="text-sm text-muted-foreground">Flow not found.</p>
+        <p className="text-sm text-muted-foreground">{t("Flow not found.")}</p>
         <button
           type="button"
           onClick={() => router.push("/flows")}
           className="text-sm text-primary hover:opacity-80"
         >
-          ← Back to flows
+          {t("← Back to flows")}
         </button>
       </div>
     );
@@ -180,16 +183,14 @@ export default function FlowRunsPage() {
         <ArrowLeft className="h-3 w-3" />
         {flow.name}
       </button>
-      <h1 className="text-xl font-semibold text-foreground">Execuções</h1>
+      <h1 className="text-xl font-semibold text-foreground">{t("Runs")}</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        The 50 most recent times this flow ran. Expand a row to see the engine&apos;s
-        per-step log.
+        {t("The 50 most recent times this flow ran. Expand a row to see the engine's per-step log.")}
       </p>
 
       {runs.length === 0 ? (
         <div className="mt-6 rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center text-sm text-muted-foreground">
-          No runs yet. Trigger the flow from a personal WhatsApp number to see
-          it appear here.
+          {t("No runs yet. Trigger the flow from a personal WhatsApp number to see it appear here.")}
         </div>
       ) : (
         <div className="mt-6 flex flex-col gap-2">
@@ -219,13 +220,16 @@ function RunCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t, language } = useLanguage();
+  const dateLocale = language === "pt-BR" ? ptBR : undefined;
   const meta = STATUS_META[run.status];
   const StatusIcon = meta.icon;
   const contactLabel =
-    run.contact?.name?.trim() || run.contact?.phone || "Unknown contact";
+    run.contact?.name?.trim() || run.contact?.phone || t("Unknown contact");
   const duration = run.ended_at
     ? formatDistanceToNow(new Date(run.ended_at), {
         addSuffix: false,
+        locale: dateLocale,
       })
     : null;
   return (
@@ -247,20 +251,30 @@ function RunCard({
             </span>
             <Badge variant="outline" className={cn("gap-1", meta.classes)}>
               <StatusIcon className="h-3 w-3" />
-              {meta.label}
+              {t(meta.label)}
             </Badge>
             {run.status === "active" && run.current_node_key && (
               <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                at {run.current_node_key}
+                {t("at node")} {run.current_node_key}
               </code>
             )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span>Started {format(new Date(run.started_at), "PP p")}</span>
+            <span>
+              {t("Started")}{" "}
+              {format(new Date(run.started_at), "PP p", { locale: dateLocale })}
+            </span>
             {run.reprompt_count > 0 && (
-              <span>· {run.reprompt_count} re-prompts</span>
+              <span>
+                · {run.reprompt_count}{" "}
+                {t(run.reprompt_count === 1 ? "re-prompt" : "re-prompts")}
+              </span>
             )}
-            {duration && <span>· ran for {duration}</span>}
+            {duration && (
+              <span>
+                · {t("ran for")} {duration}
+              </span>
+            )}
           </div>
         </div>
       </button>
@@ -269,7 +283,7 @@ function RunCard({
           {Object.keys(run.vars).length > 0 && (
             <details className="mb-3">
               <summary className="cursor-pointer text-xs text-muted-foreground">
-                Captured vars ({Object.keys(run.vars).length})
+                {t("Captured variables")} ({Object.keys(run.vars).length})
               </summary>
               <pre className="mt-2 overflow-x-auto rounded-md bg-background p-2 text-[11px] text-muted-foreground">
                 {JSON.stringify(run.vars, null, 2)}
@@ -279,7 +293,7 @@ function RunCard({
           <div className="flex flex-col gap-1">
             {events.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                Nenhum evento registrado nesta execução.
+                {t("No events recorded for this run.")}
               </p>
             ) : (
               events.map((ev, ix) => <EventLine key={ix} ev={ev} />)
