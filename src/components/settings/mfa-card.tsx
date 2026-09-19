@@ -85,7 +85,7 @@ async function recordMfaAudit(event: 'enrolled' | 'disabled') {
 }
 
 export function MfaCard() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { profile, mfaFactors, mfaReady, refreshMfa } = useAuth();
   const supabase = createClient();
 
@@ -370,7 +370,7 @@ export function MfaCard() {
                   <p className="mt-0.5 text-xs">
                     {t('Enabled on')}{' '}
                     <span data-no-translate>
-                      {new Date(enabledSince).toLocaleDateString(undefined, {
+                      {new Date(enabledSince).toLocaleDateString(language, {
                         day: '2-digit',
                         month: 'short',
                         year: 'numeric',

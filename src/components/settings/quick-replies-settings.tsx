@@ -43,7 +43,7 @@ const BODY_MAX = 4096;
 const VARIABLE_LABELS: Record<QuickReplyVariable, string> = {
   'contato.nome': 'Contact name',
   'contato.primeiro_nome': 'Contact first name',
-  'atendente.nome': 'Agent name',
+  'atendente.nome': 'Assignee name',
   empresa: 'Company',
 };
 
@@ -434,7 +434,7 @@ function QuickReplyDialog({
                   id="qr-shortcut"
                   value={shortcut}
                   onChange={(e) => setShortcut(e.target.value.toLowerCase())}
-                  placeholder="boas-vindas"
+                  placeholder={t('e.g. welcome')}
                   maxLength={30}
                   autoFocus={!reply}
                   aria-invalid={submitted && !!shortcutError}

@@ -39,6 +39,32 @@ function tr(english: string): string {
   return translateLiteral(english, DEFAULT_LANGUAGE)
 }
 
+/**
+ * Inbound media arrives with no caption as a `[image]`-style
+ * placeholder (see whatsapp/inbound.ts). The push body shows the
+ * kind in the user's language instead of the raw bracketed key.
+ */
+const MEDIA_PLACEHOLDER: Record<string, string> = {
+  image: 'Image',
+  sticker: 'Sticker',
+  video: 'Video',
+  audio: 'Audio',
+  voice: 'Audio',
+  document: 'Document',
+  location: 'Location',
+  contacts: 'Contact',
+  reaction: 'Reaction',
+  unsupported: 'Unsupported message',
+}
+
+export function inboundPushBody(preview: string): string {
+  const text = String(preview ?? '').replace(/\s+/g, ' ').trim()
+  const match = text.match(/^\[([a-z_]+)\]$/i)
+  if (!match) return text
+  const label = MEDIA_PLACEHOLDER[match[1].toLowerCase()]
+  return label ? `📎 ${tr(label)}` : text
+}
+
 const AGENT_PLUS = ['owner', 'admin', 'agent'] as const
 
 interface ProfileLite {
@@ -126,7 +152,7 @@ export async function notifyInboundMessage(
     if (recipients.length === 0) return { ...NOOP }
     return await sendPushToUsers(admin, recipients, {
       title: notice.contactName || tr('New message'),
-      body: notice.preview,
+      body: inboundPushBody(notice.preview),
       url: conversationUrl(notice.conversationId),
       tag: `conversation:${notice.conversationId}`,
     })

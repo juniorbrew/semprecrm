@@ -174,7 +174,7 @@ export function InboxSettings() {
             </CardTitle>
             <CardDescription className="text-muted-foreground">
               {t(
-                "A conversation shows up as waiting when the customer has been unanswered for longer than the SLA, and as cooling when the customer has not replied to you for the given hours.",
+                "Waiting means the customer has gone unanswered for longer than the SLA; cooling means the customer has not replied to you for the given hours.",
               )}
             </CardDescription>
           </CardHeader>

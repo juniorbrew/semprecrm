@@ -5,6 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { MFA_PATH, needsMfaChallenge } from "@/lib/auth/mfa";
+import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
+import { friendlyAuthError } from "../_lib/auth-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +19,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageSquare, UsersRound } from "lucide-react";
+
+/**
+ * Greeting copy, language-keyed rather than `t()`: the catalogue's
+ * "Welcome back" is the gendered "Bem-vindo de volta", and the login
+ * page must read gender-neutral in pt-BR.
+ */
+const GREETING_COPY: Record<Language, { title: string; noAccount: string }> = {
+  "pt-BR": {
+    title: "Que bom ter você de volta",
+    noAccount: "Ainda não tem conta?",
+  },
+  "en-US": {
+    title: "Welcome back",
+    noAccount: "Don't have an account?",
+  },
+};
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -36,9 +55,11 @@ function LoginPageInner() {
   // account. After a successful sign-in we send them to the join
   // page to accept rather than to /dashboard.
   const inviteToken = searchParams.get("invite");
+  const { t, language } = useLanguage();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // English dictionary key — rendered through `t()`.
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -55,7 +76,8 @@ function LoginPageInner() {
     });
 
     if (error) {
-      setError(error.message);
+      console.error("[login] sign-in failed:", error.message);
+      setError(friendlyAuthError(error));
       setLoading(false);
       return;
     }
@@ -90,30 +112,34 @@ function LoginPageInner() {
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
-            {inviteToken ? "Entre para aceitar o convite" : "Bem-vindo de volta"}
+            {inviteToken ? (
+              t("Sign in to accept")
+            ) : (
+              <span data-no-translate>{GREETING_COPY[language].title}</span>
+            )}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
             {inviteToken
-              ? "Entre e levaremos você até o convite."
-              : "Entre na sua conta"}
+              ? t("Sign in and we'll take you to the invitation.")
+              : t("Sign in to your account")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {error}
+                {t(error)}
               </div>
             )}
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-muted-foreground">
-                E-mail
+                {t("Email")}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="voce@exemplo.com"
+                placeholder={t("you@example.com")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -124,19 +150,19 @@ function LoginPageInner() {
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-muted-foreground">
-                  Senha
+                  {t("Password")}
                 </Label>
                 <Link
                   href="/forgot-password"
                   className="text-sm text-primary hover:text-primary/80"
                 >
-                  Esqueceu a senha?
+                  {t("Forgot password?")}
                 </Link>
               </div>
               <Input
                 id="password"
                 type="password"
-                placeholder="Digite sua senha"
+                placeholder={t("Enter your password")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -149,12 +175,12 @@ function LoginPageInner() {
               disabled={loading}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Entrando..." : "Entrar"}
+              {loading ? t("Signing in...") : t("Sign in")}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            Ainda não possui uma conta?{" "}
+            <span data-no-translate>{GREETING_COPY[language].noAccount}</span>{" "}
             <Link
               href={
                 inviteToken
@@ -163,7 +189,7 @@ function LoginPageInner() {
               }
               className="text-primary hover:text-primary/80"
             >
-              Criar conta
+              {t("Create account")}
             </Link>
           </p>
         </CardContent>

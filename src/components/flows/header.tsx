@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 import {
   useFlowEditor,
   type BuilderState,
@@ -50,6 +51,7 @@ export function EditorHeader() {
     setStatus,
     deleteFlow,
   } = useFlowEditor();
+  const { t } = useLanguage();
 
   return (
     <div className="flex flex-col gap-3">
@@ -60,7 +62,7 @@ export function EditorHeader() {
           className="inline-flex items-center gap-1 hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" />
-          Fluxos
+          {t("Flows")}
         </button>
       </div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -71,18 +73,18 @@ export function EditorHeader() {
             onChange={(e) =>
               setState((s) => ({ ...s, name: e.target.value }))
             }
-            placeholder="Nome do fluxo"
+            placeholder={t("Flow name")}
             className="max-w-md bg-card text-lg font-semibold"
           />
           <StatusBadge status={state.status} />
           {dirty && (
             <span
               className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-amber-300"
-              title="Unsaved changes — hit Save to persist"
+              title={t("Unsaved changes — hit Save to persist")}
               aria-live="polite"
             >
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              Edited
+              {t("Edited")}
             </span>
           )}
         </div>
@@ -93,7 +95,7 @@ export function EditorHeader() {
             onClick={() => router.push(`/flows/${flow.id}/runs`)}
           >
             <History className="h-3.5 w-3.5" />
-            Execuções
+            {t("Runs")}
           </Button>
           <Button
             variant="ghost"
@@ -102,7 +104,7 @@ export function EditorHeader() {
             className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Excluir
+            {t("Delete")}
           </Button>
           {state.status === "active" ? (
             <Button
@@ -116,7 +118,7 @@ export function EditorHeader() {
               ) : (
                 <PauseCircle className="h-3.5 w-3.5" />
               )}
-              Pausar
+              {t("Pause")}
             </Button>
           ) : (
             <Button
@@ -126,7 +128,7 @@ export function EditorHeader() {
               disabled={activating || !canActivate}
               title={
                 !canActivate
-                  ? "Fix the issues below before activating"
+                  ? t("Fix the issues below before activating")
                   : undefined
               }
             >
@@ -135,7 +137,7 @@ export function EditorHeader() {
               ) : (
                 <PlayCircle className="h-3.5 w-3.5" />
               )}
-              Ativar
+              {t("Activate")}
             </Button>
           )}
           <Button onClick={() => void save()} disabled={saving} size="sm">
@@ -144,7 +146,7 @@ export function EditorHeader() {
             ) : (
               <Save className="h-3.5 w-3.5" />
             )}
-            Salvar
+            {t("Save")}
           </Button>
         </div>
       </div>
@@ -153,14 +155,21 @@ export function EditorHeader() {
         onChange={(e) =>
           setState((s) => ({ ...s, description: e.target.value }))
         }
-        placeholder="Optional description (internal — customers don't see this)"
+        placeholder={t("Optional description (internal — customers don't see this)")}
         className="bg-card text-sm"
       />
     </div>
   );
 }
 
+const STATUS_LABEL: Record<BuilderState["status"], string> = {
+  draft: "Draft",
+  active: "Active",
+  archived: "Archived",
+};
+
 function StatusBadge({ status }: { status: BuilderState["status"] }) {
+  const { t } = useLanguage();
   const cls = {
     draft: "border-border bg-muted text-muted-foreground",
     active: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
@@ -168,7 +177,7 @@ function StatusBadge({ status }: { status: BuilderState["status"] }) {
   }[status];
   return (
     <Badge variant="outline" className={cn("shrink-0", cls)}>
-      {status.charAt(0).toUpperCase() + status.slice(1)}
+      {t(STATUS_LABEL[status])}
     </Badge>
   );
 }

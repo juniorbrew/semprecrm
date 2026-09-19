@@ -8,14 +8,13 @@ import { useLanguage } from "@/hooks/use-language";
 import {
   PLAN_LABELS,
   PLAN_STATUSES,
-  PLAN_STATUS_LABELS,
   resolveEntitlements,
   type PlanStatus,
 } from "@/lib/plans";
 import type { PlatformAccountRow } from "@/types";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { PlanStatusChip } from "./plan-status-chip";
+import { PlanStatusChip, planStatusLabelKey } from "./plan-status-chip";
 
 type StatusFilter = "all" | PlanStatus;
 
@@ -89,7 +88,7 @@ export function PlatformAccountsTable({ rows }: { rows: PlatformAccountRow[] }) 
             <option value="all">{t("All statuses")}</option>
             {PLAN_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {t(PLAN_STATUS_LABELS[s])}
+                {t(planStatusLabelKey(s))}
               </option>
             ))}
           </select>

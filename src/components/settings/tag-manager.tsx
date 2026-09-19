@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Loader2, Plus, Tag as TagIcon, X } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -44,6 +45,7 @@ const PRESET_COLORS = [
 export function TagManager() {
   const supabase = createClient();
   const { user, accountId, loading: authLoading } = useAuth();
+  const { t } = useLanguage();
 
   const [loading, setLoading] = useState(true);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -186,7 +188,7 @@ export function TagManager() {
                     <button
                       type="button"
                       onClick={() => confirmDelete(tag)}
-                      aria-label={`Delete ${tag.name}`}
+                      aria-label={`${t('Delete')} ${tag.name}`}
                       className="ml-0.5 rounded-full p-0.5 opacity-60 transition-opacity hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
                     >
                       <X className="size-3" />
@@ -203,7 +205,7 @@ export function TagManager() {
             {/* Inline create row */}
             <div className="flex flex-wrap items-center gap-2.5">
               <Input
-                placeholder="e.g. Newsletter"
+                placeholder={t('e.g. Newsletter')}
                 value={newTagName}
                 onChange={(e) => setNewTagName(e.target.value)}
                 onKeyDown={(e) => {
@@ -219,7 +221,7 @@ export function TagManager() {
                     key={color.value}
                     type="button"
                     onClick={() => setSelectedColor(color.value)}
-                    aria-label={`Use ${color.name}`}
+                    aria-label={`${t('Use color')} ${t(color.name)}`}
                     aria-pressed={selectedColor === color.value}
                     className={cn(
                       'size-6 rounded-md transition-transform hover:scale-110',
@@ -227,7 +229,7 @@ export function TagManager() {
                         'outline outline-2 outline-offset-2 outline-primary',
                     )}
                     style={{ backgroundColor: color.value }}
-                    title={color.name}
+                    title={t(color.name)}
                   />
                 ))}
               </div>
@@ -255,8 +257,8 @@ export function TagManager() {
           <DialogHeader>
             <DialogTitle>Delete tag</DialogTitle>
             <DialogDescription>
-              Delete the tag &quot;{tagToDelete?.name}&quot;? This removes it
-              from all contacts and cannot be undone.
+              {t('Delete the tag')} &quot;{tagToDelete?.name}&quot;?{' '}
+              {t('This removes it from all contacts and cannot be undone.')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

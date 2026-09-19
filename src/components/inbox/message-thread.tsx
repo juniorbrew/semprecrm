@@ -134,11 +134,13 @@ interface MessageThreadProps {
   onToggleContactPanel?: () => void;
 }
 
-function formatDateSeparator(dateStr: string): string {
+function formatDateSeparator(dateStr: string, language: Language): string {
   const date = new Date(dateStr);
-  if (isToday(date)) return "Hoje";
-  if (isYesterday(date)) return "Ontem";
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(date);
+  // "Today"/"Yesterday" are dictionary keys — the DOM translator renders
+  // them as "Hoje"/"Ontem" in pt-BR.
+  if (isToday(date)) return "Today";
+  if (isYesterday(date)) return "Yesterday";
+  return new Intl.DateTimeFormat(language, { dateStyle: "long" }).format(date);
 }
 
 const STATUS_ORDER: ConversationStatus[] = ["open", "pending", "closed"];
@@ -733,7 +735,7 @@ export function MessageThread({
 
       if (error) {
         console.error("Failed to update status:", error);
-        toast.error("Failed to update status");
+        toast.error(t("Failed to update status"));
         return;
       }
 
@@ -743,7 +745,7 @@ export function MessageThread({
         payload: { status, previous_status: conversation.status },
       });
     },
-    [conversation, onStatusChange, logEvent]
+    [conversation, onStatusChange, logEvent, t]
   );
 
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
@@ -901,7 +903,7 @@ export function MessageThread({
     return map;
   }, [reactions]);
 
-  const contactDisplayName = contact?.name || contact?.phone || "Customer";
+  const contactDisplayName = contact?.name || contact?.phone || t("Customer");
 
   // Author label for a quoted message: "You" when we sent the parent,
   // contact name when the customer sent it.
@@ -1441,7 +1443,7 @@ export function MessageThread({
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
                   <span className="rounded-full bg-muted px-3 py-1 text-[10px] font-medium text-muted-foreground">
-                    {formatDateSeparator(group.date)}
+                    {formatDateSeparator(group.date, language)}
                   </span>
                 </div>
                 {/* Messages, notes and system pills, interleaved */}

@@ -159,3 +159,34 @@ não protege contra perda da VPS.
 Se a equipe crescer ou o número de mensagens subir muito, o custo de operar Postgres, backups e
 atualizações na mão passa a pesar mais que a mensalidade do plano Pro. O app não muda: basta trocar as
 três variáveis `SUPABASE_*` do `.env.production` e rodar `supabase db push` no projeto novo.
+
+### 8. E-mails do Supabase Auth em português
+
+O GoTrue manda confirmação de cadastro, recuperação de senha, convite, troca de e-mail e link mágico em
+inglês por padrão. Os modelos em pt-BR ficam em `deploy/vps-all-in-one/mail-templates/*.html`; o GoTrue
+busca cada um por URL na hora de enviar, então o Nginx da API os serve em `https://api.SEU.DOMINIO/mail/`:
+
+```bash
+sudo mkdir -p /var/www/mail-templates && sudo cp /var/www/semprecrm/deploy/vps-all-in-one/mail-templates/*.html /var/www/mail-templates/
+# no bloco 443 de /etc/nginx/sites-available/semprecrm-api, antes de "location /":
+#   location /mail/ { alias /var/www/mail-templates/; default_type text/html; }
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Em `/opt/supabase/.env` (e repasse no serviço `auth` do compose, como no MFA):
+
+```bash
+MAILER_TEMPLATES_CONFIRMATION=https://api.SEU.DOMINIO/mail/confirmation.html
+MAILER_TEMPLATES_RECOVERY=https://api.SEU.DOMINIO/mail/recovery.html
+MAILER_TEMPLATES_INVITE=https://api.SEU.DOMINIO/mail/invite.html
+MAILER_TEMPLATES_EMAIL_CHANGE=https://api.SEU.DOMINIO/mail/email_change.html
+MAILER_TEMPLATES_MAGIC_LINK=https://api.SEU.DOMINIO/mail/magic_link.html
+MAILER_SUBJECTS_CONFIRMATION="Confirme seu e-mail no SempreCRM"
+MAILER_SUBJECTS_RECOVERY="Redefinir sua senha do SempreCRM"
+MAILER_SUBJECTS_INVITE="Você foi convidado para o SempreCRM"
+MAILER_SUBJECTS_EMAIL_CHANGE="Confirme seu novo e-mail no SempreCRM"
+MAILER_SUBJECTS_MAGIC_LINK="Seu link de acesso ao SempreCRM"
+```
+
+Variáveis do serviço `auth`: `GOTRUE_MAILER_TEMPLATES_<TIPO>` e `GOTRUE_MAILER_SUBJECTS_<TIPO>`. Os e-mails só
+saem de fato com um SMTP real em `SMTP_*` (Brevo, Resend, SES…); o instalador deixa um remetente falso.

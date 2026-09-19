@@ -60,6 +60,8 @@ import type {
   CustomField,
   KeywordMatchTriggerConfig,
   MessageTemplate,
+  Pipeline,
+  PipelineStage,
   Tag as TagRecord,
 } from "@/types"
 import { createClient } from "@/lib/supabase/client"
@@ -118,7 +120,7 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   wait: { label: "Wait", icon: Hourglass, border: "border-border", tile: "bg-muted text-muted-foreground" },
   condition: { label: "Condition (If/Else)", icon: GitBranch, border: "border-amber-500/40", tile: "bg-amber-500/10 text-amber-500" },
   send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-border", tile: ACTION_TILE },
-  close_conversation: { label: "Close conversation", icon: CircleSlash, border: "border-border", tile: ACTION_TILE },
+  close_conversation: { label: "Resolve conversation", icon: CircleSlash, border: "border-border", tile: ACTION_TILE },
   create_task: { label: "Create task", icon: CheckSquare, border: "border-border", tile: ACTION_TILE },
 }
 
@@ -139,7 +141,7 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   },
   { value: "keyword_match", label: "Keyword Match", hint: "Message contains specific keyword(s)" },
   { value: "new_contact_created", label: "New Contact Created", hint: "When a contact is auto-created from an incoming message" },
-  { value: "conversation_assigned", label: "Conversation Assigned", hint: "When assigned to an agent" },
+  { value: "conversation_assigned", label: "Conversation Assigned", hint: "When the conversation gets an assignee" },
   { value: "tag_added", label: "Tag Added", hint: "When a tag is added to a contact" },
   { value: "time_based", label: "Time-Based", hint: "On a recurring schedule" },
   {
@@ -217,6 +219,8 @@ interface AutomationResources {
   members: AccountMember[]
   templates: MessageTemplate[]
   customFields: CustomField[]
+  pipelines: Pipeline[]
+  stages: PipelineStage[]
 }
 
 const EMPTY_RESOURCES: AutomationResources = {
@@ -224,6 +228,8 @@ const EMPTY_RESOURCES: AutomationResources = {
   members: [],
   templates: [],
   customFields: [],
+  pipelines: [],
+  stages: [],
 }
 
 const ResourcesContext = createContext<AutomationResources>(EMPTY_RESOURCES)
@@ -237,6 +243,8 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [customFields, setCustomFields] = useState<CustomField[]>([])
+  const [pipelines, setPipelines] = useState<Pipeline[]>([])
+  const [stages, setStages] = useState<PipelineStage[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -247,19 +255,24 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     // actually be sent (anything else 400s at send time), matching the
     // broadcast picker.
     void (async () => {
-      const [tagsRes, templatesRes, customFieldsRes] = await Promise.all([
-        supabase.from("tags").select("*").order("name"),
-        supabase
-          .from("message_templates")
-          .select("*")
-          .eq("status", "APPROVED")
-          .order("name"),
-        supabase.from("custom_fields").select("*").order("field_name"),
-      ])
+      const [tagsRes, templatesRes, customFieldsRes, pipelinesRes, stagesRes] =
+        await Promise.all([
+          supabase.from("tags").select("*").order("name"),
+          supabase
+            .from("message_templates")
+            .select("*")
+            .eq("status", "APPROVED")
+            .order("name"),
+          supabase.from("custom_fields").select("*").order("field_name"),
+          supabase.from("pipelines").select("*").order("created_at"),
+          supabase.from("pipeline_stages").select("*").order("position"),
+        ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
+      setPipelines((pipelinesRes.data as Pipeline[] | null) ?? [])
+      setStages((stagesRes.data as PipelineStage[] | null) ?? [])
     })()
 
     // Members go through the API so we inherit its email-visibility
@@ -282,8 +295,8 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ tags, members, templates, customFields }),
-    [tags, members, templates, customFields],
+    () => ({ tags, members, templates, customFields, pipelines, stages }),
+    [tags, members, templates, customFields, pipelines, stages],
   )
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>
@@ -302,10 +315,11 @@ function TagSelect({
   onChange: (v: string) => void
 }) {
   const { tags } = useResources()
+  const { t } = useLanguage()
   if (tags.length === 0) {
     return (
       <Input
-        placeholder="Tag id"
+        placeholder={t("Tag id")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="bg-muted text-foreground"
@@ -325,16 +339,16 @@ function TagSelect({
         onChange={(e) => onChange(e.target.value)}
         className={SELECT_CLASS}
       >
-        <option value="">Select a tag…</option>
-        {tags.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
+        <option value="">{t("Select a tag…")}</option>
+        {tags.map((tag) => (
+          <option key={tag.id} value={tag.id}>
+            {tag.name}
           </option>
         ))}
         {/* Preserve a saved tag that's since been deleted so editing an
             existing automation doesn't silently drop it. */}
         {value && !selected && (
-          <option value={value}>{value} (unknown tag)</option>
+          <option value={value}>{t("(deleted tag)")}</option>
         )}
       </select>
     </div>
@@ -356,6 +370,7 @@ function ContactFieldSelect({
   builtInOnly?: boolean
 }) {
   const { customFields } = useResources()
+  const { t } = useLanguage()
   const customValue = value.startsWith("custom:") ? value : ""
   const knownCustom =
     customValue && customFields.some((f) => `custom:${f.id}` === customValue)
@@ -365,11 +380,11 @@ function ContactFieldSelect({
       onChange={(e) => onChange(e.target.value)}
       className={SELECT_CLASS}
     >
-      <option value="name">Nome</option>
-      <option value="email">E-mail</option>
-      <option value="company">Empresa</option>
+      <option value="name">{t("Name")}</option>
+      <option value="email">{t("Email")}</option>
+      <option value="company">{t("Company")}</option>
       {!builtInOnly && customFields.length > 0 && (
-        <optgroup label="Campos personalizados">
+        <optgroup label={t("Custom fields")}>
           {customFields.map((f) => (
             <option key={f.id} value={`custom:${f.id}`}>
               {f.field_name}
@@ -378,7 +393,7 @@ function ContactFieldSelect({
         </optgroup>
       )}
       {customValue && !knownCustom && (
-        <option value={customValue}>{customValue} (unknown field)</option>
+        <option value={customValue}>{t("(deleted field)")}</option>
       )}
     </select>
   )
@@ -394,10 +409,11 @@ function AgentSelect({
   onChange: (v: string) => void
 }) {
   const { members } = useResources()
+  const { t } = useLanguage()
   if (members.length === 0) {
     return (
       <Input
-        placeholder="Agent id"
+        placeholder={t("Assignee id")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="bg-muted text-foreground"
@@ -411,14 +427,14 @@ function AgentSelect({
       onChange={(e) => onChange(e.target.value)}
       className={SELECT_CLASS}
     >
-      <option value="">Select an agent…</option>
+      <option value="">{t("Select an assignee…")}</option>
       {members.map((m) => (
         <option key={m.user_id} value={m.user_id}>
           {m.full_name || m.email || m.user_id}
         </option>
       ))}
       {value && !selected && (
-        <option value={value}>{value} (unknown agent)</option>
+        <option value={value}>{t("(removed team member)")}</option>
       )}
     </select>
   )
@@ -429,7 +445,7 @@ function AgentSelect({
  *  language inputs when no approved templates are synced yet. */
 function SendTemplateFields({
   templateName,
-  language,
+  language: templateLanguage,
   onChange,
 }: {
   templateName: string
@@ -437,7 +453,7 @@ function SendTemplateFields({
   onChange: (patch: { template_name: string; language: string }) => void
 }) {
   const { templates } = useResources()
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
 
   if (templates.length === 0) {
     return (
@@ -446,14 +462,14 @@ function SendTemplateFields({
           <Input
             value={templateName}
             onChange={(e) =>
-              onChange({ template_name: e.target.value, language })
+              onChange({ template_name: e.target.value, language: templateLanguage })
             }
             className="bg-muted text-foreground"
           />
         </FieldBlock>
         <FieldBlock label={t("Language")}>
           <Input
-            value={language}
+            value={templateLanguage}
             onChange={(e) =>
               onChange({ template_name: templateName, language: e.target.value })
             }
@@ -467,7 +483,7 @@ function SendTemplateFields({
   // Encode name + language in the option value so two templates that
   // share a name across languages stay distinct.
   const toValue = (name: string, lang: string) => `${name}::${lang}`
-  const current = templateName ? toValue(templateName, language) : ""
+  const current = templateName ? toValue(templateName, templateLanguage) : ""
   const hasMatch = templates.some(
     (t) => toValue(t.name, t.language ?? "en_US") === current,
   )
@@ -482,22 +498,99 @@ function SendTemplateFields({
         }}
         className={SELECT_CLASS}
       >
-        <option value="">Select a template…</option>
-        {templates.map((t) => {
-          const lang = t.language ?? "en_US"
+        <option value="">{t("Select a template…")}</option>
+        {templates.map((tpl) => {
+          const lang = tpl.language ?? "en_US"
           return (
-            <option key={t.id} value={toValue(t.name, lang)}>
-              {t.name} ({lang})
+            <option key={tpl.id} value={toValue(tpl.name, lang)}>
+              {tpl.name} ({templateLanguageLabel(lang, language)})
             </option>
           )
         })}
         {current && !hasMatch && (
           <option value={current}>
-            {templateName} ({language || "unknown"}) — not in approved list
+            {templateName} ({templateLanguage ? templateLanguageLabel(templateLanguage, language) : t("unknown")}) — {t("not in the approved list")}
           </option>
         )}
       </select>
     </FieldBlock>
+  )
+}
+
+/** Pipeline + stage dropdowns by name for "Create deal", storing the
+ *  ids. Falls back to raw id inputs when no pipeline exists yet. */
+function PipelineStageFields({
+  pipelineId,
+  stageId,
+  onChange,
+}: {
+  pipelineId: string
+  stageId: string
+  onChange: (patch: { pipeline_id?: string; stage_id?: string }) => void
+}) {
+  const { pipelines, stages } = useResources()
+  const { t } = useLanguage()
+  if (pipelines.length === 0) {
+    return (
+      <>
+        <FieldBlock label={t("Pipeline id")}>
+          <Input
+            value={pipelineId}
+            onChange={(e) => onChange({ pipeline_id: e.target.value })}
+            className="bg-muted font-mono text-xs text-foreground"
+          />
+        </FieldBlock>
+        <FieldBlock label={t("Stage id")}>
+          <Input
+            value={stageId}
+            onChange={(e) => onChange({ stage_id: e.target.value })}
+            className="bg-muted font-mono text-xs text-foreground"
+          />
+        </FieldBlock>
+      </>
+    )
+  }
+  const pipelineKnown = pipelines.some((p) => p.id === pipelineId)
+  const pipelineStages = stages.filter((s) => s.pipeline_id === pipelineId)
+  const stageKnown = pipelineStages.some((s) => s.id === stageId)
+  return (
+    <>
+      <FieldBlock label={t("Pipeline")}>
+        <select
+          value={pipelineId}
+          onChange={(e) => onChange({ pipeline_id: e.target.value, stage_id: "" })}
+          className={SELECT_CLASS}
+        >
+          <option value="">{t("Select a pipeline…")}</option>
+          {pipelines.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+          {pipelineId && !pipelineKnown && (
+            <option value={pipelineId}>{t("(deleted pipeline)")}</option>
+          )}
+        </select>
+      </FieldBlock>
+      <FieldBlock label={t("Stage")}>
+        <select
+          value={stageId}
+          onChange={(e) => onChange({ stage_id: e.target.value })}
+          className={SELECT_CLASS}
+          disabled={!pipelineId}
+        >
+          <option value="">{t("Select a stage…")}</option>
+          {pipelineStages.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+          {stageId && !stageKnown && (
+            <option value={stageId}>{t("(deleted stage)")}</option>
+          )}
+        </select>
+      </FieldBlock>
+    </>
   )
 }
 
@@ -678,6 +771,28 @@ function conditionSummary(
   }
 }
 
+/** Meta template locale codes ("pt_BR", "en_US") shown as language names. */
+const TEMPLATE_LANGUAGES: Record<string, { pt: string; en: string }> = {
+  pt_BR: { pt: "Português (Brasil)", en: "Portuguese (Brazil)" },
+  pt_PT: { pt: "Português (Portugal)", en: "Portuguese (Portugal)" },
+  en: { pt: "Inglês", en: "English" },
+  en_US: { pt: "Inglês (EUA)", en: "English (US)" },
+  en_GB: { pt: "Inglês (Reino Unido)", en: "English (UK)" },
+  es: { pt: "Espanhol", en: "Spanish" },
+  es_ES: { pt: "Espanhol (Espanha)", en: "Spanish (Spain)" },
+  es_MX: { pt: "Espanhol (México)", en: "Spanish (Mexico)" },
+  es_AR: { pt: "Espanhol (Argentina)", en: "Spanish (Argentina)" },
+  fr: { pt: "Francês", en: "French" },
+  it: { pt: "Italiano", en: "Italian" },
+  de: { pt: "Alemão", en: "German" },
+}
+
+function templateLanguageLabel(code: string, lang: Language): string {
+  const entry = TEMPLATE_LANGUAGES[code]
+  if (!entry) return code
+  return lang === "pt-BR" ? entry.pt : entry.en
+}
+
 function waitUnitLabel(unit: string, amount: number, lang: Language): string {
   const pt = lang === "pt-BR"
   const one = amount === 1
@@ -701,21 +816,24 @@ function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language
     }
     case "send_template": {
       const name = String(c.template_name ?? "")
-      return name ? `${pt ? "Modelo" : "Template"}: ${name}${c.language ? ` (${c.language})` : ""}` : pt ? "Escolha um modelo" : "Pick a template"
+      return name
+        ? `${pt ? "Modelo" : "Template"}: ${name}${c.language ? ` (${templateLanguageLabel(String(c.language), lang)})` : ""}`
+        : pt ? "Escolha um modelo" : "Pick a template"
     }
     case "add_tag":
     case "remove_tag": {
       const tag = res.tags.find((t) => t.id === c.tag_id)
-      const name = tag?.name || (c.tag_id ? String(c.tag_id) : "")
-      return name ? `${pt ? "Etiqueta" : "Tag"}: ${name}` : pt ? "Escolha uma etiqueta" : "Pick a tag"
+      if (tag?.name) return `${pt ? "Etiqueta" : "Tag"}: ${tag.name}`
+      // Unknown or not-yet-loaded tag: never surface the database id.
+      return c.tag_id ? (pt ? "Etiqueta selecionada" : "Selected tag") : pt ? "Escolha uma etiqueta" : "Pick a tag"
     }
     case "assign_conversation": {
       if (c.mode === "specific") {
         const m = res.members.find((x) => x.user_id === c.agent_id)
         const who = m?.full_name || m?.email || (c.agent_id ? String(c.agent_id) : "")
-        return who ? `${pt ? "Para" : "To"}: ${who}` : pt ? "Escolha um agente" : "Pick an agent"
+        return who ? `${pt ? "Para" : "To"}: ${who}` : pt ? "Escolha um responsável" : "Pick an assignee"
       }
-      return pt ? "Distribuição circular entre os agentes" : "Round-robin across agents"
+      return pt ? "Distribuição circular entre os responsáveis" : "Round-robin across assignees"
     }
     case "update_contact_field": {
       const field = String(c.field ?? "name")
@@ -740,7 +858,7 @@ function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language
     case "send_webhook":
       return String(c.url ?? "") || (pt ? "Sem URL" : "No URL")
     case "close_conversation":
-      return pt ? "Marca a conversa como encerrada" : "Marks the conversation as closed"
+      return pt ? "Marca a conversa como resolvida" : "Marks the conversation as resolved"
     case "create_task": {
       const title = String(c.title ?? "").trim()
       const hours = Number(c.due_in_hours)
@@ -782,8 +900,8 @@ function triggerSummary(
     }
     case "tag_added": {
       const tag = res.tags.find((t) => t.id === cfg.tag_id)
-      const name = tag?.name || (cfg.tag_id ? String(cfg.tag_id) : "")
-      return name ? `${pt ? "Etiqueta" : "Tag"}: ${name}` : pt ? "Escolha uma etiqueta" : "Pick a tag"
+      if (tag?.name) return `${pt ? "Etiqueta" : "Tag"}: ${tag.name}`
+      return cfg.tag_id ? (pt ? "Etiqueta selecionada" : "Selected tag") : pt ? "Escolha uma etiqueta" : "Pick a tag"
     }
     case "time_based":
       return cfg.schedule ? `${pt ? "Agenda" : "Schedule"}: ${String(cfg.schedule)}` : pt ? "Defina o horário" : "Set a schedule"
@@ -797,7 +915,7 @@ function triggerSummary(
           ? pt ? "cliente" : "customer"
           : cfg.last_from === "any"
             ? pt ? "qualquer lado" : "either side"
-            : pt ? "atendente" : "agent"
+            : pt ? "responsável" : "assignee"
       return pt
         ? `Sem resposta há ${hoursLabel} · última do ${from}`
         : `No reply for ${hoursLabel} · last from ${from}`
@@ -951,7 +1069,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           body?.issues?.[0]
         if (firstIssue?.message) {
           toast.error(firstIssue.message, {
-            description: firstIssue.path ? `at ${firstIssue.path}` : undefined,
+            description: firstIssue.path ? t("Check the highlighted step and try again.") : undefined,
           })
         } else {
           toast.error(body?.error ?? t("Save failed"))
@@ -1040,11 +1158,11 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
             </span>
           )}
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="hidden sm:inline">Ativo</span>
+            <span className="hidden sm:inline">{t("Active rule")}</span>
             <Switch
               checked={state.is_active}
               onCheckedChange={(v) => patchTop("is_active", !!v)}
-              aria-label="Ativo"
+              aria-label={t("Active rule")}
             />
           </div>
           <Button
@@ -1079,7 +1197,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               <SectionHeader
                 n={1}
                 title={t("Trigger")}
-                hint={t("When should this rule run?")}
+                hint={t("When should this rule be executed?")}
               />
               <TriggerCard
                 type={state.trigger_type}
@@ -1872,7 +1990,7 @@ function ConversationInactiveConfig({
           onChange={(e) => onChange({ ...config, last_from: e.target.value })}
           className={SELECT_CLASS}
         >
-          <option value="agent">{t("The agent (customer went quiet)")}</option>
+          <option value="agent">{t("The assignee (customer went quiet)")}</option>
           <option value="customer">{t("The customer (nobody replied)")}</option>
           <option value="any">{t("Either side")}</option>
         </select>
@@ -1991,7 +2109,7 @@ function StepEditor({
           <Textarea
             value={(cfg.text as string) ?? ""}
             onChange={(e) => set({ text: e.target.value })}
-            placeholder="Hi! Thanks for reaching out…"
+            placeholder={t("Hi! Thanks for getting in touch…")}
             className="min-h-32 bg-muted text-foreground"
             autoFocus
           />
@@ -2028,11 +2146,11 @@ function StepEditor({
               className={SELECT_CLASS}
             >
               <option value="round_robin">{t("Round-robin")}</option>
-              <option value="specific">{t("Specific agent")}</option>
+              <option value="specific">{t("Specific assignee")}</option>
             </select>
           </FieldBlock>
           {cfg.mode === "specific" && (
-            <FieldBlock label={t("Agent")}>
+            <FieldBlock label={t("Assignee")}>
               <AgentSelect
                 value={(cfg.agent_id as string) ?? ""}
                 onChange={(v) => set({ agent_id: v })}
@@ -2078,20 +2196,11 @@ function StepEditor({
               className="bg-muted text-foreground"
             />
           </FieldBlock>
-          <FieldBlock label={t("Pipeline id")}>
-            <Input
-              value={(cfg.pipeline_id as string) ?? ""}
-              onChange={(e) => set({ pipeline_id: e.target.value })}
-              className="bg-muted font-mono text-xs text-foreground"
-            />
-          </FieldBlock>
-          <FieldBlock label={t("Stage id")}>
-            <Input
-              value={(cfg.stage_id as string) ?? ""}
-              onChange={(e) => set({ stage_id: e.target.value })}
-              className="bg-muted font-mono text-xs text-foreground"
-            />
-          </FieldBlock>
+          <PipelineStageFields
+            pipelineId={(cfg.pipeline_id as string) ?? ""}
+            stageId={(cfg.stage_id as string) ?? ""}
+            onChange={(patch) => set(patch)}
+          />
         </>
       )
     case "wait":
@@ -2144,7 +2253,7 @@ function StepEditor({
     case "close_conversation":
       return (
         <p className="text-xs text-muted-foreground">
-          {t('Sets the conversation status to "closed". No configuration needed.')}
+          {t("Marks the conversation as resolved. No configuration needed.")}
         </p>
       )
     case "create_task":
@@ -2279,7 +2388,7 @@ function ConditionEditor({
           <Input
             value={value}
             onChange={(e) => set({ value: e.target.value, operand: e.target.value })}
-            placeholder="e.g. price"
+            placeholder={t("e.g. price")}
             className="bg-muted text-foreground"
           />
         </FieldBlock>

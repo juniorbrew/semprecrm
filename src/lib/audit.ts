@@ -63,7 +63,7 @@ export function isAuditAction(value: unknown): value is AuditAction {
 export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> = {
   'pt-BR': {
     'member.invited': 'Membro convidado',
-    'member.role_changed': 'Papel de membro alterado',
+    'member.role_changed': 'Função do membro alterada',
     'member.removed': 'Membro removido',
     'account.renamed': 'Conta renomeada',
     'account.registration_updated': 'Cadastro da empresa atualizado',
@@ -118,6 +118,215 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
 export function auditActionLabel(action: string, language: Language): string {
   if (isAuditAction(action)) return AUDIT_ACTION_LABELS[language][action]
   return action
+}
+
+/**
+ * Human labels for the metadata keys the writers put in `keys` /
+ * `changes` (preferences, branding, plan, account registration and
+ * contact). The Auditoria panel never shows a raw column name: an
+ * unknown key falls back to a de-snaked, sentence-case rendering.
+ */
+export const AUDIT_FIELD_LABELS: Record<Language, Record<string, string>> = {
+  'pt-BR': {
+    // account (plan) — platform admin patch
+    plan: 'Plano',
+    plan_status: 'Status do plano',
+    plan_expires_at: 'Validade do plano',
+    module_overrides: 'Módulos do plano',
+    limit_overrides: 'Limites do plano',
+    // branding
+    app_name: 'Nome do app',
+    logo_url: 'Logotipo',
+    primary_color: 'Cor principal',
+    // preferences (Atendimento / segurança)
+    inbox_sla_minutes: 'SLA de resposta',
+    cooling_hours: 'Horas até esfriar',
+    opt_out_keywords: 'Palavras de descadastro',
+    business_hours: 'Horário de atendimento',
+    timezone: 'Fuso horário',
+    out_of_hours_enabled: 'Resposta fora do horário',
+    out_of_hours_message: 'Mensagem fora do horário',
+    auto_assign_enabled: 'Atribuição automática',
+    require_mfa_admins: 'Exigir verificação em duas etapas para administradores',
+    // company registration / contact
+    person_type: 'Tipo de conta',
+    tax_id: 'CPF/CNPJ',
+    legal_name: 'Razão social',
+    trade_name: 'Nome fantasia',
+    phone: 'Telefone',
+    email: 'E-mail',
+    address: 'Endereço',
+    name: 'Nome',
+    cep: 'CEP',
+    street: 'Logradouro',
+    number: 'Número',
+    complement: 'Complemento',
+    neighborhood: 'Bairro',
+    city: 'Cidade',
+    state: 'UF',
+    // members / invitations / mfa
+    contact_name: 'Nome do contato',
+    member_name: 'Nome do membro',
+    role: 'Função',
+    label: 'Rótulo',
+    expires_at: 'Expira em',
+    // contacts (export / anonymise) and deals
+    conversations: 'Conversas',
+    messages: 'Mensagens',
+    messages_scrubbed: 'Mensagens apagadas',
+    media_deleted: 'Mídias excluídas',
+    notes_deleted: 'Notas excluídas',
+    custom_values_deleted: 'Campos personalizados excluídos',
+    warnings: 'Avisos',
+    deals: 'Negócios',
+    tasks: 'Tarefas',
+    notes: 'Notas',
+    value: 'Valor',
+    count: 'Quantidade',
+    // WhatsApp
+    phone_number: 'Número',
+    status: 'Status',
+    previous_status: 'Status anterior',
+    resumed: 'Sessão retomada',
+    registered: 'Registrado na Meta',
+    replaced_existing: 'Substituiu a configuração anterior',
+    // business hours
+    days: 'Dias',
+    mon: 'Segunda',
+    tue: 'Terça',
+    wed: 'Quarta',
+    thu: 'Quinta',
+    fri: 'Sexta',
+    sat: 'Sábado',
+    sun: 'Domingo',
+  },
+  'en-US': {
+    plan: 'Plan',
+    plan_status: 'Plan status',
+    plan_expires_at: 'Plan expiry',
+    module_overrides: 'Plan modules',
+    limit_overrides: 'Plan limits',
+    app_name: 'App name',
+    logo_url: 'Logo',
+    primary_color: 'Primary color',
+    inbox_sla_minutes: 'Response SLA',
+    cooling_hours: 'Cooling hours',
+    opt_out_keywords: 'Opt-out keywords',
+    business_hours: 'Business hours',
+    timezone: 'Timezone',
+    out_of_hours_enabled: 'Out-of-hours reply',
+    out_of_hours_message: 'Out-of-hours message',
+    auto_assign_enabled: 'Auto-assign',
+    require_mfa_admins: 'Require MFA for admins',
+    person_type: 'Account type',
+    tax_id: 'Tax ID',
+    legal_name: 'Legal name',
+    trade_name: 'Trade name',
+    phone: 'Phone',
+    email: 'Email',
+    address: 'Address',
+    name: 'Name',
+    cep: 'Postal code',
+    street: 'Street',
+    number: 'Number',
+    complement: 'Complement',
+    neighborhood: 'Neighbourhood',
+    city: 'City',
+    state: 'State',
+    contact_name: 'Contact name',
+    member_name: 'Member name',
+    role: 'Role',
+    label: 'Label',
+    expires_at: 'Expires at',
+    conversations: 'Conversations',
+    messages: 'Messages',
+    messages_scrubbed: 'Messages scrubbed',
+    media_deleted: 'Media deleted',
+    notes_deleted: 'Notes deleted',
+    custom_values_deleted: 'Custom values deleted',
+    warnings: 'Warnings',
+    deals: 'Deals',
+    tasks: 'Tasks',
+    notes: 'Notes',
+    value: 'Value',
+    count: 'Count',
+    phone_number: 'Number',
+    status: 'Status',
+    previous_status: 'Previous status',
+    resumed: 'Session resumed',
+    registered: 'Registered with Meta',
+    replaced_existing: 'Replaced previous configuration',
+    days: 'Days',
+    mon: 'Monday',
+    tue: 'Tuesday',
+    wed: 'Wednesday',
+    thu: 'Thursday',
+    fri: 'Friday',
+    sat: 'Saturday',
+    sun: 'Sunday',
+  },
+}
+
+export function auditFieldLabel(key: string, language: Language): string {
+  const known = AUDIT_FIELD_LABELS[language][key]
+  if (known) return known
+  const words = key.replace(/[_.-]+/g, ' ').trim()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key
+}
+
+/** Entity kinds → column label. Free text in the DB, so unknown kinds
+ *  get the same de-snaked fallback as field keys. */
+export const AUDIT_ENTITY_LABELS: Record<Language, Record<string, string>> = {
+  'pt-BR': {
+    account: 'Conta',
+    member: 'Membro',
+    invitation: 'Convite',
+    whatsapp_config: 'WhatsApp oficial',
+    wa_qr_session: 'WhatsApp QR',
+    contact: 'Contato',
+    deal: 'Negócio',
+    automation: 'Automação',
+    lead_source: 'Fonte de leads',
+    preferences: 'Preferências',
+    branding: 'Marca',
+    plan: 'Plano',
+    mfa: 'Verificação em duas etapas',
+  },
+  'en-US': {
+    account: 'Account',
+    member: 'Member',
+    invitation: 'Invitation',
+    whatsapp_config: 'Official WhatsApp',
+    wa_qr_session: 'WhatsApp QR',
+    contact: 'Contact',
+    deal: 'Deal',
+    automation: 'Automation',
+    lead_source: 'Lead source',
+    preferences: 'Preferences',
+    branding: 'Branding',
+    plan: 'Plan',
+    mfa: 'Two-step verification',
+  },
+}
+
+export function auditEntityLabel(entityType: string, language: Language): string {
+  return AUDIT_ENTITY_LABELS[language][entityType] ?? auditFieldLabel(entityType, language)
+}
+
+/** Role codes stored in metadata (`role`, `from`, `to`). */
+export const AUDIT_ROLE_LABELS: Record<Language, Record<string, string>> = {
+  'pt-BR': { owner: 'Proprietário', admin: 'Administrador', agent: 'Agente', viewer: 'Visualizador' },
+  'en-US': { owner: 'Owner', admin: 'Admin', agent: 'Agent', viewer: 'Viewer' },
+}
+
+/** Platform admins are stored as "<name> (platform)" — localise the suffix. */
+export const AUDIT_ACTOR_SUFFIX: Record<Language, string> = {
+  'pt-BR': '(plataforma)',
+  'en-US': '(platform)',
+}
+
+export function auditActorLabel(actorName: string, language: Language): string {
+  return actorName.replace(/\s*\(platform\)\s*$/i, ` ${AUDIT_ACTOR_SUFFIX[language]}`)
 }
 
 /** Entity kinds the UI knows how to name. Free text in the DB. */

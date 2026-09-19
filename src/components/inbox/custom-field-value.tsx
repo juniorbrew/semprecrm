@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLanguage } from "@/hooks/use-language";
 import { setContactCustomValue } from "@/lib/contacts/custom-fields";
+import { formatCustomFieldValue, isIsoDate } from "@/components/contacts/custom-field-display";
 import type { CustomField } from "@/types";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
@@ -36,7 +37,7 @@ export function CustomFieldValue({
   emptyLabel,
   disabled = false,
 }: CustomFieldValueProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -81,7 +82,9 @@ export function CustomFieldValue({
     setEditing(false);
   }
 
-  const shown = value.trim();
+  // An ISO date reads as a locale date (14/03/1991); the input still
+  // edits the stored ISO text.
+  const shown = formatCustomFieldValue(value.trim(), language);
 
   return (
     <div className="flex items-center justify-between gap-3 px-2.5 py-1">
@@ -91,7 +94,7 @@ export function CustomFieldValue({
       <dd className="min-w-0 flex-1 text-right text-xs">
         {editing ? (
           <input
-            type="text"
+            type={isIsoDate(value) ? "date" : "text"}
             value={draft}
             autoFocus
             aria-label={field.field_name}

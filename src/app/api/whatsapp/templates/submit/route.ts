@@ -234,9 +234,10 @@ export async function POST(request: Request) {
       // The submit succeeded on Meta's side but we failed to persist
       // locally. That's a data-drift state — surface the meta_template_id
       // so the user can recover via "Sync from Meta".
+      console.error('[whatsapp/templates] submitted to Meta but local save failed:', upsertErr.message)
       return NextResponse.json(
         {
-          error: `Submitted to Meta but failed to save locally: ${upsertErr.message}. Run "Sync from Meta" to recover.`,
+          error: 'Submitted to Meta but failed to save locally. Run "Sync from Meta" to recover.',
           meta_template_id: metaTemplateId,
         },
         { status: 500 },

@@ -23,6 +23,8 @@ import {
   type CloseDateTone,
 } from "@/lib/pipelines/deal-dates";
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
+import { NOTES_LABEL } from "@/components/contacts/notes-label";
 import { useEntitlements } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
@@ -71,10 +73,18 @@ const CLOSE_TONE_CLASS: Record<CloseDateTone, string> = {
   later: "text-muted-foreground",
 };
 
-const CONVERSATION_STATUS_KEY: Record<Conversation["status"], string> = {
-  open: "Open",
-  pending: "Pending",
-  closed: "Closed",
+/**
+ * Conversation status chip. Language-keyed (not `t()`) because the pt-BR
+ * forms are feminine — "Aberta", "Resolvida" (a *conversa*) — and the
+ * catalogue's `Open`/`Closed` keys are the masculine deal/generic ones.
+ * Must match the inbox list and thread header.
+ */
+const CONVERSATION_STATUS_LABEL: Record<
+  Language,
+  Record<Conversation["status"], string>
+> = {
+  "pt-BR": { open: "Aberta", pending: "Pendente", closed: "Resolvida" },
+  "en-US": { open: "Open", pending: "Pending", closed: "Resolved" },
 };
 
 export function DealDetails({
@@ -467,7 +477,9 @@ export function DealDetails({
                           : "bg-muted-foreground/60",
                     )}
                   />
-                  {t(CONVERSATION_STATUS_KEY[conversation.status])}
+                  <span data-no-translate>
+                    {CONVERSATION_STATUS_LABEL[language][conversation.status]}
+                  </span>
                   {conversation.unread_count > 0 && (
                     <span className="ml-1 rounded-full bg-primary px-1.5 py-px text-[10px] font-semibold text-primary-foreground">
                       {conversation.unread_count}
@@ -494,10 +506,11 @@ export function DealDetails({
           </section>
         )}
 
-        {/* Owner */}
+        {/* Assignee — the person handling the deal ("Responsável"). Not
+            the catalogue's `Owner`, which is the account role. */}
         <section>
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {t("Owner")}
+            {t("Assignee")}
           </h3>
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-foreground">
@@ -509,7 +522,7 @@ export function DealDetails({
                 ownerName ? "text-foreground" : "text-muted-foreground",
               )}
             >
-              {ownerName ?? t("Unassigned")}
+              {ownerName ?? t("No assignee")}
             </span>
           </div>
         </section>
@@ -588,7 +601,7 @@ export function DealDetails({
         {/* Notes */}
         <section>
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {t("Notes")}
+            <span data-no-translate>{NOTES_LABEL[language]}</span>
           </h3>
           {deal.notes ? (
             <div className="flex gap-2 rounded-xl border border-border bg-card p-3">

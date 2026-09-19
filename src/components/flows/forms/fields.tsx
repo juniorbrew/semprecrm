@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 import { NODE_META, type BuilderNode } from "../shared";
 
 export function TextRow({
@@ -41,9 +42,10 @@ export function TextRow({
   onChange: (v: string) => void;
   rows?: number;
 }) {
+  const { t } = useLanguage();
   return (
     <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{t(label)}</label>
       {rows > 1 ? (
         <Textarea
           value={value}
@@ -75,15 +77,16 @@ export function NextNodeRow({
   onChange: (v: string) => void;
   label: string;
 }) {
+  const { t } = useLanguage();
   return (
     <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{t(label)}</label>
       <NodeKeySelect
         value={value || null}
         nodes={allNodes}
         excludeKey={currentKey}
         onChange={(v) => onChange(v ?? "")}
-        placeholder="Pick a next node…"
+        placeholder={t("Pick a next node…")}
       />
     </div>
   );
@@ -104,17 +107,30 @@ export function NodeKeySelect({
   placeholder?: string;
   className?: string;
 }) {
+  const { t } = useLanguage();
   const options = nodes.filter((n) => n.node_key !== excludeKey);
+  // Base UI's Select.Value shows the raw value unless it can look the
+  // label up; the trigger reads "Enviar botões · menu" instead of "menu".
+  const items = {
+    __none__: t("— None —"),
+    ...Object.fromEntries(
+      options.map((n) => [
+        n.node_key,
+        `${t(NODE_META[n.node_type].label)} · ${n.node_key}`,
+      ]),
+    ),
+  };
   return (
     <Select
       value={value ?? "__none__"}
+      items={items}
       onValueChange={(v) => onChange(v === "__none__" ? null : v)}
     >
       <SelectTrigger className={cn("bg-muted", className)}>
         <SelectValue placeholder={placeholder ?? "—"} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">— None —</SelectItem>
+        <SelectItem value="__none__">{t("— None —")}</SelectItem>
         {options.map((n) => {
           const Icon = NODE_META[n.node_type].icon;
           return (
@@ -123,7 +139,10 @@ export function NodeKeySelect({
                 <Icon
                   className={cn("h-3 w-3", NODE_META[n.node_type].color)}
                 />
-                {n.node_key}
+                <span className="text-muted-foreground">
+                  {t(NODE_META[n.node_type].label)}
+                </span>
+                <span>{n.node_key}</span>
               </span>
             </SelectItem>
           );

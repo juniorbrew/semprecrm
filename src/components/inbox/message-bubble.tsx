@@ -27,18 +27,40 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
 }
 
+// Delivery state is icon-only; the title/aria-label carry the words
+// ("Sent", "Delivered"…) so the DOM translator can localize them.
 function StatusIcon({ status }: { status: Message["status"] }) {
   switch (status) {
     case "sending":
-      return <Clock className="h-3 w-3 text-muted-foreground" />;
+      return (
+        <span title="Sending" aria-label="Sending" role="img">
+          <Clock className="h-3 w-3 text-muted-foreground" />
+        </span>
+      );
     case "sent":
-      return <Check className="h-3 w-3 text-muted-foreground" />;
+      return (
+        <span title="Sent" aria-label="Sent" role="img">
+          <Check className="h-3 w-3 text-muted-foreground" />
+        </span>
+      );
     case "delivered":
-      return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+      return (
+        <span title="Delivered" aria-label="Delivered" role="img">
+          <CheckCheck className="h-3 w-3 text-muted-foreground" />
+        </span>
+      );
     case "read":
-      return <CheckCheck className="h-3 w-3 text-blue-400" />;
+      return (
+        <span title="Read" aria-label="Read" role="img">
+          <CheckCheck className="h-3 w-3 text-blue-400" />
+        </span>
+      );
     case "failed":
-      return <XCircle className="h-3 w-3 text-red-400" />;
+      return (
+        <span title="Failed" aria-label="Failed" role="img">
+          <XCircle className="h-3 w-3 text-red-400" />
+        </span>
+      );
     default:
       return null;
   }
@@ -48,6 +70,8 @@ function MediaUnavailable({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       <ImageOff className="h-4 w-4 shrink-0 text-muted-foreground" />
+      {/* Two text nodes on purpose: "Image" and "unavailable" are both
+          dictionary keys, so each is translated on its own. */}
       <span>{label} unavailable</span>
     </div>
   );

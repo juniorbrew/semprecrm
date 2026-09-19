@@ -71,7 +71,7 @@ export default function ContactsPage() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -138,7 +138,7 @@ export default function ContactsPage() {
     const { data, count, error } = await query;
 
     if (error) {
-      toast.error('Falha ao carregar contatos');
+      toast.error(t('Failed to load contacts'));
       setLoading(false);
       return;
     }
@@ -173,7 +173,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap, optedOutOnly]);
+  }, [supabase, page, search, tagsMap, optedOutOnly, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -259,7 +259,7 @@ export default function ContactsPage() {
         entityId: deleteTarget.id,
         metadata: { contact_name: deleteTarget.name ?? null, phone: deleteTarget.phone },
       });
-      toast.success('Contato excluído');
+      toast.success(t('Contact deleted'));
       // The detail sheet may be showing the contact we just removed.
       if (detailContactId === deleteTarget.id) {
         setDetailOpen(false);
@@ -582,7 +582,7 @@ export default function ContactsPage() {
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
-                    {new Date(contact.created_at).toLocaleDateString('pt-BR', {
+                    {new Date(contact.created_at).toLocaleDateString(language, {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
@@ -759,12 +759,12 @@ export default function ContactsPage() {
         <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-popover-foreground">
-              Excluir {selected.size} {selected.size === 1 ? 'Contato' : 'Contatos'}
+              {t('Delete')} {selected.size} {selected.size === 1 ? t('Contact') : t('Contacts')}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               Are you sure you want to delete{' '}
               <span className="text-popover-foreground font-medium">
-                {selected.size} {selected.size === 1 ? 'contact' : 'contacts'}
+                {selected.size} {selected.size === 1 ? t('contact') : t('contacts')}
               </span>
               ? This action cannot be undone.
             </DialogDescription>

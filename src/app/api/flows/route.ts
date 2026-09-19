@@ -93,7 +93,7 @@ export async function POST(request: Request) {
     const template = getFlowTemplate(body.template_slug)
     if (!template) {
       return NextResponse.json(
-        { error: `Unknown template_slug "${body.template_slug}"` },
+        { error: 'Unknown flow template' },
         { status: 400 },
       )
     }

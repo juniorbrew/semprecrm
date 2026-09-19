@@ -74,7 +74,7 @@ export function MfaRequirementToggle() {
           </Label>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t(
-              'Owners and admins without an authenticator app are sent to Login e segurança until they enable it. Agents and viewers are not affected.',
+              'Owners and admins without an authenticator app are sent to Login & security until they enable it. Agents and viewers are not affected.',
             )}
           </p>
           {showSelfWarning && (

@@ -16,7 +16,6 @@ import {
   PLAN_CATALOG,
   PLAN_LABELS,
   PLAN_STATUSES,
-  PLAN_STATUS_LABELS,
   resolveEntitlements,
   type LimitKey,
   type OptionalModule,
@@ -36,7 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { PlanStatusChip } from "./plan-status-chip";
+import { PlanStatusChip, planStatusLabelKey } from "./plan-status-chip";
 
 // ------------------------------------------------------------
 // Local <-> ISO helpers for the datetime-local input.
@@ -308,7 +307,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
                 >
                   {PLAN_STATUSES.map((s) => (
                     <option key={s} value={s}>
-                      {t(PLAN_STATUS_LABELS[s])}
+                      {t(planStatusLabelKey(s))}
                     </option>
                   ))}
                 </select>

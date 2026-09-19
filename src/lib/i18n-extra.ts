@@ -882,7 +882,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Edit Message Template': 'Editar modelo de mensagem',
   'New Message Template': 'Novo modelo de mensagem',
   'Save your changes to re-submit to Meta. Status will flip back to PENDING during review.':
-    'Salve as alterações para reenviar à Meta. O status voltará para PENDENTE durante a análise.',
+    'Salve as alterações para reenviar à Meta. O status voltará para “Em análise” enquanto a Meta avalia.',
   'Build a template and submit it to Meta for approval. Once approved, you can use it in broadcasts and the inbox.':
     'Crie um modelo e envie-o à Meta para aprovação. Depois de aprovado, ele poderá ser usado em disparos e na caixa de entrada.',
   'Name is fixed once a template exists on Meta — create a new template to change it.':
@@ -1042,8 +1042,8 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Pending Deletion': 'Exclusão pendente',
 
   // Automations builder (src/components/automations/automation-builder.tsx)
-  'Edit rule': 'Editar regra',
-  'New rule': 'Nova regra',
+  'Edit rule': 'Editar automação',
+  'New rule': 'Nova automação',
   'Rule name': 'Nome da regra',
   'Unsaved changes': 'Alterações não salvas',
   'Describe what this rule does (optional)':
@@ -1404,7 +1404,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   // Deals — loss reasons (Entrega D, migration 031)
   'Mark as lost': 'Marcar como perdido',
   'Pick why this deal was lost. The reason feeds the pipeline analytics.':
-    'Escolha por que este negócio foi perdido. O motivo alimenta a análise do pipeline.',
+    'Escolha por que este negócio foi perdido. O motivo alimenta a análise do funil.',
   'Loss reason': 'Motivo de perda',
   'Loss reasons': 'Motivos de perda',
   'No active loss reasons': 'Nenhum motivo de perda ativo',
@@ -1589,8 +1589,8 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   Waiting: 'Aguardando',
   'No owner': 'Sem responsável',
   Cooling: 'Esfriando',
-  'Oldest waiting': 'Aguardando há mais tempo',
-  'Oldest cooling': 'Esfriando há mais tempo',
+  'Oldest waiting': 'Mais antiga aguardando',
+  'Oldest cooling': 'Mais antiga esfriando',
   'Conversations at risk right now': 'Conversas em risco agora',
   'Nothing at risk — everyone has been answered.': 'Nada em risco — todo mundo foi respondido.',
   'Open inbox': 'Abrir inbox',
@@ -1902,7 +1902,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Remove logo': 'Remover logo',
   'Use a PNG, SVG or WebP image.': 'Use uma imagem PNG, SVG ou WebP.',
   'The logo must be 512 KB or smaller.': 'O logo deve ter no máximo 512 KB.',
-  'Primary colour': 'Cor primária',
+  'Primary colour': 'Cor de destaque',
   'Buttons, links and highlights. Each member keeps their own light or dark mode.':
     'Botões, links e destaques. Cada membro mantém seu próprio modo claro ou escuro.',
   'Palette': 'Paleta',
@@ -1939,7 +1939,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'No other members in your account yet.': 'Ainda não há outros membros na sua conta.',
   'No one matches your search.': 'Ninguém corresponde à sua busca.',
   'Online': 'Online',
-  'Offline': 'Offline',
+  'Offline': 'Ausente',
   'Last seen': 'Visto há',
   'Last seen just now': 'Visto agora há pouco',
   'Last seen a long time ago': 'Visto há muito tempo',

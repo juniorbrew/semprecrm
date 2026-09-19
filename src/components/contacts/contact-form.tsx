@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import {
@@ -48,6 +49,7 @@ export function ContactForm({
   const { accountId } = useAuth();
   const isEdit = !!contact;
 
+  const { t } = useLanguage();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -130,7 +132,7 @@ export function ContactForm({
     // Hard-block an exact duplicate on create (the DB unique index is
     // the real backstop; this avoids a round-trip + a raw error toast).
     if (!isEdit && dupMatch?.exact) {
-      toast.error('A contact with this phone number already exists');
+      toast.error(t('A contact with this phone number already exists'));
       return;
     }
 
@@ -194,7 +196,7 @@ export function ContactForm({
         }
       }
 
-      toast.success(isEdit ? 'Contato atualizado' : 'Contato criado');
+      toast.success(isEdit ? t('Contact updated') : t('Contact created'));
       onOpenChange(false);
       onSaved();
     } catch (err: unknown) {
@@ -203,7 +205,7 @@ export function ContactForm({
       // normalizes equal). Surface it as the friendly duplicate notice
       // and, for new contacts, point the user at the existing record.
       if (isUniqueViolation(err)) {
-        toast.error('A contact with this phone number already exists');
+        toast.error(t('A contact with this phone number already exists'));
         if (!isEdit && accountId) {
           const existing = await findExistingContact(
             supabase,
@@ -214,7 +216,7 @@ export function ContactForm({
         }
         return;
       }
-      const message = err instanceof Error ? err.message : 'Falha ao salvar contato';
+      const message = err instanceof Error ? err.message : t('Failed to save contact');
       toast.error(message);
     } finally {
       setSaving(false);
@@ -226,12 +228,12 @@ export function ContactForm({
       <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-popover-foreground">
-            {isEdit ? 'Editar contato' : 'Adicionar contato'}
+            {isEdit ? t('Edit contact') : t('Add contact')}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {isEdit
-              ? 'Update the contact details below.'
-              : 'Fill in the details to create a new contact.'}
+              ? t('Update the contact details below.')
+              : t('Fill in the details to create a new contact.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -244,7 +246,7 @@ export function ContactForm({
               id="cf-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="John Doe"
+              placeholder={t("Full name")}
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
@@ -261,7 +263,7 @@ export function ContactForm({
                 if (dupMatch) setDupMatch(null);
               }}
               onBlur={checkDuplicate}
-              placeholder="+1 234 567 8900"
+              placeholder="+55 11 91234-5678"
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
             {dupMatch ? (
@@ -285,14 +287,14 @@ export function ContactForm({
                       onClick={() => onViewExisting(dupMatch.contact.id)}
                       className="font-medium underline underline-offset-2 hover:no-underline"
                     >
-                      View {dupMatch.contact.name || dupMatch.contact.phone}
+                      {t('View')} {dupMatch.contact.name || dupMatch.contact.phone}
                     </button>
                   )}
                 </div>
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Include country code, e.g. +1 for US
+                {t('Include the country code, e.g. +55 for Brazil')}
               </p>
             )}
           </div>
@@ -306,7 +308,7 @@ export function ContactForm({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="john@example.com"
+              placeholder="email@example.com"
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
@@ -319,21 +321,21 @@ export function ContactForm({
               id="cf-company"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
-              placeholder="Acme Inc."
+              placeholder={t("Company name")}
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <Label className="text-muted-foreground">Etiquetas</Label>
+            <Label className="text-muted-foreground">{t("Tags")}</Label>
             {loadingTags ? (
               <div className="flex items-center gap-2 text-muted-foreground text-sm">
                 <Loader2 className="size-3 animate-spin" />
-                Loading tags...
+                {t('Loading tags...')}
               </div>
             ) : tags.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                Nenhuma etiqueta disponível. Crie etiquetas nas Configurações.
+                {t('No tags available. Create tags in Settings.')}
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
@@ -370,7 +372,7 @@ export function ContactForm({
               onClick={() => onOpenChange(false)}
               className="border-border text-muted-foreground hover:bg-muted"
             >
-              Cancelar
+              {t('Cancel')}
             </Button>
             <Button
               type="submit"
@@ -378,7 +380,7 @@ export function ContactForm({
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {saving && <Loader2 className="size-4 animate-spin" />}
-              {isEdit ? 'Atualizar' : 'Criar'}
+              {isEdit ? t('Update') : t('Create')}
             </Button>
           </DialogFooter>
         </form>

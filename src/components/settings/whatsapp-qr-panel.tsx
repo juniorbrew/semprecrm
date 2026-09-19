@@ -55,7 +55,7 @@ const STATUS_CHIP: Record<WaQrSessionStatus, ChipVariant> = {
  * instead of a crash.
  */
 export function WhatsAppQrPanel() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   // Admin or owner — the API enforces the same rule (requireRole('admin')).
   const { canEditSettings: canManage } = useAuth();
 
@@ -91,7 +91,9 @@ export function WhatsAppQrPanel() {
 
       if (res.status === 503 && (body.code === 'gateway_unconfigured' || body.code === 'gateway_unreachable')) {
         setProblem(body.code);
-        setProblemMessage(body.error ?? '');
+        // The API's message carries transport detail ("(fetch failed)")
+        // and env names — the panel renders its own user-facing copy.
+        setProblemMessage('');
         // Keep the last row the API knows about so the user still sees
         // "was connected as X" while the gateway is down.
         if (body.session) setSession(body.session);
@@ -217,10 +219,10 @@ export function WhatsAppQrPanel() {
             <div className="flex items-start gap-3">
               <Unplug className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
               <div>
-                <AlertTitle className="mb-1 text-foreground">{t('Gateway not configured')}</AlertTitle>
+                <AlertTitle className="mb-1 text-foreground">{t('QR connection not available')}</AlertTitle>
                 <AlertDescription className="text-sm text-muted-foreground">
                   {t(
-                    'The QR channel needs the wa-gateway service. Set WA_GATEWAY_URL and WA_GATEWAY_SECRET on the server and restart the app.',
+                    'The QR code connection has not been set up by the server administrator yet.',
                   )}
                 </AlertDescription>
               </div>
@@ -232,10 +234,10 @@ export function WhatsAppQrPanel() {
             <div className="flex items-start gap-3">
               <Unplug className="mt-0.5 size-5 shrink-0 text-red-400" />
               <div className="flex-1">
-                <AlertTitle className="mb-1 text-red-200">{t('Gateway unreachable')}</AlertTitle>
+                <AlertTitle className="mb-1 text-red-200">{t('Could not connect')}</AlertTitle>
                 <AlertDescription className="text-sm text-red-100/80">
                   {problemMessage ||
-                    t('Could not talk to the WhatsApp gateway. Check that the wa-gateway service is running.')}
+                    t('Could not connect to the WhatsApp service. Try again in a moment; if it keeps failing, contact the server administrator.')}
                 </AlertDescription>
                 <Button
                   size="sm"
@@ -290,7 +292,7 @@ export function WhatsAppQrPanel() {
                   </p>
                   {session?.connected_at && (
                     <p data-no-translate className="mt-0.5 text-xs text-muted-foreground">
-                      {t('Since')} {new Date(session.connected_at).toLocaleString()}
+                      {t('Since')} {new Date(session.connected_at).toLocaleString(language)}
                     </p>
                   )}
                 </div>

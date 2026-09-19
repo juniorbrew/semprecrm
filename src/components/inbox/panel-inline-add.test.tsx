@@ -18,7 +18,7 @@ describe("TeamNoteComposer", () => {
     const html = renderToString(
       <TeamNoteComposer onSubmit={async () => {}} onCancel={() => {}} />,
     )
-    expect(html).toContain("Escreva uma nota para a equipe…")
+    expect(html).toContain("Escreva uma nota interna…")
     expect(html).toContain(">Salvar<")
     expect(html).toContain(">Cancelar<")
     // Nothing typed yet → Salvar is disabled.

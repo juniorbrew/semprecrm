@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
 import { translateLiteral } from "@/lib/i18n";
+import { getFlowTemplate, localizeFlowTemplate } from "@/lib/flows/templates";
 
 /**
  * Flows list page.
@@ -58,9 +59,9 @@ interface FlowRow {
 }
 
 const STATUS_LABELS: Record<FlowRow["status"], string> = {
-  draft: "Rascunho",
-  active: "Ativo",
-  archived: "Arquivado",
+  draft: "Draft",
+  active: "Active",
+  archived: "Archived",
 };
 
 const STATUS_COLORS: Record<FlowRow["status"], string> = {
@@ -168,14 +169,35 @@ export default function FlowsPage() {
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? `Clone failed: ${res.status}`);
+        throw new Error(typeof json.error === "string" ? json.error : "");
       }
       const json = (await res.json()) as { flow: FlowRow };
+      // The clone endpoint copies the English source template. For a
+      // pt-BR user, rewrite the copy (name, keywords, message bodies,
+      // button titles, notes) through the same PUT the editor's Save
+      // uses. Structure is identical, so a failure here only leaves
+      // the English copy in place — the flow itself is already created.
+      const template = getFlowTemplate(slug);
+      if (language === "pt-BR" && template) {
+        const localized = localizeFlowTemplate(template, language);
+        await fetch(`/api/flows/${json.flow.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: localized.name,
+            description: localized.description,
+            trigger_type: localized.trigger_type,
+            trigger_config: localized.trigger_config,
+            entry_node_id: localized.entry_node_id,
+            nodes: localized.nodes,
+          }),
+        }).catch(() => null);
+      }
       setCreateOpen(false);
       router.push(`/flows/${json.flow.id}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Clone failed";
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : "";
+      toast.error(msg || t("Couldn't create flow."));
     } finally {
       setCreating(false);
     }
@@ -215,23 +237,22 @@ export default function FlowsPage() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-foreground">Fluxos</h1>
+            <h1 className="text-2xl font-semibold text-foreground">{t("Flows")}</h1>
             <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-              Beta
+              {t("Beta")}
             </span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Build branching, button-driven WhatsApp conversations. Useful for
-            menus, FAQs, and triage before a human steps in.
+            {t("Build branching, button-driven WhatsApp conversations. Useful for menus, FAQs, and triage before a human steps in.")}
           </p>
         </div>
         <GatedButton
           canAct={canCreate}
-          gateReason="create flows"
+          gateReason={t("create flows")}
           onClick={() => setCreateOpen(true)}
         >
           <Plus className="h-4 w-4" />
-          Novo fluxo
+          {t("New flow")}
         </GatedButton>
       </header>
 
@@ -260,37 +281,37 @@ export default function FlowsPage() {
             sm-scoped 384px wins at every real desktop breakpoint. */}
         <DialogContent className="sm:max-w-4xl bg-popover text-popover-foreground">
           <DialogHeader>
-            <DialogTitle>Criar um novo fluxo</DialogTitle>
+            <DialogTitle>{t("Create a new flow")}</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Comece com um modelo ou crie do zero.
+              {t("Start from a template or build from scratch.")}
             </DialogDescription>
           </DialogHeader>
 
           {templates.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                Começar com um modelo
+                {t("Start with a template")}
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {templates.map((t) => {
-                  const Icon = TEMPLATE_ICONS[t.icon] ?? FileText;
+                {templates.map((tmpl) => {
+                  const Icon = TEMPLATE_ICONS[tmpl.icon] ?? FileText;
                   return (
                     <button
-                      key={t.slug}
+                      key={tmpl.slug}
                       type="button"
-                      onClick={() => handleUseTemplate(t.slug)}
+                      onClick={() => handleUseTemplate(tmpl.slug)}
                       disabled={creating}
                       className="flex flex-col gap-2.5 rounded-lg border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted disabled:opacity-50"
                     >
                       <Icon className="h-5 w-5 text-primary" />
                       <span className="text-sm font-semibold text-popover-foreground">
-                        {t.name}
+                        {t(tmpl.name)}
                       </span>
                       <span className="text-xs leading-relaxed text-muted-foreground">
-                        {t.description}
+                        {t(tmpl.description)}
                       </span>
                       <span className="mt-auto border-t border-border pt-2 text-[11px] text-muted-foreground">
-                        {`${t.node_count} ${t.node_count === 1 ? "nó" : "nós"}`}
+                        {tmpl.node_count} {t(tmpl.node_count === 1 ? "node" : "nodes")}
                       </span>
                     </button>
                   );
@@ -301,12 +322,12 @@ export default function FlowsPage() {
 
           <div className="space-y-2 border-t border-border pt-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Ou começar em branco
+              {t("Or start blank")}
             </p>
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="ex.: Menu de boas-vindas"
+              placeholder={t("e.g. Welcome menu")}
               className="bg-muted"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreate();
@@ -320,11 +341,11 @@ export default function FlowsPage() {
               onClick={() => setCreateOpen(false)}
               disabled={creating}
             >
-              Cancelar
+              {t("Cancel")}
             </Button>
             <Button onClick={handleCreate} disabled={!newName.trim() || creating}>
               {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-              Criar fluxo em branco
+              {t("Create blank flow")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -340,27 +361,26 @@ function EmptyState({
   onCreate: () => void;
   canCreate: boolean;
 }) {
+  const { t } = useLanguage();
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-16 text-center">
       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
         <Workflow className="h-6 w-6 text-muted-foreground" />
       </div>
       <h2 className="mt-4 text-base font-medium text-foreground">
-        Ainda não há fluxos
+        {t("No flows yet")}
       </h2>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">
-        Build your first conversation — a welcome menu, an order lookup, an FAQ
-        bot. Customers tap buttons; the bot routes them to the right answer (or
-        the right agent).
+        {t("Build your first conversation — a welcome menu, an order lookup, an FAQ bot. Customers tap buttons; the bot routes them to the right answer (or the right agent).")}
       </p>
       <GatedButton
         canAct={canCreate}
-        gateReason="create flows"
+        gateReason={t("create flows")}
         onClick={onCreate}
         className="mt-5"
       >
         <Plus className="h-4 w-4" />
-        Crie seu primeiro fluxo
+        {t("Create your first flow")}
       </GatedButton>
     </div>
   );
@@ -406,7 +426,7 @@ function FlowCard({
           )}
         >
           <StatusIcon className="h-3 w-3" />
-          {STATUS_LABELS[flow.status]}
+          {t(STATUS_LABELS[flow.status])}
         </Badge>
       </div>
 
@@ -417,7 +437,7 @@ function FlowCard({
       <div className="mt-4 flex items-center gap-3 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <MessageSquare className="h-3 w-3" />
-          {`${flow.execution_count} ${flow.execution_count === 1 ? "execução" : "execuções"}`}
+          {flow.execution_count} {t(flow.execution_count === 1 ? "run" : "runs")}
         </span>
       </div>
 
@@ -432,7 +452,7 @@ function FlowCard({
           render={<Link href={`/flows/${flow.id}`} />}
         >
           <Pencil className="h-3.5 w-3.5" />
-          Editar
+          {t("Edit")}
         </Button>
         <Button
           variant="ghost"
@@ -441,7 +461,7 @@ function FlowCard({
           className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
         >
           <Trash2 className="h-3.5 w-3.5" />
-          Excluir
+          {t("Delete")}
         </Button>
       </div>
     </div>

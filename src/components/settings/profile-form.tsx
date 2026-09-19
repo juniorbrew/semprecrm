@@ -7,6 +7,8 @@ import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { toStoredMediaUrl } from '@/lib/storage/media-url';
 import { useAuth } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
+import type { AccountRole } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -31,8 +33,16 @@ const ALLOWED_MIME = new Set([
 // just want to stop obvious typos before making a network call.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const ROLE_LABELS: Record<AccountRole, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  agent: 'Agent',
+  viewer: 'Viewer',
+};
+
 export function ProfileForm() {
-  const { user, profile, refreshProfile } = useAuth();
+  const { user, profile, accountRole, refreshProfile } = useAuth();
+  const { t, language } = useLanguage();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -71,14 +81,14 @@ export function ProfileForm() {
     if (!file) return;
 
     if (!ALLOWED_MIME.has(file.type)) {
-      toast.error('Unsupported image type', {
-        description: 'Use PNG, JPG, WebP, or GIF.',
+      toast.error(t('Unsupported image type'), {
+        description: t('Use PNG, JPG, WebP, or GIF.'),
       });
       return;
     }
     if (file.size > MAX_AVATAR_BYTES) {
-      toast.error('Image is too large', {
-        description: 'Maximum 2 MB.',
+      toast.error(t('Image is too large'), {
+        description: t('Maximum 2 MB.'),
       });
       return;
     }
@@ -128,7 +138,7 @@ export function ProfileForm() {
             contentType: pendingAvatar.type,
           });
         if (uploadError) {
-          throw new Error(`Upload failed: ${uploadError.message}`);
+          throw new Error(`${t('Upload failed')}: ${uploadError.message}`);
         }
         const {
           data: { publicUrl },
@@ -147,7 +157,7 @@ export function ProfileForm() {
         })
         .eq('user_id', user.id);
       if (updateError) {
-        throw new Error(`Save failed: ${updateError.message}`);
+        throw new Error(`${t('Save failed')}: ${updateError.message}`);
       }
 
       // Email change goes through Supabase Auth, which emails a
@@ -162,8 +172,8 @@ export function ProfileForm() {
         });
         if (emailError) {
           // Partial success: name/avatar saved but email didn't.
-          toast.success('Profile saved');
-          toast.error(`Email change failed: ${emailError.message}`);
+          toast.success(t('Profile saved'));
+          toast.error(`${t('Email change failed')}: ${emailError.message}`);
           setSaving(false);
           await refreshProfile();
           return;
@@ -198,7 +208,7 @@ export function ProfileForm() {
       removeAvatar);
 
   const joined = user?.created_at
-    ? new Date(user.created_at).toLocaleDateString(undefined, {
+    ? new Date(user.created_at).toLocaleDateString(language, {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -218,7 +228,7 @@ export function ProfileForm() {
           <div className="flex flex-wrap items-center gap-5">
             <Avatar size="lg" className="size-16">
               {currentAvatar ? (
-                <AvatarImage src={currentAvatar} alt={fullName || 'Avatar'} />
+                <AvatarImage src={currentAvatar} alt={fullName || t('Avatar')} />
               ) : null}
               <AvatarFallback className="bg-primary/10 text-base text-primary">
                 {initial}
@@ -308,20 +318,14 @@ export function ProfileForm() {
             </p>
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-muted-foreground">Função</dt>
-                <dd className="mt-0.5 font-mono text-foreground">
-                  {profile?.role ?? 'user'}
+                <dt className="text-muted-foreground">{t('Role')}</dt>
+                <dd className="mt-0.5 text-foreground">
+                  {accountRole ? t(ROLE_LABELS[accountRole]) : t('User')}
                 </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Joined</dt>
+                <dt className="text-muted-foreground">{t('Joined')}</dt>
                 <dd className="mt-0.5 text-foreground">{joined}</dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-muted-foreground">User ID</dt>
-                <dd className="mt-0.5 break-all font-mono text-xs text-muted-foreground">
-                  {user?.id ?? '—'}
-                </dd>
               </div>
             </dl>
           </div>

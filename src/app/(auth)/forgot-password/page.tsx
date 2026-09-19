@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { useLanguage } from "@/hooks/use-language";
+import { friendlyAuthError } from "../_lib/auth-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +18,9 @@ import {
 import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
 
 export default function ForgotPasswordPage() {
+  const { t } = useLanguage();
   const [email, setEmail] = useState("");
+  // English dictionary key — rendered through `t()`.
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -32,7 +36,8 @@ export default function ForgotPasswordPage() {
     });
 
     if (error) {
-      setError(error.message);
+      console.error("[forgot-password] reset failed:", error.message);
+      setError(friendlyAuthError(error));
       setLoading(false);
       return;
     }
@@ -50,12 +55,12 @@ export default function ForgotPasswordPage() {
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-foreground">
-              Verifique seu e-mail
+              {t("Check your email")}
             </CardTitle>
             <CardDescription className="text-muted-foreground">
-              Enviamos um link de recuperação de senha para{" "}
-              <span className="text-foreground">{email}</span>. Verifique sua
-              caixa de entrada.
+              {t("We sent a password reset link to")}{" "}
+              <span className="text-foreground">{email}</span>
+              {t(". Check your inbox.")}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -64,7 +69,7 @@ export default function ForgotPasswordPage() {
                 variant="outline"
                 className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                Voltar para o login
+                {t("Back to sign in")}
               </Button>
             </Link>
           </CardContent>
@@ -80,27 +85,27 @@ export default function ForgotPasswordPage() {
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <MessageSquare className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-xl text-foreground">Redefinir senha</CardTitle>
+          <CardTitle className="text-xl text-foreground">{t("Reset password")}</CardTitle>
           <CardDescription className="text-muted-foreground">
-            Digite seu e-mail e enviaremos um link de recuperação
+            {t("Enter your e-mail and we'll send you a reset link")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleReset} className="flex flex-col gap-4">
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {error}
+                {t(error)}
               </div>
             )}
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-muted-foreground">
-                E-mail
+                {t("Email")}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="voce@exemplo.com"
+                placeholder={t("you@example.com")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -113,7 +118,7 @@ export default function ForgotPasswordPage() {
               disabled={loading}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Enviando..." : "Enviar link de recuperação"}
+              {loading ? t("Sending...") : t("Send reset link")}
             </Button>
           </form>
 
@@ -122,7 +127,7 @@ export default function ForgotPasswordPage() {
             className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
-            Voltar para o login
+            {t("Back to sign in")}
           </Link>
         </CardContent>
       </Card>

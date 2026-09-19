@@ -69,6 +69,7 @@ import { cn } from "@/lib/utils";
 import { EVENT_COLORS, colorForUser } from "./colors";
 import { ContactPicker } from "./contact-picker";
 import { memberName, useCalendarMembers, useCalendarTimezone } from "./hooks";
+import { timezoneLabel } from "./timezone-label";
 import { ProviderIcon } from "./provider-icon";
 
 const SELECT_CLASS =
@@ -679,7 +680,9 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
               </div>
             </div>
           )}
-          <p className="text-[11px] text-muted-foreground">{t("Times in")} {tz}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {t("Timezone")}: <span data-no-translate>{timezoneLabel(tz, language)}</span>
+          </p>
         </div>
 
         {/* Location + description */}
@@ -708,12 +711,12 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
           />
         </div>
 
-        {/* Owner + reminder */}
+        {/* Assignee ("Responsável") + reminder */}
         <div className="grid grid-cols-2 gap-3">
           <div className="grid gap-1.5">
-            <Label className="text-muted-foreground">{t("Owner")}</Label>
+            <Label className="text-muted-foreground">{t("Assignee")}</Label>
             <select value={owner} disabled={readOnly} onChange={(e) => setOwner(e.target.value)} className={SELECT_CLASS}>
-              <option value="">{t("No owner")}</option>
+              <option value="">{t("No assignee")}</option>
               {members.map((m) => (
                 <option key={m.user_id} value={m.user_id}>
                   {m.full_name?.trim() || m.email}

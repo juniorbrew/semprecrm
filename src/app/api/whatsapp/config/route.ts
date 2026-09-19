@@ -310,7 +310,7 @@ export async function POST(request: Request) {
       if (!canAddChannel(count, maxChannels)) {
         return NextResponse.json(
           {
-            error: `Your plan allows up to ${maxChannels} connected WhatsApp number${maxChannels === 1 ? '' : 's'}. Disconnect one or upgrade the plan.`,
+            error: 'Your plan has no free slot for another connected WhatsApp number. Disconnect one or upgrade the plan.',
             code: 'plan_limit_reached',
           },
           { status: 403 },

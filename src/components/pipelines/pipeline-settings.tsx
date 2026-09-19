@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useLanguage } from "@/hooks/use-language";
+import { dndAccessibility } from "@/lib/dnd-accessibility";
+
 const STAGE_COLORS = [
   "#3b82f6",
   "#6366f1",
@@ -69,6 +72,7 @@ export function PipelineSettings({
   onCreateNewPipeline,
 }: PipelineSettingsProps) {
   const supabase = createClient();
+  const { language } = useLanguage();
 
   const [name, setName] = useState(pipeline.name);
   const [localStages, setLocalStages] = useState<PipelineStage[]>(stages);
@@ -224,14 +228,14 @@ export function PipelineSettings({
                 onClick={() => setShowDeleteConfirm(false)}
                 className="border-border bg-transparent text-muted-foreground hover:bg-muted"
               >
-                Cancelar
+                Cancel
               </Button>
               <Button
                 onClick={handleDeletePipeline}
                 disabled={deleting}
                 className="bg-red-600 text-white hover:bg-red-700"
               >
-                {deleting ? "Excluindo..." : "Excluir funil"}
+                {deleting ? "Deleting..." : "Delete pipeline"}
               </Button>
             </div>
           </div>
@@ -250,6 +254,7 @@ export function PipelineSettings({
               <div className="grid gap-2">
                 <Label className="text-muted-foreground">Stages</Label>
                 <DndContext
+                  accessibility={dndAccessibility(language)}
                   sensors={sensors}
                   collisionDetection={closestCenter}
                   onDragEnd={handleReorder}
@@ -296,7 +301,8 @@ export function PipelineSettings({
                             ? "var(--foreground)"
                             : "transparent",
                       }}
-                      aria-label={`Pick color ${color}`}
+                      aria-label="Pick color"
+                      title={color}
                     />
                   ))}
                 </div>
@@ -346,7 +352,7 @@ export function PipelineSettings({
                 onClick={() => onOpenChange(false)}
                 className="border-border bg-transparent text-muted-foreground hover:bg-muted"
               >
-                Cancelar
+                Cancel
               </Button>
               <Button
                 onClick={handleSave}

@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/hooks/use-language';
+import { cn } from '@/lib/utils';
 import {
   getBroadcastStatus,
   getRecipientStatus,
@@ -96,7 +97,7 @@ function FunnelChart({ title, steps }: { title: string; steps: FunnelStep[] }) {
               </span>
               <div className="relative h-7 flex-1 rounded-full bg-muted">
                 <div
-                  className={`h-7 rounded-full ${step.color} transition-[width] duration-500`}
+                  className={cn('h-7 rounded-full transition-[width] duration-500', step.color)}
                   style={{ width: `${pctOfMax}%` }}
                 />
                 <span className="absolute inset-0 flex items-center px-3 text-xs font-medium text-foreground">

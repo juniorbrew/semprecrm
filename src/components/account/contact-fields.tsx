@@ -108,7 +108,7 @@ export function ContactFields({
           autoComplete="email"
           value={values.email}
           onChange={(e) => onChange({ email: e.target.value })}
-          placeholder="contato@empresa.com.br"
+          placeholder={t('contact@company.com')}
           maxLength={120}
           disabled={disabled}
           aria-invalid={!!errors.email}
@@ -268,7 +268,7 @@ export function AddressFields({
           autoComplete="address-line1"
           value={address.street}
           onChange={(e) => set({ street: e.target.value })}
-          placeholder="Rua, avenida, praça…"
+          placeholder={t('Street, avenue, square…')}
           maxLength={120}
           disabled={disabled}
           aria-invalid={!!errors.street}
@@ -316,7 +316,7 @@ export function AddressFields({
           autoComplete="address-line2"
           value={address.complement}
           onChange={(e) => set({ complement: e.target.value })}
-          placeholder="Sala, andar, bloco…"
+          placeholder={t('Suite, floor, building…')}
           maxLength={120}
           disabled={disabled}
           className={inputClassName}

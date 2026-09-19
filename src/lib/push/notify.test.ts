@@ -6,7 +6,22 @@ vi.mock('web-push', () => ({
   WebPushError: class extends Error {},
 }))
 
-import { chatPushBody } from './notify'
+import { chatPushBody, inboundPushBody } from './notify'
+
+describe('inboundPushBody (WhatsApp inbound push preview)', () => {
+  it('passes text through, collapsing whitespace', () => {
+    expect(inboundPushBody('  olá\n  tudo bem? ')).toBe('olá tudo bem?')
+  })
+
+  it('turns a media placeholder into a translated label', () => {
+    expect(inboundPushBody('[image]')).toBe('📎 Imagem')
+    expect(inboundPushBody('[audio]')).toBe('📎 Áudio')
+  })
+
+  it('leaves unknown placeholders alone', () => {
+    expect(inboundPushBody('[whatever]')).toBe('[whatever]')
+  })
+})
 
 describe('chatPushBody (internal chat push preview)', () => {
   it('uses the text when there is one, collapsing whitespace', () => {

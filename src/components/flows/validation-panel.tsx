@@ -20,10 +20,13 @@
 import { CircleAlert, CircleCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ValidationIssue } from "@/lib/flows/validate";
+import { useLanguage } from "@/hooks/use-language";
 import { useFlowEditor } from "./flow-editor-state";
+import { translateIssueMessage } from "./issue-messages";
 
 export function ValidationPanel() {
   const { issues, requestFlash } = useFlowEditor();
+  const { t } = useLanguage();
 
   if (issues.length === 0) {
     // Slate-950 base + emerald accents so the panel stays readable when
@@ -32,7 +35,7 @@ export function ValidationPanel() {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-background p-3 text-sm font-medium text-emerald-300">
         <CircleCheck className="h-4 w-4 shrink-0" />
-        Nenhum problema. Pronto para ativar.
+        {t("No errors found. Ready to activate.")}
       </div>
     );
   }
@@ -51,8 +54,8 @@ export function ValidationPanel() {
         ) : (
           <CircleAlert className="h-4 w-4 text-amber-400" />
         )}
-        {errors.length} error{errors.length === 1 ? "" : "s"},{" "}
-        {warnings.length} warning{warnings.length === 1 ? "" : "s"}
+        {errors.length} {t(errors.length === 1 ? "error" : "errors")},{" "}
+        {warnings.length} {t(warnings.length === 1 ? "warning" : "warnings")}
       </div>
       <div className="flex flex-col gap-1">
         {issues.map((i, ix) => (
@@ -76,6 +79,7 @@ export function IssueLine({
   issue: ValidationIssue;
   onJump?: (key: string) => void;
 }) {
+  const { t, language } = useLanguage();
   const tone =
     issue.severity === "error" ? "text-red-300" : "text-amber-300";
   const iconTone =
@@ -89,7 +93,7 @@ export function IssueLine({
             {issue.node_key}
           </code>
         )}
-        {issue.message}
+        {translateIssueMessage(issue.message, language, t)}
       </span>
     </>
   );
@@ -106,7 +110,7 @@ export function IssueLine({
           "flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-muted/60",
           tone,
         )}
-        aria-label={`Jump to node ${issue.node_key}`}
+        aria-label={`${t("Jump to node")} ${issue.node_key}`}
       >
         {body}
       </button>

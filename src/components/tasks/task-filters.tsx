@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import { PRIORITY_LABELS, memberLabel } from "./task-chips";
+import { PRIORITY_LABELS, memberLabel, statusName } from "./task-chips";
 
 export type TaskView = "list" | "board";
 
@@ -50,7 +50,7 @@ export function TaskFilters({
   view,
   onViewChange,
 }: TaskFiltersProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const chipCount: Record<TaskScope, number | null> = {
     mine: counts.mine,
     today: counts.dueToday + counts.overdue,
@@ -108,7 +108,7 @@ export function TaskFilters({
           className={SELECT_CLASS}
         >
           <option value="">{t("Any assignee")}</option>
-          <option value="unassigned">{t("Unassigned")}</option>
+          <option value="unassigned">{t("No assignee")}</option>
           {members.map((m) => (
             <option key={m.user_id} value={m.user_id}>
               {memberLabel(m)}
@@ -125,7 +125,7 @@ export function TaskFilters({
           <option value="">{t("Any status")}</option>
           {statuses.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name}
+              {statusName(s, language)}
             </option>
           ))}
         </select>

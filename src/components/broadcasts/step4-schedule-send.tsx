@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
+import { templateLanguageLabel } from './template-language-label';
 
 interface AudienceConfig {
   type: string;
@@ -147,7 +148,9 @@ export function Step4ScheduleSend({
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t('Language')}</p>
-            <p className="text-foreground">{template.language ?? 'en_US'}</p>
+            <p className="text-foreground" data-no-translate>
+              {templateLanguageLabel(template.language, language)}
+            </p>
           </div>
         </div>
       </div>

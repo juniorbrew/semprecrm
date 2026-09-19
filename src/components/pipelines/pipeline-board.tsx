@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import { dndAccessibility } from "@/lib/dnd-accessibility";
 import { formatCurrency } from "@/lib/currency";
 
 interface PipelineBoardProps {
@@ -38,6 +39,7 @@ export function PipelineBoard({
   onEditDeal,
 }: PipelineBoardProps) {
   const { defaultCurrency } = useAuth();
+  const { language } = useLanguage();
   const [activeDealId, setActiveDealId] = useState<string | null>(null);
 
   const sortedStages = useMemo(
@@ -93,6 +95,7 @@ export function PipelineBoard({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
+      accessibility={dndAccessibility(language)}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}

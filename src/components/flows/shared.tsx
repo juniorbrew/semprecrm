@@ -50,6 +50,14 @@ export type NodeType =
   | "handoff"
   | "end";
 
+/** Account tag as returned by GET /api/tags — shared by the pickers and
+ *  the node summaries so a tag is always shown by name, never by id. */
+export interface UserTag {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 export interface BuilderNode {
   node_key: string;
   node_type: NodeType;
@@ -71,7 +79,7 @@ export const NODE_META: Record<
 > = {
   start: { label: "Start", icon: PlayCircle, color: "text-emerald-400" },
   send_message: {
-    label: "Enviar mensagem",
+    label: "Send message",
     icon: MessageCircle,
     color: "text-sky-400",
   },
@@ -145,7 +153,21 @@ export function truncate(s: string, max = 80): string {
   return clean.slice(0, max - 1) + "…";
 }
 
-export function summarizeNode(node: BuilderNode): string | null {
+/**
+ * `t` translates the static fragments ("options", "has tag", …) so the
+ * preview reads naturally in pt-BR; user content (texts, titles, keys)
+ * passes through untouched. Defaults to identity for callers without a
+ * language context (tests, engine-side helpers).
+ *
+ * `tagName` resolves a tag id to its display name (the editor context
+ * loads the account's tags once). Without it — or when the tag was
+ * deleted — the summary says "unnamed tag" rather than leaking a UUID.
+ */
+export function summarizeNode(
+  node: BuilderNode,
+  t: (english: string) => string = (s) => s,
+  tagName: (id: string) => string | undefined = () => undefined,
+): string | null {
   const cfg = node.config;
   switch (node.node_type) {
     case "start":
@@ -180,11 +202,11 @@ export function summarizeNode(node: BuilderNode): string | null {
       }, 0);
       if (text.length > 0) {
         return rowCount > 0
-          ? `${truncate(text, 50)} · ${rowCount} option${rowCount === 1 ? "" : "s"}`
+          ? `${truncate(text, 50)} · ${rowCount} ${t(rowCount === 1 ? "option" : "options")}`
           : truncate(text);
       }
       return rowCount > 0
-        ? `${rowCount} option${rowCount === 1 ? "" : "s"} across ${sections.length} section${sections.length === 1 ? "" : "s"}`
+        ? `${rowCount} ${t(rowCount === 1 ? "option" : "options")} · ${sections.length} ${t(sections.length === 1 ? "section" : "sections")}`
         : null;
     }
     case "send_media": {
@@ -193,10 +215,16 @@ export function summarizeNode(node: BuilderNode): string | null {
       const filename = typeof cfg.filename === "string" ? cfg.filename : "";
       const url = typeof cfg.media_url === "string" ? cfg.media_url : "";
       const caption = typeof cfg.caption === "string" ? cfg.caption : "";
-      const label = mediaType
-        ? mediaType.charAt(0).toUpperCase() + mediaType.slice(1)
-        : "Media";
-      if (!url) return `${label} (no file uploaded)`;
+      const label = t(
+        mediaType === "image"
+          ? "Image"
+          : mediaType === "video"
+            ? "Video"
+            : mediaType === "document"
+              ? "Document"
+              : "Media",
+      );
+      if (!url) return `${label} ${t("(no file uploaded)")}`;
       const name = filename || url.split("/").pop() || "file";
       return caption
         ? `${label}: ${truncate(name, 30)} · ${truncate(caption, 40)}`
@@ -205,10 +233,11 @@ export function summarizeNode(node: BuilderNode): string | null {
     case "collect_input": {
       const prompt = typeof cfg.prompt_text === "string" ? cfg.prompt_text : "";
       const varKey = typeof cfg.var_key === "string" ? cfg.var_key : "";
+      const saved = varKey ? `→ ${t("variable")} ${varKey}` : "";
       if (prompt.length > 0) {
-        return varKey ? `${truncate(prompt, 50)} → vars.${varKey}` : truncate(prompt);
+        return saved ? `${truncate(prompt, 50)} ${saved}` : truncate(prompt);
       }
-      return varKey ? `→ vars.${varKey}` : null;
+      return saved || null;
     }
     case "condition": {
       const subjectKey =
@@ -221,16 +250,18 @@ export function summarizeNode(node: BuilderNode): string | null {
             ? "field"
             : "var";
       const subjectStr =
-        subject === "tag" ? `has tag ${truncate(subjectKey, 24)}` : `${subject}.${subjectKey}`;
+        subject === "tag"
+          ? `${t("has tag")} ${truncate(tagName(subjectKey) ?? t("unnamed tag"), 24)}`
+          : `${t(subject === "field" ? "field" : "variable")} ${subjectKey}`;
       const op =
         cfg.operator === "equals"
-          ? "=="
+          ? "="
           : cfg.operator === "contains"
-            ? "contains"
+            ? t("contains")
             : cfg.operator === "present"
-              ? "exists"
+              ? t("exists")
               : cfg.operator === "absent"
-                ? "missing"
+                ? t("missing")
                 : "";
       const value = typeof cfg.value === "string" ? cfg.value : "";
       const valStr =
@@ -240,12 +271,10 @@ export function summarizeNode(node: BuilderNode): string | null {
       return subject === "tag" ? subjectStr : `${subjectStr} ${op}${valStr}`;
     }
     case "set_tag": {
-      const mode = cfg.mode === "remove" ? "Remove" : "Add";
+      const mode = t(cfg.mode === "remove" ? "Remove tag" : "Add tag");
       const tagId = typeof cfg.tag_id === "string" ? cfg.tag_id : "";
-      // No tag name available without an async lookup here; show a
-      // short prefix of the UUID so users can disambiguate between
-      // multiple set_tag nodes at a glance.
-      return tagId ? `${mode} tag ${tagId.slice(0, 8)}…` : `${mode} tag (none picked)`;
+      if (!tagId) return `${mode} ${t("(none picked)")}`;
+      return `${mode} ${truncate(tagName(tagId) ?? t("unnamed tag"), 30)}`;
     }
     case "handoff": {
       const note = typeof cfg.note === "string" ? cfg.note : "";

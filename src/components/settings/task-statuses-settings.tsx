@@ -22,10 +22,10 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import { dndAccessibility } from "@/lib/dnd-accessibility";
 import {
   TASK_STATUS_COLORS,
   TASK_STATUS_KINDS,
-  TASK_STATUS_KIND_LABELS,
   canDeleteStatus,
   createTaskStatus,
   defaultStatusForKind,
@@ -39,6 +39,31 @@ import {
   type TaskStatus,
   type TaskStatusKind,
 } from "@/lib/tasks";
+
+// Kind labels for the type select. Feminine in pt-BR ("tarefa"), so they
+// match the seeded default status names (A fazer / Em andamento /
+// Concluída) instead of the catalogue's generic Open / Done.
+const KIND_LABELS: Record<TaskStatusKind, string> = {
+  open: "To do",
+  in_progress: "In progress",
+  done: "Completed (task)",
+};
+
+/** Hex → English colour name for the swatch aria-labels. */
+const COLOR_NAMES: Record<string, string> = {
+  "#3b82f6": "Blue",
+  "#6366f1": "Indigo",
+  "#8b5cf6": "Violet",
+  "#ec4899": "Pink",
+  "#f43f5e": "Rose",
+  "#f97316": "Orange",
+  "#f59e0b": "Amber",
+  "#eab308": "Yellow",
+  "#22c55e": "Green",
+  "#14b8a6": "Teal",
+  "#06b6d4": "Cyan",
+  "#64748b": "Slate",
+};
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -58,7 +83,7 @@ const SELECT_CLASS =
  */
 export function TaskStatusesSettings() {
   const supabase = useMemo(() => createClient(), []);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { accountId, canEditSettings, profileLoading } = useAuth();
   const readOnly = !canEditSettings;
 
@@ -230,12 +255,12 @@ export function TaskStatusesSettings() {
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                   <span>
                     {t("Missing a status of kind:")}{" "}
-                    {missingKinds.map((k) => t(TASK_STATUS_KIND_LABELS[k])).join(", ")}
+                    {missingKinds.map((k) => t(KIND_LABELS[k])).join(", ")}
                   </span>
                 </div>
               )}
 
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorder}>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={dndAccessibility(language)} onDragEnd={handleReorder}>
                 <SortableContext
                   items={statuses.map((s) => s.id)}
                   strategy={verticalListSortingStrategy}
@@ -274,7 +299,7 @@ export function TaskStatusesSettings() {
                         key={color}
                         type="button"
                         onClick={() => setNewColor(color)}
-                        aria-label={`${t("Pick color")} ${color}`}
+                        aria-label={`${t("Pick color")} ${t(COLOR_NAMES[color] ?? color)}`}
                         className="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
                         style={{
                           backgroundColor: color,
@@ -301,7 +326,7 @@ export function TaskStatusesSettings() {
                     >
                       {TASK_STATUS_KINDS.map((k) => (
                         <option key={k} value={k}>
-                          {t(TASK_STATUS_KIND_LABELS[k])}
+                          {t(KIND_LABELS[k])}
                         </option>
                       ))}
                     </select>
@@ -431,7 +456,7 @@ function StatusRow({
         >
           {TASK_STATUS_KINDS.map((k) => (
             <option key={k} value={k}>
-              {t(TASK_STATUS_KIND_LABELS[k])}
+              {t(KIND_LABELS[k])}
             </option>
           ))}
         </select>

@@ -9,6 +9,9 @@ import { useAuth, useEntitlements } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { LinkedEvents } from '@/components/calendar';
 import { useLanguage } from '@/hooks/use-language';
+import { isIsoDate } from './custom-field-display';
+import { NOTES_LABEL } from './notes-label';
+import type { Language } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/currency';
 import {
   inboxConversationHref,
@@ -76,10 +79,14 @@ const STATUS_DOT: Record<ConversationStatus, string> = {
   closed: 'bg-muted-foreground',
 };
 
-const STATUS_LABEL_KEY: Record<ConversationStatus, string> = {
-  open: 'Open',
-  pending: 'Pending',
-  closed: 'Closed',
+/**
+ * Conversation status chip. Language-keyed (not `t()`) because the pt-BR
+ * forms are feminine — "Aberta", "Resolvida" (a *conversa*) — and must
+ * match the inbox list and thread header.
+ */
+const STATUS_LABEL: Record<Language, Record<ConversationStatus, string>> = {
+  'pt-BR': { open: 'Aberta', pending: 'Pendente', closed: 'Resolvida' },
+  'en-US': { open: 'Open', pending: 'Pending', closed: 'Resolved' },
 };
 
 export function ContactDetailView({
@@ -129,6 +136,11 @@ export function ContactDetailView({
   // Custom fields tab
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
+  // Fields whose stored value is an ISO date ("1991-03-14") get a date
+  // input, so the value reads as 14/03/1991 while staying ISO on save.
+  // Decided from the loaded value, not the draft, so the control does not
+  // flip while someone types.
+  const [dateFieldIds, setDateFieldIds] = useState<Set<string>>(new Set());
   const [savingCustom, setSavingCustom] = useState(false);
   const [loadingCustom, setLoadingCustom] = useState(false);
 
@@ -212,6 +224,9 @@ export function ContactDetailView({
         map[v.custom_field_id] = v.value ?? '';
       });
       setCustomValues(map);
+      setDateFieldIds(
+        new Set(Object.keys(map).filter((id) => isIsoDate(map[id])))
+      );
     }
     setLoadingCustom(false);
   }, [contactId, supabase]);
@@ -590,7 +605,7 @@ export function ContactDetailView({
               ) : (
                 <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
                   <Pencil className="size-3" />
-                  {t('Editing contact')}
+                  {t('Edit contact')}
                 </div>
               )}
             </SheetHeader>
@@ -684,7 +699,7 @@ export function ContactDetailView({
                     value="notes"
                     className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
                   >
-                    {t('Notes')}
+                    <span data-no-translate>{NOTES_LABEL[language]}</span>
                   </TabsTrigger>
                   <TabsTrigger
                     value="custom"
@@ -763,7 +778,9 @@ export function ContactDetailView({
                                   STATUS_DOT[conv.status]
                                 )}
                               />
-                              {t(STATUS_LABEL_KEY[conv.status])}
+                              <span data-no-translate>
+                                {STATUS_LABEL[language][conv.status]}
+                              </span>
                               {conv.unread_count > 0 && (
                                 <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                                   {conv.unread_count}
@@ -880,7 +897,7 @@ export function ContactDetailView({
                             </button>
                           </div>
                           <p className="text-xs text-muted-foreground mt-1.5">
-                            {new Date(note.created_at).toLocaleDateString('pt-BR', {
+                            {new Date(note.created_at).toLocaleDateString(language, {
                               month: 'short',
                               day: 'numeric',
                               year: 'numeric',
@@ -908,10 +925,11 @@ export function ContactDetailView({
                     <div className="space-y-3">
                       {customFields.map((field) => (
                         <div key={field.id} className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs capitalize">
+                          <Label className="text-muted-foreground text-xs">
                             {field.field_name}
                           </Label>
                           <Input
+                            type={dateFieldIds.has(field.id) ? 'date' : 'text'}
                             value={customValues[field.id] ?? ''}
                             onChange={(e) =>
                               setCustomValues((prev) => ({

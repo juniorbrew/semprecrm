@@ -9,6 +9,7 @@ import { BlockedScreen } from "@/components/plans/blocked-screen";
 import { MfaRequiredNotice } from "@/components/settings/mfa-card";
 import { isMfaEnrollAllowedPath, MFA_ENROLL_PATH, mustEnrollMfa } from "@/lib/auth/mfa";
 import { useBranding } from "@/hooks/use-branding";
+import { useLanguage } from "@/hooks/use-language";
 import { usePushRegistration } from "@/hooks/use-push-registration";
 import { ChatPresenceProvider } from "@/components/chat/presence-provider";
 import { brandingCssVars } from "@/lib/branding";
@@ -37,6 +38,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   // when the module is on; light/dark mode and the rest of the accent
   // theme keep working underneath.
   const branding = useBranding();
+  const { language } = useLanguage();
   const brandStyle = useMemo(
     () => brandingCssVars(branding.enabled ? branding.primary_color : null) as CSSProperties,
     [branding.enabled, branding.primary_color],
@@ -45,7 +47,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   // metadata <title> after hydration / navigation, so watch it and
   // re-apply instead of setting it once and losing the race.
   useEffect(() => {
-    const desired = `${getPageTitle(pathname)} · ${branding.app_name}`;
+    const desired = `${getPageTitle(pathname, language)} · ${branding.app_name}`;
     const apply = () => {
       if (document.title !== desired) document.title = desired;
     };
@@ -53,7 +55,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     const observer = new MutationObserver(apply);
     observer.observe(document.head, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
-  }, [pathname, branding.app_name]);
+  }, [pathname, branding.app_name, language]);
 
   // Push (spec round 2 §5): re-register /sw.js only for browsers that
   // already hold a subscription — Settings → Notificações does the opt-in.

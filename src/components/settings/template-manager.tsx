@@ -14,6 +14,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useLanguage } from '@/hooks/use-language';
 import {
   uploadAccountMedia,
   MEDIA_MAX_BYTES_BY_KIND,
@@ -55,6 +56,32 @@ import {
 const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
 type HeaderFormat = 'none' | 'text' | 'image' | 'video' | 'document';
 const HEADER_FORMATS: HeaderFormat[] = ['none', 'text', 'image', 'video', 'document'];
+const HEADER_FORMAT_LABELS: Record<HeaderFormat, string> = {
+  none: 'None',
+  text: 'Text',
+  image: 'Image',
+  video: 'Video',
+  document: 'Document',
+};
+
+/** Meta quality rating → English label key (rendered through t()). */
+const QUALITY_LABELS: Record<string, string> = {
+  GREEN: 'High',
+  YELLOW: 'Medium',
+  RED: 'Low',
+};
+
+const BUTTON_TYPE_LABELS: Record<TemplateButton['type'], string> = {
+  QUICK_REPLY: 'Quick Reply',
+  URL: 'URL',
+  PHONE_NUMBER: 'Phone',
+  COPY_CODE: 'Copy Code',
+};
+
+/** Meta language code (`pt_BR`) → the way people write it (`pt-BR`). */
+function languageLabel(code: string): string {
+  return code.replace(/_/g, '-');
+}
 
 const categoryColors: Record<string, string> = {
   Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
@@ -126,13 +153,21 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 export function TemplateManager() {
   const supabase = createClient();
   const { user, loading: authLoading } = useAuth();
+  const { t, language } = useLanguage();
+  // Default the Meta language code to the UI language — a pt-BR team
+  // almost always writes pt_BR templates.
+  const defaultLanguageCode = language === 'pt-BR' ? 'pt_BR' : 'en_US';
+  const blankForm = useMemo(
+    () => ({ ...emptyForm, language: defaultLanguageCode }),
+    [defaultLanguageCode],
+  );
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [form, setForm] = useState<TemplateFormData>(emptyForm);
+  const [form, setForm] = useState<TemplateFormData>(blankForm);
   // Non-null when the dialog is editing an existing row — switches the
   // submit handler from POST /submit to PATCH /[id] and changes the
   // dialog title + CTA. Set to the template id to pre-fill from a row.
@@ -215,7 +250,7 @@ export function TemplateManager() {
     return {
       name: form.name.trim(),
       category: form.category,
-      language: form.language.trim() || 'en_US',
+      language: form.language.trim() || defaultLanguageCode,
       header_type: form.header_format === 'none' ? undefined : form.header_format,
       header_content:
         form.header_format === 'text' ? form.header_content.trim() : undefined,
@@ -236,7 +271,7 @@ export function TemplateManager() {
     setForm({
       name: template.name,
       category: template.category,
-      language: template.language || 'en_US',
+      language: template.language || defaultLanguageCode,
       header_format: (template.header_type ?? 'none') as HeaderFormat,
       header_content: template.header_content ?? '',
       header_media_url: template.header_media_url ?? '',
@@ -251,7 +286,7 @@ export function TemplateManager() {
 
   function openCreate() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(blankForm);
     setDialogOpen(true);
   }
 
@@ -273,7 +308,7 @@ export function TemplateManager() {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(
-          data?.error || `${isEdit ? 'Editar' : 'Submit'} failed (HTTP ${res.status})`,
+          data?.error || `${isEdit ? t('Edit failed') : t('Submit failed')} (HTTP ${res.status})`,
         );
       }
       // Refresh first, then close — re-opening the dialog
@@ -289,7 +324,7 @@ export function TemplateManager() {
             : 'Submitted to Meta — typical review time is 24 hours. Status updates automatically.',
       );
       setDialogOpen(false);
-      setForm(emptyForm);
+      setForm(blankForm);
       setEditingId(null);
     } catch (err) {
       console.error('Submit error:', err);
@@ -306,12 +341,12 @@ export function TemplateManager() {
       const res = await fetch('/api/whatsapp/templates/sync', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
+        throw new Error(data?.error || `${t('Sync failed')} (HTTP ${res.status})`);
       }
       toast.success(
-        `Synced ${data.total} template${data.total === 1 ? '' : 's'} from Meta` +
+        `${t('Synced from Meta')}: ${data.total} ${data.total === 1 ? t('template') : t('templates')}` +
           (data.inserted || data.updated
-            ? ` (${data.inserted} new, ${data.updated} updated)`
+            ? ` (${data.inserted} ${t('new')}, ${data.updated} ${t('updated')})`
             : ''),
       );
       if (Array.isArray(data.errors) && data.errors.length > 0) {
@@ -320,8 +355,8 @@ export function TemplateManager() {
             `${e.name} (${e.language})`,
         );
         const suffix =
-          data.errors.length > 3 ? `, +${data.errors.length - 3} more` : '';
-        toast.error(`Failed to sync: ${preview.join(', ')}${suffix}`);
+          data.errors.length > 3 ? `, +${data.errors.length - 3} ${t('more')}` : '';
+        toast.error(`${t('Failed to sync')}: ${preview.join(', ')}${suffix}`);
       }
       if (data.truncated) {
         // Use error (not warning) so the message survives long
@@ -354,10 +389,10 @@ export function TemplateManager() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data?.error || `Delete failed (HTTP ${res.status})`);
+        throw new Error(data?.error || `${t('Delete failed')} (HTTP ${res.status})`);
       }
       toast.success('Template deleted');
-      setTemplates((prev) => prev.filter((t) => t.id !== target.id));
+      setTemplates((prev) => prev.filter((tpl) => tpl.id !== target.id));
       setTemplateToDelete(null);
     } catch (err) {
       console.error('Delete error:', err);
@@ -463,7 +498,7 @@ export function TemplateManager() {
     }
     if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
       toast.error(
-        `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`,
+        `${t('Image is')} ${(file.size / 1024 / 1024).toFixed(1)} MB — ${t("Meta's limit is 5 MB.")}`,
       );
       return;
     }
@@ -495,7 +530,7 @@ export function TemplateManager() {
               title="Pull approved templates from your Meta WhatsApp Business Account"
             >
               <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing…' : 'Sync from Meta'}
+              {syncing ? t('Syncing…') : t('Sync from Meta')}
             </Button>
             <Button onClick={openCreate}>
               <Plus className="size-4" />
@@ -534,8 +569,8 @@ export function TemplateManager() {
                         {status.label}
                       </Badge>
                       {template.language && (
-                        <span className="text-xs text-muted-foreground uppercase">
-                          {template.language}
+                        <span className="text-xs text-muted-foreground" data-no-translate>
+                          {languageLabel(template.language)}
                         </span>
                       )}
                       {template.quality_score && (
@@ -547,9 +582,9 @@ export function TemplateManager() {
                                 ? 'text-yellow-400'
                                 : 'text-red-400'
                           }`}
-                          title="Meta quality score"
+                          title={t('Meta quality score')}
                         >
-                          {template.quality_score}
+                          {t(QUALITY_LABELS[template.quality_score] ?? template.quality_score)}
                         </span>
                       )}
                     </div>
@@ -594,7 +629,7 @@ export function TemplateManager() {
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
                       >
                         <RotateCcw className="size-3.5" />
-                        Resubmit
+                        {t('Resubmit')}
                       </Button>
                     )}
                     <Button
@@ -634,7 +669,7 @@ export function TemplateManager() {
           setDialogOpen(open);
           if (!open) {
             setEditingId(null);
-            setForm(emptyForm);
+            setForm(blankForm);
           }
         }}
       >
@@ -666,7 +701,7 @@ export function TemplateManager() {
             <div className="space-y-2">
               <Label className="text-muted-foreground">Template Name</Label>
               <Input
-                placeholder="e.g. order_confirmation"
+                placeholder={t('e.g. order_confirmation')}
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 disabled={editingId !== null}
@@ -681,7 +716,7 @@ export function TemplateManager() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label className="text-muted-foreground">Categoria</Label>
+                <Label className="text-muted-foreground">{t('Category')}</Label>
                 <Select
                   value={form.category}
                   onValueChange={(val) =>
@@ -692,7 +727,7 @@ export function TemplateManager() {
                   }
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                    <SelectValue />
+                    <SelectValue>{(v: string | null) => (v ? t(v) : null)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border">
                     {CATEGORIES.map((cat) => (
@@ -701,7 +736,7 @@ export function TemplateManager() {
                         value={cat}
                         className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
                       >
-                        {cat}
+                        {t(cat)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -709,10 +744,10 @@ export function TemplateManager() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-muted-foreground">Language</Label>
+                <Label className="text-muted-foreground">{t('Language')}</Label>
                 <Input
                   list="template-language-codes"
-                  placeholder="en_US"
+                  placeholder={defaultLanguageCode}
                   value={form.language}
                   onChange={(e) =>
                     setForm({ ...form, language: e.target.value })
@@ -727,11 +762,13 @@ export function TemplateManager() {
                 </datalist>
                 <p className="text-[11px] text-muted-foreground">
                   {editingId
-                    ? 'Language is fixed once a template exists on Meta.'
+                    ? t('Language is fixed once a template exists on Meta.')
                     : (
                         <>
-                          Must match the exact code on Meta — <code>en_US</code>{' '}
-                          and <code>en</code> are distinct.
+                          {t('Must match the exact code on Meta —')}{' '}
+                          <code>{defaultLanguageCode}</code>{' '}
+                          {t('and')} <code>{language === 'pt-BR' ? 'pt' : 'en'}</code>{' '}
+                          {t('are distinct.')}
                         </>
                       )}
                 </p>
@@ -756,7 +793,9 @@ export function TemplateManager() {
                 }
               >
                 <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                  <SelectValue />
+                  <SelectValue>
+                    {(v: HeaderFormat | null) => (v ? t(HEADER_FORMAT_LABELS[v]) : null)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
                   {HEADER_FORMATS.map((type) => (
@@ -765,9 +804,7 @@ export function TemplateManager() {
                       value={type}
                       className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
                     >
-                      {type === 'none'
-                        ? 'None'
-                        : type.charAt(0).toUpperCase() + type.slice(1)}
+                      {t(HEADER_FORMAT_LABELS[type])}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -836,7 +873,7 @@ export function TemplateManager() {
                     </div>
                   )}
                   <Input
-                    placeholder={`https://… (or paste a public ${form.header_format} link)`}
+                    placeholder={`https://… (${t('or paste a public link to the')} ${t(HEADER_FORMAT_LABELS[form.header_format]).toLowerCase()})`}
                     value={form.header_media_url}
                     onChange={(e) =>
                       setForm({ ...form, header_media_url: e.target.value })
@@ -892,8 +929,8 @@ export function TemplateManager() {
                       <Input
                         key={i}
                         id={inputId}
-                        aria-label={`Sample value for body variable {{${i + 1}}}`}
-                        placeholder={`Sample for {{${i + 1}}}`}
+                        aria-label={`${t('Sample value for body variable')} {{${i + 1}}}`}
+                        placeholder={`${t('Sample for')} {{${i + 1}}}`}
                         value={val}
                         onChange={(e) => {
                           const next = [...form.body_samples];
@@ -960,7 +997,11 @@ export function TemplateManager() {
                           }}
                         >
                           <SelectTrigger className="w-40 bg-muted border-border text-foreground h-8 text-xs">
-                            <SelectValue />
+                            <SelectValue>
+                              {(v: TemplateButton['type'] | null) =>
+                                v ? t(BUTTON_TYPE_LABELS[v]) : null
+                              }
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent className="bg-popover border-border">
                             <SelectItem
@@ -1042,7 +1083,7 @@ export function TemplateManager() {
                       )}
                       {btn.type === 'COPY_CODE' && (
                         <Input
-                          placeholder="Example code (e.g. SUMMER20)"
+                          placeholder={t('Example code (e.g. SUMMER20)')}
                           value={btn.example}
                           onChange={(e) =>
                             updateButton(i, { example: e.target.value })
@@ -1073,7 +1114,7 @@ export function TemplateManager() {
               {submitting ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  {editingId ? 'Salvando…' : 'Submitting…'}
+                  {editingId ? t('Saving…') : t('Submitting…')}
                 </>
               ) : editingId ? (
                 'Save & Resubmit'
@@ -1098,9 +1139,14 @@ export function TemplateManager() {
           <DialogHeader>
             <DialogTitle className="text-popover-foreground">Delete template?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
+              &quot;{templateToDelete?.name}&quot;{' '}
               {templateToDelete?.meta_template_id
-                ? `"${templateToDelete?.name}" will be deleted from Meta and from SempreCRM. Active broadcasts using this template will start failing on their next send. This can't be undone.`
-                : `"${templateToDelete?.name}" will be deleted from SempreCRM. It was never submitted to Meta, so no remote cleanup is needed.`}
+                ? t(
+                    "will be deleted from Meta and from SempreCRM. Active broadcasts using this template will start failing on their next send. This can't be undone.",
+                  )
+                : t(
+                    'will be deleted from SempreCRM. It was never submitted to Meta, so no remote cleanup is needed.',
+                  )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="bg-popover border-border">

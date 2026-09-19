@@ -15,10 +15,13 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceStrict } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 
 /**
  * Run history viewer.
@@ -57,37 +60,52 @@ interface EventRow {
   created_at: string;
 }
 
+/** Run status labels — "execução" is feminine, so pt-BR can't reuse
+ *  the generic masculine Active/Completed entries. */
+const STATUS_LABEL: Record<Language, Record<RunRow["status"], string>> = {
+  "pt-BR": {
+    active: "Ativa",
+    completed: "Concluída",
+    handed_off: "Transferida",
+    timed_out: "Expirada",
+    paused_by_agent: "Pausada pelo responsável",
+    failed: "Falhou",
+  },
+  "en-US": {
+    active: "Active",
+    completed: "Completed",
+    handed_off: "Handed off",
+    timed_out: "Timed out",
+    paused_by_agent: "Paused by assignee",
+    failed: "Failed",
+  },
+};
+
 const STATUS_META: Record<
   RunRow["status"],
-  { label: string; classes: string; icon: typeof Clock }
+  { classes: string; icon: typeof Clock }
 > = {
   active: {
-    label: "Ativo",
     classes: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
     icon: PlayCircle,
   },
   completed: {
-    label: "Concluído",
     classes: "border-border bg-muted text-muted-foreground",
     icon: CircleCheck,
   },
   handed_off: {
-    label: "Handed off",
     classes: "border-amber-600/40 bg-amber-500/10 text-amber-300",
     icon: UserPlus,
   },
   timed_out: {
-    label: "Timed out",
     classes: "border-border bg-muted/60 text-muted-foreground",
     icon: Clock,
   },
   paused_by_agent: {
-    label: "Paused by agent",
     classes: "border-border bg-muted text-muted-foreground",
     icon: PauseCircle,
   },
   failed: {
-    label: "Falhou",
     classes: "border-red-600/40 bg-red-500/10 text-red-300",
     icon: CircleAlert,
   },
@@ -96,6 +114,7 @@ const STATUS_META: Record<
 export default function FlowRunsPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const { t } = useLanguage();
 
   const [flow, setFlow] = useState<{ id: string; name: string } | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
@@ -158,13 +177,13 @@ export default function FlowRunsPage() {
   if (notFound || !flow) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="text-sm text-muted-foreground">Flow not found.</p>
+        <p className="text-sm text-muted-foreground">{t("Flow not found.")}</p>
         <button
           type="button"
           onClick={() => router.push("/flows")}
           className="text-sm text-primary hover:opacity-80"
         >
-          ← Back to flows
+          {t("← Back to flows")}
         </button>
       </div>
     );
@@ -180,16 +199,14 @@ export default function FlowRunsPage() {
         <ArrowLeft className="h-3 w-3" />
         {flow.name}
       </button>
-      <h1 className="text-xl font-semibold text-foreground">Execuções</h1>
+      <h1 className="text-xl font-semibold text-foreground">{t("Runs")}</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        The 50 most recent times this flow ran. Expand a row to see the engine&apos;s
-        per-step log.
+        {t("The 50 most recent times this flow ran. Expand a row to see the engine's per-step log.")}
       </p>
 
       {runs.length === 0 ? (
         <div className="mt-6 rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center text-sm text-muted-foreground">
-          No runs yet. Trigger the flow from a personal WhatsApp number to see
-          it appear here.
+          {t("No runs yet. Trigger the flow from a personal WhatsApp number to see it appear here.")}
         </div>
       ) : (
         <div className="mt-6 flex flex-col gap-2">
@@ -219,13 +236,16 @@ function RunCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t, language } = useLanguage();
+  const dateLocale = language === "pt-BR" ? ptBR : undefined;
   const meta = STATUS_META[run.status];
   const StatusIcon = meta.icon;
   const contactLabel =
-    run.contact?.name?.trim() || run.contact?.phone || "Unknown contact";
+    run.contact?.name?.trim() || run.contact?.phone || t("Unknown contact");
+  // How long the run took (start → end), not how long ago it ended.
   const duration = run.ended_at
-    ? formatDistanceToNow(new Date(run.ended_at), {
-        addSuffix: false,
+    ? formatDistanceStrict(new Date(run.ended_at), new Date(run.started_at), {
+        locale: dateLocale,
       })
     : null;
   return (
@@ -247,20 +267,30 @@ function RunCard({
             </span>
             <Badge variant="outline" className={cn("gap-1", meta.classes)}>
               <StatusIcon className="h-3 w-3" />
-              {meta.label}
+              {STATUS_LABEL[language][run.status]}
             </Badge>
             {run.status === "active" && run.current_node_key && (
               <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                at {run.current_node_key}
+                {t("at node")} {run.current_node_key}
               </code>
             )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span>Started {format(new Date(run.started_at), "PP p")}</span>
+            <span>
+              {t("Started")}{" "}
+              {new Date(run.started_at).toLocaleString(language, { dateStyle: "medium", timeStyle: "short" })}
+            </span>
             {run.reprompt_count > 0 && (
-              <span>· {run.reprompt_count} re-prompts</span>
+              <span>
+                · {run.reprompt_count}{" "}
+                {t(run.reprompt_count === 1 ? "re-prompt" : "re-prompts")}
+              </span>
             )}
-            {duration && <span>· ran for {duration}</span>}
+            {duration && (
+              <span>
+                · {t("ran for")} {duration}
+              </span>
+            )}
           </div>
         </div>
       </button>
@@ -269,7 +299,7 @@ function RunCard({
           {Object.keys(run.vars).length > 0 && (
             <details className="mb-3">
               <summary className="cursor-pointer text-xs text-muted-foreground">
-                Captured vars ({Object.keys(run.vars).length})
+                {t("Captured variables")} ({Object.keys(run.vars).length})
               </summary>
               <pre className="mt-2 overflow-x-auto rounded-md bg-background p-2 text-[11px] text-muted-foreground">
                 {JSON.stringify(run.vars, null, 2)}
@@ -279,10 +309,12 @@ function RunCard({
           <div className="flex flex-col gap-1">
             {events.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                Nenhum evento registrado nesta execução.
+                {t("No events recorded for this run.")}
               </p>
             ) : (
-              events.map((ev, ix) => <EventLine key={ix} ev={ev} />)
+              events.map((ev, ix) => (
+                <EventLine key={ix} ev={ev} language={language} />
+              ))
             )}
           </div>
         </div>
@@ -303,15 +335,111 @@ const EVENT_COLOR: Record<string, string> = {
   completed: "text-emerald-300",
 };
 
-function EventLine({ ev }: { ev: EventRow }) {
+/** Engine event codes as they read in each language. */
+const EVENT_LABEL: Record<Language, Record<string, string>> = {
+  "pt-BR": {
+    started: "iniciada",
+    node_entered: "entrou no nó",
+    message_sent: "mensagem enviada",
+    reply_received: "resposta recebida",
+    fallback_fired: "resposta não compreendida",
+    handoff: "transferida",
+    timeout: "tempo esgotado",
+    error: "erro",
+    completed: "concluída",
+  },
+  "en-US": {
+    started: "started",
+    node_entered: "entered node",
+    message_sent: "message sent",
+    reply_received: "reply received",
+    fallback_fired: "fallback fired",
+    handoff: "handed off",
+    timeout: "timed out",
+    error: "error",
+    completed: "completed",
+  },
+};
+
+/** Payload keys worth surfacing inline, in priority order. */
+const PAYLOAD_LABEL: Record<Language, Record<string, string>> = {
+  "pt-BR": {
+    reply_id: "resposta",
+    captured_key: "variável",
+    reason: "motivo",
+    action: "ação",
+    advancing_to: "avançando para",
+  },
+  "en-US": {
+    reply_id: "reply",
+    captured_key: "variable",
+    reason: "reason",
+    action: "action",
+    advancing_to: "advancing to",
+  },
+};
+
+/** Engine reason / fallback-action codes as plain copy. Unknown codes
+ *  degrade to "words with spaces" rather than a raw snake_case token. */
+const PAYLOAD_VALUE_LABEL: Record<Language, Record<string, string>> = {
+  "pt-BR": {
+    unknown_reply: "resposta não reconhecida",
+    timeout: "tempo esgotado",
+    fallback_exhausted: "limite de novas tentativas atingido",
+    node_not_found: "nó não encontrado",
+    send_text_failed: "falha ao enviar a mensagem",
+    send_media_failed: "falha ao enviar a mídia",
+    collect_input_prompt_failed: "falha ao enviar a pergunta",
+    condition_evaluation_failed: "falha ao avaliar a condição",
+    set_tag_failed: "falha ao etiquetar o contato",
+    reprompt_send_failed: "falha ao reenviar a pergunta",
+    lost_race_during_advance: "outra execução avançou primeiro",
+    advance_loop_safety_break: "limite de avanços por mensagem atingido",
+    reprompt: "nova tentativa",
+    handoff: "transferir para um responsável",
+    end: "encerrar a execução",
+    ignore: "ignorar",
+  },
+  "en-US": {
+    unknown_reply: "unrecognised reply",
+    timeout: "timed out",
+    fallback_exhausted: "re-prompt limit reached",
+    node_not_found: "node not found",
+    send_text_failed: "message could not be sent",
+    send_media_failed: "media could not be sent",
+    collect_input_prompt_failed: "prompt could not be sent",
+    condition_evaluation_failed: "condition could not be evaluated",
+    set_tag_failed: "contact could not be tagged",
+    reprompt_send_failed: "re-prompt could not be sent",
+    lost_race_during_advance: "another run advanced first",
+    advance_loop_safety_break: "advance limit per message reached",
+    reprompt: "re-prompt",
+    handoff: "hand off to an assignee",
+    end: "end the run",
+    ignore: "ignore",
+  },
+};
+
+function payloadValue(key: string, value: unknown, language: Language): string {
+  const raw = String(value).slice(0, 80);
+  if (key !== "reason" && key !== "action") return raw;
+  const known = PAYLOAD_VALUE_LABEL[language][raw];
+  if (known) return known;
+  if (raw.startsWith("unknown_node_type:")) {
+    return language === "pt-BR" ? "tipo de nó desconhecido" : "unknown node type";
+  }
+  return raw.replace(/_/g, " ");
+}
+
+function EventLine({ ev, language }: { ev: EventRow; language: Language }) {
   const cls = EVENT_COLOR[ev.event_type] ?? "text-muted-foreground";
   return (
     <div className="flex items-start gap-2 rounded-md px-2 py-1 text-xs">
       <span className="w-32 shrink-0 text-[10px] text-muted-foreground">
         {format(new Date(ev.created_at), "HH:mm:ss")}
       </span>
-      <span className={cn("w-32 shrink-0 font-mono text-[10px]", cls)}>
-        {ev.event_type}
+      <span className={cn("w-32 shrink-0 text-[10px]", cls)}>
+        {EVENT_LABEL[language][ev.event_type] ?? ev.event_type}
       </span>
       {ev.node_key && (
         <code className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -320,20 +448,23 @@ function EventLine({ ev }: { ev: EventRow }) {
       )}
       {Object.keys(ev.payload).length > 0 && (
         <span className="min-w-0 truncate text-[10px] text-muted-foreground">
-          {summarizePayload(ev.payload)}
+          {summarizePayload(ev.payload, language)}
         </span>
       )}
     </div>
   );
 }
 
-function summarizePayload(payload: Record<string, unknown>): string {
-  // Show the keys that matter most to a human debugger; full JSON is
-  // available via the "Captured vars" details panel for the run.
-  const keys = ["reply_id", "captured_key", "reason", "advancing_to"];
-  for (const k of keys) {
+function summarizePayload(
+  payload: Record<string, unknown>,
+  language: Language,
+): string {
+  // Show the key that matters most to a human debugger; full JSON is
+  // available via the "Captured variables" details panel for the run.
+  const labels = PAYLOAD_LABEL[language];
+  for (const k of Object.keys(labels)) {
     if (k in payload && payload[k] !== null && payload[k] !== undefined) {
-      return `${k}=${String(payload[k]).slice(0, 80)}`;
+      return `${labels[k]}: ${payloadValue(k, payload[k], language)}`;
     }
   }
   return "";

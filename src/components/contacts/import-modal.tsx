@@ -3,6 +3,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
+import type { Language } from '@/lib/i18n';
 import {
   dedupeByPhone,
   isUniqueViolation,
@@ -72,6 +74,54 @@ function PreviewCell({
   );
 }
 
+/**
+ * Counted phrases are language-keyed here (plural + gender forms) instead
+ * of going through the DOM translator; the elements that render them are
+ * marked `data-no-translate`.
+ */
+const IMPORT_COPY: Record<
+  Language,
+  {
+    willBeCreated: (name: string) => string;
+    tags: (n: number) => string;
+    contacts: (n: number) => string;
+    imported: (n: number) => string;
+    tagsAssigned: (n: number) => string;
+    skipped: (n: number) => string;
+    failed: (n: number) => string;
+    duplicatesSkipped: (n: number) => string;
+    unknownTagsSkipped: (sample: string, more: number) => string;
+    importButton: (n: number) => string;
+  }
+> = {
+  'pt-BR': {
+    willBeCreated: (name) => `${name} (será criada na importação)`,
+    tags: (n) => `${n} etiqueta${n === 1 ? '' : 's'}`,
+    contacts: (n) => `${n} contato${n === 1 ? '' : 's'}`,
+    imported: (n) => `${n} importado${n === 1 ? '' : 's'}`,
+    tagsAssigned: (n) => `${n} etiqueta${n === 1 ? '' : 's'} atribuída${n === 1 ? '' : 's'}`,
+    skipped: (n) => `${n} ignorado${n === 1 ? '' : 's'}`,
+    failed: (n) => `${n} com falha`,
+    duplicatesSkipped: (n) => `${n} duplicado${n === 1 ? '' : 's'} ignorado${n === 1 ? '' : 's'}`,
+    unknownTagsSkipped: (sample, more) =>
+      `Etiquetas desconhecidas ignoradas (crie-as antes em Configurações): ${sample}${more > 0 ? ` (+${more})` : ''}`,
+    importButton: (n) => (n > 0 ? `Importar ${n} contato${n === 1 ? '' : 's'}` : 'Importar contatos'),
+  },
+  'en-US': {
+    willBeCreated: (name) => `${name} (will be created on import)`,
+    tags: (n) => `${n} tag${n === 1 ? '' : 's'}`,
+    contacts: (n) => `${n} contact${n === 1 ? '' : 's'}`,
+    imported: (n) => `${n} imported`,
+    tagsAssigned: (n) => `${n} tag${n === 1 ? '' : 's'} assigned`,
+    skipped: (n) => `${n} skipped`,
+    failed: (n) => `${n} failed`,
+    duplicatesSkipped: (n) => `${n} duplicate${n === 1 ? '' : 's'} skipped`,
+    unknownTagsSkipped: (sample, more) =>
+      `Unknown tags skipped (create them in Settings first): ${sample}${more > 0 ? ` (+${more} more)` : ''}`,
+    importButton: (n) => (n > 0 ? `Import ${n} contact${n === 1 ? '' : 's'}` : 'Import contacts'),
+  },
+};
+
 function ImportPreviewTags({
   tagNames,
   tagColorByKey,
@@ -79,6 +129,8 @@ function ImportPreviewTags({
   tagNames: string[];
   tagColorByKey: Map<string, string>;
 }) {
+  const { language } = useLanguage();
+  const copy = IMPORT_COPY[language] ?? IMPORT_COPY['pt-BR'];
   if (tagNames.length === 0) {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -98,7 +150,8 @@ function ImportPreviewTags({
               color,
               border: `1px solid ${color}${isKnown ? '55' : '30'}`,
             }}
-            title={isKnown ? name : `${name} (will be created on import)`}
+            title={isKnown ? name : copy.willBeCreated(name)}
+            data-no-translate
           >
             <span
               className="size-1.5 shrink-0 rounded-full"
@@ -125,6 +178,8 @@ export function ImportModal({
 }: ImportModalProps) {
   const supabase = createClient();
   const { accountId, canEditSettings } = useAuth();
+  const { language, t } = useLanguage();
+  const copy = IMPORT_COPY[language] ?? IMPORT_COPY['pt-BR'];
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -353,14 +408,11 @@ export function ImportModal({
       }
       if (skippedNames.length > 0) {
         const sample = skippedNames.slice(0, 3).join(', ');
-        const more =
-          skippedNames.length > 3 ? ` (+${skippedNames.length - 3} more)` : '';
-        toast.info(
-          `Unknown tags skipped (create them in Settings first): ${sample}${more}`
-        );
+        const more = Math.max(0, skippedNames.length - 3);
+        toast.info(copy.unknownTagsSkipped(sample, more));
       }
       if (skipped > 0) {
-        toast.info(`${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped`);
+        toast.info(copy.duplicatesSkipped(skipped));
       }
       if (failed > 0) {
         toast.error(
@@ -405,27 +457,30 @@ export function ImportModal({
               Import Contacts
             </DialogTitle>
             <DialogDescription className="leading-relaxed text-muted-foreground">
-              Upload a CSV with a required{' '}
+              {/* The header names are literal (the parser matches
+                  "phone", "name"…), so the sentence is built around
+                  them instead of translating "column" mid-phrase. */}
+              {t('Upload a CSV with the required column')}{' '}
               <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
-                phone
+                {'phone'}
+              </code>
+              . {t('Optional columns:')}{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
+                {'name'}
+              </code>
+              ,{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
+                {'email'}
+              </code>
+              ,{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
+                {'company'}
+              </code>
+              ,{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
+                {'tags'}
               </code>{' '}
-              column. Optional:{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
-                name
-              </code>
-              ,{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
-                email
-              </code>
-              ,{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
-                company
-              </code>
-              ,{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
-                tags
-              </code>{' '}
-              (comma-separated; quote multi-tag cells).
+              {t('(comma-separated; quote cells with more than one tag).')}
             </DialogDescription>
           </DialogHeader>
 
@@ -493,11 +548,12 @@ export function ImportModal({
                 </p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {tagStats.rowsWithTags > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-muted/90 px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <span
+                      data-no-translate
+                      className="inline-flex items-center gap-1 rounded-md bg-muted/90 px-2 py-0.5 text-[11px] text-muted-foreground"
+                    >
                       <Tag className="text-primary/80 size-3" />
-                      {tagStats.unique} tag{tagStats.unique !== 1 ? 's' : ''} ·{' '}
-                      {tagStats.rowsWithTags} contact
-                      {tagStats.rowsWithTags !== 1 ? 's' : ''}
+                      {copy.tags(tagStats.unique)} · {copy.contacts(tagStats.rowsWithTags)}
                     </span>
                   )}
                 </div>
@@ -589,30 +645,29 @@ export function ImportModal({
           {result && (
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <p className="text-sm font-medium text-popover-foreground">Import complete</p>
-              <div className="mt-3 flex flex-wrap gap-3">
+              <div data-no-translate className="mt-3 flex flex-wrap gap-3">
                 {result.imported > 0 && (
                   <div className="text-primary flex items-center gap-1.5 text-sm">
                     <CheckCircle className="size-4 shrink-0" />
-                    {result.imported} imported
+                    {copy.imported(result.imported)}
                   </div>
                 )}
                 {result.tagsAssigned > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-cyan-400">
                     <CheckCircle className="size-4 shrink-0" />
-                    {result.tagsAssigned} tag
-                    {result.tagsAssigned !== 1 ? 's' : ''} assigned
+                    {copy.tagsAssigned(result.tagsAssigned)}
                   </div>
                 )}
                 {result.skipped > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-amber-400">
                     <AlertTriangle className="size-4 shrink-0" />
-                    {result.skipped} skipped
+                    {copy.skipped(result.skipped)}
                   </div>
                 )}
                 {result.failed > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-red-400">
                     <XCircle className="size-4 shrink-0" />
-                    {result.failed} failed
+                    {copy.failed(result.failed)}
                   </div>
                 )}
               </div>
@@ -627,18 +682,18 @@ export function ImportModal({
             onClick={() => handleOpenChange(false)}
             className="border-border text-muted-foreground hover:bg-muted"
           >
-            {result ? 'Fechar' : 'Cancelar'}
+            {result ? t('Close') : t('Cancel')}
           </Button>
           {!result && (
             <Button
               type="button"
               disabled={parsedRows.length === 0 || importing}
               onClick={handleImport}
+              data-no-translate
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {importing && <Loader2 className="size-4 animate-spin" />}
-              Import {parsedRows.length > 0 ? parsedRows.length : ''} contact
-              {parsedRows.length !== 1 ? 's' : ''}
+              {copy.importButton(parsedRows.length)}
             </Button>
           )}
         </DialogFooter>

@@ -24,7 +24,7 @@
  * renders the advanced rows.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Loader2,
   Paperclip,
@@ -45,8 +45,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/hooks/use-language";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
-import { slugify, type BuilderNode } from "../shared";
+import { slugify, type BuilderNode, type UserTag } from "../shared";
+import { useFlowEditor } from "../flow-editor-state";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
 
 interface NodeConfigFormProps {
@@ -62,6 +64,7 @@ export function NodeConfigForm({
   showAdvanced,
   onUpdateConfig,
 }: NodeConfigFormProps) {
+  const { t } = useLanguage();
   const cfg = node.config;
   switch (node.node_type) {
     case "start":
@@ -136,7 +139,7 @@ export function NodeConfigForm({
           />
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">
-              Variable key (stored in flow_runs.vars; alphanumeric + underscore)
+              {t("Variable name (letters, numbers and underscore)")}
             </label>
             <Input
               value={(cfg as { var_key?: string }).var_key ?? ""}
@@ -145,11 +148,11 @@ export function NodeConfigForm({
                   var_key: e.target.value.replace(/[^a-zA-Z0-9_]/g, ""),
                 })
               }
-              placeholder="e.g. name, email, company"
+              placeholder={t("e.g. name, email, company")}
               className="bg-muted font-mono text-xs"
             />
             <p className="mt-1 text-[10px] text-muted-foreground">
-              Interpolate in downstream prompts and handoff notes with{" "}
+              {t("Interpolate in downstream prompts and handoff notes with")}{" "}
               <code className="rounded bg-muted px-1">
                 {"{{vars."}
                 {(cfg as { var_key?: string }).var_key || "name"}
@@ -191,7 +194,7 @@ export function NodeConfigForm({
     case "handoff":
       return (
         <TextRow
-          label="Internal note (for the agent picking up)"
+          label="Internal note (for the assignee picking up)"
           value={(cfg as { note?: string }).note ?? ""}
           onChange={(v) => onUpdateConfig({ note: v })}
           rows={2}
@@ -201,8 +204,7 @@ export function NodeConfigForm({
     case "end":
       return (
         <p className="text-xs text-muted-foreground">
-          Terminal node. When the runner reaches this node the run is marked
-          complete. No config needed.
+          {t("Terminal node. When the runner reaches this node the run is marked complete. No config needed.")}
         </p>
       );
   }
@@ -231,6 +233,7 @@ function SendButtonsForm({
   onUpdateConfig: (patch: Record<string, unknown>) => void;
   showAdvanced: boolean;
 }) {
+  const { t } = useLanguage();
   const buttons = cfg.buttons ?? [];
   const updateButton = (
     idx: number,
@@ -246,7 +249,7 @@ function SendButtonsForm({
         ...buttons,
         {
           reply_id: `btn_${buttons.length + 1}`,
-          title: "Option",
+          title: t("Option"),
           next_node_key: "",
         },
       ],
@@ -270,7 +273,7 @@ function SendButtonsForm({
       <div>
         <div className="mb-2 flex items-center justify-between">
           <label className="text-xs text-muted-foreground">
-            Buttons (1–3) — each one routes to a different next node
+            {t("Buttons (1–3) — each one routes to a different next node")}
           </label>
         </div>
         <div className="flex flex-col gap-3">
@@ -299,7 +302,7 @@ function SendButtonsForm({
               <Input
                 value={b.title}
                 onChange={(e) => updateButton(i, { title: e.target.value })}
-                placeholder="Visible title (≤20 chars)"
+                placeholder={t("Visible title (≤20 chars)")}
                 className="bg-muted"
                 maxLength={20}
               />
@@ -308,13 +311,14 @@ function SendButtonsForm({
                 nodes={allNodes}
                 excludeKey={currentKey}
                 onChange={(v) => updateButton(i, { next_node_key: v ?? "" })}
-                placeholder="Next node…"
+                placeholder={t("Next node…")}
               />
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => removeButton(i)}
                 className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                aria-label={t("Remove button")}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
@@ -329,7 +333,7 @@ function SendButtonsForm({
             className="mt-2"
           >
             <Plus className="h-3.5 w-3.5" />
-            Adicionar botão
+            {t("Add button")}
           </Button>
         )}
       </div>
@@ -369,6 +373,7 @@ function SendListForm({
   onUpdateConfig: (patch: Record<string, unknown>) => void;
   showAdvanced: boolean;
 }) {
+  const { t } = useLanguage();
   const sections = cfg.sections ?? [];
   const totalRows = sections.reduce((sum, s) => sum + s.rows.length, 0);
 
@@ -391,7 +396,7 @@ function SendListForm({
           rows: [
             {
               reply_id: `row_${totalRows + 1}`,
-              title: `Option ${totalRows + 1}`,
+              title: `${t("Option")} ${totalRows + 1}`,
               next_node_key: "",
             },
           ],
@@ -428,7 +433,7 @@ function SendListForm({
                 ...s.rows,
                 {
                   reply_id: `row_${totalRows + 1}`,
-                  title: `Option ${totalRows + 1}`,
+                  title: `${t("Option")} ${totalRows + 1}`,
                   next_node_key: "",
                 },
               ],
@@ -466,7 +471,7 @@ function SendListForm({
 
       <div className="mt-2">
         <label className="mb-2 block text-xs text-muted-foreground">
-          Rows (1–10 total across all sections)
+          {t("Rows (1–10 total across all sections)")}
         </label>
         {sections.map((section, sIdx) => (
           <div
@@ -479,7 +484,7 @@ function SendListForm({
                 onChange={(e) =>
                   updateSection(sIdx, { title: e.target.value })
                 }
-                placeholder={`Section ${sIdx + 1} title (optional)`}
+                placeholder={`${t("Section")} ${sIdx + 1} — ${t("title (optional)")}`}
                 className="bg-muted text-xs"
               />
               {sections.length > 1 && (
@@ -488,7 +493,7 @@ function SendListForm({
                   size="sm"
                   onClick={() => removeSection(sIdx)}
                   className="shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                  aria-label="Remove section"
+                  aria-label={t("Remove section")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -524,7 +529,7 @@ function SendListForm({
                   onChange={(e) =>
                     updateRow(sIdx, rIdx, { title: e.target.value })
                   }
-                  placeholder="Row title (≤24)"
+                  placeholder={t("Row title (≤24)")}
                   className="bg-muted"
                   maxLength={24}
                 />
@@ -535,13 +540,14 @@ function SendListForm({
                   onChange={(v) =>
                     updateRow(sIdx, rIdx, { next_node_key: v ?? "" })
                   }
-                  placeholder="Next node…"
+                  placeholder={t("Next node…")}
                 />
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => removeRow(sIdx, rIdx)}
                   className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  aria-label={t("Remove row")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -555,7 +561,7 @@ function SendListForm({
                 className="mt-1"
               >
                 <Plus className="h-3.5 w-3.5" />
-                Adicionar linha
+                {t("Add row")}
               </Button>
             )}
           </div>
@@ -566,7 +572,7 @@ function SendListForm({
         {sections.length < 10 && (
           <Button variant="outline" size="sm" onClick={addSection}>
             <Plus className="h-3.5 w-3.5" />
-            Adicionar seção
+            {t("Add section")}
           </Button>
         )}
       </div>
@@ -587,12 +593,6 @@ interface ConditionCfg {
   false_next?: string;
 }
 
-interface UserTag {
-  id: string;
-  name: string;
-  color?: string;
-}
-
 function ConditionForm({
   cfg,
   allNodes,
@@ -604,7 +604,9 @@ function ConditionForm({
   currentKey: string;
   onUpdateConfig: (patch: Record<string, unknown>) => void;
 }) {
+  const { t } = useLanguage();
   const tags = useUserTags();
+  const tagItems = tagSelectItems(tags);
 
   const subject = cfg.subject ?? "var";
   const operator = cfg.operator ?? "equals";
@@ -614,9 +616,14 @@ function ConditionForm({
     <>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">If</label>
+          <label className="mb-1 block text-xs text-muted-foreground">{t("If")}</label>
           <Select
             value={subject}
+            items={{
+              var: t("Captured variable"),
+              tag: t("Contact has tag"),
+              contact_field: t("Contact field"),
+            }}
             onValueChange={(v) =>
               onUpdateConfig({ subject: v as ConditionCfg["subject"] })
             }
@@ -625,32 +632,35 @@ function ConditionForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="var">Captured variable</SelectItem>
-              <SelectItem value="tag">Contact has tag</SelectItem>
-              <SelectItem value="contact_field">Contact field</SelectItem>
+              <SelectItem value="var">{t("Captured variable")}</SelectItem>
+              <SelectItem value="tag">{t("Contact has tag")}</SelectItem>
+              <SelectItem value="contact_field">{t("Contact field")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className="md:col-span-2">
           <label className="mb-1 block text-xs text-muted-foreground">
-            {subject === "var"
-              ? "var name"
-              : subject === "tag"
-                ? "Tag"
-                : "Field"}
+            {t(
+              subject === "var"
+                ? "Variable name"
+                : subject === "tag"
+                  ? "Tag"
+                  : "Field",
+            )}
           </label>
           {subject === "tag" && tags.length > 0 ? (
             <Select
               value={cfg.subject_key ?? ""}
+              items={tagItems}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
               <SelectTrigger className="bg-muted">
-                <SelectValue placeholder="Pick a tag…" />
+                <SelectValue placeholder={t("Pick a tag…")} />
               </SelectTrigger>
               <SelectContent>
-                {tags.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
+                {tags.map((tag) => (
+                  <SelectItem key={tag.id} value={tag.id}>
+                    {tag.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -658,16 +668,22 @@ function ConditionForm({
           ) : subject === "contact_field" ? (
             <Select
               value={cfg.subject_key ?? ""}
+              items={{
+                name: t("Name"),
+                email: t("Email"),
+                phone: t("Phone"),
+                company: t("Company"),
+              }}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
               <SelectTrigger className="bg-muted">
-                <SelectValue placeholder="Pick a field…" />
+                <SelectValue placeholder={t("Pick a field…")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="name">name</SelectItem>
-                <SelectItem value="email">email</SelectItem>
-                <SelectItem value="phone">phone</SelectItem>
-                <SelectItem value="company">company</SelectItem>
+                <SelectItem value="name">{t("Name")}</SelectItem>
+                <SelectItem value="email">{t("Email")}</SelectItem>
+                <SelectItem value="phone">{t("Phone")}</SelectItem>
+                <SelectItem value="company">{t("Company")}</SelectItem>
               </SelectContent>
             </Select>
           ) : (
@@ -676,7 +692,7 @@ function ConditionForm({
               onChange={(e) =>
                 onUpdateConfig({ subject_key: e.target.value })
               }
-              placeholder={subject === "var" ? "e.g. email" : "tag UUID"}
+              placeholder={subject === "var" ? t("e.g. email") : t("No tags yet — create one in Contacts")}
               className="bg-muted font-mono text-xs"
             />
           )}
@@ -690,9 +706,15 @@ function ConditionForm({
         )}
       >
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Operator</label>
+          <label className="mb-1 block text-xs text-muted-foreground">{t("Operator")}</label>
           <Select
             value={operator}
+            items={{
+              present: t("is present"),
+              absent: t("is absent"),
+              equals: t("equals"),
+              contains: t("contains"),
+            }}
             onValueChange={(v) =>
               onUpdateConfig({ operator: v as ConditionCfg["operator"] })
             }
@@ -701,16 +723,16 @@ function ConditionForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="present">is present</SelectItem>
-              <SelectItem value="absent">is absent</SelectItem>
-              <SelectItem value="equals">equals</SelectItem>
-              <SelectItem value="contains">contains</SelectItem>
+              <SelectItem value="present">{t("is present")}</SelectItem>
+              <SelectItem value="absent">{t("is absent")}</SelectItem>
+              <SelectItem value="equals">{t("equals")}</SelectItem>
+              <SelectItem value="contains">{t("contains")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         {showValue && (
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Valor</label>
+            <label className="mb-1 block text-xs text-muted-foreground">{t("Value")}</label>
             <Input
               value={cfg.value ?? ""}
               onChange={(e) => onUpdateConfig({ value: e.target.value })}
@@ -761,15 +783,18 @@ function SetTagForm({
   currentKey: string;
   onUpdateConfig: (patch: Record<string, unknown>) => void;
 }) {
+  const { t } = useLanguage();
   const tags = useUserTags();
+  const tagItems = tagSelectItems(tags);
 
   return (
     <>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Action</label>
+          <label className="mb-1 block text-xs text-muted-foreground">{t("Action")}</label>
           <Select
             value={cfg.mode ?? "add"}
+            items={{ add: t("Add tag"), remove: t("Remove tag") }}
             onValueChange={(v) =>
               onUpdateConfig({ mode: v as SetTagCfg["mode"] })
             }
@@ -778,25 +803,26 @@ function SetTagForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="add">Add tag</SelectItem>
-              <SelectItem value="remove">Remove tag</SelectItem>
+              <SelectItem value="add">{t("Add tag")}</SelectItem>
+              <SelectItem value="remove">{t("Remove tag")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Tag</label>
+          <label className="mb-1 block text-xs text-muted-foreground">{t("Tag")}</label>
           {tags.length > 0 ? (
             <Select
               value={cfg.tag_id ?? ""}
+              items={tagItems}
               onValueChange={(v) => onUpdateConfig({ tag_id: v })}
             >
               <SelectTrigger className="bg-muted">
-                <SelectValue placeholder="Pick a tag…" />
+                <SelectValue placeholder={t("Pick a tag…")} />
               </SelectTrigger>
               <SelectContent>
-                {tags.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
+                {tags.map((tag) => (
+                  <SelectItem key={tag.id} value={tag.id}>
+                    {tag.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -805,7 +831,7 @@ function SetTagForm({
             <Input
               value={cfg.tag_id ?? ""}
               onChange={(e) => onUpdateConfig({ tag_id: e.target.value })}
-              placeholder="Tag UUID"
+              placeholder={t("No tags yet — create one in Contacts")}
               className="bg-muted font-mono text-xs"
             />
           )}
@@ -823,29 +849,17 @@ function SetTagForm({
 }
 
 /**
- * Shared loader for both `condition` (subject=tag) and `set_tag`.
- * Falls back to raw UUID input if the endpoint is absent on older
- * deployments — the form remains authorable in that case.
+ * Account tags for both `condition` (subject=tag) and `set_tag` — loaded
+ * once by the editor context. Empty when the endpoint is absent on older
+ * deployments, in which case the pickers fall back to a raw input.
  */
-function useUserTags(): UserTag[] {
-  const [tags, setTags] = useState<UserTag[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/tags").catch(() => null);
-        if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
-      } catch {
-        // Tags endpoint absent — caller falls back to raw input.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return tags;
+function useUserTags() {
+  return useFlowEditor().tags;
+}
+
+/** Label map for Base UI's Select so the trigger shows the tag name. */
+function tagSelectItems(tags: UserTag[]): Record<string, string> {
+  return Object.fromEntries(tags.map((tag) => [tag.id, tag.name]));
 }
 
 // ============================================================
@@ -884,6 +898,7 @@ function SendMediaForm({
   currentKey: string;
   onUpdateConfig: (patch: Record<string, unknown>) => void;
 }) {
+  const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -897,7 +912,7 @@ function SendMediaForm({
     async (file: File) => {
       if (file.size > MEDIA_MAX_BYTES) {
         toast.error(
-          `File is ${(file.size / 1024 / 1024).toFixed(1)} MB — limit is 16 MB.`,
+          `${t("File is")} ${(file.size / 1024 / 1024).toFixed(1)} MB — ${t("limit is 16 MB.")}`,
         );
         return;
       }
@@ -912,15 +927,15 @@ function SendMediaForm({
           media_url: publicUrl,
           filename: file.name,
         });
-        toast.success("File uploaded.");
+        toast.success(t("File uploaded."));
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Upload failed.";
+        const msg = err instanceof Error ? err.message : t("Upload failed.");
         toast.error(msg);
       } finally {
         setUploading(false);
       }
     },
-    [onUpdateConfig],
+    [onUpdateConfig, t],
   );
 
   const handleClear = () => {
@@ -930,9 +945,14 @@ function SendMediaForm({
   return (
     <>
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">Media type</label>
+        <label className="mb-1 block text-xs text-muted-foreground">{t("Media type")}</label>
         <Select
           value={mediaType}
+          items={{
+            image: t("Image (PNG, JPEG, WebP)"),
+            video: t("Video (MP4, 3GP)"),
+            document: t("Document (PDF, Word, Excel, PowerPoint, TXT)"),
+          }}
           onValueChange={(v) => {
             // Changing type clears the existing file — the bucket
             // accepts different MIME sets per type and a previously
@@ -945,20 +965,20 @@ function SendMediaForm({
           }}
         >
           <SelectTrigger className="bg-muted">
-            <SelectValue />
+            <SelectValue placeholder={t("Pick a media type…")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="image">Image (PNG, JPEG, WebP)</SelectItem>
-            <SelectItem value="video">Video (MP4, 3GP)</SelectItem>
+            <SelectItem value="image">{t("Image (PNG, JPEG, WebP)")}</SelectItem>
+            <SelectItem value="video">{t("Video (MP4, 3GP)")}</SelectItem>
             <SelectItem value="document">
-              Documento (PDF, Word, Excel, PowerPoint, TXT)
+              {t("Document (PDF, Word, Excel, PowerPoint, TXT)")}
             </SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">File</label>
+        <label className="mb-1 block text-xs text-muted-foreground">{t("File")}</label>
         {cfg.media_url ? (
           <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs">
             <Paperclip className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
@@ -975,7 +995,7 @@ function SendMediaForm({
               type="button"
               onClick={handleClear}
               className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Remove file"
+              aria-label={t("Remove file")}
               disabled={uploading}
             >
               <X className="h-3.5 w-3.5" />
@@ -991,12 +1011,12 @@ function SendMediaForm({
             {uploading ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Enviando…
+                {t("Uploading…")}
               </>
             ) : (
               <>
                 <Upload className="h-3.5 w-3.5" />
-                Clique para enviar (máx. 16 MB)
+                {t("Click to upload (max 16 MB)")}
               </>
             )}
           </button>
@@ -1025,12 +1045,12 @@ function SendMediaForm({
       {isDocument && (
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">
-            Nome do arquivo exibido ao cliente (somente documentos)
+            {t("Filename shown to the customer (documents only)")}
           </label>
           <Input
             value={cfg.filename ?? ""}
             onChange={(e) => onUpdateConfig({ filename: e.target.value })}
-            placeholder="invoice.pdf"
+            placeholder={t("invoice.pdf")}
             className="bg-muted text-xs"
           />
         </div>

@@ -563,7 +563,7 @@ function SourceDetail({
             {pipeline && stage
               ? `${t('Deals go to')} ${pipeline.name} → ${stage.name}`
               : t('No deal is created — the lead becomes a contact only.')}
-            {assignee ? ` · ${t('Assigned to')} ${assignee.full_name}` : ''}
+            {assignee ? ` · ${t('Assignee')}: ${assignee.full_name}` : ''}
             {tags.length > 0 ? ` · ${t('Tags')}: ${tags.map((tg) => tg.name).join(', ')}` : ''}
           </CardDescription>
         </CardHeader>
@@ -976,9 +976,9 @@ function LeadSourceDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t('Assigned to')}</Label>
+              <Label className="text-muted-foreground">{t('Assignee')}</Label>
               <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className={SELECT_CLASS}>
-                <option value="">{t('Unassigned')}</option>
+                <option value="">{t('No assignee')}</option>
                 {resources.members.map((m) => (
                   <option key={m.user_id} value={m.user_id}>
                     {m.full_name || m.email || m.user_id}
@@ -1024,7 +1024,7 @@ function LeadSourceDialog({
             <div>
               <Label className="text-muted-foreground">{t('Field mapping')}</Label>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {t('CRM field ← payload key. Leave blank to use the default key (name/nome, phone/telefone, email, company/empresa). Dotted paths like lead.telefone work.')}
+                {t('CRM field ← payload key. Leave blank to use the default key (name, phone, email, company — Portuguese aliases work too). Dotted paths like lead.phone work.')}
               </p>
             </div>
             <div className="overflow-hidden rounded-lg border border-border">
