@@ -19,6 +19,13 @@ const eslintConfig = defineConfig([
     "services/**",
     // PM2 process files are CommonJS by design (PM2 loads them with require()).
     "deploy/**/*.cjs",
+    // Claude Code worktrees under .claude/worktrees/** are full nested
+    // checkouts (their own src/, node_modules/, .next/ build cache). A
+    // narrow ".next/**" above only matches the repo root, not a nested
+    // copy at this depth, so a leftover worktree's build cache was
+    // getting linted as if it were source — thousands of false errors
+    // from generated/transpiled output. Exclude the whole directory.
+    ".claude/**",
   ]),
 ]);
 

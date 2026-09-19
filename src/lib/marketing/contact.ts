@@ -46,26 +46,26 @@ export function validateContactSubmission(
   }
 
   const name = typeof input.name === "string" ? input.name.trim() : "";
-  if (!name) return { ok: false, error: "Name is required" };
+  if (!name) return { ok: false, error: "Nome é obrigatório" };
   if (name.length > CONTACT_LIMITS.name) {
-    return { ok: false, error: `Name must be ${CONTACT_LIMITS.name} characters or fewer` };
+    return { ok: false, error: `Nome deve ter no máximo ${CONTACT_LIMITS.name} caracteres` };
   }
 
   const email = typeof input.email === "string" ? input.email.trim() : "";
   if (!email || email.length > CONTACT_LIMITS.email || !EMAIL_RE.test(email)) {
-    return { ok: false, error: "A valid email is required" };
+    return { ok: false, error: "Informe um e-mail válido" };
   }
 
   const companyRaw = typeof input.company === "string" ? input.company.trim() : "";
   if (companyRaw.length > CONTACT_LIMITS.company) {
-    return { ok: false, error: `Company must be ${CONTACT_LIMITS.company} characters or fewer` };
+    return { ok: false, error: `Empresa deve ter no máximo ${CONTACT_LIMITS.company} caracteres` };
   }
   const company = companyRaw.length > 0 ? companyRaw : null;
 
   const message = typeof input.message === "string" ? input.message.trim() : "";
-  if (!message) return { ok: false, error: "Message is required" };
+  if (!message) return { ok: false, error: "Mensagem é obrigatória" };
   if (message.length > CONTACT_LIMITS.message) {
-    return { ok: false, error: `Message must be ${CONTACT_LIMITS.message} characters or fewer` };
+    return { ok: false, error: `Mensagem deve ter no máximo ${CONTACT_LIMITS.message} caracteres` };
   }
 
   return { ok: true, data: { name, email, company, message } };

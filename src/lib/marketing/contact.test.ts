@@ -34,17 +34,20 @@ describe("validateContactSubmission", () => {
 
   it("rejects a missing name", () => {
     const result = validateContactSubmission({ ...BASE, name: "" });
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, error: "Nome é obrigatório" });
   });
 
   it("rejects an invalid email", () => {
     const result = validateContactSubmission({ ...BASE, email: "not-an-email" });
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, error: "Informe um e-mail válido" });
   });
 
   it("rejects a message over the length limit", () => {
     const result = validateContactSubmission({ ...BASE, message: "a".repeat(2001) });
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      error: "Mensagem deve ter no máximo 2000 caracteres",
+    });
   });
 
   it("treats a blank company as null", () => {

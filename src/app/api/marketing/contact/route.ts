@@ -11,7 +11,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { supabaseServerUrl } from "@/lib/supabase/url";
 import { validateContactSubmission } from "@/lib/marketing/contact";
 
@@ -37,7 +37,28 @@ function getClientIp(request: Request): string {
 export async function POST(request: Request) {
   const ip = getClientIp(request);
   const limit = checkRateLimit(`marketing-contact:${ip}`, RATE_LIMITS.marketingContact);
-  if (!limit.success) return rateLimitResponse(limit);
+  if (!limit.success) {
+    // rateLimitResponse() (src/lib/rate-limit.ts) is shared with every other
+    // route and returns "Rate limit exceeded" — this page is pt-BR, so this
+    // route builds its own 429 with the same status/headers instead of
+    // translating the shared helper's message for every other caller.
+    const retryAfterSec = Math.max(1, Math.ceil((limit.reset - Date.now()) / 1000));
+    return NextResponse.json(
+      {
+        error: "Muitas tentativas. Aguarde um minuto e tente novamente.",
+        retry_after_seconds: retryAfterSec,
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(retryAfterSec),
+          "X-RateLimit-Limit": String(limit.limit),
+          "X-RateLimit-Remaining": String(limit.remaining),
+          "X-RateLimit-Reset": String(Math.ceil(limit.reset / 1000)),
+        },
+      },
+    );
+  }
 
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) {
