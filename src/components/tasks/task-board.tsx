@@ -26,6 +26,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Plus } from "lucide-react";
 
 import { useLanguage } from "@/hooks/use-language";
+import { dndAccessibility } from "@/lib/dnd-accessibility";
 import { groupByStatus, sortStatuses, type Task, type TaskMember, type TaskStatus } from "@/lib/tasks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,7 @@ export function TaskBoard({
   onAdd,
   readOnly,
 }: TaskBoardProps) {
+  const { language } = useLanguage();
   const sorted = useMemo(() => sortStatuses(statuses), [statuses]);
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const memberById = useMemo(() => new Map(members.map((m) => [m.user_id, m])), [members]);
@@ -158,6 +160,7 @@ export function TaskBoard({
 
   return (
     <DndContext
+      accessibility={dndAccessibility(language)}
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={handleDragStart}

@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { Toaster } from "sonner";
 
+import { useLanguage } from "@/hooks/use-language";
 import { useTheme } from "@/hooks/use-theme";
 import { DEFAULT_MODE } from "@/lib/themes";
 
@@ -34,11 +35,16 @@ function useIsClient() {
  */
 export function ThemedToaster() {
   const { mode } = useTheme();
+  const { t } = useLanguage();
   const isClient = useIsClient();
   return (
     <Toaster
       theme={isClient ? mode : DEFAULT_MODE}
       position="top-right"
+      // Sonner labels its live region "Notifications alt+T" by default;
+      // screen readers read it on every page.
+      containerAriaLabel={t("Notifications")}
+      hotkey={["altKey", "KeyT"]}
       toastOptions={{
         style: {
           background: "var(--popover)",

@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useLanguage } from "@/hooks/use-language";
+import { dndAccessibility } from "@/lib/dnd-accessibility";
+
 const STAGE_COLORS = [
   "#3b82f6",
   "#6366f1",
@@ -69,6 +72,7 @@ export function PipelineSettings({
   onCreateNewPipeline,
 }: PipelineSettingsProps) {
   const supabase = createClient();
+  const { language } = useLanguage();
 
   const [name, setName] = useState(pipeline.name);
   const [localStages, setLocalStages] = useState<PipelineStage[]>(stages);
@@ -250,6 +254,7 @@ export function PipelineSettings({
               <div className="grid gap-2">
                 <Label className="text-muted-foreground">Stages</Label>
                 <DndContext
+                  accessibility={dndAccessibility(language)}
                   sensors={sensors}
                   collisionDetection={closestCenter}
                   onDragEnd={handleReorder}

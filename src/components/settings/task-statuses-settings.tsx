@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import { dndAccessibility } from "@/lib/dnd-accessibility";
 import {
   TASK_STATUS_COLORS,
   TASK_STATUS_KINDS,
@@ -58,7 +59,7 @@ const SELECT_CLASS =
  */
 export function TaskStatusesSettings() {
   const supabase = useMemo(() => createClient(), []);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { accountId, canEditSettings, profileLoading } = useAuth();
   const readOnly = !canEditSettings;
 
@@ -235,7 +236,7 @@ export function TaskStatusesSettings() {
                 </div>
               )}
 
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorder}>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={dndAccessibility(language)} onDragEnd={handleReorder}>
                 <SortableContext
                   items={statuses.map((s) => s.id)}
                   strategy={verticalListSortingStrategy}
