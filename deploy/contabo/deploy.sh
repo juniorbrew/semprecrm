@@ -10,7 +10,16 @@ git fetch --prune origin
 git checkout -q "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
-npx supabase db push           # applies any new migrations before the build ships code that depends on them
+# Migrations before the build ships code that depends on them. The CLI needs
+# an explicit --db-url on a self-hosted stack (there is no linked project), and
+# the host port 5432 is Supavisor (user "postgres.<tenant>"), so the URL lives
+# in .env.production as SUPABASE_DB_URL. Without it the step is skipped loudly.
+DB_URL="${SUPABASE_DB_URL:-$(grep -E '^SUPABASE_DB_URL=' .env.production 2>/dev/null | cut -d= -f2- || true)}"
+if [ -n "$DB_URL" ]; then
+  npx -y supabase db push --db-url "$DB_URL"
+else
+  echo "AVISO: SUPABASE_DB_URL não definido — migrações não aplicadas" >&2
+fi
 
 npm ci --include=dev            # build needs devDependencies even if NODE_ENV=production
 npm run build                  # .env.production is read at build time for NEXT_PUBLIC_*
