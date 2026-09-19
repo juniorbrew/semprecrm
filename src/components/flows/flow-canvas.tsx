@@ -55,6 +55,7 @@ import {
   type NodeProps,
   type OnNodeDrag,
 } from "@xyflow/react";
+import type { Language } from "@/lib/i18n";
 import "@xyflow/react/dist/style.css";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -108,6 +109,54 @@ function slotLabel(
   return label;
 }
 
+/**
+ * Accessible names React Flow renders on its own chrome (Controls
+ * buttons, minimap, hidden a11y hints). The library only ships English
+ * defaults, so every string goes through `t` — and the DOM walker never
+ * has to guess at attributes the library composes itself.
+ */
+function ariaLabelConfig(t: (english: string) => string, language: Language) {
+  const directions: Record<string, string> =
+    language === "pt-BR"
+      ? { up: "para cima", down: "para baixo", left: "para a esquerda", right: "para a direita" }
+      : { up: "up", down: "down", left: "left", right: "right" };
+  return {
+    "controls.ariaLabel": t("Canvas controls"),
+    "controls.zoomIn.ariaLabel": t("Zoom in"),
+    "controls.zoomOut.ariaLabel": t("Zoom out"),
+    "controls.fitView.ariaLabel": t("Fit view"),
+    "controls.interactive.ariaLabel": t("Toggle interactivity"),
+    "minimap.ariaLabel": t("Flow overview map"),
+    "handle.ariaLabel": t("Connection handle"),
+    "node.a11yDescription.default": t(
+      "Press Enter or Space to select a node. Press Delete to remove it and Escape to cancel.",
+    ),
+    "node.a11yDescription.keyboardDisabled": t(
+      "Press Enter or Space to select a node. You can then use the arrow keys to move the node around. Press Delete to remove it and Escape to cancel.",
+    ),
+    "edge.a11yDescription.default": t(
+      "Press Enter or Space to select a connection. You can then press Delete to remove it or Escape to cancel.",
+    ),
+    "node.a11yDescription.ariaLiveMessage": ({
+      direction,
+      x,
+      y,
+    }: {
+      direction: string;
+      x: number;
+      y: number;
+    }) =>
+      `${t("Moved selected node")} ${directions[direction] ?? direction}. ${t("New position")}: x ${x}, y ${y}`,
+  };
+}
+
+/** "Edge from a to b" is composed by the library; we set our own. */
+function edgeAriaLabel(source: string, target: string, language: Language): string {
+  return language === "pt-BR"
+    ? `Conexão de ${source} para ${target}`
+    : `Connection from ${source} to ${target}`;
+}
+
 // React-Flow node `data` payload — the bits our custom renderer needs.
 interface NodeData extends Record<string, unknown> {
   node: BuilderNode;
@@ -130,9 +179,10 @@ const NODE_HEIGHT = 90;
 
 function FlowNodeCard({ data, selected }: NodeProps) {
   const { t } = useLanguage();
+  const { tagName } = useFlowEditor();
   const { node, isEntry, isFlashed } = data as NodeData;
   const meta = NODE_META[node.node_type];
-  const summary = summarizeNode(node, t);
+  const summary = summarizeNode(node, t, tagName);
   const Icon = meta.icon;
   const slots = outgoingSlots(node);
   // Start nodes are entry-only; nothing ever targets them, so they
@@ -253,7 +303,7 @@ function FlowCanvasInner() {
     removeNode,
     flashKey,
   } = useFlowEditor();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const reactFlow = useReactFlow();
   const builderNodes = state.nodes;
   const entryNodeId = state.entry_node_id;
@@ -311,6 +361,7 @@ function FlowCanvasInner() {
           x: fallback?.x ?? n.position_x ?? 0,
           y: fallback?.y ?? n.position_y ?? 0,
         },
+        ariaLabel: `${t(NODE_META[n.node_type].label)} · ${n.node_key}`,
         data: {
           node: n,
           isEntry: n.node_key === entryNodeId,
@@ -320,7 +371,7 @@ function FlowCanvasInner() {
     });
 
     return nodes;
-  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions]);
+  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions, t]);
 
   const [rfNodes, setRfNodes] = useState<RfNode<NodeData>[]>(derivedRfNodes);
 
@@ -339,6 +390,7 @@ function FlowCanvasInner() {
       source: e.source,
       target: e.target,
       sourceHandle: e.sourceHandle,
+      ariaLabel: edgeAriaLabel(e.source, e.target, language),
       label:
         e.sourceHandle && e.label !== undefined
           ? slotLabel(e.sourceHandle, e.label, t)
@@ -352,7 +404,7 @@ function FlowCanvasInner() {
     }));
 
     return rfEdges;
-  }, [builderNodes, t]);
+  }, [builderNodes, t, language]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<RfNode<NodeData>>[]) => {
@@ -482,7 +534,7 @@ function FlowCanvasInner() {
   if (rfNodes.length === 0) {
     return (
       <div className="flex h-[60vh] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-background text-sm text-muted-foreground">
-        <p>No nodes yet.</p>
+        <p>{t("No nodes yet.")}</p>
         <CanvasAddNodeButton />
       </div>
     );
@@ -515,6 +567,7 @@ function FlowCanvasInner() {
           // size, so we don't need to zoom past 1.5x.
           minZoom={0.2}
           maxZoom={1.5}
+          ariaLabelConfig={ariaLabelConfig(t, language)}
         >
           <Background gap={24} size={1} color="var(--border)" />
           <Controls

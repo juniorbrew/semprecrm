@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import { NOTES_LABEL } from "@/components/contacts/notes-label";
 import { CURRENCIES } from "@/lib/currency";
 import { AUDIT_ACTIONS } from "@/lib/audit";
 import { recordAudit } from "@/lib/audit-client";
@@ -60,7 +61,7 @@ export function DealFormBody({
 }: DealFormBodyProps) {
   const supabase = createClient();
   const { accountId, defaultCurrency } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [title, setTitle] = useState(deal?.title ?? "");
   const [value, setValue] = useState(String(deal?.value ?? ""));
@@ -292,13 +293,13 @@ export function DealFormBody({
         </div>
 
         <div className="grid gap-2">
-          <Label className="text-muted-foreground">{t("Assigned to")}</Label>
+          <Label className="text-muted-foreground">{t("Assignee")}</Label>
           <select
             value={assignedTo}
             onChange={(e) => setAssignedTo(e.target.value)}
             className={SELECT_CLASS}
           >
-            <option value="">{t("Unassigned")}</option>
+            <option value="">{t("No assignee")}</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.full_name || p.email}
@@ -308,7 +309,9 @@ export function DealFormBody({
         </div>
 
         <div className="grid gap-2">
-          <Label className="text-muted-foreground">{t("Notes")}</Label>
+          <Label className="text-muted-foreground" data-no-translate>
+            {NOTES_LABEL[language]}
+          </Label>
           <Textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}

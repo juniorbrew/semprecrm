@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import { relativeTime, longDateTime } from "@/lib/pipelines/deal-dates";
 import {
@@ -55,7 +56,18 @@ import { LinkedEvents, ScheduleButton } from "@/components/calendar";
 import { cn } from "@/lib/utils";
 
 import { useTaskMembers, useTaskStatuses } from "./hooks";
-import { AssigneeAvatar, PRIORITY_LABELS, StatusChip, memberLabel } from "./task-chips";
+import { AssigneeAvatar, PRIORITY_LABELS, StatusChip, memberLabel, statusName } from "./task-chips";
+
+/**
+ * "Created … / Completed …" line under the title. Language-keyed (not
+ * `t()`) because the pt-BR forms are feminine — "Criada", "Concluída"
+ * (a *tarefa*) — while the catalogue's `Created`/`Completed` are the
+ * generic masculine ones.
+ */
+const TASK_DATES_COPY: Record<Language, { created: string; completed: string }> = {
+  "pt-BR": { created: "Criada", completed: "Concluída" },
+  "en-US": { created: "Created", completed: "Completed" },
+};
 
 const SELECT_CLASS =
   "h-8 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
@@ -360,12 +372,14 @@ function TaskDrawerBody({
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
         {isEdit && task && (
-          <p className="text-xs text-muted-foreground">
-            {t("Created")} {relativeTime(task.created_at, language)}
+          <p className="text-xs text-muted-foreground" data-no-translate>
+            {TASK_DATES_COPY[language].created}{" "}
+            {relativeTime(task.created_at, language)}
             {task.completed_at && (
               <>
                 {" · "}
-                {t("Completed")} {relativeTime(task.completed_at, language)}
+                {TASK_DATES_COPY[language].completed}{" "}
+                {relativeTime(task.completed_at, language)}
               </>
             )}
           </p>
@@ -436,7 +450,7 @@ function TaskDrawerBody({
             >
               {sorted.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name}
+                  {statusName(s, language)}
                 </option>
               ))}
             </select>
@@ -475,7 +489,7 @@ function TaskDrawerBody({
               }}
               className={SELECT_CLASS}
             >
-              <option value="">{t("Unassigned")}</option>
+              <option value="">{t("No assignee")}</option>
               {members.map((m) => (
                 <option key={m.user_id} value={m.user_id}>
                   {memberLabel(m)}

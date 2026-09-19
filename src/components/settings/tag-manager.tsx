@@ -221,7 +221,7 @@ export function TagManager() {
                     key={color.value}
                     type="button"
                     onClick={() => setSelectedColor(color.value)}
-                    aria-label={`${t('Use')} ${t(color.name)}`}
+                    aria-label={`${t('Use color')} ${t(color.name)}`}
                     aria-pressed={selectedColor === color.value}
                     className={cn(
                       'size-6 rounded-md transition-transform hover:scale-110',

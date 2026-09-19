@@ -67,8 +67,8 @@ const audienceOptions: {
   },
   {
     type: 'csv',
-    label: 'Upload CSV',
-    description: 'Upload a list of phone numbers',
+    label: 'Import CSV',
+    description: 'Import a list of phone numbers',
     icon: Upload,
   },
 ];

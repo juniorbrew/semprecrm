@@ -22,6 +22,46 @@ import type { BusinessHours, BusinessHoursRange, Weekday } from "@/types";
 const SELECT_CLASS =
   "rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none disabled:opacity-60";
 
+/**
+ * IANA zone → English label key (rendered through t()). The option
+ * shows "Horário de Brasília (America/Sao_Paulo)" instead of the bare
+ * identifier; zones outside the list fall back to a de-underscored id.
+ */
+const TIMEZONE_LABELS: Record<string, string> = {
+  "America/Sao_Paulo": "Brasília time",
+  "America/Manaus": "Manaus (Amazon time)",
+  "America/Belem": "Belém",
+  "America/Fortaleza": "Fortaleza",
+  "America/Recife": "Recife",
+  "America/Bahia": "Salvador (Bahia)",
+  "America/Cuiaba": "Cuiabá",
+  "America/Campo_Grande": "Campo Grande",
+  "America/Porto_Velho": "Porto Velho",
+  "America/Boa_Vista": "Boa Vista",
+  "America/Rio_Branco": "Rio Branco (Acre time)",
+  "America/Noronha": "Fernando de Noronha",
+  "America/Argentina/Buenos_Aires": "Buenos Aires",
+  "America/Montevideo": "Montevideo",
+  "America/Santiago": "Santiago",
+  "America/Bogota": "Bogotá",
+  "America/Lima": "Lima",
+  "America/Mexico_City": "Mexico City",
+  "America/New_York": "New York",
+  "America/Chicago": "Chicago",
+  "America/Denver": "Denver",
+  "America/Los_Angeles": "Los Angeles",
+  "Europe/Lisbon": "Lisbon",
+  "Europe/London": "London",
+  "Europe/Madrid": "Madrid",
+  "Europe/Paris": "Paris",
+  "Europe/Berlin": "Berlin",
+  "Europe/Rome": "Rome",
+  "Africa/Luanda": "Luanda",
+  "Africa/Maputo": "Maputo",
+  "Asia/Tokyo": "Tokyo",
+  "Australia/Sydney": "Sydney",
+};
+
 const TIME_INPUT_CLASS =
   "w-[5.5rem] rounded-md border border-border bg-card px-2 py-1 text-sm tabular-nums text-foreground focus:border-primary focus:outline-none disabled:opacity-60";
 
@@ -114,7 +154,7 @@ export function BusinessHoursEditor({ value, onChange, disabled }: BusinessHours
           >
             {timezones.map((tz) => (
               <option key={tz} value={tz}>
-                {tz.replace(/_/g, " ")}
+                {TIMEZONE_LABELS[tz] ? `${t(TIMEZONE_LABELS[tz])} (${tz})` : tz.replace(/_/g, " ")}
               </option>
             ))}
           </select>

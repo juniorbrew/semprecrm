@@ -318,13 +318,13 @@ const PT_BR_TEMPLATE_COPY: Record<string, string> = {
   // Gallery
   "Welcome menu": "Menu de boas-vindas",
   "Greet customers who type a keyword and route them to the right agent based on whether they're new or existing.":
-    "Receba clientes que digitam uma palavra-chave e encaminhe-os ao agente certo conforme sejam novos ou já clientes.",
+    "Receba clientes que digitam uma palavra-chave e encaminhe-os ao responsável certo conforme sejam novos ou já clientes.",
   "FAQ bot": "Bot de perguntas frequentes",
   "Answer common questions automatically. Customer picks a topic from a list; the bot replies with the answer and ends.":
     "Responda perguntas comuns automaticamente. O cliente escolhe um tópico da lista; o bot responde e encerra.",
   "Lead capture": "Captura de leads",
   "Greet first-time inbounds, capture name + email + company, then hand off to sales with the answers in the note.":
-    "Receba quem escreve pela primeira vez, capture nome, e-mail e empresa e transfira para vendas com as respostas na observação.",
+    "Receba quem escreve pela primeira vez, capture nome, e-mail e empresa e transfira para vendas com as respostas na nota.",
   // Keywords
   support: "suporte",
   help: "ajuda",
@@ -334,7 +334,7 @@ const PT_BR_TEMPLATE_COPY: Record<string, string> = {
   info: "info",
   // Welcome menu
   "Hi! 👋 Welcome to support. Are you an existing customer or new here?":
-    "Olá! 👋 Bem-vindo ao suporte. Você já é cliente ou é novo por aqui?",
+    "Olá! 👋 Boas-vindas ao suporte. Você já é cliente ou é a primeira vez por aqui?",
   "Tap a button below to continue.": "Toque em um botão abaixo para continuar.",
   "Existing customer": "Já sou cliente",
   "New customer": "Novo cliente",
@@ -350,7 +350,7 @@ const PT_BR_TEMPLATE_COPY: Record<string, string> = {
   Pricing: "Preços",
   "Refund policy": "Política de reembolso",
   Other: "Outros",
-  "Talk to a human": "Falar com um atendente",
+  "Talk to a human": "Falar com uma pessoa",
   "We're open Mon–Fri, 9am–6pm local time. Weekend support is limited to urgent issues.":
     "Atendemos de segunda a sexta, das 9h às 18h. Nos fins de semana, apenas casos urgentes.",
   "Our pricing starts at $9/mo. Visit https://example.com/pricing for the full breakdown.":
@@ -358,13 +358,13 @@ const PT_BR_TEMPLATE_COPY: Record<string, string> = {
   "Refunds are honored within 30 days of purchase. Reply with your order number and we'll process it.":
     "Reembolsos são aceitos em até 30 dias após a compra. Responda com o número do pedido e nós cuidamos do resto.",
   "Customer asked to talk to a human from the FAQ bot.":
-    "O cliente pediu para falar com um atendente pelo bot de perguntas frequentes.",
+    "O cliente pediu para falar com uma pessoa pelo bot de perguntas frequentes.",
   // Lead capture
   "Welcome! 👋 I'll ask a few quick questions so we can get you to the right person.":
-    "Bem-vindo! 👋 Vou fazer algumas perguntas rápidas para encaminhar você à pessoa certa.",
+    "Boas-vindas! 👋 Vou fazer algumas perguntas rápidas para encaminhar você à pessoa certa.",
   "What's your name?": "Qual é o seu nome?",
   "Thanks {{vars.name}}! What's your work email?":
-    "Obrigado, {{vars.name}}! Qual é o seu e-mail profissional?",
+    "Perfeito, {{vars.name}}! Qual é o seu e-mail profissional?",
   "Almost done — what's your company name?":
     "Quase lá — qual é o nome da sua empresa?",
   "New lead — name={{vars.name}}, email={{vars.email}}, company={{vars.company}}.":

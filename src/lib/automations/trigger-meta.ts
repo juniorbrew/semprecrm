@@ -55,7 +55,7 @@ const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
   tag_added: 'Etiqueta adicionada',
   time_based: 'Baseado em horário',
   lead_captured: 'Lead capturado',
-  conversation_inactive: 'Conversa sem resposta há X horas',
+  conversation_inactive: 'Conversa sem resposta',
 };
 
 export function triggerMeta(

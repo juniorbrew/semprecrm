@@ -20,8 +20,22 @@ export const DICT_INBOX: Record<string, string> = {
   'URL button': 'Botão de URL',
   'Final URL:': 'URL final:',
 
+  // ---- Private notes: "Nota interna" (overrides i18n-extra) ----
+  'Add team note': 'Adicionar nota interna',
+  'Team note': 'Nota interna',
+  'Write a note for the team…': 'Escreva uma nota interna…',
+
   // ---- Team chat ----
   'Send (Enter)': 'Enviar (Enter)',
+  // "Pesquisar", not "Buscar" (overrides i18n-extra; area dicts load after it)
+  'Search people': 'Pesquisar pessoas',
+  'Search people and groups': 'Pesquisar pessoas e grupos',
+
+  // ---- Broadcasts: audience step ----
+  'Send to every contact in your database':
+    'Enviar para todos os contatos da sua base',
+  'Import CSV': 'Importar CSV',
+  'Import a list of phone numbers': 'Importe uma lista de números de telefone',
 
   // ---- Role gates (GatedButton tooltips) ----
   "Read-only — your role can't create broadcasts":

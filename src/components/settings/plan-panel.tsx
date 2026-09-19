@@ -10,7 +10,6 @@ import {
   MODULES,
   MODULE_LABELS,
   PLAN_LABELS,
-  PLAN_STATUS_LABELS,
   daysUntil,
   type PlanStatus,
 } from "@/lib/plans";
@@ -22,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { SettingsPanelHead } from "./settings-panel-head";
+import { planStatusLabelKey } from "@/components/platform/plan-status-chip";
 import { SettingsChip, type ChipVariant } from "./settings-chip";
 
 const STATUS_VARIANT: Record<PlanStatus, ChipVariant> = {
@@ -94,13 +94,17 @@ export function PlanPanel() {
                 </dt>
                 <dd className="mt-1">
                   <SettingsChip variant={STATUS_VARIANT[ent.status]}>
-                    {t(PLAN_STATUS_LABELS[ent.status])}
+                    {t(planStatusLabelKey(ent.status))}
                   </SettingsChip>
                 </dd>
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {ent.status === "trial" ? t("Trial ends") : t("Valid until")}
+                  {!expiresLabel
+                    ? t("Validity")
+                    : ent.status === "trial"
+                      ? t("Trial ends")
+                      : t("Valid until")}
                 </dt>
                 <dd className="mt-1 flex items-center gap-1.5 text-sm text-foreground">
                   <CalendarClock className="size-4 text-muted-foreground" />
@@ -115,7 +119,7 @@ export function PlanPanel() {
                       ) : null}
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">{t("No expiry")}</span>
+                    <span className="text-muted-foreground">{t("No end date")}</span>
                   )}
                 </dd>
               </div>

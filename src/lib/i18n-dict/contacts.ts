@@ -33,6 +33,34 @@ export const DICT_CONTACTS: Record<string, string> = {
   // ---- Dashboard ----
   Total: 'Total',
 
+  // ---- Glossary (round 2): the person handling something is
+  // "Responsável" everywhere — deal drawer/form, tasks, agenda. The base
+  // `Owner`/`Unassigned` keys stay the account-role / generic forms, so
+  // the components use these keys instead.
+  'No assignee': 'Sem responsável',
+
+  // ---- Tasks: default status names (seeded in pt-BR; en-US reverse) ----
+  'To do': 'A fazer',
+
+  // ---- "Pesquisar", not "Buscar" (overrides i18n-extra; area dicts load after it) ----
+  'Search tasks': 'Pesquisar tarefas',
+  'Search task by title': 'Pesquisar tarefa pelo título',
+  'Search contact by name or phone': 'Pesquisar contato por nome ou telefone',
+
+  // ---- "Notas", not "Observações" (overrides i18n-extra) ----
+  'Add note': 'Adicionar nota',
+  'Add notes...': 'Adicionar notas...',
+  'Write a note...': 'Escreva uma nota...',
+  'No notes yet.': 'Nenhuma nota ainda.',
+  'Note added': 'Nota adicionada',
+  'Note deleted': 'Nota excluída',
+  'Delete note': 'Excluir nota',
+  'Note (optional)': 'Nota (opcional)',
+
+  // ---- CSV import dialog (sentence built around the literal header names) ----
+  'Upload a CSV with the required column': 'Envie um CSV com a coluna obrigatória',
+  'Optional columns:': 'Colunas opcionais:',
+
   // ---- Role gates (GatedButton tooltips) ----
   "Read-only — your role can't add or import contacts":
     'Somente leitura — seu perfil não pode adicionar ou importar contatos',

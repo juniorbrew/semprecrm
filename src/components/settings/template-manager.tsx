@@ -64,6 +64,25 @@ const HEADER_FORMAT_LABELS: Record<HeaderFormat, string> = {
   document: 'Document',
 };
 
+/** Meta quality rating → English label key (rendered through t()). */
+const QUALITY_LABELS: Record<string, string> = {
+  GREEN: 'High',
+  YELLOW: 'Medium',
+  RED: 'Low',
+};
+
+const BUTTON_TYPE_LABELS: Record<TemplateButton['type'], string> = {
+  QUICK_REPLY: 'Quick Reply',
+  URL: 'URL',
+  PHONE_NUMBER: 'Phone',
+  COPY_CODE: 'Copy Code',
+};
+
+/** Meta language code (`pt_BR`) → the way people write it (`pt-BR`). */
+function languageLabel(code: string): string {
+  return code.replace(/_/g, '-');
+}
+
 const categoryColors: Record<string, string> = {
   Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
   Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
@@ -134,14 +153,21 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 export function TemplateManager() {
   const supabase = createClient();
   const { user, loading: authLoading } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  // Default the Meta language code to the UI language — a pt-BR team
+  // almost always writes pt_BR templates.
+  const defaultLanguageCode = language === 'pt-BR' ? 'pt_BR' : 'en_US';
+  const blankForm = useMemo(
+    () => ({ ...emptyForm, language: defaultLanguageCode }),
+    [defaultLanguageCode],
+  );
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [form, setForm] = useState<TemplateFormData>(emptyForm);
+  const [form, setForm] = useState<TemplateFormData>(blankForm);
   // Non-null when the dialog is editing an existing row — switches the
   // submit handler from POST /submit to PATCH /[id] and changes the
   // dialog title + CTA. Set to the template id to pre-fill from a row.
@@ -224,7 +250,7 @@ export function TemplateManager() {
     return {
       name: form.name.trim(),
       category: form.category,
-      language: form.language.trim() || 'en_US',
+      language: form.language.trim() || defaultLanguageCode,
       header_type: form.header_format === 'none' ? undefined : form.header_format,
       header_content:
         form.header_format === 'text' ? form.header_content.trim() : undefined,
@@ -245,7 +271,7 @@ export function TemplateManager() {
     setForm({
       name: template.name,
       category: template.category,
-      language: template.language || 'en_US',
+      language: template.language || defaultLanguageCode,
       header_format: (template.header_type ?? 'none') as HeaderFormat,
       header_content: template.header_content ?? '',
       header_media_url: template.header_media_url ?? '',
@@ -260,7 +286,7 @@ export function TemplateManager() {
 
   function openCreate() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(blankForm);
     setDialogOpen(true);
   }
 
@@ -298,7 +324,7 @@ export function TemplateManager() {
             : 'Submitted to Meta — typical review time is 24 hours. Status updates automatically.',
       );
       setDialogOpen(false);
-      setForm(emptyForm);
+      setForm(blankForm);
       setEditingId(null);
     } catch (err) {
       console.error('Submit error:', err);
@@ -543,8 +569,8 @@ export function TemplateManager() {
                         {status.label}
                       </Badge>
                       {template.language && (
-                        <span className="text-xs text-muted-foreground uppercase">
-                          {template.language}
+                        <span className="text-xs text-muted-foreground" data-no-translate>
+                          {languageLabel(template.language)}
                         </span>
                       )}
                       {template.quality_score && (
@@ -558,7 +584,7 @@ export function TemplateManager() {
                           }`}
                           title={t('Meta quality score')}
                         >
-                          {template.quality_score}
+                          {t(QUALITY_LABELS[template.quality_score] ?? template.quality_score)}
                         </span>
                       )}
                     </div>
@@ -643,7 +669,7 @@ export function TemplateManager() {
           setDialogOpen(open);
           if (!open) {
             setEditingId(null);
-            setForm(emptyForm);
+            setForm(blankForm);
           }
         }}
       >
@@ -701,7 +727,7 @@ export function TemplateManager() {
                   }
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                    <SelectValue />
+                    <SelectValue>{(v: string | null) => (v ? t(v) : null)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border">
                     {CATEGORIES.map((cat) => (
@@ -710,7 +736,7 @@ export function TemplateManager() {
                         value={cat}
                         className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
                       >
-                        {cat}
+                        {t(cat)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -718,10 +744,10 @@ export function TemplateManager() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-muted-foreground">Language</Label>
+                <Label className="text-muted-foreground">{t('Language')}</Label>
                 <Input
                   list="template-language-codes"
-                  placeholder="en_US"
+                  placeholder={defaultLanguageCode}
                   value={form.language}
                   onChange={(e) =>
                     setForm({ ...form, language: e.target.value })
@@ -736,11 +762,13 @@ export function TemplateManager() {
                 </datalist>
                 <p className="text-[11px] text-muted-foreground">
                   {editingId
-                    ? 'Language is fixed once a template exists on Meta.'
+                    ? t('Language is fixed once a template exists on Meta.')
                     : (
                         <>
-                          Must match the exact code on Meta — <code>en_US</code>{' '}
-                          and <code>en</code> are distinct.
+                          {t('Must match the exact code on Meta —')}{' '}
+                          <code>{defaultLanguageCode}</code>{' '}
+                          {t('and')} <code>{language === 'pt-BR' ? 'pt' : 'en'}</code>{' '}
+                          {t('are distinct.')}
                         </>
                       )}
                 </p>
@@ -765,7 +793,9 @@ export function TemplateManager() {
                 }
               >
                 <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                  <SelectValue />
+                  <SelectValue>
+                    {(v: HeaderFormat | null) => (v ? t(HEADER_FORMAT_LABELS[v]) : null)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
                   {HEADER_FORMATS.map((type) => (
@@ -967,7 +997,11 @@ export function TemplateManager() {
                           }}
                         >
                           <SelectTrigger className="w-40 bg-muted border-border text-foreground h-8 text-xs">
-                            <SelectValue />
+                            <SelectValue>
+                              {(v: TemplateButton['type'] | null) =>
+                                v ? t(BUTTON_TYPE_LABELS[v]) : null
+                              }
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent className="bg-popover border-border">
                             <SelectItem

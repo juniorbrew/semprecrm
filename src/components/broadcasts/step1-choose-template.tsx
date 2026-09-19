@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loader2, FileText, ArrowRight, Search, Settings2 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
+import { templateLanguageLabel } from './template-language-label';
 
 /**
  * Meta template categories are stored title-cased ('Marketing' /
@@ -33,7 +34,7 @@ interface Step1Props {
 }
 
 export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack }: Step1Props) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -184,7 +185,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
                 </div>
                 <p className="line-clamp-3 text-xs text-muted-foreground">{template.body_text}</p>
                 <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                  <span>{template.language ?? 'en_US'}</span>
+                  <span data-no-translate>{templateLanguageLabel(template.language, language)}</span>
                   {/* Status is omitted on purpose — every template
                       shown here is already filtered to APPROVED,
                       so the chip carried no information. */}

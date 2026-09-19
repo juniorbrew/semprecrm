@@ -169,7 +169,7 @@ export default function FlowsPage() {
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? `Clone failed: ${res.status}`);
+        throw new Error(typeof json.error === "string" ? json.error : "");
       }
       const json = (await res.json()) as { flow: FlowRow };
       // The clone endpoint copies the English source template. For a
@@ -196,8 +196,8 @@ export default function FlowsPage() {
       setCreateOpen(false);
       router.push(`/flows/${json.flow.id}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : t("Clone failed");
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : "";
+      toast.error(msg || t("Couldn't create flow."));
     } finally {
       setCreating(false);
     }

@@ -274,6 +274,13 @@ function TriggerPanel({
           <label className="mb-1 block text-xs text-muted-foreground">{t("When…")}</label>
           <Select
             value={state.trigger_type}
+            // Base UI's Select.Value renders the raw value ("keyword")
+            // unless it can look the label up here.
+            items={{
+              keyword: t("A message contains a keyword"),
+              first_inbound_message: t("First inbound message from the customer"),
+              manual: t("Manual only (no automatic trigger)"),
+            }}
             onValueChange={(v) =>
               setState((s) => ({
                 ...s,
@@ -393,9 +400,10 @@ function NodeCard({
   onSetEntry: () => void;
 }) {
   const { t } = useLanguage();
+  const { tagName } = useFlowEditor();
   const meta = NODE_META[node.node_type];
   const hasError = issues.some((i) => i.severity === "error");
-  const preview = summarizeNode(node, t);
+  const preview = summarizeNode(node, t, tagName);
   return (
     <div
       ref={cardRef}

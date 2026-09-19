@@ -389,7 +389,14 @@ export function MembersTab() {
                           className="w-32 bg-muted border-border text-foreground"
                           disabled={isBusy}
                         >
-                          <SelectValue />
+                          {/* Base UI renders the raw value ("agent") unless
+                              told how to label it — always go through the
+                              role label map. */}
+                          <SelectValue>
+                            {(v: AccountRole | null) =>
+                              v ? t(ROLE_LABELS[v]) : null
+                            }
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {EDITABLE_ROLES.map((r) => (

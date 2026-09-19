@@ -304,7 +304,9 @@ export function InviteMemberDialog({
                   onValueChange={(v) => v && setRole(v as InviteRole)}
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                    <SelectValue />
+                    <SelectValue>
+                      {(v: InviteRole | null) => (v ? t(ROLE_LABELS[v]) : null)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">{t(ROLE_LABELS.admin)}</SelectItem>
@@ -324,7 +326,12 @@ export function InviteMemberDialog({
                   onValueChange={(v) => v && setExpiry(v)}
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                    <SelectValue />
+                    <SelectValue>
+                      {(v: string | null) => {
+                        const opt = EXPIRY_OPTIONS.find((o) => o.value === v);
+                        return opt ? t(opt.label) : v;
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {EXPIRY_OPTIONS.map((opt) => (

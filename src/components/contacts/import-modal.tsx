@@ -457,11 +457,14 @@ export function ImportModal({
               Import Contacts
             </DialogTitle>
             <DialogDescription className="leading-relaxed text-muted-foreground">
-              Upload a CSV with a required{' '}
+              {/* The header names are literal (the parser matches
+                  "phone", "name"…), so the sentence is built around
+                  them instead of translating "column" mid-phrase. */}
+              {t('Upload a CSV with the required column')}{' '}
               <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
                 {'phone'}
-              </code>{' '}
-              column. Optional:{' '}
+              </code>
+              . {t('Optional columns:')}{' '}
               <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
                 {'name'}
               </code>

@@ -80,7 +80,7 @@ export function CalendarSettings() {
     const error = searchParams.get('error');
     if (!connected && !error) return;
     if (connected === 'google' || connected === 'microsoft') {
-      toast.success(`${PROVIDER_LABELS[connected]}: ${t('connected')}`);
+      toast.success(`${t(PROVIDER_LABELS[connected])}: ${t('connected')}`);
     } else if (error) {
       toast.error(t(OAUTH_ERRORS[error] ?? OAUTH_ERRORS.provider));
     }
@@ -105,7 +105,7 @@ export function CalendarSettings() {
     try {
       const res = await fetch(`/api/integrations/${provider}/disconnect`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success(`${PROVIDER_LABELS[provider]}: ${t('disconnected')}`);
+      toast.success(`${t(PROVIDER_LABELS[provider])}: ${t('disconnected')}`);
       await load();
     } catch (err) {
       console.error('[calendar-settings] disconnect failed:', err);
@@ -277,8 +277,8 @@ export function CalendarSettings() {
                       <AlertTitle className="mb-1 text-foreground">{t('Integration not configured')}</AlertTitle>
                       <AlertDescription className="text-sm text-muted-foreground">
                         {provider === 'google'
-                          ? t('Ask the administrator to set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see docs/integracoes-agenda.md).')
-                          : t('Ask the administrator to set MS_CLIENT_ID and MS_CLIENT_SECRET (see docs/integracoes-agenda.md).')}
+                          ? t('The Google Agenda integration has not been set up by the server administrator yet.')
+                          : t('The Outlook integration has not been set up by the server administrator yet.')}
                       </AlertDescription>
                     </Alert>
                   ) : null}

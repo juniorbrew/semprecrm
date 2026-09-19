@@ -223,6 +223,34 @@ function WhatsAppOfficialConfig() {
   const lastRegistrationError = config?.last_registration_error ?? null;
 
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
+  // Probe check keys → English label keys (rendered through t()). The
+  // route reports raw flags; the UI never shows them verbatim.
+  const PROBE_CHECK_LABELS: Record<string, string> = {
+    config_exists: 'Configuration saved',
+    token_decryptable: 'Access token readable',
+    phone_metadata_ok: 'Phone number recognised by Meta',
+    waba_subscribed_to_app: 'WABA subscribed to the app',
+    locally_marked_registered: 'Number registered in SempreCRM',
+  };
+  // Probe errors are "<check>: <transport/Meta detail>". Localise the
+  // prefix and the common transport failures; keep Meta's own text.
+  const PROBE_ERROR_PREFIXES: [RegExp, string][] = [
+    [/^Phone metadata check failed: (.+)$/, 'Phone number check failed:'],
+    [/^WABA subscription check failed: (.+)$/, 'WABA subscription check failed:'],
+  ];
+  function probeErrorLabel(raw: string): string {
+    for (const [re, prefix] of PROBE_ERROR_PREFIXES) {
+      const m = raw.match(re);
+      if (m) return `${t(prefix)} ${friendlyTransportError(m[1])}`;
+    }
+    return t(raw);
+  }
+  function friendlyTransportError(detail: string): string {
+    if (/fetch failed|failed to fetch|network|ECONN|ENOTFOUND|timeout/i.test(detail)) {
+      return t('could not connect to Meta');
+    }
+    return t(detail);
+  }
   type RegistrationProbe = {
     live: boolean;
     checks: Record<string, boolean | null>;
@@ -671,14 +699,16 @@ function WhatsAppOfficialConfig() {
                       ) : (
                         <span className="size-3 rounded-full border border-border shrink-0" />
                       )}
-                      <code className="text-muted-foreground">{k}</code>
+                      <span className="text-muted-foreground">
+                        {t(PROBE_CHECK_LABELS[k] ?? k)}
+                      </span>
                     </li>
                   ))}
                 </ul>
                 {(registrationProbe.errors ?? []).length > 0 && (
                   <ul className="pt-1 space-y-0.5 text-red-300">
                     {registrationProbe.errors?.map((e, i) => (
-                      <li key={i}>• {e}</li>
+                      <li key={i}>• {probeErrorLabel(e)}</li>
                     ))}
                   </ul>
                 )}

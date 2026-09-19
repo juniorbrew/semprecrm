@@ -6,7 +6,7 @@ export const DICT_FLOWS: Record<string, string> = {
   'Collect input': 'Coletar resposta',
   Nodes: 'Nós',
   "Add a Start node, then a Send buttons node, then a Handoff — that's the classic welcome-menu shape.":
-    'Adicione um nó Início, depois um Enviar botões e por fim um Transferir para agente — é o formato clássico de menu de boas-vindas.',
+    'Adicione um nó Início, depois um Enviar botões e por fim um Transferir para um responsável — é o formato clássico de menu de boas-vindas.',
   'support, help, hi': 'suporte, ajuda, oi',
   'First inbound message from the customer': 'Primeira mensagem recebida do cliente',
   'Manual only (no automatic trigger)': 'Somente manual (sem gatilho automático)',
@@ -19,7 +19,7 @@ export const DICT_FLOWS: Record<string, string> = {
   'Show advanced': 'Mostrar avançado',
   True: 'Verdadeiro',
   False: 'Falso',
-  Canvas: 'Canvas',
+  Canvas: 'Tela',
   Edited: 'Editado',
   Runs: 'Execuções',
   Archived: 'Arquivado',
@@ -104,7 +104,7 @@ export const DICT_FLOWS: Record<string, string> = {
   'Condition needs a subject (var / tag / contact_field).':
     'A condição precisa de um assunto (variável, etiqueta ou campo do contato).',
   'Condition needs a subject_key (var name, tag id, or field name).':
-    'A condição precisa de uma chave (nome da variável, ID da etiqueta ou nome do campo).',
+    'A condição precisa de um valor para comparar (nome da variável, etiqueta ou campo).',
   'Condition needs an operator.': 'A condição precisa de um operador.',
   'Set-tag needs a mode (add or remove).':
     'O nó Etiquetar contato precisa de uma ação (adicionar ou remover).',
@@ -168,7 +168,7 @@ export const DICT_FLOWS: Record<string, string> = {
   'template name is required': 'O nome do modelo é obrigatório',
   'tag is required': 'A etiqueta é obrigatória',
   'agent is required when mode is "specific"':
-    'O agente é obrigatório quando o modo é “agente específico”',
+    'Escolha o responsável quando o modo é “responsável específico”',
   'field name is required': 'O nome do campo é obrigatório',
   'field value is required': 'O valor do campo é obrigatório',
   'pipeline is required': 'O funil é obrigatório',
@@ -194,7 +194,7 @@ export const DICT_FLOWS: Record<string, string> = {
   'schedule is required': 'O agendamento é obrigatório',
   'source must be a valid id': 'A fonte deve ser um ID válido',
   'last_from must be "agent", "customer" or "any"':
-    'O último remetente deve ser “agente”, “cliente” ou “qualquer um”',
+    'O último remetente deve ser “responsável”, “cliente” ou “qualquer um”',
   'statuses must list at least one of "open", "pending"':
     'Selecione pelo menos um status: “aberta” ou “pendente”',
 
@@ -209,11 +209,80 @@ export const DICT_FLOWS: Record<string, string> = {
   'update_contact_field needs a contact': 'Atualizar campo do contato precisa de um contato',
   'create_deal needs pipeline + stage': 'Criar negócio precisa de funil e etapa',
   'send_webhook needs url': 'Enviar webhook precisa de uma URL',
-  'close_conversation needs a contact': 'Encerrar conversa precisa de um contato',
+  'close_conversation needs a contact': 'Resolver conversa precisa de um contato',
   'create_task needs a title': 'Criar tarefa precisa de um título',
   'tasks module is not enabled for this account':
     'O módulo de tarefas não está ativado nesta conta',
   'account has no task statuses': 'A conta não possui status de tarefa',
   'cannot resolve conversation: no contact': 'Não foi possível localizar a conversa: sem contato',
   'no conversation for contact': 'Nenhuma conversa para o contato',
+
+  // ---------------------------------------------------------------
+  // Round 2 — canonical glossary (Responsável, Resolver, Tela) and the
+  // React Flow chrome (Controls / minimap / keyboard hints)
+  // ---------------------------------------------------------------
+  'Canvas controls': 'Controles da tela',
+  'Zoom in': 'Aumentar zoom',
+  'Zoom out': 'Diminuir zoom',
+  'Fit view': 'Ajustar à tela',
+  'Toggle interactivity': 'Ativar ou desativar interação',
+  'Flow overview map': 'Mapa geral do fluxo',
+  'Connection handle': 'Ponto de conexão',
+  'Press Enter or Space to select a node. Press Delete to remove it and Escape to cancel.':
+    'Pressione Enter ou Espaço para selecionar um nó. Pressione Delete para removê-lo e Esc para cancelar.',
+  'Press Enter or Space to select a node. You can then use the arrow keys to move the node around. Press Delete to remove it and Escape to cancel.':
+    'Pressione Enter ou Espaço para selecionar um nó. Depois, use as setas do teclado para movê-lo. Pressione Delete para removê-lo e Esc para cancelar.',
+  'Press Enter or Space to select a connection. You can then press Delete to remove it or Escape to cancel.':
+    'Pressione Enter ou Espaço para selecionar uma conexão. Depois, pressione Delete para removê-la ou Esc para cancelar.',
+  'Moved selected node': 'Nó selecionado movido',
+  'New position': 'Nova posição',
+
+  // Node summaries / config (names instead of ids, no DB columns)
+  variable: 'variável',
+  field: 'campo',
+  'unnamed tag': 'etiqueta sem nome',
+  'Captured variable': 'Variável capturada',
+  'Pick a media type…': 'Escolha um tipo de mídia…',
+  'Variable name (letters, numbers and underscore)':
+    'Nome da variável (letras, números e sublinhado)',
+  'No tags yet — create one in Contacts': 'Ainda não há etiquetas — crie uma em Contatos',
+  'Internal note (for the assignee picking up)':
+    'Nota interna (para o responsável que assumir)',
+  'Interpolate in downstream prompts and handoff notes with':
+    'Utilize em perguntas posteriores e notas de transferência com',
+  'Handoff to agent': 'Transferir para um responsável',
+  "Greet customers who type a keyword and route them to the right agent based on whether they're new or existing.":
+    'Receba clientes que digitam uma palavra-chave e encaminhe-os ao responsável certo conforme sejam novos ou já clientes.',
+  'Greet first-time inbounds, capture name + email + company, then hand off to sales with the answers in the note.':
+    'Receba quem escreve pela primeira vez, capture nome, e-mail e empresa e transfira para vendas com as respostas na nota.',
+  'No errors found. Ready to activate.': 'Nenhum erro encontrado. Pronto para ativar.',
+  'Build your first conversation — a welcome menu, an order lookup, an FAQ bot. Customers tap buttons; the bot routes them to the right answer (or the right agent).':
+    'Crie sua primeira conversa — menu de boas-vindas, consulta de pedido ou bot de perguntas frequentes. Os clientes tocam nos botões e o bot os encaminha para a resposta certa (ou o responsável certo).',
+
+  // Automations — assignee wording, resolve, active rule
+  'When should this rule be executed?': 'Quando esta regra deve ser executada?',
+  'Resolve conversation': 'Resolver conversa',
+  'Marks the conversation as resolved. No configuration needed.':
+    'Marca a conversa como resolvida. Nenhuma configuração é necessária.',
+  'When the conversation gets an assignee': 'Quando a conversa recebe um responsável',
+  'Assignee id': 'ID do responsável',
+  'Select an assignee…': 'Selecione um responsável…',
+  '(removed team member)': '(membro removido da equipe)',
+  '(deleted tag)': '(etiqueta excluída)',
+  '(deleted field)': '(campo excluído)',
+  '(deleted pipeline)': '(funil excluído)',
+  '(deleted stage)': '(etapa excluída)',
+  'Select a pipeline…': 'Selecione um funil…',
+  'Select a stage…': 'Selecione uma etapa…',
+  'Specific assignee': 'Responsável específico',
+  'The assignee (customer went quiet)': 'O responsável (cliente ficou em silêncio)',
+  'Active rule': 'Regra ativa',
+  'Conversation Inactive': 'Conversa sem resposta',
+  'Check the highlighted step and try again.': 'Verifique a etapa destacada e tente novamente.',
+  'Hi! Thanks for getting in touch…': 'Olá! Agradecemos o contato…',
+  'Follow up with {{ contact.name }}': 'Retomar contato com {{ contact.name }}',
+  'Last message was from': 'Última mensagem enviada por',
+  'The customer (nobody replied)': 'O cliente (ninguém respondeu)',
+  'Decimals allowed — 0.05 is 3 minutes, 24 is one day, 720 is the maximum (30 days).':
+    'Aceita decimais — 0,05 são 3 minutos, 24 é um dia e 720 é o máximo (30 dias).',
 };

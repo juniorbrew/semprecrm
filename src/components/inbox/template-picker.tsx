@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
 import { useLanguage } from "@/hooks/use-language";
+import { templateLanguageLabel } from "@/components/broadcasts/template-language-label";
 
 /** Meta category codes → dictionary keys (the DOM translator does pt-BR). */
 const CATEGORY_LABEL: Record<string, string> = {
@@ -86,7 +87,7 @@ export function TemplatePicker({
   onOpenChange,
   onSelect,
 }: TemplatePickerProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
@@ -237,8 +238,8 @@ export function TemplatePicker({
                           {CATEGORY_LABEL[tpl.category] ?? tpl.category}
                         </Badge>
                         {tpl.language && (
-                          <span className="text-[10px] uppercase text-muted-foreground">
-                            {tpl.language}
+                          <span className="text-[10px] text-muted-foreground" data-no-translate>
+                            {templateLanguageLabel(tpl.language, language)}
                           </span>
                         )}
                       </div>

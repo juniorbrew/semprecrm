@@ -2,7 +2,6 @@
 export const DICT_SETTINGS: Record<string, string> = {
   // ---- Appearance --------------------------------------------------
   'Use theme': 'Usar tema',
-  'Theme ID': 'ID do tema',
   'Light mode': 'Modo claro',
   'Dark mode': 'Modo escuro',
   accent: 'destaque',
@@ -36,6 +35,8 @@ export const DICT_SETTINGS: Record<string, string> = {
     'Entre em {account} no SempreCRM usando este link (válido por {days} dias): {url}',
 
   // ---- Profile / security ------------------------------------------
+  'Require two-step verification for administrators':
+    'Exigir verificação em duas etapas para administradores',
   'User ID': 'ID do usuário',
   'Maximum 2 MB.': 'No máximo 2 MB.',
   'Email change failed': 'Não foi possível alterar o e-mail',
@@ -58,6 +59,11 @@ export const DICT_SETTINGS: Record<string, string> = {
   'custom fields': 'campos personalizados',
 
   // ---- Templates ---------------------------------------------------
+  // Meta quality rating (GREEN/YELLOW/RED → Alta/Média/Baixa; High/Low
+  // live in the base dictionary).
+  Medium: 'Média',
+  // Header format select ("none" → "Nenhum")
+  None: 'Nenhum',
   'Edit failed': 'Falha ao editar',
   'Submit failed': 'Não foi possível enviar',
   'Synced from Meta': 'Sincronizado da Meta',
@@ -84,6 +90,22 @@ export const DICT_SETTINGS: Record<string, string> = {
     'será excluído do SempreCRM. Ele nunca foi enviado à Meta, então não há limpeza remota necessária.',
 
   // ---- WhatsApp (official API) --------------------------------------
+  'e.g. 100234567890123': 'ex.: 100234567890123',
+  'e.g. 100234567890456': 'ex.: 100234567890456',
+  // Registration probe (verify-registration route) — check flags and
+  // error prefixes are mapped in whatsapp-config.tsx to these keys.
+  'Configuration saved': 'Configuração salva',
+  'Access token readable': 'Token de acesso legível',
+  'Phone number recognised by Meta': 'Número reconhecido pela Meta',
+  'WABA subscribed to the app': 'WABA inscrita no aplicativo',
+  'Number registered in SempreCRM': 'Número registrado no SempreCRM',
+  'Phone number check failed:': 'Falha ao verificar o número:',
+  'WABA subscription check failed:': 'Falha ao verificar a inscrição da WABA:',
+  'could not connect to Meta': 'não foi possível conectar à Meta',
+  'WABA has no subscribed apps. Re-save the configuration to subscribe.':
+    'A WABA não tem aplicativos inscritos. Salve a configuração novamente para inscrever.',
+  "No WABA ID on file — webhooks can't be wired without it. Add it in the form and re-save.":
+    'Nenhum ID de WABA salvo — os webhooks não funcionam sem ele. Informe-o no formulário e salve novamente.',
   "Saved, but Meta couldn't register the number": 'Salvo, mas a Meta não conseguiu registrar o número',
   Live: 'No ar',
   'can now receive events.': 'já pode receber eventos.',
@@ -109,7 +131,23 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Verify Token': 'Token de verificação',
   'Subscribe to the "messages" webhook field': 'Assine o campo de webhook "messages"',
 
+  // ---- WhatsApp via QR code ----------------------------------------
+  'QR connection not available': 'Conexão por QR code indisponível',
+  'The QR code connection has not been set up by the server administrator yet.':
+    'A conexão por QR code ainda não foi configurada pelo administrador do servidor.',
+  'Could not connect': 'Não foi possível conectar',
+  'Could not connect to the WhatsApp service. Try again in a moment; if it keeps failing, contact the server administrator.':
+    'Não foi possível conectar ao serviço do WhatsApp. Tente novamente em instantes; se continuar falhando, fale com o administrador do servidor.',
+
+  // ---- Task statuses -----------------------------------------------
+  'Completed (task)': 'Concluída',
+  // Colour names not already in the base dictionary
+  Indigo: 'Índigo',
+  Yellow: 'Amarelo',
+  Teal: 'Verde-azulado',
+
   // ---- Fields & tags -----------------------------------------------
+  'Use color': 'Usar cor',
   'e.g. Newsletter': 'ex.: Newsletter',
   'Delete the tag': 'Excluir a etiqueta',
   'This removes it from all contacts and cannot be undone.':
@@ -117,18 +155,88 @@ export const DICT_SETTINGS: Record<string, string> = {
 
   // ---- Quick replies -----------------------------------------------
   'e.g. welcome': 'ex.: boas-vindas',
+  // Glossary: "Caixa de entrada" (never "inbox"), "caixa de resposta"
+  // (never "compositor"), "Pesquisar" (never "Buscar"), "responsável"
+  // for the person handling a conversation.
+  'Canned responses for the inbox': 'Respostas rápidas para a caixa de entrada',
+  'Ready-made answers your team inserts in the inbox by typing / followed by the shortcut. Variables fill in the contact, agent and company names.':
+    'Respostas prontas que a equipe insere na caixa de entrada digitando / seguido do atalho. As variáveis preenchem o nome do contato, do responsável e da empresa.',
+  'Type / plus the shortcut in the inbox composer to insert this text.':
+    'Digite / mais o atalho na caixa de resposta para inserir este texto.',
+  'Search by shortcut or title': 'Pesquisar por atalho ou título',
+  'Assignee name': 'Nome do responsável',
+  'Open inbox': 'Abrir caixa de entrada',
 
   // ---- Inbox / attendance ------------------------------------------
+  'When a customer sends exactly one of these words (accents and punctuation ignored), the contact is marked as opted out: automations stop messaging them and broadcasts skip them. An admin can reactivate the contact from the inbox panel.':
+    'Quando um cliente envia exatamente uma destas palavras (acentos e pontuação ignorados), o contato é marcado como descadastrado: as automações deixam de enviar mensagens e os disparos o pulam. Um administrador pode reativar o contato pela caixa de entrada.',
+  'Response-time limits behind the Radar (dashboard and inbox) and the words a customer can send to stop receiving messages.':
+    'Limites de tempo de resposta por trás do Radar (painel e caixa de entrada) e as palavras que um cliente pode enviar para parar de receber mensagens.',
+  // Timezone picker — "<label> (<IANA id>)"
+  'Brasília time': 'Horário de Brasília',
+  'Manaus (Amazon time)': 'Manaus (horário do Amazonas)',
+  Belém: 'Belém',
+  Fortaleza: 'Fortaleza',
+  Recife: 'Recife',
+  'Salvador (Bahia)': 'Salvador (Bahia)',
+  Cuiabá: 'Cuiabá',
+  'Campo Grande': 'Campo Grande',
+  'Porto Velho': 'Porto Velho',
+  'Boa Vista': 'Boa Vista',
+  'Rio Branco (Acre time)': 'Rio Branco (horário do Acre)',
+  'Fernando de Noronha': 'Fernando de Noronha',
+  'Buenos Aires': 'Buenos Aires',
+  Montevideo: 'Montevidéu',
+  Santiago: 'Santiago',
+  Bogotá: 'Bogotá',
+  Lima: 'Lima',
+  'Mexico City': 'Cidade do México',
+  'New York': 'Nova York',
+  Chicago: 'Chicago',
+  Denver: 'Denver',
+  'Los Angeles': 'Los Angeles',
+  Lisbon: 'Lisboa',
+  London: 'Londres',
+  Madrid: 'Madri',
+  Paris: 'Paris',
+  Berlin: 'Berlim',
+  Rome: 'Roma',
+  Luanda: 'Luanda',
+  Maputo: 'Maputo',
+  Tokyo: 'Tóquio',
+  Sydney: 'Sydney',
   'Waiting means the customer has gone unanswered for longer than the SLA; cooling means the customer has not replied to you for the given hours.':
     'Aguardando significa que o cliente ficou sem resposta por mais tempo que o SLA; esfriando significa que o cliente não respondeu a você pelas horas indicadas.',
 
   // ---- Integrations / lead sources ---------------------------------
   Pipeline: 'Funil',
+  'No assignee': 'Sem responsável',
+  'The currency used for new deals and for pipeline and dashboard totals, and the reasons a deal can be marked as lost.':
+    'A moeda usada em novos negócios e nos totais do funil e do painel, e os motivos pelos quais um negócio pode ser marcado como perdido.',
+
+  // ---- Calendar ----------------------------------------------------
+  'Google Calendar': 'Google Agenda',
+  'The Google Agenda integration has not been set up by the server administrator yet.':
+    'A integração com o Google Agenda ainda não foi configurada pelo administrador do servidor.',
+  'The Outlook integration has not been set up by the server administrator yet.':
+    'A integração com o Outlook ainda não foi configurada pelo administrador do servidor.',
+
+  // ---- Plan --------------------------------------------------------
+  Validity: 'Validade',
+  'In trial': 'Em teste',
+  'No end date': 'Sem data de término',
   'CRM field ← payload key. Leave blank to use the default key (name, phone, email, company — Portuguese aliases work too). Dotted paths like lead.phone work.':
     'Campo do CRM ← chave do payload. Deixe em branco para usar a chave padrão (name/nome, phone/telefone, email, company/empresa). Caminhos com ponto como lead.telefone funcionam.',
 
   // ---- Audit log ---------------------------------------------------
   'Request failed': 'Falha na solicitação',
+  Change: 'Alteração',
+  'Authenticator app': 'Aplicativo autenticador',
+  'Waiting for QR scan': 'Aguardando leitura do QR',
+
+  // ---- Platform admin ----------------------------------------------
+  'Search accounts': 'Pesquisar contas',
+  'Search by name or e-mail': 'Pesquisar por nome ou e-mail',
 
   // ---- Company / account fields ------------------------------------
   'Legal name': 'Razão social',

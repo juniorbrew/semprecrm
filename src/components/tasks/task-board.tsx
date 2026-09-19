@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { TaskCard } from "./task-card";
+import { statusName } from "./task-chips";
 
 export interface TaskBoardProps {
   tasks: Task[];
@@ -224,14 +225,16 @@ function BoardColumn({
   onAdd?: (statusId: string) => void;
   readOnly?: boolean;
 }) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
 
   return (
     <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none">
       <div className="-mx-4 -mt-4 h-[3px] rounded-t-xl" style={{ backgroundColor: status.color }} />
       <div className="flex items-center justify-between pt-3">
-        <h3 className="truncate text-sm font-semibold text-foreground">{status.name}</h3>
+        <h3 className="truncate text-sm font-semibold text-foreground" data-no-translate>
+          {statusName(status, language)}
+        </h3>
         <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
           {tasks.length}
         </span>

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { MFA_PATH, needsMfaChallenge } from "@/lib/auth/mfa";
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { friendlyAuthError } from "../_lib/auth-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageSquare, UsersRound } from "lucide-react";
+
+/**
+ * Greeting copy, language-keyed rather than `t()`: the catalogue's
+ * "Welcome back" is the gendered "Bem-vindo de volta", and the login
+ * page must read gender-neutral in pt-BR.
+ */
+const GREETING_COPY: Record<Language, { title: string; noAccount: string }> = {
+  "pt-BR": {
+    title: "Que bom ter você de volta",
+    noAccount: "Ainda não tem conta?",
+  },
+  "en-US": {
+    title: "Welcome back",
+    noAccount: "Don't have an account?",
+  },
+};
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -38,7 +55,7 @@ function LoginPageInner() {
   // account. After a successful sign-in we send them to the join
   // page to accept rather than to /dashboard.
   const inviteToken = searchParams.get("invite");
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -95,7 +112,11 @@ function LoginPageInner() {
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
-            {inviteToken ? t("Sign in to accept") : t("Welcome back")}
+            {inviteToken ? (
+              t("Sign in to accept")
+            ) : (
+              <span data-no-translate>{GREETING_COPY[language].title}</span>
+            )}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
             {inviteToken
@@ -159,7 +180,7 @@ function LoginPageInner() {
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            {t("Don't have an account?")}{" "}
+            <span data-no-translate>{GREETING_COPY[language].noAccount}</span>{" "}
             <Link
               href={
                 inviteToken

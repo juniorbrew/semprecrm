@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowUp, CalendarClock, ChevronsUp, Minus, ArrowDown, GitBranch, MessageSquare, User } from "lucide-react";
 
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import {
   dueInfo,
@@ -14,6 +15,31 @@ import {
   type TaskStatus,
 } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
+
+// ------------------------------------------------------------
+// Status name
+// ------------------------------------------------------------
+
+/**
+ * The default statuses are seeded in pt-BR ("A fazer", "Em andamento",
+ * "Concluída" — see DEFAULT_TASK_STATUS_SEED). Their English names for
+ * en-US; any custom status shows as typed. Feminine "Concluída" (a
+ * *tarefa*) has no catalogue entry (`Done` is the generic "Concluído"),
+ * hence this map instead of the DOM translator.
+ */
+const SEED_STATUS_NAME_EN: Record<string, string> = {
+  "A fazer": "To do",
+  "Em andamento": "In progress",
+  "Concluída": "Done",
+};
+
+export function statusName(
+  status: Pick<TaskStatus, "name">,
+  language: Language,
+): string {
+  if (language === "pt-BR") return status.name;
+  return SEED_STATUS_NAME_EN[status.name] ?? status.name;
+}
 
 // ------------------------------------------------------------
 // Priority
@@ -82,9 +108,11 @@ export function StatusChip({
   status: TaskStatus | null | undefined;
   className?: string;
 }) {
+  const { language } = useLanguage();
   if (!status) return null;
   return (
     <span
+      data-no-translate
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-foreground",
         className,
@@ -95,7 +123,7 @@ export function StatusChip({
         className="h-2 w-2 rounded-full"
         style={{ backgroundColor: status.color }}
       />
-      {status.name}
+      {statusName(status, language)}
     </span>
   );
 }
@@ -169,7 +197,7 @@ export function AssigneeAvatar({
     return showName ? (
       <span className={cn("inline-flex items-center gap-1.5 text-xs text-muted-foreground", className)}>
         <User className="h-3.5 w-3.5" />
-        {t("Unassigned")}
+        {t("No assignee")}
       </span>
     ) : null;
   }

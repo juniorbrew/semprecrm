@@ -50,6 +50,14 @@ export type NodeType =
   | "handoff"
   | "end";
 
+/** Account tag as returned by GET /api/tags — shared by the pickers and
+ *  the node summaries so a tag is always shown by name, never by id. */
+export interface UserTag {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 export interface BuilderNode {
   node_key: string;
   node_type: NodeType;
@@ -150,10 +158,15 @@ export function truncate(s: string, max = 80): string {
  * preview reads naturally in pt-BR; user content (texts, titles, keys)
  * passes through untouched. Defaults to identity for callers without a
  * language context (tests, engine-side helpers).
+ *
+ * `tagName` resolves a tag id to its display name (the editor context
+ * loads the account's tags once). Without it — or when the tag was
+ * deleted — the summary says "unnamed tag" rather than leaking a UUID.
  */
 export function summarizeNode(
   node: BuilderNode,
   t: (english: string) => string = (s) => s,
+  tagName: (id: string) => string | undefined = () => undefined,
 ): string | null {
   const cfg = node.config;
   switch (node.node_type) {
@@ -220,10 +233,11 @@ export function summarizeNode(
     case "collect_input": {
       const prompt = typeof cfg.prompt_text === "string" ? cfg.prompt_text : "";
       const varKey = typeof cfg.var_key === "string" ? cfg.var_key : "";
+      const saved = varKey ? `→ ${t("variable")} ${varKey}` : "";
       if (prompt.length > 0) {
-        return varKey ? `${truncate(prompt, 50)} → vars.${varKey}` : truncate(prompt);
+        return saved ? `${truncate(prompt, 50)} ${saved}` : truncate(prompt);
       }
-      return varKey ? `→ vars.${varKey}` : null;
+      return saved || null;
     }
     case "condition": {
       const subjectKey =
@@ -237,11 +251,11 @@ export function summarizeNode(
             : "var";
       const subjectStr =
         subject === "tag"
-          ? `${t("has tag")} ${truncate(subjectKey, 24)}`
-          : `${subject}.${subjectKey}`;
+          ? `${t("has tag")} ${truncate(tagName(subjectKey) ?? t("unnamed tag"), 24)}`
+          : `${t(subject === "field" ? "field" : "variable")} ${subjectKey}`;
       const op =
         cfg.operator === "equals"
-          ? "=="
+          ? "="
           : cfg.operator === "contains"
             ? t("contains")
             : cfg.operator === "present"
@@ -259,10 +273,8 @@ export function summarizeNode(
     case "set_tag": {
       const mode = t(cfg.mode === "remove" ? "Remove tag" : "Add tag");
       const tagId = typeof cfg.tag_id === "string" ? cfg.tag_id : "";
-      // No tag name available without an async lookup here; show a
-      // short prefix of the UUID so users can disambiguate between
-      // multiple set_tag nodes at a glance.
-      return tagId ? `${mode} ${tagId.slice(0, 8)}…` : `${mode} ${t("(none picked)")}`;
+      if (!tagId) return `${mode} ${t("(none picked)")}`;
+      return `${mode} ${truncate(tagName(tagId) ?? t("unnamed tag"), 30)}`;
     }
     case "handoff": {
       const note = typeof cfg.note === "string" ? cfg.note : "";

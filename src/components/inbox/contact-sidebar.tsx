@@ -108,6 +108,8 @@ const PANEL_COPY: Record<
     status: Record<Conversation["status"], string>;
     tagAdded: (name: string) => string;
     tagRemoved: (name: string) => string;
+    /** Tooltip/aria on a tag chip — clicking it removes the tag. */
+    removeTag: (name: string) => string;
     tagFailed: string;
     moreNotes: (n: number) => string;
     /** Opt-out badge + admin "Reativar" (migration 030). */
@@ -137,12 +139,13 @@ const PANEL_COPY: Record<
     previous: "Conversas anteriores",
     current: "Atual",
     noPrevious: "Primeira conversa com este contato",
-    notes: "Notas da equipe",
+    notes: "Notas internas",
     noNotes: "Nenhuma nota ainda",
-    notesHint: "Use a aba Nota interna no compositor",
+    notesHint: "Use a aba Nota interna na caixa de resposta",
     status: { open: "Aberta", pending: "Pendente", closed: "Resolvida" },
     tagAdded: (name) => `Etiqueta ${name} adicionada`,
     tagRemoved: (name) => `Etiqueta ${name} removida`,
+    removeTag: (name) => `Remover etiqueta ${name}`,
     tagFailed: "Não foi possível atualizar a etiqueta",
     moreNotes: (n) => `+${n} nota${n === 1 ? "" : "s"} na conversa`,
     optedOut: "Descadastrado",
@@ -171,12 +174,13 @@ const PANEL_COPY: Record<
     previous: "Previous conversations",
     current: "Current",
     noPrevious: "First conversation with this contact",
-    notes: "Team notes",
+    notes: "Internal notes",
     noNotes: "No notes yet",
     notesHint: "Use the Private note tab in the composer",
     status: { open: "Open", pending: "Pending", closed: "Resolved" },
     tagAdded: (name) => `Label ${name} added`,
     tagRemoved: (name) => `Label ${name} removed`,
+    removeTag: (name) => `Remove label ${name}`,
     tagFailed: "Could not update the label",
     moreNotes: (n) => `+${n} note${n === 1 ? "" : "s"} in the thread`,
     optedOut: "Opted out",
@@ -849,7 +853,8 @@ export function ContactSidebar({
                     type="button"
                     onClick={() => void toggleTag(tag)}
                     disabled={!!tagBusy}
-                    title={copy.tagRemoved(tag.name)}
+                    title={copy.removeTag(tag.name)}
+                    aria-label={copy.removeTag(tag.name)}
                     className="group/tag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-60"
                     style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
                   >

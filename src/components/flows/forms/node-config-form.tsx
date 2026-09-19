@@ -24,7 +24,7 @@
  * renders the advanced rows.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Loader2,
   Paperclip,
@@ -47,7 +47,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
-import { slugify, type BuilderNode } from "../shared";
+import { slugify, type BuilderNode, type UserTag } from "../shared";
+import { useFlowEditor } from "../flow-editor-state";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
 
 interface NodeConfigFormProps {
@@ -138,7 +139,7 @@ export function NodeConfigForm({
           />
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">
-              {t("Variable key (stored in flow_runs.vars; alphanumeric + underscore)")}
+              {t("Variable name (letters, numbers and underscore)")}
             </label>
             <Input
               value={(cfg as { var_key?: string }).var_key ?? ""}
@@ -193,7 +194,7 @@ export function NodeConfigForm({
     case "handoff":
       return (
         <TextRow
-          label="Internal note (for the agent picking up)"
+          label="Internal note (for the assignee picking up)"
           value={(cfg as { note?: string }).note ?? ""}
           onChange={(v) => onUpdateConfig({ note: v })}
           rows={2}
@@ -592,12 +593,6 @@ interface ConditionCfg {
   false_next?: string;
 }
 
-interface UserTag {
-  id: string;
-  name: string;
-  color?: string;
-}
-
 function ConditionForm({
   cfg,
   allNodes,
@@ -611,6 +606,7 @@ function ConditionForm({
 }) {
   const { t } = useLanguage();
   const tags = useUserTags();
+  const tagItems = tagSelectItems(tags);
 
   const subject = cfg.subject ?? "var";
   const operator = cfg.operator ?? "equals";
@@ -623,6 +619,11 @@ function ConditionForm({
           <label className="mb-1 block text-xs text-muted-foreground">{t("If")}</label>
           <Select
             value={subject}
+            items={{
+              var: t("Captured variable"),
+              tag: t("Contact has tag"),
+              contact_field: t("Contact field"),
+            }}
             onValueChange={(v) =>
               onUpdateConfig({ subject: v as ConditionCfg["subject"] })
             }
@@ -650,6 +651,7 @@ function ConditionForm({
           {subject === "tag" && tags.length > 0 ? (
             <Select
               value={cfg.subject_key ?? ""}
+              items={tagItems}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
               <SelectTrigger className="bg-muted">
@@ -666,6 +668,12 @@ function ConditionForm({
           ) : subject === "contact_field" ? (
             <Select
               value={cfg.subject_key ?? ""}
+              items={{
+                name: t("Name"),
+                email: t("Email"),
+                phone: t("Phone"),
+                company: t("Company"),
+              }}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
               <SelectTrigger className="bg-muted">
@@ -684,7 +692,7 @@ function ConditionForm({
               onChange={(e) =>
                 onUpdateConfig({ subject_key: e.target.value })
               }
-              placeholder={subject === "var" ? t("e.g. email") : t("Tag UUID")}
+              placeholder={subject === "var" ? t("e.g. email") : t("No tags yet — create one in Contacts")}
               className="bg-muted font-mono text-xs"
             />
           )}
@@ -701,6 +709,12 @@ function ConditionForm({
           <label className="mb-1 block text-xs text-muted-foreground">{t("Operator")}</label>
           <Select
             value={operator}
+            items={{
+              present: t("is present"),
+              absent: t("is absent"),
+              equals: t("equals"),
+              contains: t("contains"),
+            }}
             onValueChange={(v) =>
               onUpdateConfig({ operator: v as ConditionCfg["operator"] })
             }
@@ -771,6 +785,7 @@ function SetTagForm({
 }) {
   const { t } = useLanguage();
   const tags = useUserTags();
+  const tagItems = tagSelectItems(tags);
 
   return (
     <>
@@ -779,6 +794,7 @@ function SetTagForm({
           <label className="mb-1 block text-xs text-muted-foreground">{t("Action")}</label>
           <Select
             value={cfg.mode ?? "add"}
+            items={{ add: t("Add tag"), remove: t("Remove tag") }}
             onValueChange={(v) =>
               onUpdateConfig({ mode: v as SetTagCfg["mode"] })
             }
@@ -797,6 +813,7 @@ function SetTagForm({
           {tags.length > 0 ? (
             <Select
               value={cfg.tag_id ?? ""}
+              items={tagItems}
               onValueChange={(v) => onUpdateConfig({ tag_id: v })}
             >
               <SelectTrigger className="bg-muted">
@@ -814,7 +831,7 @@ function SetTagForm({
             <Input
               value={cfg.tag_id ?? ""}
               onChange={(e) => onUpdateConfig({ tag_id: e.target.value })}
-              placeholder={t("Tag UUID")}
+              placeholder={t("No tags yet — create one in Contacts")}
               className="bg-muted font-mono text-xs"
             />
           )}
@@ -832,29 +849,17 @@ function SetTagForm({
 }
 
 /**
- * Shared loader for both `condition` (subject=tag) and `set_tag`.
- * Falls back to raw UUID input if the endpoint is absent on older
- * deployments — the form remains authorable in that case.
+ * Account tags for both `condition` (subject=tag) and `set_tag` — loaded
+ * once by the editor context. Empty when the endpoint is absent on older
+ * deployments, in which case the pickers fall back to a raw input.
  */
-function useUserTags(): UserTag[] {
-  const [tags, setTags] = useState<UserTag[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/tags").catch(() => null);
-        if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
-      } catch {
-        // Tags endpoint absent — caller falls back to raw input.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return tags;
+function useUserTags() {
+  return useFlowEditor().tags;
+}
+
+/** Label map for Base UI's Select so the trigger shows the tag name. */
+function tagSelectItems(tags: UserTag[]): Record<string, string> {
+  return Object.fromEntries(tags.map((tag) => [tag.id, tag.name]));
 }
 
 // ============================================================
@@ -943,6 +948,11 @@ function SendMediaForm({
         <label className="mb-1 block text-xs text-muted-foreground">{t("Media type")}</label>
         <Select
           value={mediaType}
+          items={{
+            image: t("Image (PNG, JPEG, WebP)"),
+            video: t("Video (MP4, 3GP)"),
+            document: t("Document (PDF, Word, Excel, PowerPoint, TXT)"),
+          }}
           onValueChange={(v) => {
             // Changing type clears the existing file — the bucket
             // accepts different MIME sets per type and a previously
@@ -955,7 +965,7 @@ function SendMediaForm({
           }}
         >
           <SelectTrigger className="bg-muted">
-            <SelectValue />
+            <SelectValue placeholder={t("Pick a media type…")} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="image">{t("Image (PNG, JPEG, WebP)")}</SelectItem>

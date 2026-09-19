@@ -30,6 +30,7 @@ import {
   type ContactFormValues,
 } from "@/components/account/contact-fields";
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import {
   validateAccountRegistration,
   type PersonType,
@@ -45,6 +46,12 @@ const INPUT_CLASS =
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
+/** Matches the login page's "Ainda não tem conta?" (the catalogue says "possui"). */
+const HAS_ACCOUNT_COPY: Record<Language, string> = {
+  "pt-BR": "Já tem conta?",
+  "en-US": "Already have an account?",
+};
+
 export default function SignupPage() {
   return (
     <Suspense fallback={null}>
@@ -61,7 +68,7 @@ function SignupPageInner() {
   // points back at /join/<token> so the user lands on the redeem
   // step after verifying instead of being dropped on /dashboard.
   const inviteToken = searchParams.get("invite");
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   // Pessoa física (CPF) or pessoa jurídica (CNPJ). The trigger stores
   // it on the new account so every member's data stays scoped to that
@@ -407,7 +414,7 @@ function SignupPageInner() {
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            {t("Already have an account?")}{" "}
+            <span data-no-translate>{HAS_ACCOUNT_COPY[language]}</span>{" "}
             <Link
               href={
                 inviteToken

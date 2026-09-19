@@ -4,7 +4,7 @@ import { GitBranch } from 'lucide-react'
 import type { PipelineDonutData } from '@/lib/dashboard/types'
 import { dealsCount } from '@/lib/dashboard/i18n'
 import { useLanguage } from '@/hooks/use-language'
-import { formatCurrencyShort } from '@/lib/currency'
+import { formatCompactCurrency } from './format-compact-currency'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
 
@@ -51,7 +51,7 @@ export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
                     {dealsCount(s.dealCount, language)}
                   </span>
                   <span className="w-20 text-right text-muted-foreground tabular-nums">
-                    {formatCurrencyShort(s.totalValue, currency)}
+                    {formatCompactCurrency(s.totalValue, currency, language)}
                   </span>
                 </li>
               ))}
@@ -78,6 +78,7 @@ function Donut({
   currency: string
   label: string
 }) {
+  const { language } = useLanguage()
   const size = 200
   const r = 80
   const ringWidth = 18
@@ -135,7 +136,7 @@ function Donut({
           textAnchor="middle"
           className="fill-foreground text-[18px] font-semibold tabular-nums"
         >
-          {formatCurrencyShort(data.totalValue, currency)}
+          {formatCompactCurrency(data.totalValue, currency, language)}
         </text>
       </svg>
     </div>

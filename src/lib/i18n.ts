@@ -18,7 +18,6 @@ export function isLanguage(value: unknown): value is Language {
  */
 export const EN_TO_PT: Record<string, string> = {
   ...EN_TO_PT_EXTRA,
-  ...EN_TO_PT_AREAS,
   Dashboard: 'Painel',
   Inbox: 'Caixa de entrada',
   Contacts: 'Contatos',
@@ -404,6 +403,8 @@ export const EN_TO_PT: Record<string, string> = {
   'No executions yet': 'Ainda não há execuções',
   'Unknown contact': 'Contato desconhecido',
   'No steps recorded.': 'Nenhuma etapa registrada.',
+  // Per-area dictionaries last: a curated area value overrides the base catalogue.
+  ...EN_TO_PT_AREAS,
 };
 
 const PT_TO_EN = Object.fromEntries(

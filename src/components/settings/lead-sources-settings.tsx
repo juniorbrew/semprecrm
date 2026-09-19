@@ -563,7 +563,7 @@ function SourceDetail({
             {pipeline && stage
               ? `${t('Deals go to')} ${pipeline.name} → ${stage.name}`
               : t('No deal is created — the lead becomes a contact only.')}
-            {assignee ? ` · ${t('Assigned to')} ${assignee.full_name}` : ''}
+            {assignee ? ` · ${t('Assignee')}: ${assignee.full_name}` : ''}
             {tags.length > 0 ? ` · ${t('Tags')}: ${tags.map((tg) => tg.name).join(', ')}` : ''}
           </CardDescription>
         </CardHeader>
@@ -976,9 +976,9 @@ function LeadSourceDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t('Assigned to')}</Label>
+              <Label className="text-muted-foreground">{t('Assignee')}</Label>
               <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className={SELECT_CLASS}>
-                <option value="">{t('Unassigned')}</option>
+                <option value="">{t('No assignee')}</option>
                 {resources.members.map((m) => (
                   <option key={m.user_id} value={m.user_id}>
                     {m.full_name || m.email || m.user_id}

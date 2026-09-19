@@ -5,7 +5,7 @@ import { ChevronRight, Loader2 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth, useEntitlements } from '@/hooks/use-auth';
-import { PLAN_LABELS, PLAN_STATUS_LABELS } from '@/lib/plans';
+import { PLAN_LABELS } from '@/lib/plans';
 import { useTheme } from '@/hooks/use-theme';
 import { useLanguage } from '@/hooks/use-language';
 import { THEMES } from '@/lib/themes';
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { formatTaxId } from '@/lib/br/documents';
 import { SECTION_META, type SettingsSection } from './settings-sections';
 import { SettingsChip, StatusDot } from './settings-chip';
+import { planStatusLabelKey } from '@/components/platform/plan-status-chip';
 import { ROLE_META } from './role-meta';
 
 interface OverviewCounts {
@@ -268,7 +269,7 @@ export function SettingsOverview({
     {
       section: 'appearance',
       loading: false,
-      subtitle: `${mode === 'light' ? t('Light mode') : t('Dark mode')} · ${t('accent')} ${themeName}`,
+      subtitle: `${mode === 'light' ? t('Light mode') : t('Dark mode')} · ${t('accent')} ${t(themeName)}`,
     },
     {
       section: 'notifications',
@@ -287,7 +288,7 @@ export function SettingsOverview({
     {
       section: 'plan',
       loading: !entitlements.ready,
-      subtitle: `${t(PLAN_LABELS[entitlements.plan])} · ${t(PLAN_STATUS_LABELS[entitlements.status])}`,
+      subtitle: `${t(PLAN_LABELS[entitlements.plan])} · ${t(planStatusLabelKey(entitlements.status))}`,
     },
   ];
 

@@ -327,12 +327,6 @@ export function ProfileForm() {
                 <dt className="text-muted-foreground">{t('Joined')}</dt>
                 <dd className="mt-0.5 text-foreground">{joined}</dd>
               </div>
-              <div className="sm:col-span-2">
-                <dt className="text-muted-foreground">{t('User ID')}</dt>
-                <dd className="mt-0.5 break-all font-mono text-xs text-muted-foreground">
-                  {user?.id ?? '—'}
-                </dd>
-              </div>
             </dl>
           </div>
 

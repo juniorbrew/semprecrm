@@ -45,6 +45,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useLanguage } from "@/hooks/use-language";
+import { createClient } from "@/lib/supabase/client";
 
 import {
   validateFlowForActivation,
@@ -52,7 +53,13 @@ import {
 } from "@/lib/flows/validate";
 import { unlinkNodeReferences } from "@/lib/flows/edges";
 import type { FlowNodeRow, FlowRow } from "@/lib/flows/types";
-import { NODE_META, slugify, type BuilderNode, type NodeType } from "./shared";
+import {
+  NODE_META,
+  slugify,
+  type BuilderNode,
+  type NodeType,
+  type UserTag,
+} from "./shared";
 
 // ============================================================
 // State shape
@@ -121,6 +128,16 @@ export interface FlowEditorContextValue {
    */
   flashKey: string | null;
   requestFlash: (key: string) => void;
+
+  /**
+   * Account tags, loaded once per editor mount. The tag pickers offer
+   * them by name and the node summaries resolve `tag_id` through
+   * `tagName` so a UUID never reaches the screen. Empty until the
+   * request resolves (or when the endpoint is unavailable — pickers
+   * then fall back to a raw input).
+   */
+  tags: UserTag[];
+  tagName: (id: string) => string | undefined;
 }
 
 // ============================================================
@@ -274,6 +291,32 @@ export function FlowEditorProvider({
     setDirty(true);
     setStateRaw(updaterOrValue);
   }, []);
+
+  // Account tags — one query for every picker and summary in the
+  // editor. Straight from the DB (RLS scopes it to the caller's
+  // account), same as the automation builder's resource loader.
+  const [tags, setTags] = useState<UserTag[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await createClient()
+          .from("tags")
+          .select("id, name, color")
+          .order("name");
+        if (!cancelled) setTags((data as UserTag[] | null) ?? []);
+      } catch {
+        // Query failed — pickers fall back to a raw input.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const tagName = useCallback(
+    (id: string) => tags.find((tag) => tag.id === id)?.name,
+    [tags],
+  );
 
   // Cross-view "look here" signal (see FlowEditorContextValue docs).
   // Tracked via a ref alongside state so a rapid second click on a
@@ -552,6 +595,8 @@ export function FlowEditorProvider({
       deleteFlow,
       flashKey,
       requestFlash,
+      tags,
+      tagName,
     }),
     [
       initialFlow,
@@ -573,6 +618,8 @@ export function FlowEditorProvider({
       deleteFlow,
       flashKey,
       requestFlash,
+      tags,
+      tagName,
     ],
   );
 

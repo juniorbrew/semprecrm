@@ -109,9 +109,21 @@ export function NodeKeySelect({
 }) {
   const { t } = useLanguage();
   const options = nodes.filter((n) => n.node_key !== excludeKey);
+  // Base UI's Select.Value shows the raw value unless it can look the
+  // label up; the trigger reads "Enviar botões · menu" instead of "menu".
+  const items = {
+    __none__: t("— None —"),
+    ...Object.fromEntries(
+      options.map((n) => [
+        n.node_key,
+        `${t(NODE_META[n.node_type].label)} · ${n.node_key}`,
+      ]),
+    ),
+  };
   return (
     <Select
       value={value ?? "__none__"}
+      items={items}
       onValueChange={(v) => onChange(v === "__none__" ? null : v)}
     >
       <SelectTrigger className={cn("bg-muted", className)}>
@@ -127,7 +139,10 @@ export function NodeKeySelect({
                 <Icon
                   className={cn("h-3 w-3", NODE_META[n.node_type].color)}
                 />
-                {n.node_key}
+                <span className="text-muted-foreground">
+                  {t(NODE_META[n.node_type].label)}
+                </span>
+                <span>{n.node_key}</span>
               </span>
             </SelectItem>
           );

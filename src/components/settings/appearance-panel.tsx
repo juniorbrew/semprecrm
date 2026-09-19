@@ -5,7 +5,7 @@ import { Check, Languages, Moon, Palette, SunMoon, Sun } from 'lucide-react';
 import { useTheme } from '@/hooks/use-theme';
 import { useLanguage } from '@/hooks/use-language';
 import type { Language } from '@/lib/i18n';
-import { MODES, THEMES, type Mode, type ThemeId } from '@/lib/themes';
+import { MODES, THEMES, type Mode } from '@/lib/themes';
 import { cn } from '@/lib/utils';
 import { SettingsPanelHead } from './settings-panel-head';
 
@@ -90,7 +90,6 @@ export function AppearancePanel() {
           {THEMES.map((th) => (
             <ThemeCard
               key={th.id}
-              id={th.id}
               name={th.name}
               tagline={th.tagline}
               swatch={th.swatch}
@@ -184,14 +183,12 @@ function ModeCard({
 }
 
 function ThemeCard({
-  id,
   name,
   tagline,
   swatch,
   isActive,
   onPick,
 }: {
-  id: ThemeId;
   name: string;
   tagline: string;
   swatch: string;
@@ -204,7 +201,7 @@ function ThemeCard({
       type="button"
       onClick={onPick}
       aria-pressed={isActive}
-      aria-label={`${t('Use theme')} ${name}`}
+      aria-label={`${t('Use theme')} ${t(name)}`}
       className={cn(
         'bg-card flex flex-col gap-3 rounded-lg border p-4 text-left transition-colors',
         isActive
@@ -229,9 +226,9 @@ function ThemeCard({
         )}
       </div>
       <div>
-        <div className="text-foreground text-sm font-semibold">{name}</div>
+        <div className="text-foreground text-sm font-semibold">{t(name)}</div>
         <div className="text-muted-foreground mt-1 text-xs leading-relaxed">
-          {tagline}
+          {t(tagline)}
         </div>
       </div>
       <div className="mt-1 flex h-2 overflow-hidden rounded-full" aria-hidden>
@@ -240,9 +237,6 @@ function ThemeCard({
         <span className="bg-muted w-3" />
         <span className="bg-card w-3" />
       </div>
-      <span className="sr-only">
-        {t('Theme ID')}: {id}
-      </span>
     </button>
   );
 }

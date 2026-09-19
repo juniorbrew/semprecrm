@@ -4,6 +4,15 @@ import { useLanguage } from "@/hooks/use-language";
 import { PLAN_STATUS_LABELS, type PlanStatus } from "@/lib/plans";
 import { cn } from "@/lib/utils";
 
+/**
+ * Status label key. `trial` is the one status whose catalogue label
+ * ("Trial") collides with the plan name, so "Plan: Trial · Status:
+ * Trial" read as a glitch — the status side says "In trial" instead.
+ */
+export function planStatusLabelKey(status: PlanStatus): string {
+  return status === "trial" ? "In trial" : PLAN_STATUS_LABELS[status];
+}
+
 const TONE: Record<PlanStatus, string> = {
   trial: "border-primary/40 bg-primary/10 text-primary",
   active: "border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
@@ -33,7 +42,7 @@ export function PlanStatusChip({
         expiredTrial ? TONE.past_due : TONE[status],
       )}
     >
-      {expiredTrial ? t("Trial expired") : t(PLAN_STATUS_LABELS[status])}
+      {expiredTrial ? t("Trial expired") : t(planStatusLabelKey(status))}
     </span>
   );
 }
