@@ -150,6 +150,11 @@ export const RATE_LIMITS = {
    *  human — and for an office behind one NAT address — while still
    *  keeping a scraper from using us as a free Receita proxy. */
   lookup: { limit: 60, windowMs: 60_000 },
+  /** Platform gate sign-in / password change (per IP + user). 10/min
+   *  leaves room for a few typos while making online guessing of the
+   *  master password impractical on top of the CRM login it already
+   *  requires. */
+  platformGate: { limit: 10, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

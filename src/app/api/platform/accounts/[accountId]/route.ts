@@ -16,7 +16,7 @@ import type { PostgrestError } from '@supabase/supabase-js'
 
 import { AUDIT_ACTIONS, logAudit } from '@/lib/audit'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { createClient } from '@/lib/supabase/server'
+import { getPlatformAdmin } from '@/lib/platform/server'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -49,11 +49,12 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid account id' }, { status: 400 })
   }
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Second lock: the platform gate (/platform/login) must be open for
+  // this admin — the RPC alone would accept any platform admin session.
+  const ctx = await getPlatformAdmin()
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!ctx.gateOpen) return NextResponse.json({ error: 'Unauthorized', code: 'gate_locked' }, { status: 401 })
+  const { supabase, user } = ctx
 
   const body = (await request.json().catch(() => null)) as unknown
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
