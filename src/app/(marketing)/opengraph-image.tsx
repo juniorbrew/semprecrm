@@ -21,7 +21,7 @@ export default function Image() {
           fontFamily: "sans-serif",
         }}
       >
-        <div style={{ fontSize: 72, fontWeight: 600 }}>
+        <div style={{ fontSize: 72, fontWeight: 600, display: "flex" }}>
           Sempre<span style={{ color: "#a78bfa" }}>CRM</span>
         </div>
         <div style={{ marginTop: 24, fontSize: 32, color: "#c4b5fd" }}>
