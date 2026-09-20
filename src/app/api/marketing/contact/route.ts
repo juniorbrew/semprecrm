@@ -72,6 +72,7 @@ export async function POST(request: Request) {
   const result = validateContactSubmission({
     name: body.name,
     email: body.email,
+    phone: body.phone,
     company: body.company,
     message: body.message,
     website: body.website,
@@ -92,6 +93,7 @@ export async function POST(request: Request) {
     .insert({
       name: result.data.name,
       email: result.data.email,
+      phone: result.data.phone,
       company: result.data.company,
       message: result.data.message,
       source: "contato",

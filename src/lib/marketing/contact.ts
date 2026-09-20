@@ -5,9 +5,12 @@
 // zod in this codebase).
 // ============================================================
 
+import { isValidPhone, normalizePhone } from "@/lib/br/lookup";
+
 export const CONTACT_LIMITS = {
   name: 120,
   email: 160,
+  phone: 20,
   company: 120,
   message: 2000,
 } as const;
@@ -15,6 +18,7 @@ export const CONTACT_LIMITS = {
 export interface ContactSubmissionInput {
   name: unknown;
   email: unknown;
+  phone: unknown;
   company: unknown;
   message: unknown;
   /** Honeypot field — must arrive empty from a real visitor. */
@@ -24,6 +28,8 @@ export interface ContactSubmissionInput {
 export interface ContactSubmissionData {
   name: string;
   email: string;
+  /** Digits only: DDD + number (10–11). */
+  phone: string;
   company: string | null;
   message: string;
 }
@@ -56,6 +62,13 @@ export function validateContactSubmission(
     return { ok: false, error: "Informe um e-mail válido" };
   }
 
+  // WhatsApp CRM: the follow-up happens on the phone, so it is required.
+  const phone = normalizePhone(typeof input.phone === "string" ? input.phone : "");
+  if (!phone) return { ok: false, error: "Informe seu WhatsApp ou telefone com DDD" };
+  if (!isValidPhone(phone)) {
+    return { ok: false, error: "Telefone inválido — use DDD + número, ex.: (11) 91234-5678" };
+  }
+
   const companyRaw = typeof input.company === "string" ? input.company.trim() : "";
   if (companyRaw.length > CONTACT_LIMITS.company) {
     return { ok: false, error: `Empresa deve ter no máximo ${CONTACT_LIMITS.company} caracteres` };
@@ -68,5 +81,5 @@ export function validateContactSubmission(
     return { ok: false, error: `Mensagem deve ter no máximo ${CONTACT_LIMITS.message} caracteres` };
   }
 
-  return { ok: true, data: { name, email, company, message } };
+  return { ok: true, data: { name, email, phone, company, message } };
 }
