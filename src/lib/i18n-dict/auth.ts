@@ -33,6 +33,14 @@ export const DICT_AUTH: Record<string, string> = {
     'A nova senha precisa ser diferente da atual.',
   'This link is invalid or has expired. Request a new one.':
     'Este link é inválido ou expirou. Solicite um novo.',
+  'E-mail confirmed. Sign in to continue.': 'E-mail confirmado. Entre para continuar.',
+  'Password updated': 'Senha atualizada',
+  'Link expired': 'Link expirado',
+  'Choose a new password': 'Escolha uma nova senha',
+  'Taking you to the app…': 'Levando você para o app…',
+  'It will replace your current password right away.': 'Ela substitui a senha atual na hora.',
+  'At least 8 characters.': 'Pelo menos 8 caracteres.',
+  'Save new password': 'Salvar nova senha',
 
   // ---- /join/[token] — invitation page ----
   '. Link valid until': '. Link válido até',

@@ -112,6 +112,10 @@ export function resolveAssuranceLevels(
 export function isMfaExemptPath(pathname: string): boolean {
   if (pathname === MFA_PATH || pathname.startsWith(`${MFA_PATH}/`)) return true
   if (pathname.startsWith('/api/auth/') || pathname === '/api/auth') return true
+  // E-mail links: the callback must run before any challenge, and a
+  // recovery session (password only) must be able to set the new
+  // password — the TOTP is asked again on the next sign-in.
+  if (pathname === '/auth/callback' || pathname === '/reset-password') return true
   if (pathname.startsWith('/_next/')) return true
   return false
 }

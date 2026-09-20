@@ -168,7 +168,9 @@ três variáveis `SUPABASE_*` do `.env.production` e rodar `supabase db push` no
 ### 8. E-mails do Supabase Auth em português
 
 O GoTrue manda confirmação de cadastro, recuperação de senha, convite, troca de e-mail e link mágico em
-inglês por padrão. Os modelos em pt-BR ficam em `deploy/vps-all-in-one/mail-templates/*.html`; o GoTrue
+inglês por padrão. Os modelos em pt-BR ficam em `deploy/vps-all-in-one/mail-templates/*.html` (os links
+apontam para `/auth/callback?token_hash=…`, que verifica no servidor e funciona em qualquer navegador — não
+use `{{ .ConfirmationURL }}`, que depende do navegador que iniciou o fluxo); o GoTrue
 busca cada um por URL na hora de enviar, então o Nginx da API os serve em `https://api.SEU.DOMINIO/mail/`:
 
 ```bash
