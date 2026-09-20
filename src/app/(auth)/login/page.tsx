@@ -55,6 +55,9 @@ function LoginPageInner() {
   // account. After a successful sign-in we send them to the join
   // page to accept rather than to /dashboard.
   const inviteToken = searchParams.get("invite");
+  // Set by /auth/callback after an e-mail link: expired/used link, or
+  // e-mail confirmed (when the confirmation did not open a session).
+  const notice = searchParams.get("notice");
   const { t, language } = useLanguage();
 
   const [email, setEmail] = useState("");
@@ -126,6 +129,16 @@ function LoginPageInner() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
+            {!error && notice === "link_invalid" && (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-500">
+                {t("This link is invalid or has expired. Request a new one.")}
+              </div>
+            )}
+            {!error && notice === "email_confirmed" && (
+              <div className="rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">
+                {t("E-mail confirmed. Sign in to continue.")}
+              </div>
+            )}
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                 {t(error)}
