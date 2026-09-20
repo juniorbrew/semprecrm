@@ -8,11 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trackEvent } from "@/lib/analytics";
+import { formatPhone } from "@/lib/br/lookup";
 import { CONTACT_LIMITS } from "@/lib/marketing/contact";
 
 export function ContactForm() {
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const [phone, setPhone] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -21,12 +23,13 @@ export function ContactForm() {
 
     const name = String(formData.get("name") ?? "").trim();
     const email = String(formData.get("email") ?? "").trim();
+    const phone = String(formData.get("phone") ?? "").trim();
     const company = String(formData.get("company") ?? "").trim();
     const message = String(formData.get("message") ?? "").trim();
     const website = String(formData.get("website") ?? "").trim();
 
-    if (!name || !email || !message) {
-      toast.error("Preencha nome, e-mail e mensagem.");
+    if (!name || !email || !phone || !message) {
+      toast.error("Preencha nome, e-mail, WhatsApp e mensagem.");
       return;
     }
 
@@ -35,7 +38,7 @@ export function ContactForm() {
       const response = await fetch("/api/marketing/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, company, message, website }),
+        body: JSON.stringify({ name, email, phone, company, message, website }),
       });
 
       if (!response.ok) {
@@ -81,6 +84,21 @@ export function ContactForm() {
       <div className="space-y-1.5">
         <Label htmlFor="email">E-mail</Label>
         <Input id="email" name="email" type="email" required maxLength={CONTACT_LIMITS.email} />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="phone">WhatsApp / telefone</Label>
+        <Input
+          id="phone"
+          name="phone"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel-national"
+          placeholder="(11) 91234-5678"
+          required
+          maxLength={CONTACT_LIMITS.phone}
+          value={phone}
+          onChange={(e) => setPhone(formatPhone(e.target.value))}
+        />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="company">Empresa</Label>

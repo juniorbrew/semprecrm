@@ -12,7 +12,7 @@ describe('contactNotifyRecipient', () => {
 })
 
 describe('buildContactNotification', () => {
-  const data = { name: 'Ana <b>', email: 'ana@ex.com', company: null, message: 'Olá\n<script>x</script>' }
+  const data = { name: 'Ana <b>', email: 'ana@ex.com', phone: '11912345678', company: null, message: 'Olá\n<script>x</script>' }
 
   it('addresses the owner, replies to the visitor, escapes HTML', () => {
     const m = buildContactNotification('contato@x.br', data)
@@ -23,6 +23,8 @@ describe('buildContactNotification', () => {
     expect(m.html).toContain('&lt;script&gt;x&lt;/script&gt;')
     expect(m.html).not.toContain('<script>')
     expect(m.text).toContain('Empresa: —')
+    expect(m.text).toContain('WhatsApp/telefone: (11) 91234-5678 — https://wa.me/5511912345678')
+    expect(m.html).toContain('href="https://wa.me/5511912345678"')
     expect(m.text).toContain('Olá\n<script>x</script>')
   })
 })

@@ -3,6 +3,7 @@
 // message; the route decides whether to send it.
 // ============================================================
 
+import { formatPhone } from '@/lib/br/lookup'
 import type { MailMessage } from '@/lib/mail/smtp'
 
 import type { ContactSubmissionData } from './contact'
@@ -27,9 +28,12 @@ function escapeHtml(s: string): string {
 
 export function buildContactNotification(to: string, data: ContactSubmissionData): MailMessage {
   const company = data.company?.trim() || '—'
+  const phone = formatPhone(data.phone)
+  const whatsapp = `https://wa.me/55${data.phone}`
   const text = [
     `Nome: ${data.name}`,
     `E-mail: ${data.email}`,
+    `WhatsApp/telefone: ${phone} — ${whatsapp}`,
     `Empresa: ${company}`,
     '',
     'Mensagem:',
@@ -45,6 +49,7 @@ export function buildContactNotification(to: string, data: ContactSubmissionData
 <table style="border-collapse:collapse">
 ${row('Nome', escapeHtml(data.name))}
 ${row('E-mail', `<a href="mailto:${escapeHtml(data.email)}">${escapeHtml(data.email)}</a>`)}
+${row('WhatsApp', `<a href="${whatsapp}">${escapeHtml(phone)}</a>`)}
 ${row('Empresa', escapeHtml(company))}
 </table>
 <p style="white-space:pre-wrap;margin:16px 0;padding:12px;background:#f4f5f2;border-radius:8px">${escapeHtml(data.message)}</p>

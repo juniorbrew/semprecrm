@@ -4,6 +4,7 @@ import { validateContactSubmission } from "./contact";
 const BASE = {
   name: "Maria Silva",
   email: "maria@example.com",
+  phone: "(11) 91234-5678",
   company: "Acme",
   message: "Quero saber mais sobre o plano Empresa.",
   website: "",
@@ -17,9 +18,19 @@ describe("validateContactSubmission", () => {
       data: {
         name: "Maria Silva",
         email: "maria@example.com",
+        phone: "11912345678",
         company: "Acme",
         message: "Quero saber mais sobre o plano Empresa.",
       },
+    });
+  });
+
+  it("requires a valid Brazilian phone (DDD + number), stored as digits", () => {
+    expect(validateContactSubmission({ ...BASE, phone: "" })).toMatchObject({ ok: false });
+    expect(validateContactSubmission({ ...BASE, phone: "1234" })).toMatchObject({ ok: false });
+    expect(validateContactSubmission({ ...BASE, phone: "+55 (51) 3635-4333" })).toMatchObject({
+      ok: true,
+      data: { phone: "5136354333" },
     });
   });
 
