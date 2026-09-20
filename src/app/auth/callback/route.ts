@@ -18,15 +18,18 @@
 
 import { NextResponse } from 'next/server'
 
-import { loginNoticeUrl, parseOtpType, safeNextPath } from '@/lib/auth/callback'
+import { loginNoticeUrl, parseOtpType, publicOrigin, safeNextPath } from '@/lib/auth/callback'
 import { createClient } from '@/lib/supabase/server'
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
+  // Behind the reverse proxy the request origin is the upstream address
+  // (localhost:3000) — redirects must use the public one.
+  const origin = publicOrigin(request.url, request.headers)
   const tokenHash = url.searchParams.get('token_hash')
   const type = parseOtpType(url.searchParams.get('type'))
   const code = url.searchParams.get('code')
-  const next = safeNextPath(url.searchParams.get('next'), url.origin, type)
+  const next = safeNextPath(url.searchParams.get('next'), origin, type)
 
   const supabase = await createClient()
 
@@ -34,19 +37,19 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash })
     if (error) {
       console.error('[auth/callback] verifyOtp failed:', error.message)
-      return NextResponse.redirect(loginNoticeUrl(url.origin, 'link_invalid'))
+      return NextResponse.redirect(loginNoticeUrl(origin, 'link_invalid'))
     }
-    return NextResponse.redirect(`${url.origin}${next}`)
+    return NextResponse.redirect(`${origin}${next}`)
   }
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (error) {
       console.error('[auth/callback] code exchange failed:', error.message)
-      return NextResponse.redirect(loginNoticeUrl(url.origin, 'link_invalid'))
+      return NextResponse.redirect(loginNoticeUrl(origin, 'link_invalid'))
     }
-    return NextResponse.redirect(`${url.origin}${next}`)
+    return NextResponse.redirect(`${origin}${next}`)
   }
 
-  return NextResponse.redirect(loginNoticeUrl(url.origin, 'link_invalid'))
+  return NextResponse.redirect(loginNoticeUrl(origin, 'link_invalid'))
 }

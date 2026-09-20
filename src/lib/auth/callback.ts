@@ -44,6 +44,21 @@ export function safeNextPath(raw: string | null, origin: string, type: EmailOtpT
   return path
 }
 
+/**
+ * The origin the visitor actually used. Behind Nginx/PM2 the request
+ * URL Next sees is the upstream (`https://localhost:3000`), so the
+ * proxy's `X-Forwarded-Host` / `X-Forwarded-Proto` win when present;
+ * a direct hit (dev server) falls back to the request URL itself.
+ */
+export function publicOrigin(requestUrl: string, headers: Headers): string {
+  const fwdHost = headers.get('x-forwarded-host')?.split(',')[0].trim()
+  if (fwdHost && /^[a-z0-9.-]+(:\d+)?$/i.test(fwdHost)) {
+    const proto = headers.get('x-forwarded-proto')?.split(',')[0].trim()
+    return `${proto === 'http' ? 'http' : 'https'}://${fwdHost}`
+  }
+  return new URL(requestUrl).origin
+}
+
 /** Login-page notice shown after a callback outcome (`/login?notice=…`). */
 export type CallbackNotice = 'link_invalid' | 'email_confirmed'
 
