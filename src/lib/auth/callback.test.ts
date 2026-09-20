@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { loginNoticeUrl, parseOtpType, safeNextPath } from './callback'
+import { loginNoticeUrl, parseOtpType, publicOrigin, safeNextPath } from './callback'
 
 const origin = 'https://www.semprecrm.com.br'
 
@@ -36,5 +36,18 @@ describe('safeNextPath', () => {
 describe('loginNoticeUrl', () => {
   it('builds the login URL with the notice', () => {
     expect(loginNoticeUrl(origin, 'link_invalid')).toBe(`${origin}/login?notice=link_invalid`)
+  })
+})
+
+describe('publicOrigin', () => {
+  it('prefers the proxy forwarded host/proto', () => {
+    const h = new Headers({ 'x-forwarded-host': 'www.semprecrm.com.br', 'x-forwarded-proto': 'https' })
+    expect(publicOrigin('https://localhost:3000/auth/callback?x=1', h)).toBe('https://www.semprecrm.com.br')
+  })
+
+  it('falls back to the request origin without a proxy, and ignores junk hosts', () => {
+    expect(publicOrigin('http://localhost:3102/auth/callback', new Headers())).toBe('http://localhost:3102')
+    const junk = new Headers({ 'x-forwarded-host': 'evil.com/phish?x' })
+    expect(publicOrigin('http://localhost:3102/auth/callback', junk)).toBe('http://localhost:3102')
   })
 })
