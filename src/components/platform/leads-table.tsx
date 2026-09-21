@@ -19,9 +19,11 @@ const labels: Record<LeadStatus, string> = {
   descartado: 'Descartado',
 };
 const statusColors: Record<LeadStatus, string> = {
-  novo: 'text-blue-700 dark:text-blue-300 bg-blue-500/10',
-  em_contato: 'text-amber-700 dark:text-amber-300 bg-amber-500/10',
-  convertido: 'text-emerald-700 dark:text-emerald-300 bg-emerald-500/10',
+  novo: 'text-blue-700 [[data-mode=dark]_&]:text-blue-300 bg-blue-500/10',
+  em_contato:
+    'text-amber-700 [[data-mode=dark]_&]:text-amber-300 bg-amber-500/10',
+  convertido:
+    'text-emerald-700 [[data-mode=dark]_&]:text-emerald-300 bg-emerald-500/10',
   descartado: 'text-muted-foreground bg-muted',
 };
 const selectClass =

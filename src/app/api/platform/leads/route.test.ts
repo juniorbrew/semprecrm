@@ -86,6 +86,44 @@ describe('platform leads API', () => {
       ).status
     ).toBe(403);
   });
+  it('accepts public Host when Next normalizes loopback URLs', async () => {
+    expect(
+      (
+        await PATCH(
+          patch(undefined, { host: '127.0.0.1', origin: 'http://127.0.0.1' }),
+          ctx()
+        )
+      ).status
+    ).toBe(200);
+  });
+  it('accepts HTTPS origin behind TLS terminator', async () => {
+    expect(
+      (
+        await PATCH(
+          patch(undefined, {
+            host: 'crm.example.test',
+            origin: 'https://crm.example.test',
+            'x-forwarded-proto': 'https',
+          }),
+          ctx()
+        )
+      ).status
+    ).toBe(200);
+  });
+  it('rejects cross-site fetch metadata even with matching host', async () => {
+    expect(
+      (
+        await PATCH(
+          patch(undefined, {
+            host: 'localhost',
+            origin: 'http://localhost',
+            'sec-fetch-site': 'cross-site',
+          }),
+          ctx()
+        )
+      ).status
+    ).toBe(403);
+  });
   it('only passes id and status with caller session', async () => {
     const response = await PATCH(patch(), ctx());
     expect(response.status).toBe(200);
