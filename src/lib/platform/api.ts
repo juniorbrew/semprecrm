@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { hasGateSession, loadGateCredentials } from '@/lib/platform/gate';
 
 export function platformJson(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -30,6 +31,14 @@ export async function authorizePlatformApi() {
   }
   if (data !== true)
     return { response: platformJson({ error: 'Acesso negado.' }, 403) };
+  const gate = await loadGateCredentials(user.id);
+  if (!(await hasGateSession(gate)))
+    return {
+      response: platformJson(
+        { error: 'Acesso à plataforma bloqueado.', code: 'gate_locked' },
+        401
+      ),
+    };
   return { supabase };
 }
 

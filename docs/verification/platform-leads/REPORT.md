@@ -10,7 +10,7 @@ O cron existente busca leads pendentes por RPC atômica, envia usando o Web Push
 
 ### Migration, tabelas e segurança do banco
 
-`045_platform_leads.sql` cria `leads`, com os campos solicitados, tipos/status validados e unicidade parcial por origem. Há índices para data/id, status/data, tipo/data, fila de notificação e busca trigram. As referências únicas já servem de índice para as FKs; não há um segundo índice redundante para cada origem.
+`047_platform_leads.sql` cria `leads`, com os campos solicitados, tipos/status validados e unicidade parcial por origem. A numeração 047 foi adotada na integração com o `main` remoto, que já contém `045_platform_gate.sql` e `046_contact_phone.sql`. Há índices para data/id, status/data, tipo/data, fila de notificação e busca trigram. As referências únicas já servem de índice para as FKs; não há um segundo índice redundante para cada origem.
 
 Os snapshots de nome/email/empresa sobrevivem à exclusão de contas e submissões. As FKs usam `ON DELETE SET NULL`; o CHECK permite origem removida, sem permitir associação ao tipo errado. Essa escolha evita que a própria exclusão viole o CHECK.
 
@@ -57,8 +57,8 @@ Sucesso parcial conserva recibos: o dispositivo já atendido não é reenviado n
 
 ### Automatizados e PostgreSQL real
 
-- Suíte completa mais recente: **104 arquivos, 1189 testes PASS** (`npm test`,20/09/2026).
-- API:31 testes, incluindo regressões de Host normalizado, HTTPS atrás de proxy e rejeição cross-site.
+- Suíte completa da integração com o `main` remoto: **107 arquivos, 1209 testes PASS** (`npm test`,21/09/2026).
+- API de leads:33 testes, incluindo segunda senha da plataforma, Host normalizado, HTTPS atrás de proxy e rejeição cross-site.
 - Worker/envio: elegibilidade, destinatários, payload, ausência de configuração/assinaturas, falha total/parcial, recibos e fencing. `send.test.ts` testa exclusão dos recibos e falha de persistência.
 - SQL real: `supabase/tests/platform_leads.sql` PASS. Exercita signup/auth real, contato, RLS, anon, dois tenants, admin, unicidade, fonte excluída, CHECK, status, busca literal/SQL injection, falha não bloqueante, claim/expiração/backoff/token obsoleto/sucesso/não reenvio. Transação revertida após o teste.
 - Migration aplicada no ambiente isolado e reaplicada duas vezes pelo crítico com PASS.
@@ -81,6 +81,8 @@ O harness `scripts/verify-platform-leads.mjs` usa Next, Supabase Auth/REST/Postg
 
 Os resultados da última execução integral ficam em `e2e-results.json`. Incluem `/contato`, `/signup`, status persistido, busca/tipo/status/paginação, falhas controladas da API, loading/vazio/erro, XSS como texto, requests sem duplicação inicial, auth/tenants por HTTP e REST direto, UUID/status/payload grandes/campos extras/replay, dois crons simultâneos, falha503/retry/backoff e sucesso parcial com duas assinaturas.
 
+Na integração final para publicação, o E2E também comprovou que a API de leads retorna `gate_locked` para um platform admin autenticado sem a segunda senha e só libera acesso depois do setup e do cookie assinado do gate. O formulário `/contato` foi exercitado com o campo de telefone introduzido no `main` remoto.
+
 Capturas: `desktop-light.png`, `desktop-dark.png`, `mobile-light.png`, `mobile-dark.png`, `filtered.png`, `loading.png`, `empty.png`, `list-error.png`, `status-error.png`, `xss-text.png`.
 
 A crítica visual independente aprovou a interface após uma execução própria em quatro combinações de largura/tema, com persistência após reload, sem overflow horizontal e sem erros de console. O parecer, resultados e capturas estão em `critic-ui.md`, `critic-ui-results.json` e `critic-{1440,390}-{light,dark}.png`. Duas observações não bloqueantes permanecem: um erro de listagem após uma busca vazia exibe também o cartão de estado vazio, e emails longos quebram no meio do endereço para caber na tabela.
@@ -101,7 +103,7 @@ Falhas do próprio harness também foram corrigidas: seleção inicial do tema, 
 
 Instância de verificação: Supabase57021/DB57022, nome `semprecrm-leads-verification`, diretório de trabalho no TEMP do usuário. Next de teste em3107. Nenhum reset da stack local preexistente56021, nenhum banco remoto utilizado. Após desligamentos, sockets de runtime do Docker foram preservados em diretórios de backup e recriados; volumes/bancos não foram apagados.
 
-Depois dos testes, `supabase migration up --local --workdir C:\SempreCRM --yes` aplicou apenas `045_platform_leads.sql` ao banco local principal56022. Consulta final: `public.leads` existe e `supabase_migrations.schema_migrations` está em045. O container web atualmente ativo na porta3101 aponta para **outro checkout em `.claude/worktrees/...`**; ele não foi substituído, para preservar o trabalho paralelo. O recurso deste repositório foi executado e testado na porta3107; para publicar na porta3101 é necessário construir o container a partir deste checkout no fluxo de implantação escolhido.
+Na validação de release, `045_platform_gate.sql`, `046_contact_phone.sql` e `047_platform_leads.sql` foram aplicadas em sequência na stack isolada. Consulta final: `platform_gate_credentials` e `leads` existem e `supabase_migrations.schema_migrations` está em047. O recurso integrado com o `main` remoto foi executado e testado na porta3107.
 
 Os caminhos locais de SUPABASE_CLI/PLAYWRIGHT_MODULE e os comandos de bootstrap estão em `HANDOFF-PLATFORM-LEADS.md`. Com essas variáveis definidas:
 
@@ -136,7 +138,7 @@ O build de teste usa chaves sintéticas locais. Não levar `.next` desse teste p
 | Migration | PASS — aplicada em ambos; reaplicação2x em transação pelo crítico |
 | RLS | PASS — SQL real anon/tenants/admin |
 | Multitenancy | PASS — SQL real + HTTP/REST direto de tenant A/B |
-| APIs | PASS —31 testes, HTTP E2E e replay/erro |
+| APIs | PASS —33 testes, gate da plataforma, HTTP E2E e replay/erro |
 | SECURITY DEFINER | PASS — search_path/grants/checagem e revisão independente |
 | Lead contato | PASS — formulário no browser e SQL real |
 | Lead cadastro | PASS — signup no browser e SQL real |
@@ -146,12 +148,12 @@ O build de teste usa chaves sintéticas locais. Não levar `.next` desse teste p
 | Concorrência | PASS — duas conexões SQL e dois cron HTTP simultâneos |
 | Retry | PASS —503, backoff, sucesso posterior e recibos de2 assinaturas |
 | XSS | PASS — payloads script/img permanecem texto em DOM |
-| Secrets frontend | PASS —88 assets,10 valores privados, nenhum match; DOM/storage E2E |
+| Secrets frontend | PASS —93 assets da release,5 valores privados sintéticos, nenhum match; DOM/storage E2E |
 | Performance | PASS —10k leads/40 medições por cenário, payload limitado |
 | Mobile | PASS — Chromium390, claro/escuro, sem overflow horizontal |
-| Testes | PASS —104 arquivos/1189 testes; SQL e E2E completos |
+| Testes | PASS —107 arquivos/1209 testes; SQL e E2E completos |
 | Lint | PASS — exit0,8 avisos preexistentes |
 | Typecheck | PASS — TypeScript no build e comando separado |
-| Build | PASS — Next16.2.6/Turbopack;69 páginas |
+| Build | PASS — Next16.2.6/Turbopack;74 rotas/páginas |
 
 O critério Push PASS descreve envio HTTP/Web Push real para receiver HTTPS controlado e seus registros de sucesso/falha. A notificação exibida por um provedor externo em um dispositivo administrativo real permanece `NÃO VALIDADO`, pois esse dispositivo/assinatura não fazia parte do ambiente de teste. Isso não altera o resultado local do sender/cron.

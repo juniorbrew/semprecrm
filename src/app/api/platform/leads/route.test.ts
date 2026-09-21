@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const { getUser, rpc } = vi.hoisted(() => ({ getUser: vi.fn(), rpc: vi.fn() }));
+const { getUser, rpc, loadGateCredentials, hasGateSession } = vi.hoisted(
+  () => ({
+    getUser: vi.fn(),
+    rpc: vi.fn(),
+    loadGateCredentials: vi.fn(),
+    hasGateSession: vi.fn(),
+  })
+);
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ auth: { getUser }, rpc }),
 }));
+vi.mock('@/lib/platform/gate', () => ({ loadGateCredentials, hasGateSession }));
 import { GET } from './route';
 import { PATCH } from './[id]/route';
 
@@ -15,6 +23,8 @@ const patch = (body: unknown = { status: 'em_contato' }, headers = {}) =>
     body: JSON.stringify(body),
   });
 beforeEach(() => {
+  loadGateCredentials.mockReset().mockResolvedValue({ userId: id });
+  hasGateSession.mockReset().mockResolvedValue(true);
   getUser
     .mockReset()
     .mockResolvedValue({ data: { user: { id } }, error: null });
@@ -57,6 +67,19 @@ describe('platform leads API', () => {
       (await GET(new Request('http://localhost/api/platform/leads'))).status
     ).toBe(401);
   });
+  it.each(['GET', 'PATCH'])(
+    'denies a platform admin while the second gate is locked: %s',
+    async (method) => {
+      hasGateSession.mockResolvedValue(false);
+      const response =
+        method === 'GET'
+          ? await GET(new Request('http://localhost/api/platform/leads'))
+          : await PATCH(patch(), ctx());
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ code: 'gate_locked' });
+      expect(rpc).toHaveBeenCalledTimes(1);
+    }
+  );
   it('validates UUID', async () => {
     expect((await PATCH(patch(), ctx("' OR 1=1"))).status).toBe(400);
     expect(rpc).toHaveBeenCalledTimes(1);

@@ -25,6 +25,7 @@ const { chromium } = await import(
 );
 const browser = await chromium.launch({ headless: true });
 const run = Date.now();
+const pushReceiverPort = 58043;
 const password = 'Local-verification-847!';
 const checks = [];
 const pass = (name) => {
@@ -78,6 +79,16 @@ const request = (path, identity, init = {}) =>
       ...init.headers,
     },
   });
+const rememberResponseCookie = (identity, response) => {
+  const raw = response.headers.get('set-cookie');
+  assert.ok(raw, 'gate response must set a cookie');
+  const [pair] = raw.split(';', 1);
+  const separator = pair.indexOf('=');
+  const name = pair.slice(0, separator);
+  const value = pair.slice(separator + 1);
+  identity.cookies = identity.cookies.filter((cookie) => cookie.name !== name);
+  identity.cookies.push({ name, value });
+};
 const jsonPatch = (status) => ({
   method: 'PATCH',
   headers: { 'content-type': 'application/json' },
@@ -85,6 +96,22 @@ const jsonPatch = (status) => ({
 });
 let provider;
 try {
+  const locked = await request('/api/platform/leads', owner);
+  assert.equal(locked.status, 401);
+  assert.equal((await locked.json()).code, 'gate_locked');
+  const gate = await request('/api/platform/gate', owner, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      username: `platform-${run}`,
+      password,
+    }),
+  });
+  assert.equal(gate.status, 200);
+  rememberResponseCookie(owner, gate);
+  assert.equal((await request('/api/platform/leads', owner)).status, 200);
+  pass('platform second gate blocks leads API until setup and signed cookie');
+
   assert.equal((await request('/api/platform/leads')).status, 401);
   for (const tenant of [tenantA, tenantB]) {
     assert.equal((await request('/api/platform/leads', tenant)).status, 403);
@@ -133,6 +160,7 @@ try {
   await contact.goto(`${base}/contato`);
   await contact.locator('#name').fill('Marina Oliveira');
   await contact.locator('#email').fill(`contact-${run}@example.test`);
+  await contact.locator('#phone').fill('+55 11 99999-0000');
   await contact.locator('#company').fill('Aurora Tecnologia');
   await contact
     .locator('#message')
@@ -448,13 +476,16 @@ try {
       res.end();
     }
   );
-  await new Promise((resolve) => provider.listen(57443, '127.0.0.1', resolve));
-  // Remove stale synthetic receiver keys from a previous interrupted run only.
+  await new Promise((resolve) =>
+    provider.listen(pushReceiverPort, '127.0.0.1', resolve)
+  );
+  // Remove stale local receiver keys from previous runs, including runs that
+  // used a different port after Windows reserved the old one.
   unwrap(
     await admin
       .from('push_subscriptions')
       .delete()
-      .like('endpoint', 'https://127.0.0.1:57443/%')
+      .like('endpoint', 'https://127.0.0.1:%')
   );
   // Test harness owns every row in this isolated stack. Suspend old fixtures.
   unwrap(
@@ -474,7 +505,7 @@ try {
     await admin.from('push_subscriptions').insert({
       account_id: account.id,
       user_id: owner.user.id,
-      endpoint: `https://127.0.0.1:57443/${run}`,
+      endpoint: `https://127.0.0.1:${pushReceiverPort}/${run}`,
       p256dh: keys.getPublicKey().toString('base64url'),
       auth: authSecret.toString('base64url'),
     })
@@ -556,7 +587,7 @@ try {
     await admin.from('push_subscriptions').insert({
       account_id: account.id,
       user_id: owner.user.id,
-      endpoint: `https://127.0.0.1:57443/${run}/second`,
+      endpoint: `https://127.0.0.1:${pushReceiverPort}/${run}/second`,
       p256dh: keys.getPublicKey().toString('base64url'),
       auth: authSecret.toString('base64url'),
     })

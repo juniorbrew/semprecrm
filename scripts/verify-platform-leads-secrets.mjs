@@ -1,6 +1,12 @@
 // Read private values without ever printing them; inspect browser-delivered assets.
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { verificationEnv } from './platform-leads-runtime.mjs';
 
@@ -10,7 +16,7 @@ const values = new Map();
 for (const [name, value] of Object.entries(verificationEnv())) {
   if (privateName.test(name) && value?.length >= 16) values.set(name, value);
 }
-const raw = readFileSync('.env.local', 'utf8');
+const raw = existsSync('.env.local') ? readFileSync('.env.local', 'utf8') : '';
 for (const line of raw.split(/\r?\n/)) {
   const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
   if (match && privateName.test(match[1])) {

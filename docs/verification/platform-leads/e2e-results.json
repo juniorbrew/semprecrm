@@ -1,6 +1,7 @@
 {
-  "at": "2026-09-20T13:56:55.588Z",
+  "at": "2026-09-21T10:19:25.857Z",
   "checks": [
+    "platform second gate blocks leads API until setup and signed cookie",
     "HTTP auth + direct Supabase RLS: anon, invalid session, tenant A/B isolated",
     "/contato browser submission creates exactly one new contato lead",
     "/signup browser submission creates account + exactly one cadastro lead with owner email",
