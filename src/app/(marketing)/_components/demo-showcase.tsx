@@ -1,4 +1,24 @@
-const PIPELINE_STAGES = ["Novo", "Contato feito", "Proposta", "Fechado"] as const;
+const PIPELINE_STAGES = [
+  {
+    name: "Novo",
+    deals: [
+      { name: "Barbearia Vintage", value: "R$ 480" },
+      { name: "Studio Fit", value: "R$ 1.200" },
+    ],
+  },
+  {
+    name: "Contato feito",
+    deals: [{ name: "Doce & Cia Confeitaria", value: "R$ 690" }],
+  },
+  {
+    name: "Proposta",
+    deals: [{ name: "Loja da Ana", value: "R$ 2.150" }],
+  },
+  {
+    name: "Fechado",
+    deals: [{ name: "Ótica Bela Vista", value: "R$ 3.400" }],
+  },
+] as const;
 
 export function DemoShowcase() {
   return (
@@ -9,30 +29,39 @@ export function DemoShowcase() {
       </div>
       <div className="mt-12 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl shadow-primary/10">
         <div className="flex items-center gap-2 border-b border-border bg-muted/60 px-4 py-3">
-          <span className="size-2.5 rounded-full bg-destructive/60" />
-          <span className="size-2.5 rounded-full bg-amber-500/60" />
-          <span className="size-2.5 rounded-full bg-emerald-500/60" />
-          <span className="ml-3 text-xs text-muted-foreground">www.semprecrm.com.br/dashboard</span>
+          <span aria-hidden="true" className="size-2.5 rounded-full bg-destructive/60" />
+          <span aria-hidden="true" className="size-2.5 rounded-full bg-amber-500/60" />
+          <span aria-hidden="true" className="size-2.5 rounded-full bg-emerald-500/60" />
+          <span translate="no" className="ml-3 text-xs text-muted-foreground">www.semprecrm.com.br/dashboard</span>
         </div>
         <div className="grid gap-4 p-6 sm:grid-cols-3">
-          <div className="rounded-xl bg-muted p-4">
-            <p className="text-xs text-muted-foreground">Conversas hoje</p>
-            <p className="mt-2 text-2xl font-semibold text-foreground">142</p>
-          </div>
-          <div className="rounded-xl bg-muted p-4">
-            <p className="text-xs text-muted-foreground">Negócios em aberto</p>
-            <p className="mt-2 text-2xl font-semibold text-foreground">37</p>
-          </div>
-          <div className="rounded-xl bg-muted p-4">
-            <p className="text-xs text-muted-foreground">Tempo médio de resposta</p>
-            <p className="mt-2 text-2xl font-semibold text-foreground">4 min</p>
-          </div>
+          <dl className="rounded-xl bg-muted p-4">
+            <dt className="text-xs text-muted-foreground">Conversas hoje</dt>
+            <dd className="mt-2 text-2xl font-semibold tabular-nums text-foreground">142</dd>
+          </dl>
+          <dl className="rounded-xl bg-muted p-4">
+            <dt className="text-xs text-muted-foreground">Negócios em aberto</dt>
+            <dd className="mt-2 text-2xl font-semibold tabular-nums text-foreground">37</dd>
+          </dl>
+          <dl className="rounded-xl bg-muted p-4">
+            <dt className="text-xs text-muted-foreground">Tempo médio de resposta</dt>
+            <dd className="mt-2 text-2xl font-semibold tabular-nums text-foreground">4&nbsp;min</dd>
+          </dl>
           <div className="col-span-full space-y-2 rounded-xl bg-muted p-4">
-            <p className="text-xs text-muted-foreground">Funil de vendas</p>
-            <div className="mt-2 flex gap-2">
+            <div className="flex items-baseline justify-between">
+              <h3 className="text-xs text-muted-foreground">Funil de vendas</h3>
+              <p className="text-xs tabular-nums text-muted-foreground">37 negócios abertos · mostrando 5</p>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {PIPELINE_STAGES.map((stage) => (
-                <div key={stage} className="flex-1 rounded-lg bg-background p-3 text-center">
-                  <p className="text-xs text-muted-foreground">{stage}</p>
+                <div key={stage.name} className="space-y-2 rounded-lg bg-background p-2.5">
+                  <p className="px-0.5 text-xs font-medium text-muted-foreground">{stage.name}</p>
+                  {stage.deals.map((deal) => (
+                    <div key={deal.name} className="rounded-md border border-border bg-card p-2">
+                      <p className="truncate text-xs font-medium text-foreground">{deal.name}</p>
+                      <p className="text-xs tabular-nums text-muted-foreground">{deal.value}</p>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

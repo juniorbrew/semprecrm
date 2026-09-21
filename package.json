@@ -33,6 +33,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "a11y:marketing": "npx -y playwright cli close-all && npx -y playwright cli open http://localhost:3101 && npx -y playwright cli --raw run-code --filename=scripts/a11y-marketing.js && npx -y playwright cli close",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

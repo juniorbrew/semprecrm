@@ -7,6 +7,7 @@ import { Features } from "./_components/features";
 import { Audience } from "./_components/audience";
 import { DemoShowcase } from "./_components/demo-showcase";
 import { Faq } from "./_components/faq";
+import { TrustStrip } from "./_components/trust-strip";
 import { CtaBanner } from "./_components/cta-banner";
 
 const DESCRIPTION =
@@ -37,9 +38,10 @@ const jsonLd = {
 export default function HomePage() {
   return (
     <>
+      {/* "<" → "\u003c" so a "</script>" inside any value can't close the tag early. */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
       <Hero />
       <Benefits />
@@ -48,6 +50,7 @@ export default function HomePage() {
       <Audience />
       <DemoShowcase />
       <Faq />
+      <TrustStrip />
       <CtaBanner />
     </>
   );

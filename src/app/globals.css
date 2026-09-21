@@ -52,6 +52,12 @@
   --color-primary-hover: var(--primary-hover);
   --color-primary-soft: var(--primary-soft);
   --color-primary-soft-2: var(--primary-soft-2);
+  /* Accent used as *text* on the mode's surface (text-primary-readable).
+   * --primary is tuned as a button fill (white text on top), so as a
+   * foreground it can dip under WCAG 4.5:1 — violet on the dark
+   * background reads 3.3:1. This mixes it toward the mode's contrast
+   * pole; defined per MODE block below, resolves per accent at use time. */
+  --color-primary-readable: var(--primary-readable);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -118,9 +124,11 @@ html[data-mode="dark"] {
   --sidebar-accent: oklch(0.22 0.01 260);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.28 0.01 260);
+  --primary-readable: color-mix(in oklch, var(--primary), white 25%);
 }
 
 html[data-mode="light"] {
+  --primary-readable: color-mix(in oklch, var(--primary), black 30%);
   --background: oklch(0.99 0.002 260);
   --foreground: oklch(0.21 0.01 260);
   --card: oklch(1 0 0);
