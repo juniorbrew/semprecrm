@@ -42,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+# Agent skills (installed via skills CLI / playwright; only skills-lock.json is versioned)
+.claude/skills/
