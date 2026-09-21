@@ -19,8 +19,17 @@ export const metadata: Metadata = {
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-full flex-col">
+      {/* Skip link: first Tab stop on every marketing page, visible only on focus. */}
+      <a
+        href="#conteudo"
+        className="sr-only z-50 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:absolute focus:top-2 focus:left-2"
+      >
+        Pular para o conteúdo
+      </a>
       <SiteHeader />
-      <main className="flex-1">{children}</main>
+      <main id="conteudo" tabIndex={-1} className="flex-1 outline-none">
+        {children}
+      </main>
       <SiteFooter />
       <Analytics />
     </div>
