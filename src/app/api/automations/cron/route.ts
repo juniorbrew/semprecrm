@@ -4,7 +4,7 @@ import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { scanInactiveConversations } from '@/lib/automations/inactivity'
 import { AUDIT_RETENTION_DAYS } from '@/lib/audit'
-import { notifyCalendarReminders, notifyTasksDueSoon } from '@/lib/push/notify'
+import { notifyCalendarReminders, notifyTasksDueSoon, notifyNewLeads } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
 
 /** Retention for the lead-capture webhook log (spec §2). */
@@ -144,8 +144,11 @@ export async function GET(request: Request) {
     }
   }
 
+  const leadNotifications = await notifyNewLeads(admin)
+
   return NextResponse.json({
     processed,
+    lead_notifications: leadNotifications,
     tasks_due: tasksDue,
     calendar_reminders: calendarReminders,
     inactivity: {

@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-21T10:19:25.857Z",
+  "checks": [
+    "platform second gate blocks leads API until setup and signed cookie",
+    "HTTP auth + direct Supabase RLS: anon, invalid session, tenant A/B isolated",
+    "/contato browser submission creates exactly one new contato lead",
+    "/signup browser submission creates account + exactly one cadastro lead with owner email",
+    "SSR list, 25-row server pagination, desktop/mobile light+dark, no initial double fetch",
+    "UI search + direct status edit persists after reload",
+    "status/type filters + failed status leaves confirmed value intact",
+    "loading/empty/error visual states captured; retry control present",
+    "XSS renders text, no injected elements, browser DOM/storage secrets absent",
+    "manual HTTP: manipulated UUID/status, missing lead, extra fields, oversized body, bounded pagination, idempotent status replay",
+    "two concurrent real cron HTTP requests: one encrypted push, durable success, no second-tick duplicate",
+    "controlled provider 503: no false success, attempt counted, claim released, backoff, later retry succeeds once",
+    "partial two-device failure: durable receipt skips successful device on retry, both eventually delivered"
+  ],
+  "consoleErrors": [],
+  "pushRequests": 6,
+  "note": "Real local HTTP/Web Push encryption with controlled HTTPS receiver; not proof of delivery to an external browser push service."
+}

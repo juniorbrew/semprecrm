@@ -203,7 +203,7 @@ describe('sendPushToUsers', () => {
       tag: 'conversation:abc',
       data: { url: '/inbox?c=abc' },
     })
-    expect(optsArg).toEqual({ TTL: 3600 })
+    expect(optsArg).toEqual({ TTL: 3600, timeout: 10000 })
 
     expect(res).toEqual({ users: 2, sent: 3, failed: 0, removed: 0, configured: true })
     expect(stamped.sort()).toEqual(['s1', 's2', 's3'])
@@ -231,5 +231,27 @@ describe('sendPushToUsers', () => {
     const res = await sendPushToUsers({ from } as any, [], PAYLOAD)
     expect(res.sent).toBe(0)
     expect(from).not.toHaveBeenCalled()
+  })
+
+  it('skips durable receipts and records only new successful subscriptions', async () => {
+    sendNotification.mockResolvedValue({ statusCode: 201 })
+    const { admin } = makeAdmin(ROWS)
+    const onDelivered = vi.fn().mockResolvedValue(undefined)
+    const result = await sendPushToUsers(admin, ['u1', 'u2'], PAYLOAD, {
+      excludeSubscriptionIds: ['s1', 's3'], onDelivered,
+    })
+    expect(result.sent).toBe(1)
+    expect(sendNotification).toHaveBeenCalledTimes(1)
+    expect(onDelivered).toHaveBeenCalledExactlyOnceWith('s2')
+  })
+
+  it('does not count delivery as durable if receipt persistence fails', async () => {
+    sendNotification.mockResolvedValue({ statusCode: 201 })
+    const { admin } = makeAdmin([ROWS[0]])
+    const result = await sendPushToUsers(admin, ['u1'], PAYLOAD, {
+      excludeSubscriptionIds: [], onDelivered: async () => { throw new Error('receipt write failed') },
+    })
+    expect(result.sent).toBe(0)
+    expect(result.failed).toBe(1)
   })
 })

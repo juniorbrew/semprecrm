@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gauntlet — Entregar leads de contato e cadastro no painel da plataforma</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d0f;color:#e8e8ea;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:36px 24px 64px}
+.wrap{max-width:1100px;margin:0 auto}
+h1{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.meta{margin-top:14px;display:grid;grid-template-columns:130px 1fr;gap:6px 16px;font-size:14px}
+.meta dt{color:#8b8b93}
+.meta dd{color:#e8e8ea}
+.scroll{overflow-x:auto;margin-top:28px;border:1px solid #24242a;border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:820px;font-size:14px}
+th{background:#161619;color:#9a9aa2;text-align:left;font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:10px 12px;white-space:nowrap}
+td{border-top:1px solid #1e1e23;padding:11px 12px;vertical-align:top}
+td img{max-width:220px;height:auto;border-radius:4px;display:block}
+.v-ok{color:#4ade80;font-weight:600}
+.v-no{color:#f87171;font-weight:600}
+section{margin-top:32px}
+h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#8b8b93;font-weight:600;margin-bottom:10px}
+ul{list-style:none}
+li{padding:7px 0;border-top:1px solid #1e1e23}
+li:first-child{border-top:none}
+.next{background:#141418;border:1px solid #24242a;border-radius:8px;padding:14px 16px;color:#e8e8ea}
+footer{margin-top:40px;color:#5a5a63;font-size:12px}
+@media(prefers-color-scheme:light){
+body{background:#fff;color:#1a1a1d}
+th{background:#f5f5f7;color:#55555e}
+td,li{border-color:#e6e6ea}
+.scroll,.next{border-color:#e0e0e6}
+.next{background:#fafafc}
+.meta dt,h2{color:#6b6b74}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Entregar leads de contato e cadastro no painel da plataforma</h1>
+  <dl class="meta">
+    <dt>Barra</dt><dd>Gates do pedido comprovados por testes executados, isolamento no banco e capturas desktop/mobile</dd>
+    <dt>Referência</dt><dd>Fonte primária: especificação anexada, PostgreSQL e contratos reais de Supabase/Next</dd>
+    <dt>Rodada</dt><dd>2</dd>
+  </dl>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Peça</th><th>Rodada</th><th>Referência</th><th>Resultado atual</th><th>Veredito</th><th>O que o crítico apontou</th></tr>
+      </thead>
+      <tbody>
+        <!-- ROWS: uma linha NOVA por peça por rodada. Nunca sobrescreva a anterior.
+             Veredito: <span class="v-ok">APROVADO</span> ou <span class="v-no">REPROVADO</span>
+             Peça visual: <img src="ref.png"> na coluna Referência e a captura em Resultado atual. -->
+        <tr><td>Banco e APIs</td><td>1</td><td>PostgreSQL / pedido</td><td>Migration045 e testes SQL de RLS/triggers/claims PASS</td><td>Revisão pendente</td><td>Revisor original interrompido por limite de uso</td></tr>
+        <tr><td>Interface</td><td>1</td><td>Pedido / design system</td><td>Listagem renderizada; contato e signup E2E PASS</td><td>Validação parcial</td><td>Execução interrompida após desligamento</td></tr>
+        <tr><td>Push</td><td>1</td><td>Web Push existente</td><td>Worker e recibos; testes unitários PASS</td><td>E2E pendente</td><td>Faltava receiver HTTPS e cron simultâneo</td></tr>
+        <tr><td>Banco e APIs</td><td>2</td><td>PostgreSQL / pedido</td><td>SQL real, migration reaplicada, concorrência com2 conexões, 10k/40 medições e API31 testes PASS</td><td class="v-ok">APROVADO</td><td>Crítico independente: sem achados P1/P2; limites de crash externo declarados</td></tr>
+        <tr><td>Interface</td><td>2</td><td>Pedido / design system</td><td><img src="docs/verification/platform-leads/mobile-light.png" alt="Tela mobile clara"><img src="docs/verification/platform-leads/mobile-dark.png" alt="Tela mobile escura">10 capturas E2E, 4 capturas independentes; reload, console e overflow verificados</td><td class="v-ok">APROVADO</td><td>Crítica independente em critic-ui.md; dois pontos visuais menores, sem bloqueio</td></tr>
+        <tr><td>Push</td><td>2</td><td>Web Push existente</td><td>Dois crons simultâneos, HTTPS/VAPID criptografado, 503/retry e falha parcial em2 assinaturas PASS</td><td class="v-ok">APROVADO no ambiente local</td><td>Entrega externa em dispositivo real não observada</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section>
+    <h2>Abordagens descartadas</h2>
+    <ul><li>Claim por notified_at descartado: reserva e sucesso são estados separados.</li><li>Retry integral descartado: recibos por assinatura preservam sucessos parciais.</li><li>Teste inicial na stack principal descartado: a instância57021 evitou interferência no cron local. Migration045 foi aplicada ao banco local principal após validação.</li></ul>
+  </section>
+
+  <section>
+    <h2>Próxima ação</h2>
+    <div class="next">Implementação, testes e crítica concluídos. Relatório e evidências em docs/verification/platform-leads/REPORT.md; entrega local pronta para revisão e implantação a partir deste checkout.</div>
+  </section>
+
+  <section>
+    <h2>Suposições em vigor</h2>
+    <ul><li>Sem backfill de leads antigos; nenhuma produção alterada.</li><li>Push exactly-once não é garantido entre aceitação externa e recibo local; tag estável limita duplicação visual.</li><li>Tamanho L; validação final concluída na rodada 2.</li></ul>
+  </section>
+
+  <footer>Gauntlet Loop — atualizado a cada rodada. Acompanhe sem interromper.</footer>
+</div>
+</body>
+</html>
