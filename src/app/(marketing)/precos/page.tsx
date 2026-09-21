@@ -34,6 +34,28 @@ const PLAN_TAGLINES: Record<Plan, string> = {
   empresa: "Para operações maiores, com múltiplos canais.",
 };
 
+// null = sem preço fixo publicado (planos "fale com a gente").
+const PLAN_PRICES: Record<Plan, number | null> = {
+  trial: 0,
+  basico: 59.9,
+  pro: 89.9,
+  empresa: null,
+};
+
+function formatPrice(plan: Plan): { value: string; suffix: string } {
+  const price = PLAN_PRICES[plan];
+  if (price === null) return { value: "Personalizado", suffix: "" };
+  if (price === 0) return { value: "Grátis", suffix: "por 14 dias" };
+  return {
+    value: price.toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+      minimumFractionDigits: 2,
+    }),
+    suffix: "/mês",
+  };
+}
+
 // pt-BR labels for the marketing site — src/lib/plans.ts's own
 // MODULE_LABELS are English (they feed the in-app i18n catalogue),
 // but marketing copy is hardcoded pt-BR (see plan's Global
@@ -56,15 +78,32 @@ const MODULE_LABELS_PT: Record<Module, string> = {
   calendar: "Agenda",
 };
 
-function formatLimit(value: number | null): string {
-  return value === null ? "Ilimitado" : String(value);
+// pt-BR plural forms per limit; null = unlimited.
+const LIMIT_COPY = {
+  max_users: { one: "usuário", many: "usuários", unlimited: "Usuários ilimitados" },
+  max_channels: { one: "canal de WhatsApp", many: "canais de WhatsApp", unlimited: "Canais de WhatsApp ilimitados" },
+} as const;
+
+function LimitLine({ value, copy }: { value: number | null; copy: (typeof LIMIT_COPY)[keyof typeof LIMIT_COPY] }) {
+  if (value === null) {
+    return (
+      <p>
+        <strong>{copy.unlimited}</strong>
+      </p>
+    );
+  }
+  return (
+    <p>
+      <strong className="tabular-nums">{value}</strong> {value === 1 ? copy.one : copy.many}
+    </p>
+  );
 }
 
 export default function PricingPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-2xl text-center">
-        <h1 className="text-4xl font-semibold tracking-tight text-foreground">Planos</h1>
+        <h1 className="text-balance text-4xl font-semibold tracking-tight text-foreground">Planos</h1>
         <p className="mt-3 text-muted-foreground">
           Comece com 14 dias de teste grátis, com acesso a todos os módulos. Fale com a nossa
           equipe para saber qual plano cabe melhor no tamanho da sua operação.
@@ -74,25 +113,28 @@ export default function PricingPage() {
         {PLAN_ORDER.map((plan) => {
           const definition = PLAN_CATALOG[plan];
           const isEmpresa = plan === "empresa";
+          const price = formatPrice(plan);
           return (
             <Card key={plan} className={isEmpresa ? "ring-2 ring-primary" : undefined}>
               <CardHeader>
-                <CardTitle className="text-lg">{PLAN_LABELS_PT[plan]}</CardTitle>
+                <CardTitle className="text-lg">
+                  <h2>{PLAN_LABELS_PT[plan]}</h2>
+                </CardTitle>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">{price.value}</span>
+                  {price.suffix && <span className="text-sm text-muted-foreground">{price.suffix}</span>}
+                </div>
                 <CardDescription>{PLAN_TAGLINES[plan]}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-1 text-sm text-foreground">
-                  <p>
-                    <strong>{formatLimit(definition.limits.max_users)}</strong> usuário(s)
-                  </p>
-                  <p>
-                    <strong>{formatLimit(definition.limits.max_channels)}</strong> canal(is) de WhatsApp
-                  </p>
+                  <LimitLine value={definition.limits.max_users} copy={LIMIT_COPY.max_users} />
+                  <LimitLine value={definition.limits.max_channels} copy={LIMIT_COPY.max_channels} />
                 </div>
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   {definition.modules.map((moduleKey) => (
                     <li key={moduleKey} className="flex items-center gap-2">
-                      <Check className="size-4 shrink-0 text-primary" />
+                      <Check aria-hidden="true" className="size-4 shrink-0 text-primary" />
                       {MODULE_LABELS_PT[moduleKey]}
                     </li>
                   ))}
