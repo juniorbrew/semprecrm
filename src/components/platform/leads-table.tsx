@@ -58,6 +58,37 @@ function LeadStatusSelect({
   );
 }
 
+/**
+ * Empty-list card. When a refresh fails on top of an already empty result the
+ * error alert above the list is the only message: a "no leads" card beside it
+ * would contradict the alert.
+ */
+export function LeadsEmptyState({
+  hasData,
+  error,
+}: {
+  hasData: boolean;
+  error: string;
+}) {
+  if (hasData && error) return null;
+  return (
+    <div className="px-4 py-14 text-center">
+      <Users
+        aria-hidden
+        className="text-muted-foreground mx-auto mb-3 size-8"
+      />
+      <p className="font-medium">
+        {hasData ? 'Nenhum lead encontrado' : 'Lista indisponível'}
+      </p>
+      <p className="text-muted-foreground mt-1 text-sm">
+        {hasData
+          ? 'Novos contatos e cadastros aparecerão aqui. Ajuste os filtros para buscar outros leads.'
+          : 'Tente carregar a lista novamente.'}
+      </p>
+    </div>
+  );
+}
+
 function leadDate(value: string) {
   return new Date(value).toLocaleDateString('pt-BR', {
     timeZone: 'America/Sao_Paulo',
@@ -287,23 +318,12 @@ export function PlatformLeadsTable({
       )}
       <div
         aria-busy={disabled}
+        // Nothing to frame when the empty-state card yields to the error alert.
+        hidden={!leads.length && data !== null && error !== ''}
         className="border-border bg-card overflow-hidden rounded-xl border"
       >
         {!leads.length ? (
-          <div className="px-4 py-14 text-center">
-            <Users
-              aria-hidden
-              className="text-muted-foreground mx-auto mb-3 size-8"
-            />
-            <p className="font-medium">
-              {data ? 'Nenhum lead encontrado' : 'Lista indisponível'}
-            </p>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {data
-                ? 'Novos contatos e cadastros aparecerão aqui. Ajuste os filtros para buscar outros leads.'
-                : 'Tente carregar a lista novamente.'}
-            </p>
-          </div>
+          <LeadsEmptyState hasData={data !== null} error={error} />
         ) : (
           <>
             <table className="hidden w-full table-fixed text-sm md:table">
@@ -330,7 +350,11 @@ export function PlatformLeadsTable({
                     >
                       {lead.name}
                     </td>
-                    <td className="px-3 py-4 break-all" data-no-translate>
+                    <td
+                      className="truncate px-3 py-4"
+                      title={lead.email}
+                      data-no-translate
+                    >
                       {lead.email}
                     </td>
                     <td
