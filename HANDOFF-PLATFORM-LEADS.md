@@ -1,6 +1,6 @@
 # Continuidade — leads da plataforma SempreCRM
 
-Atualizado em 19/09/2026. Trabalho interrompido por desligamento do computador a pedido do usuário. **Implementação presente, validação final ainda incompleta. Não anunciar como concluído.**
+Este arquivo registra o estado histórico da interrupção em 19/09/2026. O trabalho foi retomado em 20/09/2026; para resultados atuais, leia primeiro `docs/verification/platform-leads/REPORT.md` e `e2e-results.json`. As pendências descritas abaixo eram válidas na interrupção e foram resolvidas ou atualizadas no relatório final.
 
 ## Como retomar
 

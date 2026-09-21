@@ -40,8 +40,20 @@ export async function PATCH(
     if (auth.response) return auth.response;
     // Cookie-authenticated mutations must not accept a cross-origin browser request.
     const origin = request.headers.get('origin');
-    if (origin && origin !== new URL(request.url).origin) {
-      return platformJson({ error: 'Origem inválida.' }, 403);
+    if (origin) {
+      // Next can normalize loopback request.url to localhost. The public Host
+      // stays authoritative; TLS terminators supply x-forwarded-proto.
+      const url = new URL(request.url);
+      const host = request.headers.get('host') ?? url.host;
+      const protocol =
+        request.headers.get('x-forwarded-proto')?.split(',')[0].trim() ??
+        url.protocol.slice(0, -1);
+      if (
+        origin !== `${protocol}://${host}` ||
+        request.headers.get('sec-fetch-site') === 'cross-site'
+      ) {
+        return platformJson({ error: 'Origem inválida.' }, 403);
+      }
     }
     const { id } = await params;
     if (!UUID_RE.test(id))

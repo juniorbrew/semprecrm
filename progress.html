@@ -42,9 +42,8 @@ td,li{border-color:#e6e6ea}
   <dl class="meta">
     <dt>Barra</dt><dd>Gates do pedido comprovados por testes executados, isolamento no banco e capturas desktop/mobile</dd>
     <dt>Referência</dt><dd>Fonte primária: especificação anexada, PostgreSQL e contratos reais de Supabase/Next</dd>
-    <dt>Rodada</dt><dd>1</dd>
+    <dt>Rodada</dt><dd>2</dd>
   </dl>
-
   <div class="scroll">
     <table>
       <thead>
@@ -54,24 +53,29 @@ td,li{border-color:#e6e6ea}
         <!-- ROWS: uma linha NOVA por peça por rodada. Nunca sobrescreva a anterior.
              Veredito: <span class="v-ok">APROVADO</span> ou <span class="v-no">REPROVADO</span>
              Peça visual: <img src="ref.png"> na coluna Referência e a captura em Resultado atual. -->
-        
+        <tr><td>Banco e APIs</td><td>1</td><td>PostgreSQL / pedido</td><td>Migration045 e testes SQL de RLS/triggers/claims PASS</td><td>Revisão pendente</td><td>Revisor original interrompido por limite de uso</td></tr>
+        <tr><td>Interface</td><td>1</td><td>Pedido / design system</td><td>Listagem renderizada; contato e signup E2E PASS</td><td>Validação parcial</td><td>Execução interrompida após desligamento</td></tr>
+        <tr><td>Push</td><td>1</td><td>Web Push existente</td><td>Worker e recibos; testes unitários PASS</td><td>E2E pendente</td><td>Faltava receiver HTTPS e cron simultâneo</td></tr>
+        <tr><td>Banco e APIs</td><td>2</td><td>PostgreSQL / pedido</td><td>SQL real, migration reaplicada, concorrência com2 conexões, 10k/40 medições e API31 testes PASS</td><td class="v-ok">APROVADO</td><td>Crítico independente: sem achados P1/P2; limites de crash externo declarados</td></tr>
+        <tr><td>Interface</td><td>2</td><td>Pedido / design system</td><td><img src="docs/verification/platform-leads/mobile-light.png" alt="Tela mobile clara"><img src="docs/verification/platform-leads/mobile-dark.png" alt="Tela mobile escura">10 capturas E2E, 4 capturas independentes; reload, console e overflow verificados</td><td class="v-ok">APROVADO</td><td>Crítica independente em critic-ui.md; dois pontos visuais menores, sem bloqueio</td></tr>
+        <tr><td>Push</td><td>2</td><td>Web Push existente</td><td>Dois crons simultâneos, HTTPS/VAPID criptografado, 503/retry e falha parcial em2 assinaturas PASS</td><td class="v-ok">APROVADO no ambiente local</td><td>Entrega externa em dispositivo real não observada</td></tr>
       </tbody>
     </table>
   </div>
 
   <section>
     <h2>Abordagens descartadas</h2>
-    <ul><li>nenhuma até agora</li></ul>
+    <ul><li>Claim por notified_at descartado: reserva e sucesso são estados separados.</li><li>Retry integral descartado: recibos por assinatura preservam sucessos parciais.</li><li>Teste inicial na stack principal descartado: a instância57021 evitou interferência no cron local. Migration045 foi aplicada ao banco local principal após validação.</li></ul>
   </section>
 
   <section>
     <h2>Próxima ação</h2>
-    <div class="next">—</div>
+    <div class="next">Implementação, testes e crítica concluídos. Relatório e evidências em docs/verification/platform-leads/REPORT.md; entrega local pronta para revisão e implantação a partir deste checkout.</div>
   </section>
 
   <section>
     <h2>Suposições em vigor</h2>
-    <ul><li>nenhuma</li></ul>
+    <ul><li>Sem backfill de leads antigos; nenhuma produção alterada.</li><li>Push exactly-once não é garantido entre aceitação externa e recibo local; tag estável limita duplicação visual.</li><li>Tamanho L; validação final concluída na rodada 2.</li></ul>
   </section>
 
   <footer>Gauntlet Loop — atualizado a cada rodada. Acompanhe sem interromper.</footer>

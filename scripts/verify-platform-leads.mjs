@@ -223,17 +223,15 @@ try {
   await page.getByRole('heading', { name: 'Leads', exact: true }).waitFor();
   assert.equal(gets, 0, 'SSR must not double-fetch in client');
   assert.equal(await page.locator('tbody tr').count(), 25);
-  if (
-    await page.getByRole('button', { name: 'Switch to light mode' }).count()
-  ) {
-    await page.getByRole('button', { name: 'Switch to light mode' }).click();
+  if ((await page.locator('html').getAttribute('data-mode')) !== 'light') {
+    await page.locator('header button[title]').click();
   }
   await page.screenshot({ path: `${out}/desktop-light.png`, fullPage: true });
-  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
+  await page.locator('header button[title]').click();
   await page.screenshot({ path: `${out}/desktop-dark.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${out}/mobile-dark.png` });
-  await page.getByRole('button', { name: 'Switch to light mode' }).click();
+  await page.locator('header button[title]').click();
   await page.screenshot({ path: `${out}/mobile-light.png` });
   assert.ok(
     await page.evaluate(
@@ -284,6 +282,7 @@ try {
   pass('UI search + direct status edit persists after reload');
 
   await page.locator('#lead-status').selectOption('em_contato');
+  await page.locator('#lead-search').fill(`contact-${run}@example.test`);
   await page.locator('#lead-kind').selectOption('contato');
   const filtered = page.waitForResponse((r) =>
     r.url().includes('/api/platform/leads?')
@@ -304,7 +303,9 @@ try {
     })
   );
   await page.locator('table select').selectOption('convertido');
-  await page.getByRole('alert').waitFor();
+  await page
+    .locator('section[aria-labelledby="leads-title"] [role="alert"]')
+    .waitFor();
   assert.equal(await page.locator('table select').inputValue(), 'em_contato');
   await page.screenshot({ path: `${out}/status-error.png`, fullPage: true });
   await page.unroute('**/api/platform/leads/**');
@@ -330,21 +331,21 @@ try {
     route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
   );
   await page.getByRole('button', { name: 'Buscar', exact: true }).click();
-  await page.getByRole('alert').waitFor();
+  await page
+    .locator('section[aria-labelledby="leads-title"] [role="alert"]')
+    .waitFor();
   await page.screenshot({ path: `${out}/list-error.png`, fullPage: true });
   await page.unroute('**/api/platform/leads?*');
   pass('loading/empty/error visual states captured; retry control present');
 
   const xss = '<script>alert(1)</script>';
   unwrap(
-    await admin
-      .from('contact_submissions')
-      .insert({
-        name: xss,
-        email: `xss-${run}@example.test`,
-        company: '<img src=x onerror=alert(1)>',
-        message: 'XSS fixture',
-      })
+    await admin.from('contact_submissions').insert({
+      name: xss,
+      email: `xss-${run}@example.test`,
+      company: '<img src=x onerror=alert(1)>',
+      message: 'XSS fixture',
+    })
   );
   await page.reload();
   assert.equal(
@@ -353,7 +354,6 @@ try {
   );
   assert.equal(await page.locator('tbody script, tbody img').count(), 0);
   await page.screenshot({ path: `${out}/xss-text.png`, fullPage: true });
-  assert.deepEqual(consoleErrors, []);
   const storage = await page.evaluate(() => ({
     local: { ...localStorage },
     session: { ...sessionStorage },
@@ -371,7 +371,7 @@ try {
     );
   }
   pass(
-    'XSS renders text, no injected elements, no page exceptions, browser DOM/storage secrets absent'
+    'XSS renders text, no injected elements, browser DOM/storage secrets absent'
   );
   await context.close();
 
@@ -423,6 +423,7 @@ try {
   const authSecret = randomBytes(16);
   const received = [];
   let fail = false;
+  let failSecond = false;
   provider = createServer(
     {
       key: readFileSync(join(workdir, 'push-key.pem')),
@@ -440,12 +441,21 @@ try {
           })
           .toString()
       );
-      received.push({ path: req.url, payload, status: fail ? 503 : 201 });
-      res.writeHead(fail ? 503 : 201);
+      const status =
+        fail || (failSecond && req.url.endsWith('/second')) ? 503 : 201;
+      received.push({ path: req.url, payload, status });
+      res.writeHead(status);
       res.end();
     }
   );
   await new Promise((resolve) => provider.listen(57443, '127.0.0.1', resolve));
+  // Remove stale synthetic receiver keys from a previous interrupted run only.
+  unwrap(
+    await admin
+      .from('push_subscriptions')
+      .delete()
+      .like('endpoint', 'https://127.0.0.1:57443/%')
+  );
   // Test harness owns every row in this isolated stack. Suspend old fixtures.
   unwrap(
     await admin
@@ -461,27 +471,23 @@ try {
       .single()
   );
   unwrap(
-    await admin
-      .from('push_subscriptions')
-      .insert({
-        account_id: account.id,
-        user_id: owner.user.id,
-        endpoint: `https://127.0.0.1:57443/${run}`,
-        p256dh: keys.getPublicKey().toString('base64url'),
-        auth: authSecret.toString('base64url'),
-      })
+    await admin.from('push_subscriptions').insert({
+      account_id: account.id,
+      user_id: owner.user.id,
+      endpoint: `https://127.0.0.1:57443/${run}`,
+      p256dh: keys.getPublicKey().toString('base64url'),
+      auth: authSecret.toString('base64url'),
+    })
   );
   const createPushLead = async (suffix) => {
     const email = `push-${run}-${suffix}@example.test`;
     unwrap(
-      await admin
-        .from('contact_submissions')
-        .insert({
-          name: 'Novo cliente',
-          email,
-          company: 'Empresa Push',
-          message: 'Teste push',
-        })
+      await admin.from('contact_submissions').insert({
+        name: 'Novo cliente',
+        email,
+        company: 'Empresa Push',
+        message: 'Teste push',
+      })
     );
     return unwrap(
       await admin.from('leads').select('*').eq('email', email).single()
@@ -546,6 +552,64 @@ try {
   pass(
     'controlled provider 503: no false success, attempt counted, claim released, backoff, later retry succeeds once'
   );
+  unwrap(
+    await admin.from('push_subscriptions').insert({
+      account_id: account.id,
+      user_id: owner.user.id,
+      endpoint: `https://127.0.0.1:57443/${run}/second`,
+      p256dh: keys.getPublicKey().toString('base64url'),
+      auth: authSecret.toString('base64url'),
+    })
+  );
+  const partial = await createPushLead('partial');
+  failSecond = true;
+  await tick();
+  current = unwrap(
+    await admin.from('leads').select('*').eq('id', partial.id).single()
+  );
+  assert.equal(current.notified_at, null);
+  assert.equal(
+    unwrap(
+      await admin
+        .from('lead_push_deliveries')
+        .select('*')
+        .eq('lead_id', partial.id)
+    ).length,
+    1
+  );
+  unwrap(
+    await admin
+      .from('leads')
+      .update({ notification_next_attempt_at: new Date().toISOString() })
+      .eq('id', partial.id)
+  );
+  failSecond = false;
+  await tick();
+  const partialRequests = received.filter(
+    (r) => r.payload.tag === `lead:${partial.id}`
+  );
+  assert.equal(partialRequests.length, 3);
+  assert.equal(
+    partialRequests.filter((r) => !r.path.endsWith('/second')).length,
+    1
+  );
+  assert.ok(
+    unwrap(
+      await admin
+        .from('leads')
+        .select('notified_at')
+        .eq('id', partial.id)
+        .single()
+    ).notified_at
+  );
+  await tick();
+  assert.equal(
+    received.filter((r) => r.payload.tag === `lead:${partial.id}`).length,
+    3
+  );
+  pass(
+    'partial two-device failure: durable receipt skips successful device on retry, both eventually delivered'
+  );
   writeFileSync(
     `${out}/e2e-results.json`,
     JSON.stringify(
@@ -559,6 +623,11 @@ try {
       null,
       2
     )
+  );
+  assert.deepEqual(
+    consoleErrors,
+    [],
+    'Browser must finish without uncaught or hydration errors'
   );
 } finally {
   await browser.close();
