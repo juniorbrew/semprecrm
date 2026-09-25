@@ -53,9 +53,23 @@ export async function drainAutomationEvents(
     }
 
     for (const row of (data ?? []) as QueuedEvent[]) {
+      // Acknowledge FIRST. If the acknowledgement cannot be written, skip
+      // the event (its claim goes stale and it is retried) — never run
+      // automations for a row that could replay them later.
+      const ack = await db
+        .from('automation_event_queue')
+        .update({ processed_at: new Date().toISOString(), last_error: null })
+        .eq('id', row.id)
+      if (ack.error) {
+        console.error('[automations] cannot acknowledge queued event', row.id, ack.error.message)
+        failed += 1
+        continue
+      }
+
+      let retry: string | null = null
       try {
         const ctx = row.context ?? {}
-        await runAutomationsForTrigger({
+        const outcome = await runAutomationsForTrigger({
           accountId: row.account_id,
           triggerType: row.trigger_type as AutomationTriggerType,
           contactId: row.contact_id,
@@ -67,17 +81,25 @@ export async function drainAutomationEvents(
           },
           origin: { depth: row.depth ?? 0, automationId: row.origin_automation_id },
         })
-        await db
-          .from('automation_event_queue')
-          .update({ processed_at: new Date().toISOString(), last_error: null })
-          .eq('id', row.id)
-        processed += 1
+        // A read failed before any automation ran: safe to retry.
+        if (!outcome?.ok) retry = 'dispatch could not load the automations'
       } catch (err) {
-        failed += 1
-        const msg = err instanceof Error ? err.message : String(err)
-        // Left unprocessed: the claim goes stale after 5 min and the row
-        // is retried, up to 5 attempts.
-        await db.from('automation_event_queue').update({ last_error: msg.slice(0, 500) }).eq('id', row.id)
+        retry = err instanceof Error ? err.message : String(err)
+      }
+
+      if (retry === null) {
+        processed += 1
+        continue
+      }
+      failed += 1
+      // Un-acknowledge: the claim goes stale after 5 min and the row is
+      // retried, up to 5 attempts.
+      const undo = await db
+        .from('automation_event_queue')
+        .update({ processed_at: null, last_error: retry.slice(0, 500) })
+        .eq('id', row.id)
+      if (undo.error) {
+        console.error('[automations] queued event lost after a failed dispatch', row.id, undo.error.message)
       }
     }
   } catch (err) {

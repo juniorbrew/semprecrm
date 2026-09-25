@@ -425,6 +425,27 @@ describe('waits', () => {
     expect(pending.status).toBe('done')
   })
 
+  it('a run that sent, waited and ended is a success, not "no action"', async () => {
+    const a = automation()
+    step(a.id, 'send_message', { text: 'Recebido!' }, 0)
+    step(a.id, 'wait', { amount: 1, unit: 'hours' }, 1)
+    await message()
+    expect(logs()[0].status).toBe('waiting')
+    await resumePendingExecution(h.db.automation_pending_executions[0] as never)
+    expect(logs()[0].status).toBe('success')
+  })
+
+  it('reports ok:false when it cannot load the automations, so the queue retries', async () => {
+    const res = await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'tag_added',
+      contactId: 'not-in-account',
+      context: { tag_id: TAG },
+    })
+    // A foreign contact is refused, not an infrastructure failure.
+    expect(res).toEqual({ ok: true })
+  })
+
   it('a reply cancels a follow-up set to cancel on reply', async () => {
     const a = automation()
     step(a.id, 'wait', { amount: 1, unit: 'days', cancel_on_reply: true }, 0)

@@ -98,6 +98,17 @@ function formatHours(h: number): string {
 }
 
 /**
+ * Outcome of one dispatch. `ok: false` only when the dispatch could not
+ * get as far as running automations (a DB read failed before any of
+ * them started) — the event queue retries those. Once automations start,
+ * each one's failure is recorded in its own log and the event counts as
+ * handled: retrying would replay the automations that did succeed.
+ */
+export interface DispatchOutcome {
+  ok: boolean
+}
+
+/**
  * Fire all active automations matching the given trigger for an
  * account.
  *
@@ -105,7 +116,8 @@ function formatHours(h: number): string {
  * All errors are caught and logged; per-automation failures are
  * recorded into automation_logs with status='failed'.
  */
-export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
+export async function runAutomationsForTrigger(input: DispatchInput): Promise<DispatchOutcome> {
+  let started = false
   try {
     const db = supabaseAdmin()
 
@@ -125,11 +137,11 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         .maybeSingle()
       if (ownErr) {
         console.error('[automations] contact ownership check failed:', ownErr)
-        return
+        return { ok: false }
       }
       if (!owned) {
         console.warn('[automations] contact not in account, refusing dispatch', input.contactId)
-        return
+        return { ok: true }
       }
     }
 
@@ -137,7 +149,7 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
     // module (or a blocked account) runs nothing, even if active rows
     // exist from before the plan changed.
     if (!(await accountHasModule(db, input.accountId, 'automations'))) {
-      return
+      return { ok: true }
     }
 
     const { data: automations, error } = await db
@@ -149,12 +161,13 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
 
     if (error) {
       console.error('[automations] fetch failed:', error)
-      return
+      return { ok: false }
     }
-    if (!automations || automations.length === 0) return
+    if (!automations || automations.length === 0) return { ok: true }
 
     for (const automation of automations as Automation[]) {
       if (!triggerMatches(automation, input.context)) continue
+      started = true
       try {
         const gate = await checkRunGate(automation, input)
         if (!gate.ok) {
@@ -166,8 +179,10 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         console.error('[automations] execute failed:', automation.id, err)
       }
     }
+    return { ok: true }
   } catch (err) {
     console.error('[automations] dispatch failed:', err)
+    return { ok: started }
   }
 }
 
@@ -339,6 +354,9 @@ export async function resumePendingExecution(pending: {
   }
 
   const run = newRunState()
+  // Actions done before the wait count toward the final status: "sent,
+  // waited, nothing after" is a success, not "no action".
+  run.actions = await priorActionCount(pending.log_id)
   try {
     let parentStepId = pending.parent_step_id
     let branch = pending.branch
@@ -379,6 +397,20 @@ export async function resumePendingExecution(pending: {
     console.error('[automations] resume failed:', err)
     await markPending(pending.id, 'failed')
   }
+}
+
+/** Actions (anything but conditions and waits) a log already recorded as done. */
+async function priorActionCount(logId: string | null): Promise<number> {
+  if (!logId) return 0
+  const { data } = await supabaseAdmin()
+    .from('automation_logs')
+    .select('steps_executed')
+    .eq('id', logId)
+    .maybeSingle()
+  const steps = ((data as { steps_executed?: AutomationLogStepResult[] } | null)?.steps_executed ?? [])
+  return steps.filter(
+    (st) => st.status === 'success' && st.step_type !== 'condition' && st.step_type !== 'wait',
+  ).length
 }
 
 /**
