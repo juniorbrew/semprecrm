@@ -18,7 +18,15 @@ import type { AppClient } from "./app-client.js";
 import { jidToPhone, mapInboundMessage } from "./inbound-mapper.js";
 import type { Logger } from "./logger.js";
 import type { MediaStore } from "./media.js";
-import type { AckStatus, SendRequest, SendResponse, SessionStatus, SessionStatusResponse } from "./types.js";
+import type {
+  AckStatus,
+  ReadRequest,
+  ReadResponse,
+  SendRequest,
+  SendResponse,
+  SessionStatus,
+  SessionStatusResponse,
+} from "./types.js";
 
 export class GatewayError extends Error {
   constructor(
@@ -52,7 +60,22 @@ interface Session {
   jidCache: Map<string, string>;
   /** `send()` aguardando a sessão voltar a `connected` */
   connectWaiters: Array<() => void>;
+  /**
+   * message_id recebido → chave original (remoteJid/participant). O cliente
+   * pode chegar como `@lid`; a confirmação de leitura precisa do jid exato.
+   */
+  inboundKeys: Map<string, InboundKey>;
 }
+
+interface InboundKey {
+  remoteJid: string;
+  participant?: string;
+}
+
+/** quantas chaves de mensagens recebidas lembramos por sessão (confirmação de leitura) */
+const INBOUND_KEYS_MAX = 5000;
+/** teto de ids por pedido de leitura */
+const READ_MAX_IDS = 100;
 
 export interface SessionManagerOptions {
   dataDir: string;
@@ -149,6 +172,7 @@ function newSession(accountId: string): Session {
     ackRank: new Map(),
     jidCache: new Map(),
     connectWaiters: [],
+    inboundKeys: new Map(),
   };
 }
 
@@ -584,6 +608,7 @@ export class SessionManager {
         return;
       }
       const { payload, media } = mapped;
+      this.rememberInboundKey(s, msg);
       if (media) {
         try {
           const stored = await this.opts.mediaStore.storeInbound(accountId, msg, sock, media);
@@ -621,6 +646,52 @@ export class SessionManager {
         continue;
       }
       await this.opts.appClient.sendAck({ account_id: s.accountId, message_id: key.id, status: ack });
+    }
+  }
+
+  /**
+   * Confirmação de leitura: marca como lidas (✓✓ azul no celular do cliente)
+   * as mensagens recebidas `message_ids`. Usa a chave original guardada na
+   * chegada; sem ela (gateway reiniciado), cai no jid do telefone.
+   */
+  async markRead(accountId: string, req: ReadRequest): Promise<ReadResponse> {
+    const s = this.sessions.get(accountId);
+    if (!s || !s.sock || s.status !== "connected") {
+      throw new GatewayError("sessão não conectada", "not_connected", 409);
+    }
+    const ids = [...new Set(req.message_ids.filter((id) => typeof id === "string" && id))].slice(-READ_MAX_IDS);
+    if (ids.length === 0) return { read: 0 };
+    const fallbackJid = toJid(req.to);
+    const keys = ids.map((id) => {
+      const known = s.inboundKeys.get(id);
+      return {
+        remoteJid: known?.remoteJid ?? fallbackJid,
+        id,
+        fromMe: false,
+        ...(known?.participant ? { participant: known.participant } : {}),
+      };
+    });
+    try {
+      await s.sock.readMessages(keys);
+    } catch (err) {
+      this.log.warn({ accountId, count: keys.length, err: (err as Error).message }, "readMessages falhou");
+      throw new GatewayError(`falha ao marcar como lida: ${(err as Error).message}`, "send_failed", 502);
+    }
+    return { read: keys.length };
+  }
+
+  private rememberInboundKey(s: Session, msg: WAMessage): void {
+    const id = msg.key.id;
+    const remoteJid = msg.key.remoteJid;
+    if (!id || !remoteJid) return;
+    s.inboundKeys.set(id, {
+      remoteJid,
+      ...(msg.key.participant ? { participant: msg.key.participant } : {}),
+    });
+    while (s.inboundKeys.size > INBOUND_KEYS_MAX) {
+      const oldest = s.inboundKeys.keys().next().value;
+      if (oldest === undefined) break;
+      s.inboundKeys.delete(oldest);
     }
   }
 

@@ -259,6 +259,33 @@ export async function sendTextMessage(
   return { messageId: data.messages[0].id }
 }
 
+/**
+ * Mark an inbound message as read (blue ✓✓). WhatsApp treats every
+ * earlier message of the conversation as read too, so the caller only
+ * sends the newest one.
+ */
+export async function markMessageRead(args: {
+  phoneNumberId: string
+  accessToken: string
+  messageId: string
+}): Promise<void> {
+  const response = await fetch(`${META_API_BASE}/${args.phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${args.accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: args.messageId,
+    }),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
 export type MediaKind = 'image' | 'video' | 'document' | 'audio'
 
 export interface SendMediaMessageArgs {

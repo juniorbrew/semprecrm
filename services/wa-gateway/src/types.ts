@@ -27,6 +27,17 @@ export interface SendRequest {
   };
 }
 
+/** `POST /sessions/:id/read` — confirmação de leitura (✓✓ azul) das mensagens recebidas. */
+export interface ReadRequest {
+  /** telefone do contato (dígitos), usado quando o id não está no cache */
+  to: string;
+  message_ids: string[];
+}
+
+export interface ReadResponse {
+  read: number;
+}
+
 export interface SendResponse {
   message_id: string;
 }

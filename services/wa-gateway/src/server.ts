@@ -2,11 +2,11 @@ import { Hono } from "hono";
 import { HEADER_SECRET } from "./app-client.js";
 import type { Logger } from "./logger.js";
 import { GatewayError, type SessionManager } from "./session-manager.js";
-import type { SendRequest } from "./types.js";
+import type { ReadRequest, SendRequest } from "./types.js";
 
 export interface ServerDeps {
   secret: string;
-  sessions: Pick<SessionManager, "connect" | "logout" | "getStatus" | "send" | "listAccountIds">;
+  sessions: Pick<SessionManager, "connect" | "logout" | "getStatus" | "send" | "markRead" | "listAccountIds">;
   logger: Logger;
 }
 
@@ -86,6 +86,23 @@ export function createApp(deps: ServerDeps): Hono {
       throw new GatewayError("media precisa de url e mimetype", "invalid_request", 400);
     }
     const result = await deps.sessions.send(c.req.param("accountId"), body);
+    return c.json(result);
+  });
+
+  app.post("/sessions/:accountId/read", async (c) => {
+    let body: ReadRequest;
+    try {
+      body = (await c.req.json()) as ReadRequest;
+    } catch {
+      throw new GatewayError("JSON inválido", "invalid_request", 400);
+    }
+    if (!body || typeof body.to !== "string" || !body.to.trim()) {
+      throw new GatewayError("campo `to` obrigatório", "invalid_request", 400);
+    }
+    if (!Array.isArray(body.message_ids) || body.message_ids.some((id) => typeof id !== "string")) {
+      throw new GatewayError("message_ids precisa ser uma lista de ids", "invalid_request", 400);
+    }
+    const result = await deps.sessions.markRead(c.req.param("accountId"), body);
     return c.json(result);
   });
 

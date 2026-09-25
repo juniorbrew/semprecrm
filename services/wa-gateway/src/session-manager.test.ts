@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     logout = vi.fn(async () => undefined);
     end = vi.fn();
     updateMediaMessage = vi.fn();
+    readMessages = vi.fn(async (_keys: unknown[]) => undefined);
     signalRepository = { lidMapping: { getPNForLID: vi.fn(async () => null as string | null) } };
     emit(event: string, payload: unknown) {
       this.ev.emit(event, payload);
@@ -278,6 +279,38 @@ describe("SessionManager — mensagens", () => {
       timestamp: 1_757_700_100,
       type: "text",
       text: "Bom dia",
+    });
+  });
+
+  it("confirmação de leitura usa a chave original da mensagem recebida (inclusive @lid)", async () => {
+    const { manager, appClient, sock } = await connected();
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "123456789@lid", remoteJidAlt: "5511988887777@s.whatsapp.net", fromMe: false, id: "LID1" },
+          messageTimestamp: 1,
+          message: { conversation: "oi" },
+        },
+      ],
+    });
+    await until(() => appClient.sendInbound.mock.calls.length === 1);
+
+    const res = await manager.markRead(ACCOUNT, { to: "5511988887777", message_ids: ["LID1", "OLD9", "LID1"] });
+
+    expect(res).toEqual({ read: 2 });
+    expect(sock.readMessages).toHaveBeenCalledWith([
+      { remoteJid: "123456789@lid", id: "LID1", fromMe: false },
+      // desconhecido (ex.: gateway reiniciado): cai no jid do telefone
+      { remoteJid: "5511988887777@s.whatsapp.net", id: "OLD9", fromMe: false },
+    ]);
+  });
+
+  it("confirmação de leitura com a sessão desconectada responde 409", async () => {
+    const { manager } = makeManager(dataDir);
+    await expect(manager.markRead(ACCOUNT, { to: "5511988887777", message_ids: ["X"] })).rejects.toMatchObject({
+      code: "not_connected",
+      httpStatus: 409,
     });
   });
 

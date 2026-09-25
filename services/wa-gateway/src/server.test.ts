@@ -11,6 +11,7 @@ function makeApp() {
     logout: vi.fn(async (_id: string) => ({ status: "disconnected" as const })),
     getStatus: vi.fn((_id: string) => ({ status: "qr" as const, qr: "data:image/png;base64,AAA" })),
     send: vi.fn(async (_id: string, _req: unknown) => ({ message_id: "M1" })),
+    markRead: vi.fn(async (_id: string, _req: unknown) => ({ read: 1 })),
     listAccountIds: vi.fn(() => ["a"]),
   };
   const app = createApp({ secret: SECRET, sessions, logger: pino({ level: "silent" }) });
@@ -76,6 +77,24 @@ describe("HTTP", () => {
     });
     expect(notConnected.status).toBe(409);
     expect(await notConnected.json()).toEqual({ error: "not_connected", message: "sessão não conectada" });
+  });
+
+  it("POST read valida o corpo e repassa para markRead", async () => {
+    const { app, sessions } = makeApp();
+    const post = (body: unknown) =>
+      app.request("/sessions/acc-1/read", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ message_ids: ["A"] })).status).toBe(400);
+    expect((await post({ to: "5511999999999", message_ids: "A" })).status).toBe(400);
+    expect((await post({ to: "5511999999999", message_ids: [1] })).status).toBe(400);
+
+    const ok = await post({ to: "5511999999999", message_ids: ["A"] });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ read: 1 });
+    expect(sessions.markRead).toHaveBeenCalledWith("acc-1", { to: "5511999999999", message_ids: ["A"] });
   });
 
   it("rejeita accountId com caracteres estranhos", async () => {
