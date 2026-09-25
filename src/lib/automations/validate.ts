@@ -1,4 +1,5 @@
 import type { AutomationTriggerType } from '@/types'
+import { COOLDOWN_HOURS_MAX, COOLDOWN_HOURS_MIN, isRunFrequency } from './frequency'
 
 // ------------------------------------------------------------
 // Pre-flight config validation for automations about to be activated.
@@ -106,15 +107,31 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
           message: 'wait unit must be minutes, hours, or days',
         })
       }
+      if (c.cancel_on_reply !== undefined && typeof c.cancel_on_reply !== 'boolean') {
+        issues.push({ path: `${path}.cancel_on_reply`, message: 'cancel on reply must be true or false' })
+      }
       break
-    case 'condition':
+    case 'condition': {
+      const subject = String(c.subject ?? '')
       if (!nonEmpty(c.subject)) {
         issues.push({ path: `${path}.subject`, message: 'condition subject is required' })
+      } else if (!CONDITION_SUBJECTS.has(subject)) {
+        issues.push({ path: `${path}.subject`, message: `unknown condition: ${subject}` })
       }
-      if (!nonEmpty(c.operand)) {
+      // What each subject needs: tags / fields / time windows name their
+      // target in `operand`; "message contains" compares `value`; business
+      // hours reads the account schedule and needs nothing.
+      if (OPERAND_SUBJECTS.has(subject) && !nonEmpty(c.operand)) {
         issues.push({ path: `${path}.operand`, message: 'condition operand is required' })
       }
+      if (subject === 'message_content' && !nonEmpty(c.value)) {
+        issues.push({ path: `${path}.value`, message: 'the text to look for is required' })
+      }
+      if (subject === 'time_of_day' && nonEmpty(c.operand) && !TIME_WINDOW_RE.test(String(c.operand))) {
+        issues.push({ path: `${path}.operand`, message: 'time window must look like 18:00-09:00' })
+      }
       break
+    }
     case 'send_webhook':
       if (!nonEmpty(c.url)) {
         issues.push({ path: `${path}.url`, message: 'webhook URL is required' })
@@ -185,9 +202,12 @@ export function validateTriggerForActivation(
       })
     }
   } else if (triggerType === 'time_based') {
-    if (!nonEmpty(cfg.schedule)) {
-      issues.push({ path: 'trigger.schedule', message: 'schedule is required' })
-    }
+    // Never wired to a scheduler: an active time-based rule would sit
+    // there and never run. Kept as a type for old rows only.
+    issues.push({
+      path: 'trigger.type',
+      message: 'the time-based trigger is not available; use "Conversation inactive" or a wait step',
+    })
   } else if (triggerType === 'tag_added') {
     if (!nonEmpty(cfg.tag_id)) {
       issues.push({ path: 'trigger.tag_id', message: 'tag is required' })
@@ -233,6 +253,40 @@ export function validateTriggerForActivation(
     }
   }
 
+  return issues
+}
+
+const CONDITION_SUBJECTS = new Set([
+  'tag_presence',
+  'tag_absence',
+  'contact_field',
+  'message_content',
+  'time_of_day',
+  'business_hours',
+])
+const OPERAND_SUBJECTS = new Set(['tag_presence', 'tag_absence', 'contact_field', 'time_of_day'])
+const TIME_WINDOW_RE = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/
+
+/**
+ * Run frequency + cooldown (migration 048). Checked on every save —
+ * drafts included — because the DB rejects out-of-range values.
+ */
+export function validateRunFrequency(frequency: unknown, cooldownHours: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = []
+  if (frequency === undefined || frequency === null) return issues
+  if (!isRunFrequency(frequency)) {
+    issues.push({ path: 'run_frequency', message: 'unknown run frequency' })
+    return issues
+  }
+  if (frequency === 'cooldown') {
+    const h = typeof cooldownHours === 'string' ? Number(cooldownHours) : cooldownHours
+    if (typeof h !== 'number' || !Number.isFinite(h) || h < COOLDOWN_HOURS_MIN || h > COOLDOWN_HOURS_MAX) {
+      issues.push({
+        path: 'cooldown_hours',
+        message: `interval must be between ${COOLDOWN_HOURS_MIN} and ${COOLDOWN_HOURS_MAX} hours`,
+      })
+    }
+  }
   return issues
 }
 

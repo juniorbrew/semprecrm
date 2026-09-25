@@ -7,6 +7,7 @@ import {
   type BuilderStepInput,
 } from '@/lib/automations/steps-tree'
 import {
+  validateRunFrequency,
   validateStepsForActivation,
   validateTriggerForActivation,
 } from '@/lib/automations/validate'
@@ -76,6 +77,17 @@ export async function PATCH(
     'is_active',
   ] as const) {
     if (k in body) update[k] = body[k]
+  }
+
+  // Run frequency (migration 048). Only touched when the caller sends it;
+  // cooldown_hours is kept only for the 'cooldown' mode.
+  if ('run_frequency' in body) {
+    const issues = validateRunFrequency(body.run_frequency, body.cooldown_hours)
+    if (issues.length > 0) {
+      return NextResponse.json({ error: 'Invalid run frequency', issues }, { status: 400 })
+    }
+    update.run_frequency = body.run_frequency
+    update.cooldown_hours = body.run_frequency === 'cooldown' ? Number(body.cooldown_hours) : null
   }
 
   // If this PATCH leaves the automation active (either explicitly

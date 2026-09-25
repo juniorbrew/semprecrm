@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { scanInactiveConversations } from '@/lib/automations/inactivity'
+import { drainAutomationEvents, pruneAutomationEvents } from '@/lib/automations/event-queue'
 import { AUDIT_RETENTION_DAYS } from '@/lib/audit'
 import { notifyCalendarReminders, notifyTasksDueSoon, notifyNewLeads } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
@@ -72,6 +73,15 @@ export async function GET(request: Request) {
       context: (row.context as AutomationContext) ?? {},
     })
     processed++
+  }
+
+  // DB-raised trigger events (migration 048): tag added, conversation
+  // assigned / resolved / reopened from any path, incl. the inbox UI.
+  const events = await drainAutomationEvents({ limit: 200 })
+  try {
+    await pruneAutomationEvents(new Date())
+  } catch (err) {
+    console.error('[cron] automation_event_queue prune threw:', err)
   }
 
   // Follow-up scan (migration 030). Runs after the pending drain so a
@@ -148,6 +158,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     processed,
+    events,
     lead_notifications: leadNotifications,
     tasks_due: tasksDue,
     calendar_reminders: calendarReminders,

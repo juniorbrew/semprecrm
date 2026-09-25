@@ -20,7 +20,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
-import { runAutomationsForTrigger } from '@/lib/automations/engine'
+import { cancelWaitsOnCustomerReply, runAutomationsForTrigger } from '@/lib/automations/engine'
+import { drainAutomationEvents } from '@/lib/automations/event-queue'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { parseAccountPreferences } from '@/lib/account-preferences'
@@ -628,6 +629,11 @@ export async function ingestInboundMessage(
     if (evErr) console.error('[inbound] reopen event insert failed:', evErr)
   }
 
+  // The customer answered: follow-ups parked with "cancel if the
+  // customer replies" stop here (migration 048), before this message
+  // can schedule new ones.
+  await cancelWaitsOnCustomerReply(conversation.id)
+
   await flagBroadcastReplyIfAny(db, accountId, contact.id)
 
   // "PARAR" / "SAIR" — mark the contact and tell the automations so
@@ -727,17 +733,14 @@ export async function ingestInboundMessage(
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
-  if (autoAssignedTo) {
-    runAutomationsForTrigger({
-      accountId,
-      triggerType: 'conversation_assigned',
-      contactId: contact.id,
-      context: {
-        conversation_id: conversation.id,
-        agent_id: autoAssignedTo,
-        ...(optedOut ? { vars: { opted_out: true } } : {}),
-      },
-    }).catch((err) => console.error('[automations] dispatch failed:', err))
+  // Auto-assign and reopen were written to `conversations` above; the
+  // table trigger queued conversation_assigned / conversation_reopened
+  // (migration 048). Drain this account now instead of waiting for the
+  // cron minute. Fire-and-forget like the dispatches above.
+  if (autoAssignedTo || reopened) {
+    drainAutomationEvents({ accountId }).catch((err) =>
+      console.error('[automations] event drain failed:', err),
+    )
   }
 
   return {

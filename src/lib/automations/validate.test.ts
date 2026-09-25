@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
+  validateRunFrequency,
 } from "./validate";
 
 describe("validateStepsForActivation", () => {
@@ -138,7 +139,7 @@ describe("validateStepsForActivation", () => {
     const issues = validateStepsForActivation([
       {
         step_type: "condition",
-        step_config: { subject: "tag", operand: "vip" },
+        step_config: { subject: "tag_presence", operand: "vip" },
         branches: {
           yes: [{ step_type: "add_tag", step_config: { tag_id: "" } }],
           no: [
@@ -165,14 +166,38 @@ describe("validateStepsForActivation", () => {
     ]);
   });
 
-  it("flags condition subject/operand independently", () => {
+  it("flags a missing condition subject", () => {
     const issues = validateStepsForActivation([
       { step_type: "condition", step_config: {} },
     ]);
-    expect(issues.map((i) => i.path).sort()).toEqual([
-      "steps[0].operand",
-      "steps[0].subject",
-    ]);
+    expect(issues.map((i) => i.path)).toEqual(["steps[0].subject"]);
+  });
+
+  it("asks each condition subject for what it actually uses", () => {
+    const paths = (step_config: Record<string, unknown>) =>
+      validateStepsForActivation([{ step_type: "condition", step_config }]).map((i) => i.path);
+    expect(paths({ subject: "tag_presence" })).toEqual(["steps[0].operand"]);
+    expect(paths({ subject: "tag_absence" })).toEqual(["steps[0].operand"]);
+    expect(paths({ subject: "tag_absence", operand: "tag-uuid" })).toEqual([]);
+    expect(paths({ subject: "message_content" })).toEqual(["steps[0].value"]);
+    expect(paths({ subject: "message_content", value: "preço" })).toEqual([]);
+    expect(paths({ subject: "business_hours" })).toEqual([]);
+    expect(paths({ subject: "time_of_day", operand: "6pm" })).toEqual(["steps[0].operand"]);
+    expect(paths({ subject: "time_of_day", operand: "18:00-09:00" })).toEqual([]);
+    expect(paths({ subject: "moon_phase", operand: "full" })).toEqual(["steps[0].subject"]);
+  });
+
+  it("checks cancel_on_reply on waits", () => {
+    expect(
+      validateStepsForActivation([
+        { step_type: "wait", step_config: { amount: 1, unit: "days", cancel_on_reply: true } },
+      ]),
+    ).toEqual([]);
+    expect(
+      validateStepsForActivation([
+        { step_type: "wait", step_config: { amount: 1, unit: "days", cancel_on_reply: "yes" } },
+      ]).map((i) => i.path),
+    ).toEqual(["steps[0].cancel_on_reply"]);
   });
 
   describe("create_task", () => {
@@ -262,13 +287,25 @@ describe("validateTriggerForActivation", () => {
     expect(issues.map((i) => i.path)).toContain("trigger.match_type");
   });
 
-  it("requires schedule on time_based triggers", () => {
-    expect(validateTriggerForActivation("time_based", {})).toEqual([
-      { path: "trigger.schedule", message: "schedule is required" },
-    ]);
+  it("refuses to activate the never-wired time_based trigger", () => {
     expect(
-      validateTriggerForActivation("time_based", { schedule: "0 9 * * *" }),
-    ).toEqual([]);
+      validateTriggerForActivation("time_based", { schedule: "0 9 * * *" }).map((i) => i.path),
+    ).toEqual(["trigger.type"]);
+  });
+
+  it("accepts the reopened / resolved triggers without config", () => {
+    expect(validateTriggerForActivation("conversation_reopened", {})).toEqual([]);
+    expect(validateTriggerForActivation("conversation_resolved", {})).toEqual([]);
+  });
+
+  it("validates run frequency and the cooldown interval", () => {
+    expect(validateRunFrequency(undefined, undefined)).toEqual([]);
+    expect(validateRunFrequency("once_per_contact", null)).toEqual([]);
+    expect(validateRunFrequency("sometimes", null).map((i) => i.path)).toEqual(["run_frequency"]);
+    expect(validateRunFrequency("cooldown", 12)).toEqual([]);
+    expect(validateRunFrequency("cooldown", "12")).toEqual([]);
+    expect(validateRunFrequency("cooldown", 0).map((i) => i.path)).toEqual(["cooldown_hours"]);
+    expect(validateRunFrequency("cooldown", 1000).map((i) => i.path)).toEqual(["cooldown_hours"]);
   });
 
   it("requires tag_id on tag_added triggers", () => {

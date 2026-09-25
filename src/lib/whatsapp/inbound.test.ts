@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   },
   flows: { consumed: false },
   automationCalls: [] as Record<string, unknown>[],
+  cancelledWaits: [] as string[],
+  drains: [] as Record<string, unknown>[],
   // Availability features (spec round 2 §2)
   roundRobinPick: null as string | null,
   roundRobinCalls: 0,
@@ -30,6 +32,17 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/automations/engine', () => ({
   runAutomationsForTrigger: vi.fn(async (args: Record<string, unknown>) => {
     h.automationCalls.push(args)
+  }),
+  cancelWaitsOnCustomerReply: vi.fn(async (conversationId: string) => {
+    h.cancelledWaits.push(conversationId)
+    return 0
+  }),
+}))
+
+vi.mock('@/lib/automations/event-queue', () => ({
+  drainAutomationEvents: vi.fn(async (opts: Record<string, unknown>) => {
+    h.drains.push(opts)
+    return { processed: 0, failed: 0 }
   }),
 }))
 
@@ -188,6 +201,8 @@ beforeEach(() => {
   h.state.updates = []
   h.flows.consumed = false
   h.automationCalls = []
+  h.cancelledWaits = []
+  h.drains = []
   h.roundRobinPick = null
   h.roundRobinCalls = 0
   h.sendCalls = []
@@ -471,7 +486,10 @@ describe('ingestInboundMessage — auto-assign (round-robin)', () => {
       actor_user_id: null,
       payload: { assignee_user_id: 'agent-7', source: 'auto_assign' },
     })
-    expect(h.automationCalls.map((c) => c.triggerType)).toContain('conversation_assigned')
+    // conversation_assigned now comes from the DB trigger's queue
+    // (migration 048); inbound drains this account right away.
+    expect(h.automationCalls.map((c) => c.triggerType)).not.toContain('conversation_assigned')
+    expect(h.drains).toEqual([{ accountId: 'acct-1' }])
   })
 
   it('leaves the conversation alone when it already has an owner or is not the first message', async () => {
@@ -551,6 +569,14 @@ describe('ingestInboundMessage — reopen resolved conversation', () => {
     // Not a new first message: the welcome triggers stay quiet.
     const triggers = h.automationCalls.map((c) => c.triggerType)
     expect(triggers).not.toContain('first_inbound_message')
+  })
+
+  it('cancels reply-cancellable follow-ups and drains the reopen event', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'closed' })
+    await ingestInboundMessage(BASE, db)
+    expect(h.cancelledWaits).toEqual(['conv-1'])
+    expect(h.drains).toEqual([{ accountId: 'acct-1' }])
   })
 
   it('leaves open and pending conversations alone', async () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -17,6 +17,7 @@ import {
   PhoneCall,
   Loader2,
   Snowflake,
+  AlertTriangle,
 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
@@ -48,6 +49,8 @@ import { triggerMeta, formatRelative } from '@/lib/automations/trigger-meta';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/hooks/use-language';
 import { localizeAutomationTemplate } from '@/lib/automations/templates';
+import { findDuplicateAutomations } from '@/lib/automations/duplicates';
+import { frequencyLabel } from '@/lib/automations/frequency';
 
 const TEMPLATE_ORDER: TemplateSlug[] = [
   'welcome_message',
@@ -70,6 +73,10 @@ export default function AutomationsPage() {
   const canCreate = useCan('send-messages');
   const { language, t } = useLanguage();
   const [automations, setAutomations] = useState<Automation[] | null>(null);
+  const duplicates = useMemo(
+    () => findDuplicateAutomations(automations ?? []),
+    [automations]
+  );
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -248,6 +255,7 @@ export default function AutomationsPage() {
               key={a.id}
               automation={a}
               language={language}
+              duplicateOf={duplicates.get(a.id) ?? []}
               onToggle={(next) => toggleActive(a, next)}
               onEdit={() => router.push(`/automations/${a.id}/edit`)}
               onDuplicate={() => duplicate(a)}
@@ -306,9 +314,12 @@ function AutomationCard({
   onDuplicate,
   onLogs,
   onDelete,
+  duplicateOf,
 }: {
   automation: Automation;
   language: import('@/lib/i18n').Language;
+  /** Names of other active automations on the same trigger. */
+  duplicateOf: string[];
   onToggle: (next: boolean) => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -357,6 +368,12 @@ function AutomationCard({
             >
               {meta.label}
             </span>
+            <span className="border-border inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]">
+              {frequencyLabel(
+                automation.run_frequency ?? 'every_time',
+                language
+              ).replace('X', String(automation.cooldown_hours ?? 24))}
+            </span>
             <span className="tabular-nums">
               {automation.execution_count}{' '}
               {t(automation.execution_count === 1 ? 'run' : 'runs')}
@@ -366,6 +383,16 @@ function AutomationCard({
               {t('last:')} {formatRelative(automation.last_executed_at, language)}
             </span>
           </div>
+          {duplicateOf.length > 0 && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-400">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+              <span>
+                {language === 'pt-BR'
+                  ? `Mesmo gatilho que ${duplicateOf.map((n) => `"${n}"`).join(', ')} — o cliente pode receber tudo em dobro.`
+                  : `Same trigger as ${duplicateOf.map((n) => `"${n}"`).join(', ')} — customers may get every reply twice.`}
+              </span>
+            </p>
+          )}
         </button>
 
         <div className="flex items-center gap-3">

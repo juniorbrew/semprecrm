@@ -13,6 +13,7 @@ import {
   loadTemplateBody,
   renderTemplateBody,
 } from '@/lib/whatsapp/qr-engine-send'
+import { paceAutomatedQrSend } from './qr-pacing'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -70,6 +71,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Web session, so deliver through the gateway. Templates don't exist
   // there — send the rendered body as plain text instead.
   if ((await conversationChannel(db, input.conversationId)) === 'qr') {
+    // Anti-ban: automated sends of one number go out spaced, not in a burst.
+    await paceAutomatedQrSend(input.accountId)
     if (input.kind === 'template') {
       const body = await loadTemplateBody(db, input.accountId, input.templateName, input.language)
       if (!body) {

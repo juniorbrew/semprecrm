@@ -1,4 +1,5 @@
 import type {
+  AutomationRunFrequency,
   AutomationStepConfig,
   AutomationStepType,
   AutomationTriggerConfig,
@@ -27,6 +28,9 @@ export interface AutomationTemplateDefinition {
   description: string;
   trigger_type: AutomationTriggerType;
   trigger_config: AutomationTriggerConfig;
+  /** How often it may run per contact (migration 048). */
+  run_frequency: AutomationRunFrequency;
+  cooldown_hours?: number | null;
   steps: TemplateStepSeed[];
 }
 
@@ -45,6 +49,7 @@ export const AUTOMATION_TEMPLATES: Record<
     // manually-imported case.
     trigger_type: 'first_inbound_message',
     trigger_config: {},
+    run_frequency: 'once_per_contact',
     steps: [
       {
         step_type: 'send_message',
@@ -52,33 +57,29 @@ export const AUTOMATION_TEMPLATES: Record<
           text: "Hi! 👋 Thanks for reaching out. We'll get back to you shortly.",
         },
       },
-      {
-        step_type: 'add_tag',
-        step_config: { tag_id: '' },
-      },
     ],
   },
   out_of_office: {
     slug: 'out_of_office',
     name: 'Out of Office',
-    description: 'Auto-reply during off-hours so nobody is left waiting.',
+    description: 'Auto-reply outside business hours — at most once every 12 hours per contact.',
     trigger_type: 'new_message_received',
     trigger_config: {},
+    run_frequency: 'cooldown',
+    cooldown_hours: 12,
     steps: [
       {
+        // Settings → business hours, in the account's timezone.
         step_type: 'condition',
-        step_config: {
-          subject: 'time_of_day',
-          operand: '18:00-09:00',
-        },
+        step_config: { subject: 'business_hours' },
       },
       {
         step_type: 'send_message',
         step_config: {
-          text: 'Thanks for your message! Our team is offline right now (9am–6pm) and will reply first thing tomorrow.',
+          text: "Thanks for your message! Our team is offline right now and will reply as soon as we're back.",
         },
         parent_index: 0,
-        branch: 'yes',
+        branch: 'no',
       },
     ],
   },
@@ -91,6 +92,7 @@ export const AUTOMATION_TEMPLATES: Record<
       keywords: ['pricing', 'quote', 'buy'],
       match_type: 'contains',
     },
+    run_frequency: 'once_per_attendance',
     steps: [
       {
         step_type: 'send_message',
@@ -111,18 +113,26 @@ export const AUTOMATION_TEMPLATES: Record<
   follow_up_reminder: {
     slug: 'follow_up_reminder',
     name: 'Follow-up Reminder',
-    description: 'Send a nudge if a contact has not replied within 24 hours.',
-    trigger_type: 'new_message_received',
-    trigger_config: {},
+    description:
+      'Two gentle nudges when the customer goes quiet after your reply; stops as soon as they answer.',
+    trigger_type: 'conversation_inactive',
+    trigger_config: { hours: 24, last_from: 'agent', statuses: ['open', 'pending'] },
+    run_frequency: 'once_per_attendance',
     steps: [
-      {
-        step_type: 'wait',
-        step_config: { amount: 1, unit: 'days' },
-      },
       {
         step_type: 'send_message',
         step_config: {
           text: 'Just circling back — did you have any other questions for us? Happy to help!',
+        },
+      },
+      {
+        step_type: 'wait',
+        step_config: { amount: 2, unit: 'days', cancel_on_reply: true },
+      },
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: "Last check-in from us — if you still need anything, just reply here and we'll pick it up.",
         },
       },
     ],
@@ -137,6 +147,7 @@ export const AUTOMATION_TEMPLATES: Record<
     // next message either way.
     trigger_type: 'conversation_inactive',
     trigger_config: { hours: 24, last_from: 'agent', statuses: ['open', 'pending'] },
+    run_frequency: 'every_time',
     steps: [
       {
         step_type: 'send_message',
@@ -167,10 +178,11 @@ const PT_BR_TEMPLATE_COPY: Record<
   },
   out_of_office: {
     name: 'Fora do horário',
-    description: 'Responda fora do expediente para ninguém ficar esperando.',
+    description:
+      'Responda fora do horário de atendimento — no máximo uma vez a cada 12 horas por contato.',
     messages: {
-      'Thanks for your message! Our team is offline right now (9am–6pm) and will reply first thing tomorrow.':
-        'Obrigado pela mensagem! Nossa equipe está fora do expediente agora (9h–18h) e responderá amanhã no início do dia.',
+      "Thanks for your message! Our team is offline right now and will reply as soon as we're back.":
+        'Obrigado pela mensagem! Nossa equipe está fora do horário de atendimento agora e responderá assim que voltar.',
     },
   },
   lead_qualifier: {
@@ -185,10 +197,12 @@ const PT_BR_TEMPLATE_COPY: Record<
   follow_up_reminder: {
     name: 'Lembrete de acompanhamento',
     description:
-      'Envie um lembrete se o contato não responder em até 24 horas.',
+      'Dois lembretes gentis quando o cliente some depois da sua resposta; para assim que ele responder.',
     messages: {
       'Just circling back — did you have any other questions for us? Happy to help!':
         'Passando para acompanhar — ficou alguma dúvida? Será um prazer ajudar!',
+      "Last check-in from us — if you still need anything, just reply here and we'll pick it up.":
+        'Último contato da nossa parte — se ainda precisar de algo, é só responder aqui que retomamos.',
     },
   },
   revive_cold_conversation: {

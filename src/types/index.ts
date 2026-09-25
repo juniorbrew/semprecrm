@@ -585,7 +585,22 @@ export type AutomationTriggerType =
   | 'time_based'
   | 'lead_captured'
   /** Conversation silent for N hours (migration 030) — fired by the cron scan. */
-  | 'conversation_inactive';
+  | 'conversation_inactive'
+  /** Resolved conversation came back to open/pending — a new attendance (migration 048). */
+  | 'conversation_reopened'
+  /** Conversation marked resolved (migration 048). */
+  | 'conversation_resolved';
+
+/**
+ * How often one automation may run for the same contact (migration 048).
+ * `once_per_attendance` resets when a resolved conversation reopens;
+ * `cooldown` allows a new run after `cooldown_hours`.
+ */
+export type AutomationRunFrequency =
+  | 'every_time'
+  | 'once_per_contact'
+  | 'once_per_attendance'
+  | 'cooldown';
 
 export type AutomationStepType =
   | 'send_message'
@@ -601,7 +616,18 @@ export type AutomationStepType =
   | 'close_conversation'
   | 'create_task';
 
-export type AutomationLogStatus = 'success' | 'partial' | 'failed';
+export type AutomationLogStatus =
+  | 'success'
+  | 'partial'
+  | 'failed'
+  /** Parked at a wait step (migration 048; older rows used 'partial'). */
+  | 'waiting'
+  /** Ran, but the path taken had nothing to do. */
+  | 'no_action'
+  /** Did not run — `skip_reason` says why. */
+  | 'skipped'
+  /** A parked wait was cancelled (the customer replied). */
+  | 'cancelled';
 
 export interface KeywordMatchTriggerConfig {
   keywords: string[];
@@ -686,6 +712,8 @@ export interface CreateDealStepConfig {
 export interface WaitStepConfig {
   amount: number;
   unit: 'minutes' | 'hours' | 'days';
+  /** Stop the run if the customer writes before the wait ends (migration 048). */
+  cancel_on_reply?: boolean;
 }
 
 /**
@@ -708,8 +736,13 @@ export interface CreateTaskStepConfig {
 export type ConditionSubject =
   | 'contact_field'
   | 'tag_presence'
+  /** Contact does NOT have the tag in `operand`. */
+  | 'tag_absence'
   | 'message_content'
-  | 'time_of_day';
+  /** Wall clock in the account's timezone is within `operand` ("HH:mm-HH:mm"). */
+  | 'time_of_day'
+  /** Now is inside the account's configured business hours. */
+  | 'business_hours';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;
@@ -753,6 +786,10 @@ export interface Automation {
   trigger_type: AutomationTriggerType;
   trigger_config: AutomationTriggerConfig;
   is_active: boolean;
+  /** Migration 048 — defaults to 'every_time' for rows created before it. */
+  run_frequency?: AutomationRunFrequency;
+  /** Hours between runs when `run_frequency` is 'cooldown'. */
+  cooldown_hours?: number | null;
   execution_count: number;
   last_executed_at?: string | null;
   created_at: string;
@@ -786,6 +823,8 @@ export interface AutomationLog {
   steps_executed: AutomationLogStepResult[];
   status: AutomationLogStatus;
   error_message?: string | null;
+  /** Why a 'skipped' run did not execute (migration 048). */
+  skip_reason?: string | null;
   created_at: string;
   contact?: Contact;
 }
