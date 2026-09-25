@@ -37,6 +37,8 @@ import {
   X,
   Filter,
   MousePointerClick,
+  AlertTriangle,
+  FlaskConical,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -57,6 +59,7 @@ import type {
   AccountMember,
   AutomationStepType,
   AutomationTriggerType,
+  AutomationRunFrequency,
   CustomField,
   KeywordMatchTriggerConfig,
   MessageTemplate,
@@ -67,6 +70,16 @@ import type {
 import { createClient } from "@/lib/supabase/client"
 import { useLanguage } from "@/hooks/use-language"
 import { LeadSourceSelect } from "@/components/automations/lead-source-select"
+import { AutomationTestDialog } from "@/components/automations/test-dialog"
+import {
+  COOLDOWN_HOURS_MAX,
+  COOLDOWN_HOURS_MIN,
+  DEFAULT_COOLDOWN_HOURS,
+  RUN_FREQUENCIES,
+  defaultFrequencyForTrigger,
+  frequencyHint,
+  frequencyLabel,
+} from "@/lib/automations/frequency"
 import type { Language } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
@@ -89,6 +102,9 @@ export interface BuilderInitial {
   trigger_type: AutomationTriggerType
   trigger_config: Record<string, unknown>
   is_active: boolean
+  /** Migration 048. Absent on old callers → treated as "every_time". */
+  run_frequency?: AutomationRunFrequency
+  cooldown_hours?: number | null
   steps: BuilderStep[]
 }
 
@@ -142,8 +158,11 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   { value: "keyword_match", label: "Keyword Match", hint: "Message contains specific keyword(s)" },
   { value: "new_contact_created", label: "New Contact Created", hint: "When a contact is auto-created from an incoming message" },
   { value: "conversation_assigned", label: "Conversation Assigned", hint: "When the conversation gets an assignee" },
-  { value: "tag_added", label: "Tag Added", hint: "When a tag is added to a contact" },
-  { value: "time_based", label: "Time-Based", hint: "On a recurring schedule" },
+  {
+    value: "tag_added",
+    label: "Tag Added",
+    hint: "When a tag is added to a contact",
+  },
   {
     value: "lead_captured",
     label: "Lead Captured",
@@ -154,7 +173,44 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
     label: "Conversation Inactive",
     hint: "When a conversation has had no message for a number of hours (checked every minute by the scheduler)",
   },
+  {
+    value: "conversation_reopened",
+    label: "Conversation Reopened",
+    hint: "A resolved conversation came back — the customer wrote again or an agent reopened it (a new attendance)",
+  },
+  {
+    value: "conversation_resolved",
+    label: "Conversation Resolved",
+    hint: "When a conversation is marked as resolved",
+  },
 ]
+
+/** Kept only so old rows still render a name; not offered in the picker. */
+const LEGACY_TRIGGER_OPTIONS: typeof TRIGGER_OPTIONS = [
+  {
+    value: "time_based",
+    label: "Time-Based",
+    hint: "No longer available — this trigger never ran. Pick another trigger or use a wait step.",
+  },
+]
+
+const ALL_TRIGGER_OPTIONS = [...TRIGGER_OPTIONS, ...LEGACY_TRIGGER_OPTIONS]
+
+/** Builder copy for the new pieces, inline instead of the shared dictionary. */
+const PT_COPY: Record<string, string> = {
+  "Conversation Reopened": "Conversa reaberta (novo atendimento)",
+  "A resolved conversation came back — the customer wrote again or an agent reopened it (a new attendance)":
+    "Uma conversa resolvida voltou — o cliente escreveu de novo ou um atendente reabriu (novo atendimento)",
+  "Conversation Resolved": "Conversa resolvida",
+  "When a conversation is marked as resolved": "Quando uma conversa é marcada como resolvida",
+  "Time-Based": "Baseado em horário",
+  "No longer available — this trigger never ran. Pick another trigger or use a wait step.":
+    "Não está mais disponível — este gatilho nunca executava. Escolha outro gatilho ou use uma etapa de espera.",
+}
+
+function copy(text: string, lang: Language, t: (english: string) => string): string {
+  return lang === "pt-BR" && PT_COPY[text] ? PT_COPY[text] : t(text)
+}
 
 function cid(): string {
   return (
@@ -752,6 +808,14 @@ function conditionSummary(
       if (!name) return pt ? "Contato tem a etiqueta … (escolha uma)" : "Contact has tag … (pick one)"
       return pt ? `Contato tem a etiqueta "${name}"` : `Contact has tag "${name}"`
     }
+    case "tag_absence": {
+      const tag = res.tags.find((t) => t.id === operand)
+      const name = tag?.name || operand
+      if (!name) return pt ? "Contato NÃO tem a etiqueta … (escolha uma)" : "Contact does NOT have tag … (pick one)"
+      return pt ? `Contato NÃO tem a etiqueta "${name}"` : `Contact does NOT have tag "${name}"`
+    }
+    case "business_hours":
+      return pt ? "Dentro do horário de atendimento" : "Within business hours"
     case "contact_field": {
       const fieldLabel =
         operand === "email" ? "E-mail" : operand === "company" ? (pt ? "Empresa" : "Company") : pt ? "Nome" : "Name"
@@ -851,7 +915,8 @@ function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language
     }
     case "wait": {
       const amount = Number(c.amount ?? 1)
-      return `${pt ? "Aguardar" : "Wait"} ${amount} ${waitUnitLabel(String(c.unit ?? "hours"), amount, lang)}`
+      const base = `${pt ? "Aguardar" : "Wait"} ${amount} ${waitUnitLabel(String(c.unit ?? "hours"), amount, lang)}`
+      return c.cancel_on_reply ? `${base} · ${pt ? "cancela se o cliente responder" : "cancels if the customer replies"}` : base
     }
     case "condition":
       return `${pt ? "Se" : "If"}: ${conditionSummary(c, res, lang)}`
@@ -904,7 +969,7 @@ function triggerSummary(
       return cfg.tag_id ? (pt ? "Etiqueta selecionada" : "Selected tag") : pt ? "Escolha uma etiqueta" : "Pick a tag"
     }
     case "time_based":
-      return cfg.schedule ? `${pt ? "Agenda" : "Schedule"}: ${String(cfg.schedule)}` : pt ? "Defina o horário" : "Set a schedule"
+      return pt ? "Indisponível — escolha outro gatilho" : "Unavailable — pick another trigger"
     case "lead_captured":
       return cfg.source_id ? (pt ? "Somente uma fonte" : "One source only") : pt ? "Qualquer fonte" : "Any source"
     case "conversation_inactive": {
@@ -965,11 +1030,15 @@ function useMediaQuery(query: string): boolean {
 
 export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const router = useRouter()
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const isEditing = !!initial.id
   const [state, setState] = useState<BuilderInitial>(initial)
   const [baseline, setBaseline] = useState<BuilderInitial>(initial)
   const [saving, setSaving] = useState(false)
+  const [testOpen, setTestOpen] = useState(false)
+  // A new rule follows its trigger's default frequency until the user
+  // picks one; an existing rule never changes on its own.
+  const [frequencyTouched, setFrequencyTouched] = useState(isEditing)
   // The trigger opens in the inspector by default so the right-hand
   // panel is never blank on first paint (docked layout only — see the
   // effect below for the narrow/sheet case).
@@ -1045,6 +1114,11 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
         is_active: state.is_active,
+        run_frequency: state.run_frequency ?? "every_time",
+        cooldown_hours:
+          (state.run_frequency ?? "every_time") === "cooldown"
+            ? Number(state.cooldown_hours ?? DEFAULT_COOLDOWN_HOURS)
+            : null,
         steps: toApiSteps(state.steps),
       }
 
@@ -1113,7 +1187,13 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       located={selectedStep}
       isGate={selectedIsGate}
       onClose={() => setSelection(null)}
-      onTriggerTypeChange={(v) => patchTop("trigger_type", v)}
+      onTriggerTypeChange={(v) => {
+        setState((s) => ({
+          ...s,
+          trigger_type: v,
+          ...(frequencyTouched ? {} : { run_frequency: defaultFrequencyForTrigger(v) }),
+        }))
+      }}
       onTriggerConfigChange={(c) => patchTop("trigger_config", c)}
       updateStep={updateStep}
       deleteStepAt={deleteStepAt}
@@ -1165,6 +1245,25 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               aria-label={t("Active rule")}
             />
           </div>
+          {isEditing && (
+            <Button
+              variant="outline"
+              onClick={() => setTestOpen(true)}
+              disabled={dirty}
+              title={
+                language === "pt-BR"
+                  ? dirty
+                    ? "Salve antes — o teste usa a versão salva"
+                    : "Simula esta automação num contato sem enviar nada"
+                  : dirty
+                    ? "Save first — the test runs the saved version"
+                    : "Simulate this rule on a contact without sending anything"
+              }
+            >
+              <FlaskConical className="h-4 w-4" />
+              <span className="hidden sm:inline">{language === "pt-BR" ? "Testar" : "Test"}</span>
+            </Button>
+          )}
           <Button
             onClick={save}
             disabled={saving}
@@ -1204,6 +1303,15 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
                 config={state.trigger_config}
                 selected={effectiveSelection?.kind === "trigger"}
                 onSelect={() => setSelection({ kind: "trigger" })}
+              />
+              <FrequencyCard
+                frequency={state.run_frequency ?? "every_time"}
+                cooldownHours={state.cooldown_hours ?? null}
+                triggerType={state.trigger_type}
+                onChange={(frequency, cooldownHours) => {
+                  setFrequencyTouched(true)
+                  setState((s) => ({ ...s, run_frequency: frequency, cooldown_hours: cooldownHours }))
+                }}
               />
 
               {/* 2 · Conditions */}
@@ -1276,6 +1384,14 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           </Sheet>
         )}
       </div>
+      {isEditing && initial.id && (
+        <AutomationTestDialog
+          open={testOpen}
+          onOpenChange={setTestOpen}
+          automationId={initial.id}
+          triggerType={state.trigger_type}
+        />
+      )}
     </ResourcesProvider>
   )
 }
@@ -1283,6 +1399,77 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
 // ------------------------------------------------------------
 // Document pieces
 // ------------------------------------------------------------
+
+/**
+ * How often the rule may run for the same contact (migration 048). Lives
+ * in the document, right under the trigger: it is the answer to "why did
+ * my welcome message go out on every message?".
+ */
+function FrequencyCard({
+  frequency,
+  cooldownHours,
+  triggerType,
+  onChange,
+}: {
+  frequency: AutomationRunFrequency
+  cooldownHours: number | null
+  triggerType: AutomationTriggerType
+  onChange: (frequency: AutomationRunFrequency, cooldownHours: number | null) => void
+}) {
+  const { language } = useLanguage()
+  const pt = language === "pt-BR"
+  const hours = cooldownHours ?? DEFAULT_COOLDOWN_HOURS
+  const messageTrigger =
+    triggerType === "new_message_received" || triggerType === "keyword_match"
+  return (
+    <section className="rounded-xl border border-border bg-card px-4 py-3">
+      <label htmlFor="run-frequency" className="mb-1 block text-xs font-medium text-muted-foreground">
+        {pt ? "Com que frequência pode rodar para o mesmo contato?" : "How often may it run for the same contact?"}
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          id="run-frequency"
+          value={frequency}
+          onChange={(e) => {
+            const next = e.target.value as AutomationRunFrequency
+            onChange(next, next === "cooldown" ? hours : null)
+          }}
+          className={cn(SELECT_CLASS, "w-auto min-w-[14rem]")}
+        >
+          {RUN_FREQUENCIES.map((f) => (
+            <option key={f} value={f}>
+              {frequencyLabel(f, language)}
+            </option>
+          ))}
+        </select>
+        {frequency === "cooldown" && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Input
+              type="number"
+              min={COOLDOWN_HOURS_MIN}
+              max={COOLDOWN_HOURS_MAX}
+              step={1}
+              value={hours}
+              onChange={(e) => onChange("cooldown", Number(e.target.value))}
+              aria-label={pt ? "Intervalo em horas" : "Interval in hours"}
+              className="h-9 w-20 bg-muted text-foreground"
+            />
+            {pt ? "horas" : "hours"}
+          </div>
+        )}
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{frequencyHint(frequency, language)}</p>
+      {frequency === "every_time" && messageTrigger && (
+        <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-500">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+          {pt
+            ? "Com este gatilho, o cliente recebe a resposta a cada mensagem que mandar."
+            : "With this trigger the customer gets the reply on every message they send."}
+        </p>
+      )}
+    </section>
+  )
+}
 
 function SectionHeader({
   n,
@@ -1324,8 +1511,8 @@ function TriggerCard({
 }) {
   const { t, language } = useLanguage()
   const res = useResources()
-  const option = TRIGGER_OPTIONS.find((o) => o.value === type)
-  const summary = triggerSummary(type, config, res, language) || (option ? t(option.hint) : "")
+  const option = ALL_TRIGGER_OPTIONS.find((o) => o.value === type)
+  const summary = triggerSummary(type, config, res, language) || (option ? copy(option.hint, language, t) : "")
   return (
     <button
       type="button"
@@ -1342,7 +1529,7 @@ function TriggerCard({
       <div className="min-w-0 flex-1">
         <div className="text-[11px] uppercase tracking-wide text-blue-500">{t("Trigger")}</div>
         <div className="truncate text-sm font-medium text-foreground">
-          {option ? t(option.label) : type}
+          {option ? copy(option.label, language, t) : type}
         </div>
         <div className="truncate text-xs text-muted-foreground">{summary}</div>
       </div>
@@ -1848,8 +2035,9 @@ function TriggerEditor({
   onTypeChange: (t: AutomationTriggerType) => void
   onConfigChange: (c: Record<string, unknown>) => void
 }) {
-  const { t } = useLanguage()
-  const option = TRIGGER_OPTIONS.find((o) => o.value === type)
+  const { t, language } = useLanguage()
+  const option = ALL_TRIGGER_OPTIONS.find((o) => o.value === type)
+  const legacy = LEGACY_TRIGGER_OPTIONS.find((o) => o.value === type)
   return (
     <>
       <FieldBlock label={t("Trigger type")}>
@@ -1858,13 +2046,18 @@ function TriggerEditor({
           onChange={(e) => onTypeChange(e.target.value as AutomationTriggerType)}
           className={SELECT_CLASS}
         >
-          {TRIGGER_OPTIONS.map((o) => (
+          {/* A legacy trigger stays selectable only on the rule that has it. */}
+          {[...TRIGGER_OPTIONS, ...(legacy ? [legacy] : [])].map((o) => (
             <option key={o.value} value={o.value}>
-              {t(o.label)}
+              {copy(o.label, language, t)}
             </option>
           ))}
         </select>
-        {option && <p className="mt-1 text-[11px] text-muted-foreground">{t(option.hint)}</p>}
+        {option && (
+          <p className={cn("mt-1 text-[11px]", legacy ? "text-amber-500" : "text-muted-foreground")}>
+            {copy(option.hint, language, t)}
+          </p>
+        )}
       </FieldBlock>
       {type === "keyword_match" && (
         <KeywordMatchConfig
@@ -1886,16 +2079,6 @@ function TriggerEditor({
           <LeadSourceSelect
             value={(config.source_id as string) ?? ""}
             onChange={(v) => onConfigChange(v ? { ...config, source_id: v } : { ...config, source_id: undefined })}
-          />
-        </FieldBlock>
-      )}
-      {type === "time_based" && (
-        <FieldBlock label={t("Schedule")}>
-          <Input
-            placeholder="Cron expression or HH:mm"
-            value={(config.schedule as string) ?? ""}
-            onChange={(e) => onConfigChange({ ...config, schedule: e.target.value })}
-            className="bg-muted text-foreground"
           />
         </FieldBlock>
       )}
@@ -2097,7 +2280,7 @@ function StepEditor({
   isGate: boolean
   onChange: (s: BuilderStep) => void
 }) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const cfg = step.step_config
   const set = (patch: Record<string, unknown>) =>
     onChange({ ...step, step_config: { ...cfg, ...patch } })
@@ -2226,6 +2409,22 @@ function StepEditor({
               <option value="days">{t("Days")}</option>
             </select>
           </FieldBlock>
+          <label className="col-span-2 flex cursor-pointer items-start gap-2 text-xs text-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 accent-primary"
+              checked={!!cfg.cancel_on_reply}
+              onChange={(e) => set({ cancel_on_reply: e.target.checked })}
+            />
+            <span>
+              {language === "pt-BR" ? "Cancelar se o cliente responder" : "Cancel if the customer replies"}
+              <span className="block text-[11px] text-muted-foreground">
+                {language === "pt-BR"
+                  ? "Ideal para follow-up: se o cliente escrever durante a espera, o restante não é enviado."
+                  : "Ideal for follow-ups: if the customer writes during the wait, the rest is not sent."}
+              </span>
+            </span>
+          </label>
         </div>
       )
     case "condition":
@@ -2330,7 +2529,8 @@ function ConditionEditor({
   set: (patch: Record<string, unknown>) => void
   isGate: boolean
 }) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
+  const pt = language === "pt-BR"
   const subject = (cfg.subject as string) ?? "tag_presence"
   const operand = (cfg.operand as string) ?? ""
   const value = (cfg.value as string) ?? ""
@@ -2350,13 +2550,23 @@ function ConditionEditor({
           className={SELECT_CLASS}
         >
           <option value="tag_presence">{t("Contact has tag")}</option>
+          <option value="tag_absence">{pt ? "Contato NÃO tem a etiqueta" : "Contact does NOT have tag"}</option>
           <option value="contact_field">{t("Contact field equals")}</option>
           <option value="message_content">{t("Message contains")}</option>
           <option value="time_of_day">{t("Time of day is between")}</option>
+          <option value="business_hours">{pt ? "Dentro do horário de atendimento" : "Within business hours"}</option>
         </select>
       </FieldBlock>
 
-      {subject === "tag_presence" && (
+      {subject === "business_hours" && (
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          {pt
+            ? "Usa os horários de Configurações → Horário de atendimento, no fuso da conta. \"Não\" = fora do horário."
+            : "Uses Settings → Business hours in the account timezone. \"No\" = outside business hours."}
+        </p>
+      )}
+
+      {(subject === "tag_presence" || subject === "tag_absence") && (
         <FieldBlock label={t("Tag")}>
           <TagSelect value={operand} onChange={(v) => set({ operand: v })} />
         </FieldBlock>
@@ -2413,7 +2623,8 @@ function ConditionEditor({
             />
           </FieldBlock>
           <p className="col-span-2 text-[11px] text-muted-foreground">
-            {t("Overnight windows like 18:00–09:00 are supported.")}
+            {t("Overnight windows like 18:00–09:00 are supported.")}{" "}
+            {pt ? "Horário no fuso da conta." : "In the account's timezone."}
           </p>
         </div>
       )}

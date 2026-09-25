@@ -36,6 +36,9 @@ export default function AutomationLogsPage({
   const [logs, setLogs] = useState<AutomationLog[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openLogId, setOpenLogId] = useState<string | null>(null);
+  // Skipped runs ("already ran for this contact") can outnumber real
+  // ones by far on a once-per-contact automation; hidden by default.
+  const [showSkipped, setShowSkipped] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -80,6 +83,10 @@ export default function AutomationLogsPage({
     );
   }
 
+  const skippedCount = logs.filter((l) => l.status === 'skipped').length;
+  const visibleLogs = showSkipped ? logs : logs.filter((l) => l.status !== 'skipped');
+  const pt = language === 'pt-BR';
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -101,7 +108,21 @@ export default function AutomationLogsPage({
         </div>
       </div>
 
-      {logs.length === 0 ? (
+      {skippedCount > 0 && (
+        <label className="text-muted-foreground flex w-fit cursor-pointer items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="accent-primary h-3.5 w-3.5"
+            checked={showSkipped}
+            onChange={(e) => setShowSkipped(e.target.checked)}
+          />
+          {pt
+            ? `Mostrar execuções ignoradas (${skippedCount})`
+            : `Show skipped runs (${skippedCount})`}
+        </label>
+      )}
+
+      {visibleLogs.length === 0 ? (
         <div className="border-border bg-card/40 flex h-48 flex-col items-center justify-center rounded-xl border border-dashed">
           <p className="text-foreground text-sm">
             {t('No executions yet')}
@@ -112,7 +133,7 @@ export default function AutomationLogsPage({
         </div>
       ) : (
         <ul className="space-y-2">
-          {logs.map((log) => {
+          {visibleLogs.map((log) => {
             const isOpen = openLogId === log.id;
             return (
               <li
@@ -138,8 +159,9 @@ export default function AutomationLogsPage({
                     </div>
                     <div className="text-muted-foreground truncate text-xs">
                       {triggerMeta(log.trigger_event, language).label} ·{' '}
-                      {log.steps_executed?.length ?? 0}{' '}
-                      {t(log.steps_executed?.length === 1 ? 'step' : 'steps')}
+                      {log.status === 'skipped' && log.skip_reason
+                        ? describeSkipReason(log.skip_reason, language)
+                        : `${log.steps_executed?.length ?? 0} ${t(log.steps_executed?.length === 1 ? 'step' : 'steps')}`}
                     </div>
                   </div>
                   <div className="text-muted-foreground text-xs">
@@ -148,6 +170,19 @@ export default function AutomationLogsPage({
                 </button>
                 {isOpen && (
                   <div className="border-border border-t px-4 py-3">
+                    {log.status === 'no_action' && (
+                      <p className="text-muted-foreground mb-3 text-xs">
+                        {pt
+                          ? 'A automação rodou, mas o caminho que as condições escolheram não tinha nenhuma ação.'
+                          : 'The automation ran, but the path its conditions chose had no action.'}
+                      </p>
+                    )}
+                    {log.status === 'skipped' && log.skip_reason && (
+                      <p className="text-muted-foreground mb-3 text-xs">
+                        {pt ? 'Não executada: ' : 'Not run: '}
+                        {describeSkipReason(log.skip_reason, language)}
+                      </p>
+                    )}
                     {log.error_message && (
                       <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
                         {log.error_message}
@@ -177,9 +212,49 @@ export default function AutomationLogsPage({
 type Lang = import('@/lib/i18n').Language;
 
 const RUN_STATUS_LABEL: Record<Lang, Record<AutomationLog['status'], string>> = {
-  'pt-BR': { success: 'sucesso', partial: 'parcial', failed: 'falhou' },
-  'en-US': { success: 'success', partial: 'partial', failed: 'failed' },
+  'pt-BR': {
+    success: 'sucesso',
+    partial: 'aguardando',
+    failed: 'falhou',
+    waiting: 'aguardando',
+    no_action: 'sem ação',
+    skipped: 'ignorada',
+    cancelled: 'cancelada',
+  },
+  'en-US': {
+    success: 'success',
+    partial: 'waiting',
+    failed: 'failed',
+    waiting: 'waiting',
+    no_action: 'no action',
+    skipped: 'skipped',
+    cancelled: 'cancelled',
+  },
 };
+
+const STATUS_CLASSES: Record<AutomationLog['status'], string> = {
+  success: 'border-primary/30 bg-primary/10 text-primary',
+  partial: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  waiting: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  failed: 'border-red-500/30 bg-red-500/10 text-red-300',
+  no_action: 'border-border bg-muted text-muted-foreground',
+  skipped: 'border-border bg-muted/50 text-muted-foreground',
+  cancelled: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
+};
+
+/**
+ * The engine stores skip reasons in pt-BR (shown verbatim there); give
+ * English readers the same sentence.
+ */
+function describeSkipReason(reason: string, language: Lang): string {
+  if (language === 'pt-BR') return reason;
+  if (reason === 'já executada para este contato') return 'already ran for this contact';
+  if (reason === 'já executada neste atendimento') return 'already ran in this attendance';
+  if (reason.startsWith('aguardando o intervalo')) return 'waiting for the interval since the last run';
+  if (reason.startsWith('proteção contra loop')) return 'loop protection';
+  if (reason.startsWith('controle de frequência indisponível')) return 'frequency control unavailable';
+  return reason;
+}
 
 function StatusBadge({
   status,
@@ -188,12 +263,7 @@ function StatusBadge({
   status: AutomationLog['status'];
   language: Lang;
 }) {
-  const classes =
-    status === 'success'
-      ? 'border-primary/30 bg-primary/10 text-primary'
-      : status === 'partial'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-        : 'border-red-500/30 bg-red-500/10 text-red-300';
+  const classes = STATUS_CLASSES[status] ?? STATUS_CLASSES.failed;
   return (
     <span
       className={cn(
@@ -267,11 +337,15 @@ function describeStepDetail(
   const pt = language === 'pt-BR';
   let m: RegExpMatchArray | null;
 
-  if ((m = detail.match(/^waiting (\d+(?:\.\d+)?) (minutes|hours|days)$/))) {
+  if ((m = detail.match(/^waiting (\d+(?:\.\d+)?) (minutes|hours|days)(; cancel on reply)?$/))) {
     const n = Number(m[1]);
     const unit = WAIT_UNIT_LABEL[m[2]];
     const label = pt ? unit.pt : unit.en;
-    return `${pt ? 'aguardando' : 'waiting'} ${m[1]} ${n === 1 ? label[0] : label[1]}`;
+    const cancel = m[3] ? (pt ? ' (cancela se o cliente responder)' : ' (cancels if the customer replies)') : '';
+    return `${pt ? 'aguardando' : 'waiting'} ${m[1]} ${n === 1 ? label[0] : label[1]}${cancel}`;
+  }
+  if (detail === 'cancelled: customer replied') {
+    return pt ? 'espera cancelada: o cliente respondeu' : 'wait cancelled: the customer replied';
   }
   if ((m = detail.match(/^branch=(yes|no)$/))) {
     const yes = m[1] === 'yes';

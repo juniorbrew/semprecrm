@@ -13,6 +13,7 @@ import {
   type TemplateSlug,
 } from '@/lib/automations/templates';
 import { localizeAutomationTemplate } from '@/lib/automations/templates';
+import { defaultFrequencyForTrigger } from '@/lib/automations/frequency';
 import { useLanguage } from '@/hooks/use-language';
 import type { AutomationStepType, AutomationTriggerType } from '@/types';
 
@@ -42,6 +43,8 @@ export default function NewAutomationPage() {
         trigger_type: t.trigger_type,
         trigger_config: t.trigger_config as Record<string, unknown>,
         is_active: false,
+        run_frequency: t.run_frequency,
+        cooldown_hours: t.cooldown_hours ?? null,
         steps,
       };
     }
@@ -51,6 +54,9 @@ export default function NewAutomationPage() {
       trigger_type: 'new_message_received' as AutomationTriggerType,
       trigger_config: {},
       is_active: false,
+      // Message triggers start on "once per attendance" (migration 048).
+      run_frequency: defaultFrequencyForTrigger('new_message_received'),
+      cooldown_hours: null,
       steps: [],
     };
   }, [template, language]);

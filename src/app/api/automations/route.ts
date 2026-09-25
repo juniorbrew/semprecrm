@@ -4,9 +4,11 @@ import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
 import {
+  validateRunFrequency,
   validateStepsForActivation,
   validateTriggerForActivation,
 } from '@/lib/automations/validate'
+import { defaultFrequencyForTrigger } from '@/lib/automations/frequency'
 
 export async function GET() {
   const supabase = await createClient()
@@ -50,6 +52,8 @@ export async function POST(request: Request) {
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
 
   const { name, description, trigger_type, trigger_config, is_active, steps, template } = body
+  let effectiveFrequency = body.run_frequency
+  let effectiveCooldown = body.cooldown_hours ?? null
 
   let effectiveSteps: BuilderStepInput[] | undefined = steps
   let effectiveName = name
@@ -65,12 +69,29 @@ export async function POST(request: Request) {
       effectiveTriggerType = effectiveTriggerType ?? t.trigger_type
       effectiveTriggerConfig = effectiveTriggerConfig ?? t.trigger_config
       effectiveSteps = t.steps as unknown as BuilderStepInput[]
+      if (effectiveFrequency === undefined && t.run_frequency) {
+        effectiveFrequency = t.run_frequency
+        effectiveCooldown = t.cooldown_hours ?? null
+      }
     }
   }
 
   if (!effectiveName || !effectiveTriggerType) {
     return NextResponse.json(
       { error: 'name and trigger_type are required' },
+      { status: 400 },
+    )
+  }
+
+  // New automations start on their trigger's default frequency (message
+  // triggers: once per attendance) unless the caller chose one.
+  if (effectiveFrequency === undefined || effectiveFrequency === null) {
+    effectiveFrequency = defaultFrequencyForTrigger(effectiveTriggerType)
+  }
+  const frequencyIssues = validateRunFrequency(effectiveFrequency, effectiveCooldown)
+  if (frequencyIssues.length > 0) {
+    return NextResponse.json(
+      { error: 'Invalid run frequency', issues: frequencyIssues },
       { status: 400 },
     )
   }
@@ -105,6 +126,8 @@ export async function POST(request: Request) {
       trigger_type: effectiveTriggerType,
       trigger_config: effectiveTriggerConfig ?? {},
       is_active: !!is_active,
+      run_frequency: effectiveFrequency,
+      cooldown_hours: effectiveFrequency === 'cooldown' ? Number(effectiveCooldown) : null,
     })
     .select()
     .single()

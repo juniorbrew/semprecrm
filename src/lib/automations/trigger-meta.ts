@@ -44,6 +44,14 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Conversation Inactive',
     pillClass: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
   },
+  conversation_reopened: {
+    label: 'Conversation Reopened',
+    pillClass: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+  },
+  conversation_resolved: {
+    label: 'Conversation Resolved',
+    pillClass: 'border-lime-500/30 bg-lime-500/10 text-lime-300',
+  },
 };
 
 const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
@@ -56,6 +64,8 @@ const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
   time_based: 'Baseado em horário',
   lead_captured: 'Lead capturado',
   conversation_inactive: 'Conversa sem resposta',
+  conversation_reopened: 'Conversa reaberta (novo atendimento)',
+  conversation_resolved: 'Conversa resolvida',
 };
 
 export function triggerMeta(
