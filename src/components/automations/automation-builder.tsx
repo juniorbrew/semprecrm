@@ -1030,7 +1030,7 @@ function useMediaQuery(query: string): boolean {
 
 export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const router = useRouter()
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const isEditing = !!initial.id
   const [state, setState] = useState<BuilderInitial>(initial)
   const [baseline, setBaseline] = useState<BuilderInitial>(initial)
@@ -1251,13 +1251,17 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               onClick={() => setTestOpen(true)}
               disabled={dirty}
               title={
-                dirty
-                  ? t("Save first — the test runs the saved version")
-                  : t("Simulate this rule on a contact without sending anything")
+                language === "pt-BR"
+                  ? dirty
+                    ? "Salve antes — o teste usa a versão salva"
+                    : "Simula esta automação num contato sem enviar nada"
+                  : dirty
+                    ? "Save first — the test runs the saved version"
+                    : "Simulate this rule on a contact without sending anything"
               }
             >
               <FlaskConical className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("Test")}</span>
+              <span className="hidden sm:inline">{language === "pt-BR" ? "Testar" : "Test"}</span>
             </Button>
           )}
           <Button
