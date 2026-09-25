@@ -512,6 +512,78 @@ describe('ingestInboundMessage — auto-assign (round-robin)', () => {
   })
 })
 
+describe('ingestInboundMessage — reopen resolved conversation', () => {
+  function seedConversation(extra: Record<string, unknown>) {
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
+    h.state.conversations.push({
+      id: 'conv-1',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      channel: 'qr',
+      unread_count: 0,
+      ...extra,
+    })
+    h.state.messages.push({ id: 'm-0', conversation_id: 'conv-1', sender_type: 'customer' })
+  }
+
+  it('reopens a resolved conversation, keeps the owner and logs the pill', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'closed', assigned_agent_id: 'agent-1' })
+
+    const res = await ingestInboundMessage(BASE, db)
+
+    expect(res.ok).toBe(true)
+    expect(res.reopened).toBe(true)
+    expect(h.state.conversations[0]).toMatchObject({
+      status: 'open',
+      assigned_agent_id: 'agent-1',
+      unread_count: 1,
+    })
+    expect(h.state.events).toEqual([
+      expect.objectContaining({
+        account_id: 'acct-1',
+        conversation_id: 'conv-1',
+        actor_user_id: null,
+        event_type: 'status_changed',
+        payload: { status: 'open', previous_status: 'closed', source: 'customer_message' },
+      }),
+    ])
+    // Not a new first message: the welcome triggers stay quiet.
+    const triggers = h.automationCalls.map((c) => c.triggerType)
+    expect(triggers).not.toContain('first_inbound_message')
+  })
+
+  it('leaves open and pending conversations alone', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'open' })
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.reopened).toBeUndefined()
+    expect(h.state.events).toHaveLength(0)
+    const upd = h.state.updates.find((u) => u.table === 'conversations')
+    expect(upd?.payload).not.toHaveProperty('status')
+
+    h.state.conversations[0].status = 'pending'
+    await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, db)
+    expect(h.state.conversations[0].status).toBe('pending')
+    expect(h.state.events).toHaveLength(0)
+  })
+
+  it('does not reopen on a redelivered message', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'closed' })
+    h.state.messages.push({
+      id: 'm-1',
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+      message_id: 'wamid-1',
+    })
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.reason).toBe('duplicate')
+    expect(h.state.conversations[0].status).toBe('closed')
+    expect(h.state.events).toHaveLength(0)
+  })
+})
+
 describe('ingestInboundMessage — out-of-hours reply', () => {
   // Saturday 2026-09-12 14:00Z = 11:00 in São Paulo → closed (default hours).
   const SATURDAY = new Date('2026-09-12T14:00:00Z')

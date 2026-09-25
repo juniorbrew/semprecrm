@@ -92,6 +92,8 @@ export interface IngestResult {
   autoAssignedTo?: string | null
   /** Out-of-hours auto-reply outcome, when the feature is on and we are closed. */
   outOfHoursReply?: 'sent' | 'skipped' | 'failed'
+  /** True when the customer's message reopened a resolved conversation. */
+  reopened?: boolean
 }
 
 // ------------------------------------------------------------
@@ -596,6 +598,9 @@ export async function ingestInboundMessage(
 
   // Conversation bookkeeping. `channel` follows the customer's latest
   // inbound transport so an agent reply goes back the way it came.
+  // A customer writing into a resolved conversation reopens it (same
+  // thread, same owner) so it comes back to the open inbox.
+  const reopening = conversation.status === 'closed'
   const { error: convError } = await db
     .from('conversations')
     .update({
@@ -604,11 +609,23 @@ export async function ingestInboundMessage(
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
       channel,
+      ...(reopening ? { status: 'open' } : {}),
     })
     .eq('id', conversation.id)
 
   if (convError) {
     console.error('[inbound] error updating conversation:', convError)
+  }
+  const reopened = reopening && !convError
+  if (reopened) {
+    const { error: evErr } = await db.from('conversation_events').insert({
+      account_id: accountId,
+      conversation_id: conversation.id,
+      actor_user_id: null,
+      event_type: 'status_changed',
+      payload: { status: 'open', previous_status: 'closed', source: 'customer_message' },
+    })
+    if (evErr) console.error('[inbound] reopen event insert failed:', evErr)
   }
 
   await flagBroadcastReplyIfAny(db, accountId, contact.id)
@@ -731,5 +748,6 @@ export async function ingestInboundMessage(
     optedOut,
     ...(autoAssignedTo ? { autoAssignedTo } : {}),
     ...(outOfHoursReply ? { outOfHoursReply } : {}),
+    ...(reopened ? { reopened } : {}),
   }
 }
