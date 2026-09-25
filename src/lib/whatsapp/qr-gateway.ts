@@ -228,6 +228,23 @@ export async function sendViaGateway(input: GatewaySendInput): Promise<{ message
   return { message_id: res.message_id }
 }
 
+/**
+ * Read receipts (blue ✓✓) for customer messages the agent has seen.
+ * `messageIds` are the provider ids stored in `messages.message_id`.
+ */
+export async function markReadViaGateway(input: {
+  accountId: string
+  /** Digits only — fallback jid when the gateway no longer knows the message. */
+  to: string
+  messageIds: string[]
+}): Promise<{ read: number }> {
+  const res = await gatewayFetch<{ read?: number }>(
+    `/sessions/${encodeURIComponent(input.accountId)}/read`,
+    { method: 'POST', body: { to: input.to, message_ids: input.messageIds } },
+  )
+  return { read: res.read ?? 0 }
+}
+
 // ------------------------------------------------------------
 // Inbound auth — the gateway → app direction
 // ------------------------------------------------------------

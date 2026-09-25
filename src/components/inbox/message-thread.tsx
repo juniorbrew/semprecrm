@@ -595,6 +595,35 @@ export function MessageThread({
       });
   }, [conversationId, hasUnread]);
 
+  // Read receipts (blue ✓✓ on the customer's phone, migration 049): while
+  // the thread is open and the tab visible, confirm the customer's new
+  // messages as read on WhatsApp. The server only sends what is newer
+  // than the last confirmation, so re-firing is cheap. Debounced so a
+  // burst of incoming messages is one call.
+  const lastCustomerMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].sender_type === "customer") return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+  useEffect(() => {
+    if (!conversationId || !lastCustomerMessageId) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const send = () => {
+      if (document.visibilityState !== "visible") return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void fetch(`/api/conversations/${conversationId}/read`, { method: "POST" }).catch(() => {});
+      }, 800);
+    };
+    send();
+    document.addEventListener("visibilitychange", send);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", send);
+    };
+  }, [conversationId, lastCustomerMessageId]);
+
   // Auto-scroll to bottom on new messages, notes or event pills. Keyed
   // on what the timeline contains rather than array identity, so a
   // background resync that refetches the same rows keeps the agent's
