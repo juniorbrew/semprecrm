@@ -595,13 +595,26 @@ export function MessageThread({
       });
   }, [conversationId, hasUnread]);
 
-  // Auto-scroll to bottom on new messages, notes or event pills
+  // Auto-scroll to bottom on new messages, notes or event pills. Keyed
+  // on what the timeline contains rather than array identity, so a
+  // background resync that refetches the same rows keeps the agent's
+  // scroll position while they read history.
+  const lastScrollSignatureRef = useRef<string | null>(null);
   useEffect(() => {
+    const signature = [
+      conversationId,
+      messages.length,
+      messages[messages.length - 1]?.id,
+      notes.length,
+      eventRecords.length,
+    ].join("|");
+    if (signature === lastScrollSignatureRef.current) return;
+    lastScrollSignatureRef.current = signature;
     if (scrollRef.current) {
       const el = scrollRef.current;
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, notes, eventRecords]);
+  }, [conversationId, messages, notes, eventRecords]);
 
   const handleSend = useCallback(
     async (text: string, replyToId?: string) => {
