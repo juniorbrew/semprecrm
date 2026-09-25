@@ -23,7 +23,13 @@ async function main(): Promise<void> {
     serviceRoleKey: config.supabaseServiceRoleKey,
     logger,
   });
-  const sessions = new SessionManager({ dataDir: config.dataDir, appClient, mediaStore, logger });
+  const sessions = new SessionManager({
+    dataDir: config.dataDir,
+    appClient,
+    mediaStore,
+    logger,
+    markOnline: config.markOnline,
+  });
 
   const app = createApp({ secret: config.secret, sessions, logger });
   const server = serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {

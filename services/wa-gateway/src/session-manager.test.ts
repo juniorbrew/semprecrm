@@ -64,7 +64,7 @@ async function until(pred: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-function makeManager(dataDir: string, extra: { sendWaitMs?: number } = {}) {
+function makeManager(dataDir: string, extra: { sendWaitMs?: number; markOnline?: boolean } = {}) {
   const appClient = {
     sendInbound: vi.fn(async () => true),
     sendStatus: vi.fn(async () => true),
@@ -95,6 +95,20 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await fs.rm(dataDir, { recursive: true, force: true });
+});
+
+describe("SessionManager — presença (recibos de entrega)", () => {
+  it("conecta online por padrão, para o Baileys mandar recibo de entrega (✓✓)", async () => {
+    const { manager } = makeManager(dataDir);
+    await manager.connect(ACCOUNT);
+    expect(mocks.makeWASocket.mock.calls[0][0]).toMatchObject({ markOnlineOnConnect: true });
+  });
+
+  it("respeita markOnline=false (prioriza as notificações do celular)", async () => {
+    const { manager } = makeManager(dataDir, { markOnline: false });
+    await manager.connect(ACCOUNT);
+    expect(mocks.makeWASocket.mock.calls[0][0]).toMatchObject({ markOnlineOnConnect: false });
+  });
 });
 
 describe("SessionManager — máquina de estados", () => {
