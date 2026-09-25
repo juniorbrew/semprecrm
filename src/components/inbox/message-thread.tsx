@@ -391,14 +391,19 @@ export function MessageThread({
   // separate from the unread-reset effect so that incoming messages
   // arriving while the thread is open don't trigger a full refetch —
   // they only flip hasUnread, which only the reset effect listens to.
+  // A resync of the same conversation refetches silently — the spinner
+  // is only for opening a thread, not for background catch-ups.
+  const loadedConversationIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!conversationId) return;
 
     const supabase = createClient();
     let cancelled = false;
+    const isResync = loadedConversationIdRef.current === conversationId;
+    loadedConversationIdRef.current = conversationId;
 
     (async () => {
-      setLoading(true);
+      if (!isResync) setLoading(true);
 
       const { data, error } = await supabase
         .from("messages")

@@ -387,6 +387,22 @@ export default function InboxPage() {
   }, [isConnected]);
 
   /**
+   * Safety net while realtime is down. A dropped socket that never
+   * rejoins (sleeping tab woken without a visibility change, proxy
+   * cut) would otherwise leave the inbox frozen until F5 — poll the
+   * same resync path every 30 s until the channel is back.
+   */
+  useEffect(() => {
+    if (isConnected || !initialConnectDoneRef.current) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        setResyncToken((n) => n + 1);
+      }
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [isConnected]);
+
+  /**
    * Refetch when the tab regains focus. Background tabs may have their
    * WS throttled by the browser even without a full disconnect, so a
    * visibilitychange → visible is a reliable signal that we may have
@@ -447,6 +463,17 @@ export default function InboxPage() {
   const handleConversationsLoaded = useCallback(
     (loaded: Conversation[]) => {
       setConversations(loaded);
+      // A resync (reconnect / tab focus / manual refresh) must also
+      // refresh the open thread's header — otherwise a status flip we
+      // missed over realtime (e.g. the customer reopening a resolved
+      // conversation) only shows after a full reload. Unread stays 0:
+      // the user is reading it.
+      setActiveConversation((prev) => {
+        if (!prev) return prev;
+        const fresh = loaded.find((c) => c.id === prev.id);
+        if (!fresh || fresh.updated_at === prev.updated_at) return prev;
+        return { ...prev, ...fresh, unread_count: 0 };
+      });
       // Resolve a pending deep-link here rather than in an effect — this
       // is an event handler, so the setState calls below are allowed by
       // react-hooks/set-state-in-effect. Runs once per ?c=<id> URL value
