@@ -64,6 +64,11 @@ export interface SessionManagerOptions {
   reconnectMaxMs?: number;
   /** quanto `send()` espera a sessão reconectar antes de responder 409 (padrão 15 s) */
   sendWaitMs?: number;
+  /**
+   * Ficar online ao conectar (padrão true) — sem isso o Baileys manda
+   * recibos "inactive" e o cliente vê só um tique. Ver GatewayConfig.markOnline.
+   */
+  markOnline?: boolean;
 }
 
 const PN_SUFFIX = "@s.whatsapp.net";
@@ -445,7 +450,7 @@ export class SessionManager {
         ...(version ? { version } : {}),
         logger: this.log.child({ accountId, lib: "baileys" }),
         browser: Browsers.ubuntu("SempreCRM"),
-        markOnlineOnConnect: false,
+        markOnlineOnConnect: this.opts.markOnline ?? true,
         syncFullHistory: false,
         generateHighQualityLinkPreview: false,
       });

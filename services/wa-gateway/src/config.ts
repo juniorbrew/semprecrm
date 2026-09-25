@@ -22,6 +22,15 @@ export interface GatewayConfig {
   supabaseServiceRoleKey: string;
   dataDir: string;
   logLevel: string;
+  /**
+   * Fica "online" ao conectar (WA_MARK_ONLINE, padrão true). O Baileys só
+   * devolve a confirmação de entrega normal (✓✓ no celular do cliente)
+   * quando a sessão está online; offline ele manda um recibo "inactive" e
+   * o cliente vê só ✓ enquanto o celular principal estiver sem conexão.
+   * Efeito colateral: com uma sessão online o WhatsApp não notifica o
+   * celular principal. `WA_MARK_ONLINE=false` volta ao comportamento antigo.
+   */
+  markOnline: boolean;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -54,5 +63,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     supabaseServiceRoleKey: required(env, "SUPABASE_SERVICE_ROLE_KEY"),
     dataDir: path.resolve(env.WA_DATA_DIR?.trim() || "./data"),
     logLevel: env.LOG_LEVEL?.trim() || "info",
+    markOnline: !/^(false|0|no|off)$/i.test(env.WA_MARK_ONLINE?.trim() ?? ""),
   };
 }
