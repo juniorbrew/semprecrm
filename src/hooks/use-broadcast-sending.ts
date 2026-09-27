@@ -94,6 +94,12 @@ interface BroadcastBatchResponse {
   skipped?: number;
 }
 
+/**
+ * IN-lists travel in the URL; ~150 UUIDs / phone numbers keeps a
+ * request well under common proxy URL limits (8 KB).
+ */
+const IN_LIST_PAGE = 150;
+
 /** contactId → (customFieldId → value). */
 type CustomValueIndex = Map<string, Map<string, string>>;
 
@@ -146,11 +152,9 @@ async function fetchCustomValueIndex(
   const index: CustomValueIndex = new Map();
   if (contactIds.length === 0) return index;
 
-  // Supabase PostgREST caps the .in(...) IN-clause roughly at 1000
-  // values. Page through to stay safe.
-  const PAGE = 500;
-  for (let i = 0; i < contactIds.length; i += PAGE) {
-    const slice = contactIds.slice(i, i + PAGE);
+  // The IN-list goes in the URL — page it (see IN_LIST_PAGE).
+  for (let i = 0; i < contactIds.length; i += IN_LIST_PAGE) {
+    const slice = contactIds.slice(i, i + IN_LIST_PAGE);
     const { data } = await supabase
       .from('contact_custom_values')
       .select('contact_id, custom_field_id, value')
@@ -278,13 +282,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     // created on the shared account, so those numbers looked new and
     // their inserts collided with the account-wide unique index.
     const byKey = new Map<string, Contact>();
-    const LOOKUP_PAGE = 500;
-    for (let i = 0; i < keys.length; i += LOOKUP_PAGE) {
+    for (let i = 0; i < keys.length; i += IN_LIST_PAGE) {
       const { data: existing, error: lookupErr } = await supabase
         .from('contacts')
         .select('*')
         .eq('account_id', accountId)
-        .in('phone_normalized', keys.slice(i, i + LOOKUP_PAGE));
+        .in('phone_normalized', keys.slice(i, i + IN_LIST_PAGE));
       if (lookupErr) {
         throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
       }
