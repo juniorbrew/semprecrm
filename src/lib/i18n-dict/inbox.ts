@@ -47,6 +47,25 @@ export const DICT_INBOX: Record<string, string> = {
     'Informe a URL da mídia para enviar este modelo.',
   'Enter a valid http(s) URL.': 'Informe uma URL http(s) válida.',
 
+  // ---- Broadcasts: detail page — resume / retry (wacrm #472) ----
+  'This campaign is still sending': 'Este disparo ainda está enviando',
+  'This campaign stopped part-way': 'Este disparo parou no meio',
+  'Some recipients need another attempt':
+    'Alguns destinatários precisam de nova tentativa',
+  'Another tab or a background pass is delivering it. Resume and retry unlock when it finishes or stops responding for 10 minutes.':
+    'Outra aba ou um envio em segundo plano está entregando. Retomar e reenviar liberam quando ele terminar ou ficar 10 minutos sem responder.',
+  'Recipients never sent': 'Destinatários não enviados',
+  'The tab running this campaign was closed before it finished. Resuming completes it from the server.':
+    'A aba que enviava este disparo foi fechada antes de terminar. Retomar conclui o envio pelo servidor.',
+  'Recipients that failed': 'Destinatários com falha',
+  'Retrying sends them again from the server.':
+    'Reenviar tenta de novo pelo servidor.',
+  'Resume sending': 'Retomar envio',
+  'Retry failed': 'Reenviar falhas',
+  'Could not resume': 'Não foi possível retomar',
+  'Sending in the background': 'Enviando em segundo plano',
+  'Left for another run': 'Restam para outra rodada',
+
   // ---- Role gates (GatedButton tooltips) ----
   "Read-only — your role can't create broadcasts":
     'Somente leitura — seu perfil não pode criar disparos',

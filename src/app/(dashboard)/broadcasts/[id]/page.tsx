@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
@@ -34,6 +34,8 @@ import {
   Trash2,
   CalendarClock,
   FileText,
+  PlayCircle,
+  RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/hooks/use-language';
@@ -42,6 +44,8 @@ import {
   getBroadcastStatus,
   getRecipientStatus,
 } from '@/lib/broadcast-status';
+import { isDeliveryLockActive } from '@/lib/broadcast-delivery-lock';
+import { useCan } from '@/hooks/use-can';
 
 interface StatCardProps {
   label: string;
@@ -160,38 +164,42 @@ export default function BroadcastDetailPage() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resumingScope, setResumingScope] = useState<'pending' | 'failed' | null>(
+    null,
+  );
+  const canSend = useCan('send-messages');
+
+  const fetchData = useCallback(async () => {
+    try {
+      const supabase = createClient();
+
+      const { data: bc, error: bcError } = await supabase
+        .from('broadcasts')
+        .select('*')
+        .eq('id', broadcastId)
+        .single();
+
+      if (bcError) throw bcError;
+      setBroadcast(bc);
+
+      const { data: recs, error: recsError } = await supabase
+        .from('broadcast_recipients')
+        .select('*, contact:contacts(*)')
+        .eq('broadcast_id', broadcastId)
+        .order('created_at', { ascending: false });
+
+      if (recsError) throw recsError;
+      setRecipients(recs ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load broadcast');
+    } finally {
+      setLoading(false);
+    }
+  }, [broadcastId]);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const supabase = createClient();
-
-        const { data: bc, error: bcError } = await supabase
-          .from('broadcasts')
-          .select('*')
-          .eq('id', broadcastId)
-          .single();
-
-        if (bcError) throw bcError;
-        setBroadcast(bc);
-
-        const { data: recs, error: recsError } = await supabase
-          .from('broadcast_recipients')
-          .select('*, contact:contacts(*)')
-          .eq('broadcast_id', broadcastId)
-          .order('created_at', { ascending: false });
-
-        if (recsError) throw recsError;
-        setRecipients(recs ?? []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load broadcast');
-      } finally {
-        setLoading(false);
-      }
-    }
-
     fetchData();
-  }, [broadcastId]);
+  }, [fetchData]);
 
   const filteredRecipients = useMemo(
     () =>
@@ -259,6 +267,47 @@ export default function BroadcastDetailPage() {
     downloadBlob(`broadcast-${safeName}-${broadcastId.slice(0, 8)}.csv`, csv);
   }
 
+  /**
+   * Hand the leftovers to the server (wacrm #472). The wizard's send
+   * loop lives in the tab that started the campaign, so closing it
+   * strands the rest as 'pending' with the broadcast stuck in
+   * 'sending'. This is the recovery, and the same call retries failed
+   * recipients.
+   */
+  async function handleResume(scope: 'pending' | 'failed') {
+    setResumingScope(scope);
+    try {
+      const res = await fetch(`/api/whatsapp/broadcast/${broadcastId}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope }),
+      });
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(
+          `${t('Could not resume')}: ${t(payload?.error || `HTTP ${res.status}`)}`,
+        );
+        return;
+      }
+
+      toast.success(
+        payload.remaining > 0
+          ? `${t('Sending in the background')}: ${payload.resuming}. ${t('Left for another run')}: ${payload.remaining}.`
+          : `${t('Sending in the background')}: ${payload.resuming}.`,
+      );
+      // Delivery runs server-side after the 202, so the counts here are
+      // a snapshot — reload to pick up the first of it.
+      await fetchData();
+    } catch (err) {
+      toast.error(
+        `${t('Could not resume')}: ${t(err instanceof Error ? err.message : 'Unknown error')}`,
+      );
+    } finally {
+      setResumingScope(null);
+    }
+  }
+
   async function handleDelete() {
     setDeleting(true);
     const supabase = createClient();
@@ -299,6 +348,17 @@ export default function BroadcastDetailPage() {
   }
 
   const status = getBroadcastStatus(broadcast.status);
+
+  const pendingCount = recipients.filter((r) => r.status === 'pending').length;
+  const retryableCount = recipients.filter((r) => r.status === 'failed').length;
+  // Someone's tab (or a server pass) is still sending and renewing the
+  // delivery lock — resuming now would be refused with 409 anyway.
+  const deliveryActive = isDeliveryLockActive(broadcast.delivery_locked_at);
+  // A campaign whose tab went away sits in 'sending' with recipients
+  // still pending and nothing left to move them. Name that state rather
+  // than leaving a permanently "sending" badge.
+  const isStalled =
+    broadcast.status === 'sending' && pendingCount > 0 && !deliveryActive;
 
   const funnelSteps: FunnelStep[] = [
     { label: t('Sent'), value: broadcast.sent_count, color: 'bg-primary' },
@@ -409,6 +469,61 @@ export default function BroadcastDetailPage() {
           </Button>
         )}
       </div>
+
+      {/* Resume / retry (wacrm #472). Only rendered when something is
+          outstanding and the viewer's role can send. */}
+      {canSend && (pendingCount > 0 || retryableCount > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+          <div className="text-sm">
+            <p className="font-medium text-foreground">
+              {deliveryActive
+                ? t('This campaign is still sending')
+                : isStalled
+                  ? t('This campaign stopped part-way')
+                  : t('Some recipients need another attempt')}
+            </p>
+            <p className="mt-0.5 text-muted-foreground">
+              {deliveryActive
+                ? t('Another tab or a background pass is delivering it. Resume and retry unlock when it finishes or stops responding for 10 minutes.')
+                : isStalled
+                  ? `${t('Recipients never sent')}: ${pendingCount}. ${t('The tab running this campaign was closed before it finished. Resuming completes it from the server.')}`
+                  : `${t('Recipients that failed')}: ${retryableCount}. ${t('Retrying sends them again from the server.')}`}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {pendingCount > 0 && (
+              <Button
+                size="sm"
+                onClick={() => handleResume('pending')}
+                disabled={resumingScope !== null || deliveryActive}
+              >
+                {resumingScope === 'pending' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <PlayCircle className="h-3.5 w-3.5" />
+                )}
+                {t('Resume sending')} ({pendingCount})
+              </Button>
+            )}
+            {retryableCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleResume('failed')}
+                disabled={resumingScope !== null || deliveryActive}
+                className="border-border text-muted-foreground hover:bg-muted"
+              >
+                {resumingScope === 'failed' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                {t('Retry failed')} ({retryableCount})
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

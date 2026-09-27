@@ -209,6 +209,16 @@ export const DICT_API: Record<string, string> = {
   'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.':
     'O modelo está corrompido localmente — execute "Sincronizar da Meta" em Configurações para corrigi-lo antes de disparar.',
   'Failed to process broadcast': 'Não foi possível processar o disparo',
+  // Resume route + recipient error_message (wacrm #472)
+  'A delivery pass is already running for this broadcast. Wait for it to finish before resuming again.':
+    'Já há um envio em andamento para este disparo. Aguarde terminar antes de retomar de novo.',
+  'This broadcast has no failed recipients to retry':
+    'Este disparo não tem destinatários com falha para reenviar',
+  'This broadcast has no recipients left to send':
+    'Este disparo não tem destinatários pendentes',
+  'Failed to load recipients': 'Não foi possível carregar os destinatários',
+  'No valid phone number on contact': 'Contato sem telefone válido',
+  'Contact opted out': 'Contato pediu para não receber mensagens',
 
   // ---- WhatsApp: config -------------------------------------------------
   'Failed to fetch configuration': 'Não foi possível carregar a configuração',

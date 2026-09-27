@@ -543,6 +543,14 @@ export interface Broadcast {
   read_count: number;
   replied_count: number;
   failed_count: number;
+  /**
+   * Set while a delivery pass (the wizard's tab or a server-side
+   * resume) is fanning out, NULL when idle. Claimed with a conditional
+   * UPDATE so two passes can't both send. Added in migration 051.
+   */
+  delivery_locked_at?: string | null;
+  /** Header media URL chosen in the wizard (migration 051). */
+  header_media_url?: string | null;
   created_at: string;
 }
 
@@ -567,6 +575,13 @@ export interface BroadcastRecipient {
    * Added in migration 003.
    */
   whatsapp_message_id?: string;
+  /**
+   * Positional body values for this recipient's template send
+   * ({{1}}, {{2}}, …), frozen when the broadcast was planned so a
+   * server-side resume reproduces the original pass exactly.
+   * Added in migration 051; null on rows created before it.
+   */
+  template_params?: string[] | null;
   created_at: string;
   contact?: Contact;
 }

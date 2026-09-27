@@ -157,6 +157,21 @@ async function fetchCustomValueIndex(
   return index;
 }
 
+/** Refresh the wizard's delivery lock (migration 051). Best-effort. */
+async function renewDeliveryLock(
+  supabase: ReturnType<typeof createClient>,
+  broadcastId: string,
+): Promise<void> {
+  await supabase
+    .from('broadcasts')
+    .update({ delivery_locked_at: new Date().toISOString() })
+    .eq('id', broadcastId)
+    .then(
+      () => undefined,
+      () => undefined,
+    );
+}
+
 export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -340,6 +355,11 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     setProgress(0);
 
     const supabase = createClient();
+    // Set once the broadcast row exists and holds the delivery lock
+    // (migration 051); cleared when the lock is released. The finally
+    // block releases it if the send dies half-way, so "Retomar" on the
+    // detail page doesn't have to wait out the staleness window.
+    let lockedBroadcastId: string | null = null;
 
     try {
       // ── Step 0: Resolve current user ──────────────────────────────
@@ -377,6 +397,13 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
           template_variables: payload.variables,
+          // Frozen for a server-side resume (migration 051, #298/#472).
+          header_media_url:
+            headerMediaMessageParams(payload.template, payload.headerMediaUrl)
+              ?.headerMediaUrl ?? null,
+          // This tab is the delivery pass: hold the lock (renewed per
+          // batch below) so "Retomar" can't double-send while it runs.
+          delivery_locked_at: new Date().toISOString(),
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -400,12 +427,30 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         );
       }
 
+      lockedBroadcastId = broadcast.id;
+
       // ── Step 3: Insert recipient rows ─────────────────────────────
+      // Custom values are fetched BEFORE the insert so each row can
+      // carry its resolved template params (migration 051). Those params
+      // are what makes the campaign resumable server-side (wacrm #472):
+      // the send loop below runs in this browser tab, and if the tab goes
+      // away the only record of what {{1}} should be for each contact is
+      // this column. Resolving once here also means a resume sends
+      // exactly what this pass would have.
       setProgress(20);
+      const customValueIndex = await fetchCustomValueIndex(
+        supabase,
+        contacts.map((c) => c.id),
+      );
       const recipientRows = contacts.map((contact) => ({
         broadcast_id: broadcast.id,
         contact_id: contact.id,
         status: 'pending' as const,
+        template_params: resolveVariables(
+          payload.variables,
+          contact,
+          customValueIndex.get(contact.id),
+        ),
       }));
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
@@ -424,15 +469,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             .update({
               status: 'failed',
               failed_count: contacts.length,
+              delivery_locked_at: null,
             })
             .eq('id', broadcast.id);
+          lockedBroadcastId = null;
           throw new Error(
             `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
           );
         }
       }
 
-      // ── Step 4: Fetch recipients (joined contact) + preload custom values
+      // ── Step 4: Fetch recipients back (joined contact) ────────────
       setProgress(30);
       const { data: recipients, error: recipientsFetchError } = await supabase
         .from('broadcast_recipients')
@@ -442,16 +489,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       if (recipientsFetchError || !recipients) {
         throw new Error('Failed to fetch broadcast recipients');
       }
-
-      // One bulk fetch of custom values for every contact in this
-      // broadcast, avoiding N+1 during the send loop.
-      const contactIds = recipients
-        .map((r) => r.contact?.id)
-        .filter((id): id is string => Boolean(id));
-      const customValueIndex = await fetchCustomValueIndex(
-        supabase,
-        contactIds,
-      );
 
       let failedCount = 0;
       const totalRecipients = recipients.length;
@@ -472,17 +509,21 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           .filter((r) => r.contact?.phone)
           .map((r) => ({
             phone: r.contact!.phone as string,
-            params: r.contact
-              ? resolveVariables(
-                  payload.variables,
-                  r.contact,
-                  customValueIndex.get(r.contact.id),
+            // Read back off the row rather than re-resolved, so this
+            // pass and any later resume send identical params.
+            params: Array.isArray(r.template_params)
+              ? (r.template_params as unknown[]).filter(
+                  (p): p is string => typeof p === 'string',
                 )
               : [],
             ...(messageParams ? { messageParams } : {}),
           }));
 
         if (apiRecipients.length === 0) continue;
+
+        // Renew the delivery lock so a long send is never read as
+        // abandoned (DELIVERY_LOCK_STALE_MS in broadcast-resume.ts).
+        await renewDeliveryLock(supabase, broadcast.id);
 
         try {
           // Send the batch, waiting out a 429 rather than writing the
@@ -511,6 +552,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               throw new Error(data.error || 'Broadcast API request failed');
             }
             await sleep(retryIn);
+            await renewDeliveryLock(supabase, broadcast.id);
           }
 
           const resultsByPhone = new Map<string, BroadcastApiResult>();
@@ -584,12 +626,25 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
       await supabase
         .from('broadcasts')
-        .update({ status: finalStatus })
+        .update({ status: finalStatus, delivery_locked_at: null })
         .eq('id', broadcast.id);
+      lockedBroadcastId = null;
 
       setProgress(100);
       return broadcast.id;
     } finally {
+      if (lockedBroadcastId) {
+        // Died half-way: free the lock so the detail page can resume the
+        // rest right away. Best-effort — a stale lock expires anyway.
+        await supabase
+          .from('broadcasts')
+          .update({ delivery_locked_at: null })
+          .eq('id', lockedBroadcastId)
+          .then(
+            () => undefined,
+            () => undefined,
+          );
+      }
       setIsProcessing(false);
     }
   }
