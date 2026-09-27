@@ -3,6 +3,16 @@
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import {
+  BATCH_SEND_ATTEMPTS,
+  batchRetryDelayMs,
+} from '@/lib/broadcast-retry';
+import { headerMediaMessageParams } from '@/lib/broadcast-header-media';
+import { releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
+import { abandonUnstartedBroadcast } from '@/lib/broadcast-abandon';
+import { normalizeKey } from '@/lib/contacts/dedupe';
+import { toast } from 'sonner';
+import { useLanguage } from '@/hooks/use-language';
 import { Contact, MessageTemplate } from '@/types';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -39,6 +49,13 @@ interface BroadcastPayload {
   template: MessageTemplate;
   audience: AudienceConfig;
   variables: Record<string, VariableMapping>;
+  /**
+   * Media URL for an IMAGE/VIDEO/DOCUMENT header. Required at send
+   * time for media-header templates — Meta rejects the send without
+   * it. Passed through as `messageParams.headerMediaUrl`; the builder
+   * falls back to the template's stored URL only when this is empty.
+   */
+  headerMediaUrl?: string;
 }
 
 interface UseBroadcastSendingReturn {
@@ -51,6 +68,11 @@ interface UseBroadcastSendingReturn {
  * Meta rate-limit buffer. 10 per batch + 1 s pause matches the spec
  * and keeps us comfortably under Meta's per-phone-number messaging
  * rate so a large broadcast never trips the upstream limiter.
+ *
+ * Note this shape when touching `RATE_LIMITS.broadcast`: a campaign is
+ * many calls to `/api/whatsapp/broadcast`, not one. A 1 000-recipient
+ * send is ~100 calls over several minutes, and a bucket sized for
+ * "one call per campaign" throttles most of it away (issue #472).
  */
 const SEND_BATCH_SIZE = 10;
 const SEND_BATCH_DELAY_MS = 1000;
@@ -62,12 +84,22 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface BroadcastApiResult {
-  phone: string;
-  status: 'sent' | 'failed';
-  whatsapp_message_id?: string;
+/** Response of POST /api/whatsapp/broadcast (row-based, server-stamped). */
+interface BroadcastBatchResponse {
   error?: string;
+  code?: string;
+  lock_token?: string;
+  sent?: number;
+  failed?: number;
+  uncertain?: number;
+  skipped?: number;
 }
+
+/**
+ * IN-lists travel in the URL; ~150 UUIDs / phone numbers keeps a
+ * request well under common proxy URL limits (8 KB).
+ */
+const IN_LIST_PAGE = 150;
 
 /** contactId → (customFieldId → value). */
 type CustomValueIndex = Map<string, Map<string, string>>;
@@ -121,11 +153,9 @@ async function fetchCustomValueIndex(
   const index: CustomValueIndex = new Map();
   if (contactIds.length === 0) return index;
 
-  // Supabase PostgREST caps the .in(...) IN-clause roughly at 1000
-  // values. Page through to stay safe.
-  const PAGE = 500;
-  for (let i = 0; i < contactIds.length; i += PAGE) {
-    const slice = contactIds.slice(i, i + PAGE);
+  // The IN-list goes in the URL — page it (see IN_LIST_PAGE).
+  for (let i = 0; i < contactIds.length; i += IN_LIST_PAGE) {
+    const slice = contactIds.slice(i, i + IN_LIST_PAGE);
     const { data } = await supabase
       .from('contact_custom_values')
       .select('contact_id, custom_field_id, value')
@@ -142,6 +172,7 @@ async function fetchCustomValueIndex(
 
 export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
+  const { t } = useLanguage();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -213,6 +244,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
    * Pre-existing implementation synthesized `csv-N` strings as
    * contact_id, which failed the UUID cast on insert — every CSV
    * broadcast silently created zero recipients.
+   *
+   * Matching is on the normalized number throughout (wacrm #512), so it
+   * agrees with the account-wide unique index rather than colliding
+   * with it.
    */
   async function upsertCsvContacts(
     supabase: ReturnType<typeof createClient>,
@@ -231,37 +266,48 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       throw new Error('Your profile is not linked to an account.');
     }
 
-    // De-duplicate by phone within the CSV (users can paste duplicates).
-    const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
+    // De-duplicate within the CSV on the NORMALIZED number — the same
+    // key the DB's UNIQUE (account_id, phone_normalized) index uses
+    // (migration 022). Keyed on the raw string instead, "+55 11 9…" and
+    // "5511…" survived as two rows and the insert below died on a 23505,
+    // failing the whole broadcast.
+    const uniqueByKey = new Map<string, { phone: string; name?: string }>();
     for (const row of csvRows) {
-      if (row.phone) uniqueByPhone.set(row.phone, row);
+      const key = normalizeKey(row.phone);
+      if (key && !uniqueByKey.has(key)) uniqueByKey.set(key, row);
     }
-    const phones = [...uniqueByPhone.keys()];
+    const keys = [...uniqueByKey.keys()];
 
-    // Single round-trip lookup of existing contacts by phone.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('user_id', user.id)
-      .in('phone', phones);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-    }
-
-    const byPhone = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
-      if (c.phone) byPhone.set(c.phone, c);
+    // Lookup of the contacts already in this ACCOUNT, in pages (PostgREST
+    // caps the IN-list). Scoping to `user_id` missed rows a teammate
+    // created on the shared account, so those numbers looked new and
+    // their inserts collided with the account-wide unique index.
+    const byKey = new Map<string, Contact>();
+    for (let i = 0; i < keys.length; i += IN_LIST_PAGE) {
+      const { data: existing, error: lookupErr } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('account_id', accountId)
+        .in('phone_normalized', keys.slice(i, i + IN_LIST_PAGE));
+      if (lookupErr) {
+        throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
+      }
+      for (const c of (existing ?? []) as Contact[]) {
+        const key = normalizeKey(c.phone ?? '');
+        if (key) byKey.set(key, c);
+      }
     }
 
     // Insert only missing contacts, in one batch per 200 rows (PostgREST
     // has a default payload cap — 200 keeps individual requests small).
-    const missing = phones
-      .filter((p) => !byPhone.has(p))
-      .map((phone) => ({
+    const missing = keys
+      .filter((k) => !byKey.has(k))
+      .map((k) => uniqueByKey.get(k)!)
+      .map((row) => ({
         user_id: user.id,
         account_id: accountId,
-        phone,
-        name: uniqueByPhone.get(phone)?.name ?? null,
+        phone: row.phone,
+        name: row.name ?? null,
       }));
 
     const INSERT_CHUNK = 200;
@@ -275,13 +321,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
       }
       for (const c of (inserted ?? []) as Contact[]) {
-        if (c.phone) byPhone.set(c.phone, c);
+        const key = normalizeKey(c.phone ?? '');
+        if (key) byKey.set(key, c);
       }
     }
 
     // Preserve input order so analytics roughly matches the CSV order.
-    return phones
-      .map((p) => byPhone.get(p))
+    return keys
+      .map((k) => byKey.get(k))
       .filter((c): c is Contact => Boolean(c));
   }
 
@@ -323,6 +370,11 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     setProgress(0);
 
     const supabase = createClient();
+    // This tab's delivery lock (migration 051): the broadcast id plus MY
+    // token. The server renews it per batch and hands back the next token;
+    // releasing is conditional on the token, so this tab can never clear a
+    // lock a resume pass took over. Cleared once released.
+    let held: { id: string; token: string } | null = null;
 
     try {
       // ── Step 0: Resolve current user ──────────────────────────────
@@ -360,6 +412,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
           template_variables: payload.variables,
+          // Frozen for a server-side resume (migration 051, #298/#472).
+          header_media_url:
+            headerMediaMessageParams(payload.template, payload.headerMediaUrl)
+              ?.headerMediaUrl ?? null,
+          // Per-row claim protocol (migration 051) — not a legacy campaign.
+          delivery_protocol: 1,
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -383,19 +441,61 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         );
       }
 
+      // This tab is the delivery pass: the SERVER takes the lock and mints
+      // the first token from its own clock (renewed per batch), so
+      // "Retomar" can't start while this tab sends.
+      let startData: BroadcastBatchResponse = {};
+      let started = false;
+      try {
+        const startRes = await fetch(`/api/whatsapp/broadcast/${broadcast.id}/start`, {
+          method: 'POST',
+        });
+        startData = (await startRes.json().catch(() => ({}))) as BroadcastBatchResponse;
+        started = startRes.ok && Boolean(startData.lock_token);
+      } catch (err) {
+        startData = { error: err instanceof Error ? err.message : undefined };
+      }
+      if (!started || !startData.lock_token) {
+        // Don't leave an empty campaign sitting in "Enviando": no rows
+        // exist yet, so it is deleted (or marked failed if that's refused).
+        await abandonUnstartedBroadcast(supabase, broadcast.id).catch(() => undefined);
+        throw new Error(startData.error || 'Could not start the broadcast');
+      }
+      held = { id: broadcast.id, token: startData.lock_token };
+
       // ── Step 3: Insert recipient rows ─────────────────────────────
+      // Custom values are fetched BEFORE the insert so each row can
+      // carry its resolved template params (migration 051). Those params
+      // are what makes the campaign resumable server-side (wacrm #472):
+      // the send loop below runs in this browser tab, and if the tab goes
+      // away the only record of what {{1}} should be for each contact is
+      // this column. Resolving once here also means a resume sends
+      // exactly what this pass would have.
       setProgress(20);
+      const customValueIndex = await fetchCustomValueIndex(
+        supabase,
+        contacts.map((c) => c.id),
+      );
       const recipientRows = contacts.map((contact) => ({
         broadcast_id: broadcast.id,
         contact_id: contact.id,
         status: 'pending' as const,
+        template_params: resolveVariables(
+          payload.variables,
+          contact,
+          customValueIndex.get(contact.id),
+        ),
       }));
 
+      // Ids come back from the insert itself — a later SELECT would be
+      // capped at 1000 rows by PostgREST and silently drop the rest.
+      const recipientIds: string[] = [];
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);
-        const { error: recipientError } = await supabase
+        const { data: insertedRows, error: recipientError } = await supabase
           .from('broadcast_recipients')
-          .insert(batch);
+          .insert(batch)
+          .select('id');
         if (recipientError) {
           // Previous impl logged and marched on — the broadcast then ran
           // with an incomplete recipient set, so webhook status updates
@@ -407,150 +507,103 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             .update({
               status: 'failed',
               failed_count: contacts.length,
+              delivery_locked_at: null,
             })
-            .eq('id', broadcast.id);
+            .eq('id', broadcast.id)
+            .eq('delivery_locked_at', held.token);
+          held = null;
           throw new Error(
             `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
           );
         }
+        for (const r of (insertedRows ?? []) as { id: string }[]) recipientIds.push(r.id);
       }
 
-      // ── Step 4: Fetch recipients (joined contact) + preload custom values
+      // ── Step 4: Send, one server-side batch at a time ─────────────
+      // The SERVER claims each row (pending → sending, atomically), sends
+      // it and stamps sent / failed / uncertain itself. This tab only
+      // passes row ids: it never stamps rows, so a reload, a second tab or
+      // a resume pass can't make anyone get the message twice — a row
+      // someone else already claimed just comes back 'skipped'.
       setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
+      const totalRecipients = recipientIds.length;
+      let stopReason: string | null = null;
+      let uncertainCount = 0;
 
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
-      }
+      for (let i = 0; i < recipientIds.length; i += SEND_BATCH_SIZE) {
+        const batchIds = recipientIds.slice(i, i + SEND_BATCH_SIZE);
+        if (!held) break;
+        const token = held.token;
 
-      // One bulk fetch of custom values for every contact in this
-      // broadcast, avoiding N+1 during the send loop.
-      const contactIds = recipients
-        .map((r) => r.contact?.id)
-        .filter((id): id is string => Boolean(id));
-      const customValueIndex = await fetchCustomValueIndex(
-        supabase,
-        contactIds,
-      );
-
-      let failedCount = 0;
-      const totalRecipients = recipients.length;
-
-      for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
-        const batch = recipients.slice(i, i + SEND_BATCH_SIZE);
-
-        const apiRecipients = batch
-          .filter((r) => r.contact?.phone)
-          .map((r) => ({
-            phone: r.contact!.phone as string,
-            params: r.contact
-              ? resolveVariables(
-                  payload.variables,
-                  r.contact,
-                  customValueIndex.get(r.contact.id),
-                )
-              : [],
-          }));
-
-        if (apiRecipients.length === 0) continue;
-
+        let data: BroadcastBatchResponse = {};
+        let ok = false;
         try {
-          const res = await fetch('/api/whatsapp/broadcast', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              recipients: apiRecipients,
-              template_name: payload.template.name,
-              template_language: payload.template.language ?? 'en_US',
-            }),
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            throw new Error(data.error || 'Broadcast API request failed');
-          }
-
-          const resultsByPhone = new Map<string, BroadcastApiResult>();
-          for (const r of (data.results ?? []) as BroadcastApiResult[]) {
-            resultsByPhone.set(r.phone, r);
-          }
-
-          for (const recipient of batch) {
-            const phone = recipient.contact?.phone;
-            const result = phone ? resultsByPhone.get(phone) : undefined;
-
-            if (!result) {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: 'No phone number on contact',
-                })
-                .eq('id', recipient.id);
-              continue;
+          // Only a 429 is replayed: the route rate-limits BEFORE it
+          // claims or sends anything (see batchRetryDelayMs).
+          for (let attempt = 1; ; attempt++) {
+            const res = await fetch('/api/whatsapp/broadcast', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                broadcast_id: broadcast.id,
+                recipient_ids: batchIds,
+                lock_token: token,
+              }),
+            });
+            data = await res.json().catch(() => ({}));
+            if (res.ok) {
+              ok = true;
+              break;
             }
-
-            if (result.status === 'sent') {
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'sent',
-                  sent_at: new Date().toISOString(),
-                  whatsapp_message_id: result.whatsapp_message_id ?? null,
-                  error_message: null,
-                })
-                .eq('id', recipient.id);
-            } else {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: result.error ?? 'Unknown error',
-                })
-                .eq('id', recipient.id);
-            }
+            const retryIn =
+              attempt < BATCH_SEND_ATTEMPTS
+                ? batchRetryDelayMs(res.status, res.headers.get('Retry-After'))
+                : null;
+            if (retryIn === null) break;
+            await sleep(retryIn);
           }
         } catch (err) {
-          for (const recipient of batch) {
-            failedCount++;
-            await supabase
-              .from('broadcast_recipients')
-              .update({
-                status: 'failed',
-                error_message: err instanceof Error ? err.message : 'Unknown error',
-              })
-              .eq('id', recipient.id);
-          }
+          // Network drop: the server may or may not have processed the
+          // batch. Its rows are stamped (or expire to 'uncertain')
+          // server-side — never re-sent from here.
+          data = { error: err instanceof Error ? err.message : 'Network error' };
         }
 
-        const progressPct =
-          30 + Math.round(((i + batch.length) / totalRecipients) * 60);
-        setProgress(progressPct);
+        if (!ok) {
+          if (data.code === 'delivery_lock_lost') held = null;
+          stopReason = data.error || 'Broadcast API request failed';
+          break;
+        }
+        if (data.lock_token && held) held = { ...held, token: data.lock_token };
+        uncertainCount += data.uncertain ?? 0;
 
-        if (i + SEND_BATCH_SIZE < recipients.length) {
+        setProgress(30 + Math.round(((i + batchIds.length) / totalRecipients) * 65));
+
+        if (i + SEND_BATCH_SIZE < recipientIds.length) {
           await sleep(SEND_BATCH_DELAY_MS);
         }
       }
 
-      // ── Step 5: Finalize status ───────────────────────────────────
-      // Aggregate counts are maintained by the DB trigger (migration
-      // 003); we only flip the final status here.
-      setProgress(95);
-      const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
-      await supabase
-        .from('broadcasts')
-        .update({ status: finalStatus })
-        .eq('id', broadcast.id);
-
+      // ── Step 5: Finish ────────────────────────────────────────────
+      // The final status is settled server-side from the rows
+      // (finalizeBroadcastStatus); counts are trigger-owned (003/005).
+      if (stopReason) {
+        toast.warning(
+          `${t('The broadcast stopped before finishing')}: ${stopReason}`,
+        );
+      } else if (uncertainCount > 0) {
+        toast.warning(
+          `${t('Recipients with an uncertain result (not resent)')}: ${uncertainCount}`,
+        );
+      }
       setProgress(100);
       return broadcast.id;
     } finally {
+      if (held) {
+        // Release MY lock (a no-op if someone else holds it now), so the
+        // detail page can resume the rest right away.
+        await releaseDeliveryLock(supabase, held.id, held.token).catch(() => undefined);
+      }
       setIsProcessing(false);
     }
   }

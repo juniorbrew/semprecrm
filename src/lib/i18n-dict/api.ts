@@ -209,6 +209,33 @@ export const DICT_API: Record<string, string> = {
   'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.':
     'O modelo está corrompido localmente — execute "Sincronizar da Meta" em Configurações para corrigi-lo antes de disparar.',
   'Failed to process broadcast': 'Não foi possível processar o disparo',
+  // Resume route + recipient error_message (wacrm #472)
+  'A delivery pass is already running for this broadcast. Wait for it to finish before resuming again.':
+    'Já há um envio em andamento para este disparo. Aguarde terminar antes de retomar de novo.',
+  'This broadcast has no failed recipients to retry':
+    'Este disparo não tem destinatários com falha para reenviar',
+  'This broadcast has no recipients left to send':
+    'Este disparo não tem destinatários pendentes',
+  'Failed to load recipients': 'Não foi possível carregar os destinatários',
+  'No valid phone number on contact': 'Contato sem telefone válido',
+  'Contact opted out': 'Contato pediu para não receber mensagens',
+  'This broadcast was created before this version and cannot be resumed safely: the previous version could send a message before recording it. Review the remaining recipients manually.':
+    'Esta campanha foi criada antes desta versão e não pode ser retomada com segurança: a versão anterior podia enviar a mensagem antes de registrar o envio. Revise os destinatários restantes manualmente.',
+  'This broadcast is being delivered by another pass. This tab stopped sending — open the broadcast to follow it.':
+    'Este disparo está sendo entregue por outro envio. Esta aba parou de enviar — abra o disparo para acompanhar.',
+  'Provide broadcast_id, lock_token and 1–50 recipient_ids. Reload the page if this tab is out of date.':
+    'Requisição de envio inválida. Recarregue a página se esta aba estiver desatualizada.',
+  'Send interrupted — outcome unknown': 'Envio interrompido — resultado desconhecido',
+  'Could not start the broadcast': 'Não foi possível iniciar o disparo',
+  'Meta accepted the request but returned no message id':
+    'A Meta aceitou a requisição, mas não devolveu o id da mensagem',
+
+  // ---- WhatsApp: template header media (wacrm #562) ----
+  'Could not fetch the header media URL. Make sure it is publicly reachable.':
+    'Não foi possível baixar a mídia do cabeçalho. Confira se o link é público.',
+  'Media-header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the media header.':
+    'Modelos com mídia no cabeçalho precisam de META_APP_ID configurado (usado no upload retomável da Meta). Configure-o ou remova a mídia do cabeçalho.',
+  'Header media upload failed.': 'Falha ao enviar a mídia do cabeçalho.',
 
   // ---- WhatsApp: config -------------------------------------------------
   'Failed to fetch configuration': 'Não foi possível carregar a configuração',

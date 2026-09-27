@@ -525,7 +525,21 @@ export interface Deal {
 }
 
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
-export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
+/**
+ * 'sending'   — claimed by a delivery pass (migration 051); never resent.
+ * 'uncertain' — Meta may or may not have it (network/timeout/5xx, or the
+ *               pass died mid-send); never resent automatically.
+ * 'failed'    — CONFIRMED not sent; the only status "Reenviar falhas" retries.
+ */
+export type RecipientStatus =
+  | 'pending'
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'replied'
+  | 'failed'
+  | 'uncertain';
 
 export interface Broadcast {
   id: string;
@@ -543,7 +557,20 @@ export interface Broadcast {
   read_count: number;
   replied_count: number;
   failed_count: number;
+  /**
+   * Set while a delivery pass (the wizard's tab or a server-side
+   * resume) is fanning out, NULL when idle. Claimed with a conditional
+   * UPDATE so two passes can't both send. Added in migration 051.
+   */
+  delivery_locked_at?: string | null;
+  /** Header media URL chosen in the wizard (migration 051). */
+  header_media_url?: string | null;
+  /** NULL = legacy campaign (pre-051 code); 1 = per-row claim protocol. */
+  delivery_protocol?: number | null;
+  /** Rows with an uncertain outcome (migration 051, trigger-maintained). */
+  uncertain_count?: number;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface BroadcastRecipient {
@@ -567,6 +594,15 @@ export interface BroadcastRecipient {
    * Added in migration 003.
    */
   whatsapp_message_id?: string;
+  /**
+   * Positional body values for this recipient's template send
+   * ({{1}}, {{2}}, …), frozen when the broadcast was planned so a
+   * server-side resume reproduces the original pass exactly.
+   * Added in migration 051; null on rows created before it.
+   */
+  template_params?: string[] | null;
+  /** When a delivery pass claimed the row (migration 051). */
+  claimed_at?: string | null;
   created_at: string;
   contact?: Contact;
 }

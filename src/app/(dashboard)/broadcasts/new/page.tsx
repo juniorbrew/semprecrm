@@ -44,7 +44,14 @@ export default function NewBroadcastPage() {
   const [variables, setVariables] = useState<
     Record<string, { type: 'static' | 'field' | 'custom_field'; value: string }>
   >({});
+  const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
+
+  // A header URL typed for one template must not leak into another.
+  function selectTemplate(next: MessageTemplate | null) {
+    if (next?.id !== template?.id) setHeaderMediaUrl('');
+    setTemplate(next);
+  }
 
   async function handleSend() {
     if (!template) return;
@@ -61,6 +68,7 @@ export default function NewBroadcastPage() {
           excludeTagIds: audience.excludeTagIds,
         },
         variables,
+        headerMediaUrl,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
@@ -199,7 +207,7 @@ export default function NewBroadcastPage() {
           {currentStep === 0 && (
             <Step1ChooseTemplate
               selectedTemplate={template}
-              onSelect={setTemplate}
+              onSelect={selectTemplate}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
             />
@@ -217,6 +225,8 @@ export default function NewBroadcastPage() {
               template={template}
               variables={variables}
               onUpdate={setVariables}
+              headerMediaUrl={headerMediaUrl}
+              onHeaderMediaUrlChange={setHeaderMediaUrl}
               onNext={() => setCurrentStep(3)}
               onBack={() => setCurrentStep(1)}
             />

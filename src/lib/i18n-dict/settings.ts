@@ -79,6 +79,23 @@ export const DICT_SETTINGS: Record<string, string> = {
   'or paste a public link to the': 'ou cole um link público para o',
   'Recommended: MP4 / 3GPP, ≤16 MB, ≤60 seconds.': 'Recomendado: MP4 / 3GPP, ≤16 MB, ≤60 segundos.',
   'Recommended: PDF, ≤100 MB.': 'Recomendado: PDF, ≤100 MB.',
+  // Template header media — video/document upload (wacrm #562)
+  'Upload video': 'Enviar vídeo',
+  'Upload document': 'Enviar documento',
+  'MP4 or 3GPP, ≤16 MB': 'MP4 ou 3GPP, até 16 MB',
+  'PDF, Word, PowerPoint, Excel or text, ≤16 MB':
+    'PDF, Word, PowerPoint, Excel ou texto, até 16 MB',
+  'Header video must be an MP4 or 3GPP file.':
+    'O vídeo do cabeçalho deve ser MP4 ou 3GPP.',
+  'Header document must be a PDF, Word, PowerPoint, Excel or text file.':
+    'O documento do cabeçalho deve ser PDF, Word, PowerPoint, Excel ou texto.',
+  'the upload limit is': 'o limite de envio é',
+  'Upload a file or paste a public HTTPS link — we upload it to Meta for review automatically.':
+    'Envie um arquivo ou cole um link HTTPS público — nós o enviamos à Meta para análise automaticamente.',
+  'MP4 or 3GPP, ≤16 MB, ≤60 seconds recommended.':
+    'MP4 ou 3GPP, até 16 MB, até 60 segundos recomendado.',
+  'PDF, Word, PowerPoint, Excel or text, ≤100 MB via link (≤16 MB when uploaded here).':
+    'PDF, Word, PowerPoint, Excel ou texto, até 100 MB por link (até 16 MB enviando por aqui).',
   'Sample value for body variable': 'Valor de exemplo para a variável do corpo',
   'Sample for': 'Exemplo para',
   'https://example.com/path or with {{1}} suffix': 'https://exemplo.com/caminho ou com sufixo {{1}}',

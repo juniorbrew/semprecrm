@@ -72,4 +72,7 @@ export const DICT_CONTACTS: Record<string, string> = {
     'Somente leitura — seu perfil não pode criar negócios',
   "Read-only — your role can't create appointments":
     'Somente leitura — seu perfil não pode criar compromissos',
+
+  // ---- CSV import: per-row failure reasons (wacrm a0e804b) ----
+  'Rows that failed': 'Linhas com falha',
 };

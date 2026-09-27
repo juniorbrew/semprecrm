@@ -389,6 +389,14 @@ export default function BroadcastsPage() {
                         )}
                         {t(status.label)}
                       </span>
+                      {(broadcast.uncertain_count ?? 0) > 0 && (
+                        <span
+                          className="mt-1 block text-[11px] text-amber-400"
+                          title={t('Meta may or may not have received these messages. They are never resent automatically.')}
+                        >
+                          {t('Uncertain result')}: {broadcast.uncertain_count}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground xl:table-cell">
                       {formatDate(broadcast.created_at)}
