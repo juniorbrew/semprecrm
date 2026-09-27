@@ -8,6 +8,7 @@ import {
   createCompany,
   deleteCompany,
   findCompanyByCnpj,
+  getPrimaryCompany,
   linkContactCompany,
   listCompanies,
   listContactCompanies,
@@ -176,6 +177,14 @@ describe('primary-company rules (client side)', () => {
       ['b', true],
       ['a', false],
     ]);
+  });
+
+  it('reads the contact primary company (deal default) from the primary link only', async () => {
+    const { db, calls } = fakeDb({ data: { company: [{ id: 'co-1', razao_social: 'Sol' }] } });
+    expect(await getPrimaryCompany(db, 'contact-1')).toMatchObject({ id: 'co-1' });
+    expect(calls[0].ops).toContainEqual(['eq', 'contact_id', 'contact-1']);
+    expect(calls[0].ops).toContainEqual(['eq', 'is_primary', true]);
+    expect(await getPrimaryCompany(fakeDb({ data: null }).db, 'contact-2')).toBeNull();
   });
 
   it('links with a single insert and leaves account and primary bookkeeping to the database', async () => {

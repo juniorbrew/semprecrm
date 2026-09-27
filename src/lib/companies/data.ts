@@ -272,16 +272,16 @@ export async function listContactCompanies(
   return sortContactCompanies(links);
 }
 
-/** The contact's primary company id (deal form default). */
-export async function getPrimaryCompanyId(db: CompaniesClient, contactId: string): Promise<string | null> {
+/** The contact's primary company (the deal form's default), or null. */
+export async function getPrimaryCompany(db: CompaniesClient, contactId: string): Promise<CompanySummary | null> {
   const { data, error } = await db
     .from('contact_companies')
-    .select('company_id')
+    .select(`company:companies(${COMPANY_SUMMARY_COLUMNS})`)
     .eq('contact_id', contactId)
     .eq('is_primary', true)
     .maybeSingle();
   if (error) throw companyErrorFromDb(error, 'already_linked');
-  return (data as { company_id: string } | null)?.company_id ?? null;
+  return one((data as { company: CompanySummary | CompanySummary[] | null } | null)?.company);
 }
 
 /**
@@ -321,6 +321,25 @@ export async function unlinkContactCompany(db: CompaniesClient, contactId: strin
     .select('company_id');
   if (error) throw companyErrorFromDb(error, 'already_linked');
   if (!data || (data as unknown[]).length === 0) throw new CompanyError('forbidden');
+}
+
+/** For the company drawer's "Link contact" picker. */
+export async function searchContactsForCompany(
+  db: CompaniesClient,
+  search: string,
+  limit = 20,
+): Promise<CompanyContactLink['contact'][]> {
+  let q = db
+    .from('contacts')
+    .select('id, name, phone, email, avatar_url')
+    .is('anonymized_at', null)
+    .order('name', { ascending: true })
+    .limit(limit);
+  const clean = sanitizeCompanySearch(search);
+  if (clean) q = q.or(`name.ilike.%${clean}%,phone.ilike.%${clean}%,email.ilike.%${clean}%`);
+  const { data, error } = await q;
+  if (error) throw companyErrorFromDb(error, 'already_linked');
+  return (data ?? []) as CompanyContactLink['contact'][];
 }
 
 export async function listCompanyContacts(
