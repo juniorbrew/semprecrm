@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Loader2, FileText, ArrowRight, Search, Settings2 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import { templateLanguageLabel } from './template-language-label';
+import { isStubTemplate } from '@/lib/whatsapp/template-row-guard';
 
 /**
  * Meta template categories are stored title-cased ('Marketing' /
@@ -54,7 +55,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
           .order('created_at', { ascending: false });
 
         if (fetchError) throw fetchError;
-        setTemplates(data ?? []);
+        // Webhook stubs (migration 053) have no components yet — every
+        // recipient would fail at Meta, so they are not offered.
+        setTemplates((data ?? []).filter((tpl) => !isStubTemplate(tpl)));
       } catch (err) {
         // English key — translated where it is rendered.
         setError(err instanceof Error ? err.message : 'Failed to load templates');

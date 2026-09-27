@@ -266,6 +266,7 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       name: 'created_in_meta',
       language: 'de',
       body_text: '',
+      needs_sync: true,
       status: 'APPROVED',
       rejection_reason: null,
       submission_error: null,
@@ -376,6 +377,7 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       name: 'created_in_meta',
       language: 'en_US',
       body_text: '',
+      needs_sync: true,
       quality_score: 'RED',
     });
     // `status` is deliberately absent — the column default applies.
@@ -437,6 +439,55 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
     });
     expect(warn).not.toHaveBeenCalled();
   });
+
+  // Review fix: a deletion (or unrecognised) event for a template we
+  // don't have locally must not resurrect a ghost row.
+  it.each([
+    'PENDING_DELETION',
+    'DELETED',
+    'ARCHIVED',
+    'LOCKED',
+    'FLAGGED',
+    'REINSTATED',
+    'LIMIT_EXCEEDED',
+    'SOMETHING_NEW',
+  ])('never creates a stub for a %s event', async (event) => {
+    const warn = vi.spyOn(console, 'warn');
+    const { stub, calls } = makeSupabaseStub(
+      { data: [], error: null },
+      { configRows: [CONFIG] },
+    );
+    await handleTemplateWebhookChange(
+      {
+        field: 'message_template_status_update',
+        value: { event, message_template_id: '570', message_template_name: 'gone' },
+        wabaId: 'WABA-1',
+      },
+      stub,
+    );
+    expect(calls).toHaveLength(1); // only the original UPDATE
+    expect(calls.some((c) => c.insert)).toBe(false);
+    expect(String(warn.mock.calls.at(-1)?.[0])).toContain('not creating a stub');
+  });
+
+  it.each(['PENDING', 'PENDING_REVIEW', 'PAUSED', 'DISABLED', 'IN_APPEAL'])(
+    'creates a stub for a live-template %s event',
+    async (event) => {
+      const { stub, calls } = makeSupabaseStub(
+        { data: [], error: null },
+        { configRows: [CONFIG] },
+      );
+      await handleTemplateWebhookChange(
+        {
+          field: 'message_template_status_update',
+          value: { event, message_template_id: '571', message_template_name: 'alive' },
+          wabaId: 'WABA-1',
+        },
+        stub,
+      );
+      expect(calls[2]?.insert).toMatchObject({ name: 'alive', needs_sync: true });
+    },
+  );
 
   it('does not create a stub when the event has no template name', async () => {
     const warn = vi.spyOn(console, 'warn');

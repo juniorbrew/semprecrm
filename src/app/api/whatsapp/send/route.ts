@@ -21,6 +21,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
+import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard'
 import {
   resolveTemplateRow,
   templateBodyParams,
@@ -392,6 +393,14 @@ export async function POST(request: Request) {
               'Template row is malformed locally — run "Sync from Meta" in Settings to repair it.',
           },
           { status: 500 },
+        )
+      }
+      if (resolved.needsSync) {
+        // A webhook stub (migration 053): no body / components yet, so
+        // Meta would reject the send. Refuse until a sync replaces it.
+        return NextResponse.json(
+          { error: TEMPLATE_NEEDS_SYNC_ERROR, code: 'template_needs_sync' },
+          { status: 409 },
         )
       }
       templateRow = resolved.row

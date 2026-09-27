@@ -22,7 +22,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { isMessageTemplate, isStubTemplate } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 
 /**
@@ -66,6 +66,23 @@ function baseLanguage(language: string): string {
   return language.toLowerCase().split(/[_-]/)[0];
 }
 
+/** True for a bare language code (`en`), false for a regional one (`en_US`). */
+function isBareLanguage(language: string): boolean {
+  return !/[_-]/.test(language);
+}
+
+/**
+ * Same language, allowing only the bare ↔ regional split (`en` ↔
+ * `en_US`). Sibling regions (`pt_PT` for `pt_BR`, `en_GB` for `en_US`)
+ * are different translations on Meta's side with their own components,
+ * so they never stand in for each other.
+ */
+function sameLanguageFallback(a: string, b: string): boolean {
+  return (
+    baseLanguage(a) === baseLanguage(b) && (isBareLanguage(a) || isBareLanguage(b))
+  );
+}
+
 export interface ResolvedTemplate {
   /** Best-matching local row, or null when the account has none. */
   row: MessageTemplate | null;
@@ -76,17 +93,24 @@ export interface ResolvedTemplate {
    */
   malformed: boolean;
   /**
-   * The language code to send to Meta: the caller's when they named
-   * one, otherwise the matched row's, otherwise `en_US`. Callers that
-   * pinned `en_US` unconditionally could not send an `en` template at
-   * all — Meta rejects the pair as a missing translation.
+   * The language code to send to Meta: always the matched row's (its
+   * components are the ones the send-builder uses), otherwise the
+   * caller's, otherwise `en_US`. Callers that pinned `en_US`
+   * unconditionally could not send an `en` template at all — Meta
+   * rejects the pair as a missing translation.
    */
   language: string;
+  /**
+   * The matching row is a webhook stub (migration 053) — created from a
+   * status event for a template made directly in Meta, with no body or
+   * components yet. Senders refuse it until "Sync from Meta" replaces it.
+   */
+  needsSync: boolean;
 }
 
 /**
  * Look up the `message_templates` row for a send, tolerant of the
- * `en` / `en_US` split.
+ * `en` / `en_US` split (never of sibling regions like pt_PT ↔ pt_BR).
  *
  * The old lookup was `.eq('language', requested || 'en_US')`. Templates
  * synced from Meta commonly carry the bare `en`, so a caller that
@@ -115,7 +139,7 @@ export async function resolveTemplateRow(
   const fallbackLanguage = requestedLanguage || 'en_US';
 
   if (rows.length === 0) {
-    return { row: null, malformed: false, language: fallbackLanguage };
+    return { row: null, malformed: false, language: fallbackLanguage, needsSync: false };
   }
 
   const pick = (): { language?: string } | undefined => {
@@ -123,9 +147,8 @@ export async function resolveTemplateRow(
       const wanted = requestedLanguage.toLowerCase();
       const exact = rows.find((r) => r.language?.toLowerCase() === wanted);
       if (exact) return exact;
-      const wantedBase = baseLanguage(requestedLanguage);
       return rows.find(
-        (r) => r.language && baseLanguage(r.language) === wantedBase
+        (r) => r.language && sameLanguageFallback(r.language, requestedLanguage)
       );
     }
     // No language asked for: prefer the historical default, then the
@@ -142,17 +165,30 @@ export async function resolveTemplateRow(
     // Rows exist but none in the requested language — the caller pinned
     // a translation this account hasn't synced. Send it anyway; Meta is
     // the authority on which translations are approved.
-    return { row: null, malformed: false, language: fallbackLanguage };
+    return { row: null, malformed: false, language: fallbackLanguage, needsSync: false };
+  }
+
+  if (isStubTemplate(chosen)) {
+    return {
+      row: null,
+      malformed: false,
+      language: chosen.language || fallbackLanguage,
+      needsSync: true,
+    };
   }
 
   if (!isMessageTemplate(chosen)) {
-    return { row: null, malformed: true, language: fallbackLanguage };
+    return { row: null, malformed: true, language: fallbackLanguage, needsSync: false };
   }
 
   return {
     row: chosen,
     malformed: false,
-    language: requestedLanguage || chosen.language || 'en_US',
+    // The row's own code: its components are what gets sent, so the
+    // language must be the one they belong to (`en` for an `en_US`
+    // request resolved to a bare `en` row).
+    language: chosen.language || requestedLanguage || 'en_US',
+    needsSync: false,
   };
 }
 

@@ -49,3 +49,21 @@ export function assertMessageTemplate(
   }
   return row;
 }
+
+/**
+ * A stub row created by the template webhook for a template that exists
+ * on Meta but was never synced here (migration 053, `needs_sync`). It
+ * has no body / components, so pickers hide it and senders refuse it
+ * until "Sync from Meta" replaces it.
+ */
+export function isStubTemplate(row: unknown): boolean {
+  return (
+    !!row &&
+    typeof row === 'object' &&
+    (row as { needs_sync?: unknown }).needs_sync === true
+  );
+}
+
+/** Message shown when a sender refuses a stub template. */
+export const TEMPLATE_NEEDS_SYNC_ERROR =
+  'This template was created directly in Meta and has not been synced yet — run "Sync from Meta" in Settings → Templates before sending it.';

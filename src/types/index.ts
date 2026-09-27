@@ -470,6 +470,12 @@ export interface MessageTemplate {
   rejection_reason?: string;
   quality_score?: 'GREEN' | 'YELLOW' | 'RED';
   submission_error?: string;
+  /**
+   * Stub created by the template webhook for a template that exists on
+   * Meta but was never synced here (migration 053). No body/components
+   * yet — hidden from pickers, refused by senders until a sync clears it.
+   */
+  needs_sync?: boolean;
   last_submitted_at?: string;
   created_at: string;
 }

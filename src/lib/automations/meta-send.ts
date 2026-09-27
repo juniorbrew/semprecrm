@@ -11,6 +11,7 @@ import {
   resolveTemplateRow,
   templateContentText,
 } from '@/lib/whatsapp/template-body'
+import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard'
 import {
   conversationChannel,
   engineSendViaQr,
@@ -142,17 +143,16 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // #483), not for the Meta payload (the wire shape is deliberately
   // unchanged here). A missing row is fine: the send still goes out, we
   // just can't reconstruct the text the customer saw.
-  const templateRow =
+  const resolvedTemplate =
     input.kind === 'template'
-      ? (
-          await resolveTemplateRow(
-            db,
-            input.accountId,
-            input.templateName,
-            input.language,
-          )
-        ).row
+      ? await resolveTemplateRow(db, input.accountId, input.templateName, input.language)
       : null
+  if (resolvedTemplate?.needsSync) {
+    // Webhook stub (migration 053) — refuse rather than send a template
+    // with no components that Meta would reject.
+    throw new Error(TEMPLATE_NEEDS_SYNC_ERROR)
+  }
+  const templateRow = resolvedTemplate?.row ?? null
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {

@@ -53,10 +53,16 @@ import type {
   TemplateSampleValues,
 } from '@/types';
 import { templateStatusConfig } from '@/lib/template-status';
+import { isStubTemplate } from '@/lib/whatsapp/template-row-guard';
 import {
   extractVariableIndices,
   TEMPLATE_LIMITS,
 } from '@/lib/whatsapp/template-validators';
+
+// Webhook stub (migration 053): Meta reported this template but it was
+// never synced here — no body/components, so it can't be sent yet.
+const NEEDS_SYNC_HINT =
+  'Created directly in Meta and not synced yet — click "Sync from Meta" to load its content. Until then it can\'t be sent.';
 
 const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
 type HeaderFormat = 'none' | 'text' | 'image' | 'video' | 'document';
@@ -621,7 +627,18 @@ export function TemplateManager() {
                           {t(QUALITY_LABELS[template.quality_score] ?? template.quality_score)}
                         </span>
                       )}
+                      {isStubTemplate(template) && (
+                        <Badge className="text-xs border border-amber-600/40 bg-amber-950/40 text-amber-200">
+                          {t('Needs sync')}
+                        </Badge>
+                      )}
                     </div>
+                    {isStubTemplate(template) && (
+                      <div className="flex items-start gap-1.5 text-xs text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded px-2 py-1.5">
+                        <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
+                        <span>{t(NEEDS_SYNC_HINT)}</span>
+                      </div>
+                    )}
                     <p className="text-sm text-muted-foreground line-clamp-2">
                       {template.body_text}
                     </p>

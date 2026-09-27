@@ -350,6 +350,10 @@ export const DICT_SETTINGS: Record<string, string> = {
   'The WhatsApp Business Account is subscribed to a different Meta app, not this one, so inbound webhooks go to that app. Save again with an access token from this app to subscribe it.':
     'A conta do WhatsApp Business está inscrita em outro app da Meta, não neste, então os webhooks de entrada vão para aquele app. Salve de novo com um token de acesso deste app para inscrevê-la.',
   'Saved, but with a warning': 'Salvo, mas com um aviso',
+  // ---- Templates: webhook stub awaiting sync (migration 053) ----
+  'Needs sync': 'Precisa sincronizar',
+  'Created directly in Meta and not synced yet — click "Sync from Meta" to load its content. Until then it can\'t be sent.':
+    'Criado direto na Meta e ainda não sincronizado — clique em "Sincronizar da Meta" para carregar o conteúdo. Até lá ele não pode ser enviado.',
   'The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it.':
     'A conta do WhatsApp Business não está inscrita neste app, então a Meta não entregará os webhooks de entrada. Informe o token de acesso de novo e salve para inscrevê-la.',
 };

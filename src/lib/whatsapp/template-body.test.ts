@@ -111,8 +111,9 @@ describe('resolveTemplateRow', () => {
       'en_US'
     );
     expect(resolved.row?.language).toBe('en');
-    // Caller pinned a language — that is what Meta is sent.
-    expect(resolved.language).toBe('en_US');
+    // The components used are the 'en' row's, so Meta is sent 'en'
+    // (review fix — sending 'en_US' with 'en' components mismatches).
+    expect(resolved.language).toBe('en');
   });
 
   it("resolves a bare 'en' row when the caller omits the language, and sends 'en'", async () => {
@@ -161,7 +162,7 @@ describe('resolveTemplateRow', () => {
       'missing',
       'fr'
     );
-    expect(resolved).toEqual({ row: null, malformed: false, language: 'fr' });
+    expect(resolved).toEqual({ row: null, malformed: false, language: 'fr', needsSync: false });
   });
 
   it('reports a row that matched by name but fails the shape guard', async () => {
@@ -173,6 +174,40 @@ describe('resolveTemplateRow', () => {
     );
     expect(resolved.malformed).toBe(true);
     expect(resolved.row).toBeNull();
+  });
+
+  it("matches a regional row for a bare request ('pt' → 'pt_BR') and sends the row's code", async () => {
+    const resolved = await resolveTemplateRow(
+      dbReturning([row({ language: 'pt_BR' })]),
+      'acct-1',
+      'order_update',
+      'pt'
+    );
+    expect(resolved.row?.language).toBe('pt_BR');
+    expect(resolved.language).toBe('pt_BR');
+  });
+
+  it('never uses a sibling regional translation (pt_PT for pt_BR)', async () => {
+    const resolved = await resolveTemplateRow(
+      dbReturning([row({ language: 'pt_PT' })]),
+      'acct-1',
+      'order_update',
+      'pt_BR'
+    );
+    expect(resolved.row).toBeNull();
+    expect(resolved.language).toBe('pt_BR');
+  });
+
+  it('flags a webhook stub (needs_sync) instead of returning it', async () => {
+    const resolved = await resolveTemplateRow(
+      dbReturning([row({ language: 'pt_BR', body_text: '', needs_sync: true })]),
+      'acct-1',
+      'order_update',
+      'pt_BR'
+    );
+    expect(resolved.row).toBeNull();
+    expect(resolved.needsSync).toBe(true);
+    expect(resolved.malformed).toBe(false);
   });
 
   it('sends the caller-pinned language even when no local row matches it', async () => {

@@ -41,6 +41,7 @@ import {
   sanitizePhoneForMeta,
 } from '@/lib/whatsapp/phone-utils';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
+import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 
 /** Caller-visible failure; routes map it to a JSON error. */
@@ -148,6 +149,10 @@ export async function loadDeliveryContext(
       'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.',
       500,
     );
+  }
+  if (resolvedTemplate.needsSync) {
+    // Webhook stub (migration 053) — every recipient would fail at Meta.
+    throw new BroadcastError('template_needs_sync', TEMPLATE_NEEDS_SYNC_ERROR, 409);
   }
   const templateRow: MessageTemplate | null = resolvedTemplate.row;
   const templateLanguage = resolvedTemplate.language;

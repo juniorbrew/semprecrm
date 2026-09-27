@@ -119,3 +119,14 @@ describe('engineSendTemplate — body persistence (wacrm #483)', () => {
     })
   })
 })
+
+describe('engineSendTemplate — webhook stub (migration 053)', () => {
+  it('refuses a needs_sync template before calling Meta', async () => {
+    h.templates = [
+      { id: 't-1', user_id: 'u-1', name: 'boas_vindas', language: 'pt_BR', body_text: '', needs_sync: true },
+    ]
+    await expect(engineSendTemplate(ARGS)).rejects.toThrow(/Sync from Meta/)
+    expect(h.sendTemplateMessage).not.toHaveBeenCalled()
+    expect(h.inserts).toHaveLength(0)
+  })
+})

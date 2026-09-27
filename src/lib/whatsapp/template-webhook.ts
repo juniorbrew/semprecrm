@@ -89,6 +89,24 @@ export interface TemplateWebhookChange {
 /** `body_text` is NOT NULL; the sync route uses '' for a body-less template too. */
 const STUB_BODY_TEXT = ''
 const DEFAULT_TEMPLATE_LANGUAGE = 'en_US'
+/**
+ * Status events that may create a stub for an unknown template. A stub
+ * is only worth creating for a template that is alive on Meta. Deletion
+ * events (PENDING_DELETION, DELETED) arriving after the local row was
+ * removed — and anything normalizeStatus doesn't know (ARCHIVED,
+ * LOCKED, FLAGGED, REINSTATED, LIMIT_EXCEEDED… which it maps to
+ * PENDING) — must never resurrect a ghost row.
+ */
+const STUBBABLE_STATUS_EVENTS: ReadonlySet<string> = new Set([
+  'APPROVED',
+  'PENDING',
+  'PENDING_REVIEW',
+  'REJECTED',
+  'PAUSED',
+  'DISABLED',
+  'IN_APPEAL',
+])
+
 /** Postgres unique_violation — the row appeared between our UPDATE and INSERT. */
 const PG_UNIQUE_VIOLATION = '23505'
 
@@ -173,6 +191,13 @@ async function handleStatusUpdate(
     return
   }
   if (!data || data.length === 0) {
+    const rawEvent = String(value.event).toUpperCase()
+    if (!STUBBABLE_STATUS_EVENTS.has(rawEvent)) {
+      console.warn(
+        `[template-webhook] status update ${rawEvent} for unknown template meta_template_id ${metaTemplateId} (${value.message_template_name ?? 'unnamed'}), WABA ${wabaId ?? 'unknown'} — not creating a stub for this event.`,
+      )
+      return
+    }
     await createStubForUnknownTemplate({
       kind: 'status update',
       metaTemplateId,
@@ -334,6 +359,9 @@ async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
     name,
     language: p.language || DEFAULT_TEMPLATE_LANGUAGE,
     body_text: STUB_BODY_TEXT,
+    // Hidden from pickers / refused by senders until "Sync from Meta"
+    // fills in the components (migration 053).
+    needs_sync: true,
     ...p.fields,
   }
 

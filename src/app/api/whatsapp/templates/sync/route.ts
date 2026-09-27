@@ -236,6 +236,8 @@ export async function POST() {
         status: normalizeStatus(t.status),
         meta_template_id: t.id,
         quality_score: normalizeQualityScore(t.quality_score),
+        // Real components now — clears a webhook stub (migration 053).
+        needs_sync: false,
         updated_at: new Date().toISOString(),
       }
 

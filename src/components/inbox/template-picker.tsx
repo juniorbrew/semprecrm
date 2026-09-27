@@ -22,6 +22,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
+import { isStubTemplate } from "@/lib/whatsapp/template-row-guard";
 import { useLanguage } from "@/hooks/use-language";
 import { templateLanguageLabel } from "@/components/broadcasts/template-language-label";
 
@@ -126,7 +127,9 @@ export function TemplatePicker({
         console.error("Failed to fetch templates:", error);
         setTemplates([]);
       } else {
-        setTemplates((data as MessageTemplate[]) ?? []);
+        // Webhook stubs (migration 053) have no body/components yet —
+        // Meta would reject the send, so they are not offered.
+        setTemplates(((data as MessageTemplate[]) ?? []).filter((tpl) => !isStubTemplate(tpl)));
       }
       setLoading(false);
     })();

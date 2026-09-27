@@ -25,6 +25,9 @@ const KEYS = [
   "Not delivered",
   "The WhatsApp Business Account is subscribed to a different Meta app, not this one, so inbound webhooks go to that app. Save again with an access token from this app to subscribe it.",
   "Saved, but with a warning",
+  "Needs sync",
+  'Created directly in Meta and not synced yet — click "Sync from Meta" to load its content. Until then it can\'t be sent.',
+  'This template was created directly in Meta and has not been synced yet — run "Sync from Meta" in Settings → Templates before sending it.',
 ];
 
 describe("pt-BR dictionary — WhatsApp connection diagnostics", () => {

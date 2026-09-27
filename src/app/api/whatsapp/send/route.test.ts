@@ -371,6 +371,22 @@ describe('POST /api/whatsapp/send — template persistence', () => {
     })
   })
 
+  it('refuses a webhook stub template (needs_sync) with 409 and sends nothing', async () => {
+    h.state.templates = [{ ...TEMPLATE, body_text: '', needs_sync: true }]
+    const res = await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'pedido_enviado',
+        template_language: 'pt_BR',
+      }),
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ code: 'template_needs_sync' })
+    expect(h.meta.sendTemplateMessage).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
+  })
+
   it('leaves content_text null when there is no local template row', async () => {
     await POST(
       request({

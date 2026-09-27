@@ -388,3 +388,18 @@ describe('finalizeBroadcastStatus', () => {
     expect(allUncertain.table('broadcasts')[0].status).toBe('failed');
   });
 });
+
+// Review fix (wacrm #534 follow-up): a webhook stub (needs_sync, no
+// components) must not be broadcast — every recipient would fail.
+describe('loadDeliveryContext — template stub awaiting sync', () => {
+  it('refuses a needs_sync template with a 409 before any send', async () => {
+    const db = seed(1);
+    db.table('message_templates')[0].needs_sync = true;
+    db.table('message_templates')[0].body_text = '';
+    await expect(loadDeliveryContext(db.client(), ACCOUNT, BC)).rejects.toMatchObject({
+      code: 'template_needs_sync',
+      status: 409,
+    });
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
+  });
+});

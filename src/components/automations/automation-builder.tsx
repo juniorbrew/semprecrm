@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react"
 import { useRouter } from "next/navigation"
+import { isStubTemplate } from "@/lib/whatsapp/template-row-guard"
 import { toast } from "sonner"
 import {
   ArrowLeft,
@@ -325,7 +326,12 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
         ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
-      setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
+      // Webhook stubs (migration 053) can't be sent until synced.
+      setTemplates(
+        ((templatesRes.data as MessageTemplate[] | null) ?? []).filter(
+          (tpl) => !isStubTemplate(tpl),
+        ),
+      )
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
       setPipelines((pipelinesRes.data as Pipeline[] | null) ?? [])
       setStages((stagesRes.data as PipelineStage[] | null) ?? [])
