@@ -244,16 +244,77 @@ describe("POST /api/whatsapp/config — Meta connection errors (wacrm #505)", ()
     expect(h.state.writes).toHaveLength(0);
   });
 
-  it("treats a subscribed_apps failure as a failed connect and writes nothing", async () => {
+  it("saves anyway and warns (en + pt-BR) when subscribed_apps fails", async () => {
     vi.mocked(metaApi.subscribeWabaToApp).mockRejectedValue(
       metaError("(#200) Permissions error", { code: 200 }),
     );
+    const res = await POST(request({ ...VALID, pin: "123456" }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      saved?: boolean;
+      warning?: ConfigError;
+      warnings?: ConfigError[];
+    };
+    expect(json.saved).toBe(true);
+    expect(json.warning?.meta).toMatchObject({ step: "subscribe_waba", field: "access_token" });
+    expect(json.warning?.error_pt).toMatch(/whatsapp_business_management/);
+    expect(json.warnings).toHaveLength(1);
+    // /register ran before the subscribe step — its outcome is recorded.
+    expect(h.state.writes).toHaveLength(1);
+    const row = h.state.writes[0].payload as Record<string, unknown>;
+    expect(row.subscribed_apps_at).toBeNull();
+    expect(row.registered_at).toEqual(expect.any(String));
+    expect(row.last_registration_error).toBeNull();
+  });
+
+  it("saves anyway and warns when the WABA phone list cannot be fetched", async () => {
+    vi.mocked(metaApi.listWabaPhoneNumbers).mockRejectedValue(
+      metaError("Service temporarily unavailable", { code: 2, httpStatus: 503 }),
+    );
     const res = await POST(request(VALID));
-    expect(res.status).toBe(400);
-    const json = (await res.json()) as ConfigError;
-    expect(json.meta).toMatchObject({ step: "subscribe_waba", field: "access_token" });
-    expect(json.error_pt).toMatch(/whatsapp_business_management/);
-    expect(h.state.writes).toHaveLength(0);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { warning?: ConfigError };
+    expect(json.warning?.meta?.step).toBe("waba_phone_numbers");
+    expect(json.warning?.error_pt).toBeTruthy();
+    expect(metaApi.subscribeWabaToApp).toHaveBeenCalledTimes(1);
+    expect(h.state.writes).toHaveLength(1);
+    const row = h.state.writes[0].payload as Record<string, unknown>;
+    expect(row.subscribed_apps_at).toEqual(expect.any(String));
+  });
+
+  it("returns no warning on a clean save", async () => {
+    const res = await POST(request(VALID));
+    const json = (await res.json()) as { warning?: unknown };
+    expect(json.warning).toBeUndefined();
+  });
+
+  it("skips the pairing + subscribe calls when the same WABA/number is already subscribed", async () => {
+    h.state.existing = {
+      id: "cfg-1",
+      registered_at: "2026-01-01T00:00:00Z",
+      phone_number_id: "123456",
+      waba_id: "789",
+      subscribed_apps_at: "2026-01-01T00:00:00Z",
+    };
+    const res = await POST(request(VALID));
+    expect(res.status).toBe(200);
+    expect(metaApi.listWabaPhoneNumbers).not.toHaveBeenCalled();
+    expect(metaApi.subscribeWabaToApp).not.toHaveBeenCalled();
+    const row = h.state.writes[0].payload as Record<string, unknown>;
+    expect(row.subscribed_apps_at).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("re-checks when the WABA changed", async () => {
+    h.state.existing = {
+      id: "cfg-1",
+      registered_at: "2026-01-01T00:00:00Z",
+      phone_number_id: "123456",
+      waba_id: "111",
+      subscribed_apps_at: "2026-01-01T00:00:00Z",
+    };
+    await POST(request(VALID));
+    expect(metaApi.listWabaPhoneNumbers).toHaveBeenCalledTimes(1);
+    expect(metaApi.subscribeWabaToApp).toHaveBeenCalledTimes(1);
   });
 
   it("maps a network failure to a 502", async () => {

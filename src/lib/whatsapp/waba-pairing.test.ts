@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  subscriptionNotice,
   appSubscriptionState,
   describeWabaPhoneMismatch,
   isNumericMetaId,
@@ -108,5 +109,19 @@ describe("describeWabaPhoneMismatch — pt-BR (SempreCRM)", () => {
     expect(describeWabaPhoneMismatch([], "3", "9", "pt-BR")).toMatch(/não lista nenhum número/);
     const many = Array.from({ length: 7 }, (_, i) => ({ id: String(i) }));
     expect(describeWabaPhoneMismatch(many, "x", "9", "pt-BR")).toMatch(/0, 1, 2, 3, 4 e mais 2/);
+  });
+});
+
+describe("subscriptionNotice", () => {
+  it("treats a subscription held by another app as not ours", () => {
+    expect(subscriptionNotice({ subscribed: true, app_id_match: false })).toBe("other_app");
+  });
+  it("is subscribed when the app matches or META_APP_ID is unknown", () => {
+    expect(subscriptionNotice({ subscribed: true, app_id_match: true })).toBe("subscribed");
+    expect(subscriptionNotice({ subscribed: true, app_id_match: null })).toBe("subscribed");
+  });
+  it("reports not subscribed and unknown", () => {
+    expect(subscriptionNotice({ subscribed: false, app_id_match: false })).toBe("not_subscribed");
+    expect(subscriptionNotice({ subscribed: null, app_id_match: null })).toBe("unknown");
   });
 });

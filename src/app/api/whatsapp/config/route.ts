@@ -92,6 +92,31 @@ function metaFailure(err: unknown, step: MetaConnectStep, ctx: MetaErrorContext)
 }
 
 /**
+ * A non-fatal Meta failure during save (review of wacrm #505): the
+ * credentials are saved anyway and the UI shows this next to the
+ * success toast. Same explanation shape as a failure, pt-BR included.
+ */
+type MetaWarning = {
+  error: string
+  error_pt: string
+  meta: ReturnType<typeof metaErrorPayload>
+}
+
+function metaWarning(err: unknown, step: MetaConnectStep, ctx: MetaErrorContext): MetaWarning {
+  const explained = explainMetaError(err, step, ctx)
+  console.warn(`[whatsapp/config] Meta ${step} failed (saving anyway):`, explained.metaMessage, {
+    code: explained.code,
+    subcode: explained.subcode,
+    fbtrace_id: explained.fbtraceId,
+  })
+  return {
+    error: explained.summary,
+    error_pt: explained.summaryPt,
+    meta: metaErrorPayload(explained),
+  }
+}
+
+/**
  * GET /api/whatsapp/config
  *
  * Used by the "Test API Connection" button and by the page to check
@@ -257,6 +282,11 @@ export async function GET() {
  * fbtrace_id, step, field, message } }` — `error` is the actionable
  * text, `meta` is what to quote to Meta support. 400 = fix it on the
  * form (token / ids / PIN), 502 = Meta has to change something.
+ *
+ * Only the phone-number check and a PROVEN WABA/number mismatch block
+ * the save. A failed WABA phone-list fetch or subscribed_apps call is
+ * non-fatal: the row is saved and the 200 carries `warning` (+
+ * `warnings`) with the same { error, error_pt, meta } shape.
  */
 export async function POST(request: Request) {
   try {
@@ -367,21 +397,46 @@ export async function POST(request: Request) {
       return metaFailure(err, 'verify_number', metaCtx)
     }
 
+    // Look up any pre-existing row for this account so we know whether
+    // this number is already registered with Meta — if so we can skip
+    // /register when the user didn't provide a PIN this time around —
+    // and whether this WABA/number pair was already paired + subscribed.
+    const { data: existing } = await supabase
+      .from('whatsapp_config')
+      .select('id, registered_at, phone_number_id, waba_id, subscribed_apps_at')
+      .eq('account_id', accountId)
+      .maybeSingle()
+
+    // Non-fatal Meta failures (list / subscribe): saved anyway, shown
+    // to the user as warnings.
+    const warnings: MetaWarning[] = []
+
+    // Same WABA + number that was already paired and subscribed on a
+    // previous save (e.g. a token rotation) — nothing to re-check.
+    const alreadyWired =
+      !!waba_id &&
+      existing?.waba_id === waba_id &&
+      existing?.phone_number_id === phone_number_id &&
+      existing?.subscribed_apps_at != null
+
     // The number resolves — now make sure it lives under the WABA the
     // user typed. A foreign-but-valid WABA ID used to save fine and
     // subscribe the *wrong* account, surfacing days later as a webhook
-    // that never fires. Failing here names the mismatch instead.
-    if (waba_id) {
-      let wabaNumbers
+    // that never fires. Only a PROVEN mismatch (a list we actually got
+    // back that lacks the number) blocks the save; if the list itself
+    // can't be fetched (5xx, rate limit, a token without
+    // whatsapp_business_management) we save anyway and warn.
+    if (waba_id && !alreadyWired) {
+      let wabaNumbers: Awaited<ReturnType<typeof listWabaPhoneNumbers>> | null = null
       try {
         wabaNumbers = await listWabaPhoneNumbers({
           wabaId: waba_id,
           accessToken: access_token,
         })
       } catch (err) {
-        return metaFailure(err, 'waba_phone_numbers', metaCtx)
+        warnings.push(metaWarning(err, 'waba_phone_numbers', metaCtx))
       }
-      if (!phoneNumberBelongsToWaba(wabaNumbers, phone_number_id)) {
+      if (wabaNumbers && !phoneNumberBelongsToWaba(wabaNumbers, phone_number_id)) {
         return NextResponse.json(
           {
             error: describeWabaPhoneMismatch(wabaNumbers, phone_number_id, waba_id),
@@ -419,14 +474,6 @@ export async function POST(request: Request) {
       )
     }
 
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
 
     // Plan gate (migration 025). Saving the official API config needs
     // the `channel_official` module, and a *new* channel must fit under
@@ -520,17 +567,21 @@ export async function POST(request: Request) {
 
     // Step 2: subscribe the WABA to this app. Idempotent on Meta's
     // side, so we call on every save and persist the timestamp.
-    // Skipped only when there's no waba_id (legacy rows from before
-    // we required it).
+    // Skipped when there's no waba_id (legacy rows from before we
+    // required it), and when this exact WABA/number pair is already
+    // subscribed (keeps the stored timestamp).
     //
     // A failure here used to be swallowed with a console.warn, which
     // left the user with a green "connected" banner and a webhook that
-    // never fired. Without this subscription Meta delivers nothing, so
-    // treat it as a failed connect and say why (issue #505). Nothing
-    // has been written yet, so the user just fixes the cause and saves
-    // again.
-    let subscribedAppsAt: string | null = null
-    if (waba_id) {
+    // never fired. It must not block the save either: /register above
+    // may already have succeeded on Meta's side, and the credentials are
+    // valid. So the row is saved with subscribed_apps_at = null and the
+    // response carries a warning explaining why inbound events won't
+    // arrive until the subscription goes through (wacrm #505).
+    let subscribedAppsAt: string | null = alreadyWired
+      ? (existing?.subscribed_apps_at as string)
+      : null
+    if (waba_id && !alreadyWired) {
       try {
         await subscribeWabaToApp({
           wabaId: waba_id,
@@ -538,9 +589,11 @@ export async function POST(request: Request) {
         })
         subscribedAppsAt = new Date().toISOString()
       } catch (err) {
-        return metaFailure(err, 'subscribe_waba', metaCtx)
+        warnings.push(metaWarning(err, 'subscribe_waba', metaCtx))
       }
     }
+    const warningFields =
+      warnings.length > 0 ? { warning: warnings[0], warnings } : {}
 
     // Persist everything in one shot. If /register failed we still
     // store the credentials and the error so the UI can guide the
@@ -620,6 +673,7 @@ export async function POST(request: Request) {
         error_pt: registrationErrorPt,
         meta: registrationMeta,
         phone_info: phoneInfo,
+        ...warningFields,
       })
     }
 
@@ -633,6 +687,7 @@ export async function POST(request: Request) {
       // rather than claiming the number is fully live.
       registration_skipped: registrationSkipped,
       phone_info: phoneInfo,
+      ...warningFields,
     })
   } catch (error) {
     console.error('Error in WhatsApp config POST:', error)

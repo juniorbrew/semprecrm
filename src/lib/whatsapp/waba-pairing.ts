@@ -86,3 +86,20 @@ export function appSubscriptionState(
     appIdMatch: wanted ? ids.includes(wanted) : null,
   }
 }
+
+/**
+ * What the settings page should say about the WABA subscription the GET
+ * health check reported. `app_id_match === false` means the WABA is
+ * subscribed — but to a *different* Meta app, so inbound webhooks go
+ * there, not here: treat it as not subscribed (review of wacrm #505).
+ */
+export type SubscriptionNotice = 'subscribed' | 'not_subscribed' | 'other_app' | 'unknown'
+
+export function subscriptionNotice(state: {
+  subscribed: boolean | null
+  app_id_match: boolean | null
+}): SubscriptionNotice {
+  if (state.subscribed === false) return 'not_subscribed'
+  if (state.subscribed === true) return state.app_id_match === false ? 'other_app' : 'subscribed'
+  return 'unknown'
+}

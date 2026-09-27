@@ -23,6 +23,8 @@ const KEYS = [
   "Phone Number ID must contain only digits — it is the numeric id shown under Meta → WhatsApp → API Setup, not the phone number itself.",
   "WhatsApp Business Account ID must contain only digits — copy it from Meta → WhatsApp → API Setup.",
   "Not delivered",
+  "The WhatsApp Business Account is subscribed to a different Meta app, not this one, so inbound webhooks go to that app. Save again with an access token from this app to subscribe it.",
+  "Saved, but with a warning",
 ];
 
 describe("pt-BR dictionary — WhatsApp connection diagnostics", () => {

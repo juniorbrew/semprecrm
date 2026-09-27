@@ -347,6 +347,9 @@ export const DICT_SETTINGS: Record<string, string> = {
     'O ID da conta do WhatsApp Business deve ter só dígitos. Copie-o em Meta → WhatsApp → Configuração da API.',
   'The WhatsApp Business Account is subscribed to this app — inbound webhooks can be delivered.':
     'A conta do WhatsApp Business está inscrita neste app — os webhooks de entrada podem ser entregues.',
+  'The WhatsApp Business Account is subscribed to a different Meta app, not this one, so inbound webhooks go to that app. Save again with an access token from this app to subscribe it.':
+    'A conta do WhatsApp Business está inscrita em outro app da Meta, não neste, então os webhooks de entrada vão para aquele app. Salve de novo com um token de acesso deste app para inscrevê-la.',
+  'Saved, but with a warning': 'Salvo, mas com um aviso',
   'The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it.':
     'A conta do WhatsApp Business não está inscrita neste app, então a Meta não entregará os webhooks de entrada. Informe o token de acesso de novo e salve para inscrevê-la.',
 };

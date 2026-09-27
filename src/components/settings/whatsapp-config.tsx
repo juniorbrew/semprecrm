@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/accordion';
 import { WhatsAppQrPanel } from './whatsapp-qr-panel';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import { subscriptionNotice } from '@/lib/whatsapp/waba-pairing';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
@@ -72,6 +73,9 @@ const WABA_ID_NOT_NUMERIC =
   'WhatsApp Business Account ID must contain only digits. Copy it from Meta → WhatsApp → API Setup.';
 const WABA_SUBSCRIBED =
   'The WhatsApp Business Account is subscribed to this app — inbound webhooks can be delivered.';
+const WABA_OTHER_APP =
+  'The WhatsApp Business Account is subscribed to a different Meta app, not this one, so inbound webhooks go to that app. Save again with an access token from this app to subscribe it.';
+const SAVED_WITH_WARNING = 'Saved, but with a warning';
 const WABA_NOT_SUBSCRIBED =
   'The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it.';
 
@@ -254,6 +258,9 @@ function WhatsAppOfficialConfig() {
   // save) — rendered as small muted text under the actionable message.
   const [statusMeta, setStatusMeta] = useState<MetaErrorMeta | null>(null);
   const [saveFailure, setSaveFailure] = useState<MetaFailure | null>(null);
+  // Saved, but a non-fatal Meta step failed (WABA phone list or
+  // subscribed_apps) — shown until the next save / reset.
+  const [saveWarning, setSaveWarning] = useState<MetaFailure | null>(null);
   const [wabaSubscription, setWabaSubscription] = useState<WabaSubscription | null>(null);
   // The config route's Meta explanations embed ids and Meta's own text,
   // so the DOM dictionary can't translate them; it sends a pt-BR
@@ -482,6 +489,16 @@ function WhatsAppOfficialConfig() {
         return;
       }
       setSaveFailure(null);
+      const warning: MetaFailure | null = data.warning
+        ? {
+            message: localized(data.warning.error, data.warning.error_pt),
+            meta: data.warning.meta ?? null,
+          }
+        : null;
+      setSaveWarning(warning);
+      if (warning) {
+        toast.warning(`${t(SAVED_WITH_WARNING)}: ${warning.message}`, { duration: 12000 });
+      }
 
       // The route now returns a structured outcome:
       //   * registered=true   → number is live, events will flow
@@ -618,6 +635,7 @@ function WhatsAppOfficialConfig() {
       setStatusMessage('');
       setStatusMeta(null);
       setSaveFailure(null);
+      setSaveWarning(null);
       setWabaSubscription(null);
     } catch (err) {
       console.error('Reset error:', err);
@@ -731,6 +749,22 @@ function WhatsAppOfficialConfig() {
           </Alert>
         )}
 
+        {/* Saved, but a non-fatal Meta step failed */}
+        {saveWarning && (
+          <Alert className="bg-amber-950/40 border-amber-600/40">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="size-5 text-amber-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <AlertTitle className="text-amber-200 mb-1">{t(SAVED_WITH_WARNING)}</AlertTitle>
+                <AlertDescription className="text-amber-100/80 text-sm" data-no-translate>
+                  {saveWarning.message}
+                </AlertDescription>
+                {saveWarning.meta && renderMetaDetails(saveWarning.meta)}
+              </div>
+            </div>
+          </Alert>
+        )}
+
         {/* Connection Status */}
         <Alert className="bg-card border-border">
           <div className="flex items-center gap-2">
@@ -749,20 +783,27 @@ function WhatsAppOfficialConfig() {
               : statusMessage ||
                 t('Configure your Meta API credentials below to connect your WhatsApp Business account.')}
           </AlertDescription>
-          {connectionStatus === 'connected' && wabaSubscription?.checked && (
-            <p
-              className={cn(
-                'mt-1 text-xs',
-                wabaSubscription.subscribed === false ? 'text-amber-300' : 'text-muted-foreground',
-              )}
-            >
-              {wabaSubscription.subscribed === false
-                ? t(WABA_NOT_SUBSCRIBED)
-                : wabaSubscription.subscribed === true
-                  ? t(WABA_SUBSCRIBED)
-                  : localized(wabaSubscription.error, wabaSubscription.error_pt)}
-            </p>
-          )}
+          {connectionStatus === 'connected' && wabaSubscription?.checked && (() => {
+            const notice = subscriptionNotice(wabaSubscription);
+            return (
+              <p
+                className={cn(
+                  'mt-1 text-xs',
+                  notice === 'not_subscribed' || notice === 'other_app'
+                    ? 'text-amber-300'
+                    : 'text-muted-foreground',
+                )}
+              >
+                {notice === 'not_subscribed'
+                  ? t(WABA_NOT_SUBSCRIBED)
+                  : notice === 'other_app'
+                    ? t(WABA_OTHER_APP)
+                    : notice === 'subscribed'
+                      ? t(WABA_SUBSCRIBED)
+                      : localized(wabaSubscription.error, wabaSubscription.error_pt)}
+              </p>
+            );
+          })()}
           {connectionStatus !== 'connected' && statusMeta && renderMetaDetails(statusMeta)}
         </Alert>
 
