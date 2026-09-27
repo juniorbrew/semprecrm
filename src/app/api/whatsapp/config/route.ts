@@ -411,8 +411,11 @@ export async function POST(request: Request) {
     // to the user as warnings.
     const warnings: MetaWarning[] = []
 
-    // Same WABA + number that was already paired and subscribed on a
-    // previous save (e.g. a token rotation) — nothing to re-check.
+    // Same WABA + number that was already paired on a previous save
+    // (e.g. a token rotation) — the pairing needs no re-check. The
+    // subscribe step below still runs on every save: it is idempotent,
+    // and "save again" is how the UI tells users to fix an unsubscribed
+    // WABA or one held by another app.
     const alreadyWired =
       !!waba_id &&
       existing?.waba_id === waba_id &&
@@ -567,9 +570,9 @@ export async function POST(request: Request) {
 
     // Step 2: subscribe the WABA to this app. Idempotent on Meta's
     // side, so we call on every save and persist the timestamp.
-    // Skipped when there's no waba_id (legacy rows from before we
-    // required it), and when this exact WABA/number pair is already
-    // subscribed (keeps the stored timestamp).
+    // Skipped only when there's no waba_id (legacy rows from before we
+    // required it). Never skipped for an unchanged pair: re-saving is
+    // the documented way to re-subscribe.
     //
     // A failure here used to be swallowed with a console.warn, which
     // left the user with a green "connected" banner and a webhook that
@@ -578,10 +581,8 @@ export async function POST(request: Request) {
     // valid. So the row is saved with subscribed_apps_at = null and the
     // response carries a warning explaining why inbound events won't
     // arrive until the subscription goes through (wacrm #505).
-    let subscribedAppsAt: string | null = alreadyWired
-      ? (existing?.subscribed_apps_at as string)
-      : null
-    if (waba_id && !alreadyWired) {
+    let subscribedAppsAt: string | null = null
+    if (waba_id) {
       try {
         await subscribeWabaToApp({
           wabaId: waba_id,

@@ -288,20 +288,38 @@ describe("POST /api/whatsapp/config — Meta connection errors (wacrm #505)", ()
     expect(json.warning).toBeUndefined();
   });
 
-  it("skips the pairing + subscribe calls when the same WABA/number is already subscribed", async () => {
-    h.state.existing = {
-      id: "cfg-1",
-      registered_at: "2026-01-01T00:00:00Z",
-      phone_number_id: "123456",
-      waba_id: "789",
-      subscribed_apps_at: "2026-01-01T00:00:00Z",
-    };
+  const WIRED = {
+    id: "cfg-1",
+    registered_at: "2026-01-01T00:00:00Z",
+    phone_number_id: "123456",
+    waba_id: "789",
+    subscribed_apps_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("skips only the pairing check for an unchanged, already-subscribed WABA/number — still re-subscribes", async () => {
+    h.state.existing = { ...WIRED };
     const res = await POST(request(VALID));
     expect(res.status).toBe(200);
     expect(metaApi.listWabaPhoneNumbers).not.toHaveBeenCalled();
-    expect(metaApi.subscribeWabaToApp).not.toHaveBeenCalled();
+    // "Save again to resubscribe" must not be a silent no-op.
+    expect(metaApi.subscribeWabaToApp).toHaveBeenCalledTimes(1);
     const row = h.state.writes[0].payload as Record<string, unknown>;
-    expect(row.subscribed_apps_at).toBe("2026-01-01T00:00:00Z");
+    expect(row.subscribed_apps_at).toEqual(expect.any(String));
+    expect(row.subscribed_apps_at).not.toBe(WIRED.subscribed_apps_at);
+  });
+
+  it("still warns (and clears subscribed_apps_at) when re-subscribing an unchanged pair fails", async () => {
+    h.state.existing = { ...WIRED };
+    vi.mocked(metaApi.subscribeWabaToApp).mockRejectedValue(
+      metaError("(#200) Permissions error", { code: 200 }),
+    );
+    const res = await POST(request(VALID));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { warning?: ConfigError };
+    expect(json.warning?.meta?.step).toBe("subscribe_waba");
+    expect(json.warning?.error_pt).toBeTruthy();
+    const row = h.state.writes[0].payload as Record<string, unknown>;
+    expect(row.subscribed_apps_at).toBeNull();
   });
 
   it("re-checks when the WABA changed", async () => {
