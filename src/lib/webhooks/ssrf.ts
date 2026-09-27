@@ -132,11 +132,27 @@ export class DestinoNaoPermitido extends Error {
   }
 }
 
+/** Cabeçalhos que podem atravessar para OUTRA origem num redirect. */
+const CABECALHOS_ENTRE_ORIGENS = new Set(['content-type', 'accept']);
+
+function soCabecalhosSeguros(headers: HeadersInit | undefined, semCorpo: boolean): Headers {
+  const limpos = new Headers();
+  new Headers(headers).forEach((valor, nome) => {
+    if (!CABECALHOS_ENTRE_ORIGENS.has(nome)) return;
+    if (semCorpo && nome === 'content-type') return;
+    limpos.set(nome, valor);
+  });
+  return limpos;
+}
+
 /**
  * `fetch` que confere o destino ANTES de sair e a cada redirect (até
  * `maxRedirects`), sem deixar o runtime seguir 3xx sozinho: uma URL pública
  * não consegue rebater para uma interna. 307/308 repetem o método e o corpo;
- * 301/302/303 viram GET sem corpo, como o navegador faz.
+ * 301/302/303 viram GET sem corpo, como o navegador faz. Redirect para OUTRA
+ * origem leva só content-type/accept: o segredo do webhook (Authorization,
+ * X-Api-Key…) não vai para um terceiro — o mesmo que o fetch nativo faz com
+ * Authorization. O corpo de cada 3xx é descartado para soltar a conexão.
  */
 export async function fetchSeguro(
   rawUrl: string,
@@ -151,12 +167,17 @@ export async function fetchSeguro(
     if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
     const location = res.headers.get('location');
     if (!location) return res;
-    url = new URL(location, url).toString();
-    if (res.status === 301 || res.status === 302 || res.status === 303) {
+    await res.body?.cancel().catch(() => undefined);
+    const proxima = new URL(location, url);
+    const outraOrigem = proxima.origin !== new URL(url).origin;
+    url = proxima.toString();
+    const viraGet = res.status === 301 || res.status === 302 || res.status === 303;
+    if (viraGet) {
       const semCorpo: RequestInit = { ...atual, method: 'GET' };
       delete (semCorpo as { body?: unknown }).body;
       atual = semCorpo;
     }
+    if (outraOrigem) atual = { ...atual, headers: soCabecalhosSeguros(atual.headers, viraGet) };
   }
   throw new DestinoNaoPermitido();
 }

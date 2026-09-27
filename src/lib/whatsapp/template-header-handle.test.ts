@@ -148,4 +148,29 @@ describe('ensureImageHeaderHandle', () => {
     const init = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit;
     expect(init).toMatchObject({ redirect: 'manual' });
   });
+
+  // SempreCRM: mídia relativa é do próprio storage — vale só o caminho de objeto
+  // público, conferido antes de resolver, com ou sem SUPABASE_INTERNAL_URL.
+  it('mídia relativa sem SUPABASE_INTERNAL_URL resolve pelo NEXT_PUBLIC_SITE_URL', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase');
+    vi.stubEnv('SUPABASE_INTERNAL_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.test');
+    const fetchSpy = vi.fn(async () => imgResponse());
+    vi.stubGlobal('fetch', fetchSpy);
+    const p = payload({ header_media_url: '/supabase/storage/v1/object/public/chat-media/a.jpg' });
+    await ensureImageHeaderHandle(p, 'tok');
+    expect((fetchSpy.mock.calls[0] as unknown[])[0]).toBe('https://app.test/supabase/storage/v1/object/public/chat-media/a.jpg');
+  });
+
+  it('caminho relativo fora do storage (com ..) é recusado sem buscar', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase');
+    vi.stubEnv('SUPABASE_INTERNAL_URL', 'http://kong:8000');
+    const fetchSpy = vi.fn(async () => imgResponse());
+    vi.stubGlobal('fetch', fetchSpy);
+    const p = payload({ header_media_url: '/supabase/storage/v1/object/public/../../../rest/v1/profiles' });
+    await expect(ensureImageHeaderHandle(p, 'tok')).rejects.toThrow(/publicly reachable/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

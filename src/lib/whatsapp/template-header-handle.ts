@@ -49,9 +49,14 @@ export async function ensureImageHeaderHandle(
   let res: Response
   try {
     if (isRelativeMediaUrl(payload.header_media_url)) {
-      const interna = new URL(mediaUrlForServer(payload.header_media_url))
-      if (!interna.pathname.startsWith('/storage/v1/object/public/')) throw new Error(INALCANCAVEL)
-      res = await fetch(interna.toString(), { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
+      // O caminho é conferido ANTES de resolver (normalizado, sem `..`), contra
+      // o prefixo público do Supabase: vale com SUPABASE_INTERNAL_URL ou só com
+      // NEXT_PUBLIC_SITE_URL, as duas formas que mediaUrlForServer aceita.
+      const caminho = new URL(payload.header_media_url, 'http://x').pathname
+      const publico = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? ''
+      const prefixo = publico.startsWith('/') ? publico.replace(/\/+$/, '') : ''
+      if (!caminho.startsWith(`${prefixo}/storage/v1/object/public/`)) throw new Error(INALCANCAVEL)
+      res = await fetch(mediaUrlForServer(caminho), { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
     } else {
       res = await fetchSeguro(payload.header_media_url, { signal: AbortSignal.timeout(10_000) })
     }

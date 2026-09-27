@@ -113,3 +113,23 @@ describe('fetchSeguro', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('fetchSeguro — segredo não atravessa para outra origem', () => {
+  it('mesma origem mantém os cabeçalhos; outra origem leva só content-type/accept', async () => {
+    const vistos: Array<Record<string, string>> = [];
+    const respostas: Record<string, Response> = {
+      'https://1.1.1.1/a': new Response(null, { status: 307, headers: { location: '/b' } }),
+      'https://1.1.1.1/b': new Response(null, { status: 307, headers: { location: 'https://8.8.8.8/c' } }),
+      'https://8.8.8.8/c': new Response('ok', { status: 200 }),
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      vistos.push(Object.fromEntries(new Headers(init?.headers).entries()));
+      return respostas[url];
+    }));
+    const hdrs = { 'content-type': 'application/json', authorization: 'Bearer segredo', 'x-api-key': 'k' };
+    await fetchSeguro('https://1.1.1.1/a', { method: 'POST', headers: hdrs, body: '{}' });
+    expect(vistos[1]).toMatchObject({ authorization: 'Bearer segredo', 'x-api-key': 'k' });
+    expect(vistos[2]).toEqual({ 'content-type': 'application/json' });
+    vi.unstubAllGlobals();
+  });
+});
