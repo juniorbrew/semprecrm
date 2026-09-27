@@ -8,6 +8,10 @@ import {
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
 import {
+  resolveTemplateRow,
+  templateContentText,
+} from '@/lib/whatsapp/template-body'
+import {
   conversationChannel,
   engineSendViaQr,
   loadTemplateBody,
@@ -134,6 +138,22 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
 
   const accessToken = decrypt(config.access_token)
 
+  // Local template row — read for the body we persist below (wacrm
+  // #483), not for the Meta payload (the wire shape is deliberately
+  // unchanged here). A missing row is fine: the send still goes out, we
+  // just can't reconstruct the text the customer saw.
+  const templateRow =
+    input.kind === 'template'
+      ? (
+          await resolveTemplateRow(
+            db,
+            input.accountId,
+            input.templateName,
+            input.language,
+          )
+        ).row
+      : null
+
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
       const r = await sendTemplateMessage({
@@ -184,7 +204,13 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.
   const content_type = input.kind === 'template' ? 'template' : 'text'
-  const content_text = input.kind === 'text' ? input.text : null
+  // Templates persist the substituted body, same as the manual send
+  // route. This was unconditionally null, so every automation template
+  // send rendered as an empty bubble (wacrm #483).
+  const content_text =
+    input.kind === 'text'
+      ? input.text
+      : templateContentText(templateRow, input.params ?? [])
   const template_name = input.kind === 'template' ? input.templateName : null
 
   const { error: msgErr } = await db.from('messages').insert({
@@ -206,7 +232,9 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     .from('conversations')
     .update({
       last_message_text:
-        input.kind === 'template' ? `[template:${input.templateName}]` : input.text,
+        input.kind === 'template'
+          ? (content_text ?? `[template:${input.templateName}]`)
+          : input.text,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })

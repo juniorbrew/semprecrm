@@ -40,7 +40,7 @@ import {
   isRecipientNotAllowedError,
   sanitizePhoneForMeta,
 } from '@/lib/whatsapp/phone-utils';
-import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 
 /** Caller-visible failure; routes map it to a JSON error. */
@@ -134,22 +134,23 @@ export async function loadDeliveryContext(
     );
   }
 
-  const templateLanguage = (broadcast.template_language as string) || 'en_US';
-  const { data: rawTemplateRow } = await db
-    .from('message_templates')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('name', broadcast.template_name)
-    .eq('language', templateLanguage)
-    .maybeSingle();
-  if (rawTemplateRow && !isMessageTemplate(rawTemplateRow)) {
+  // Tolerant of the en / en_US split (wacrm #483): a row synced as `en`
+  // still supplies the header/button components for an `en_US` campaign.
+  const resolvedTemplate = await resolveTemplateRow(
+    db,
+    accountId,
+    broadcast.template_name as string,
+    (broadcast.template_language as string | null) || null,
+  );
+  if (resolvedTemplate.malformed) {
     throw new BroadcastError(
       'template_malformed',
       'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.',
       500,
     );
   }
-  const templateRow = (rawTemplateRow as MessageTemplate | null) ?? null;
+  const templateRow: MessageTemplate | null = resolvedTemplate.row;
+  const templateLanguage = resolvedTemplate.language;
 
   return {
     accountId,

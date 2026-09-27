@@ -148,7 +148,14 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   );
 }
 
-function MessageContent({ message }: { message: Message }) {
+function MessageContent({
+  message,
+  isAgent,
+}: {
+  message: Message;
+  /** Outbound bubbles sit on the primary fill — badges must invert. */
+  isAgent: boolean;
+}) {
   switch (message.content_type) {
     case "text":
       return (
@@ -223,16 +230,37 @@ function MessageContent({ message }: { message: Message }) {
       );
 
     case "template":
+      // Outbound templates sit on the primary fill, where the old
+      // `bg-primary/20 text-primary` chip was invisible; paired with a
+      // null content_text that rendered an empty bubble (wacrm #483).
+      // Invert on the primary fill, and fall back to the template name
+      // for legacy rows stored without a body.
       return (
         <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          <span
+            className={cn(
+              "mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              isAgent
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-primary/20 text-primary",
+            )}
+          >
             <LayoutTemplate className="h-3 w-3" />
             Template
           </span>
-          {message.content_text && (
+          {message.content_text ? (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
               {message.content_text}
             </p>
+          ) : (
+            message.template_name && (
+              <p
+                className="mt-1 break-words text-sm italic opacity-80"
+                data-no-translate
+              >
+                {message.template_name}
+              </p>
+            )
           )}
         </div>
       );
@@ -308,7 +336,7 @@ export function MessageBubble({
             onPrimary={isAgent}
           />
         )}
-        <MessageContent message={message} />
+        <MessageContent message={message} isAgent={isAgent} />
         <div
           className={cn(
             "mt-1 flex items-center gap-1",

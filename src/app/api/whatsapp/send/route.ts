@@ -21,7 +21,11 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
-import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
+import {
+  resolveTemplateRow,
+  templateBodyParams,
+  templateContentText,
+} from '@/lib/whatsapp/template-body'
 import {
   GatewayNotConfiguredError,
   GatewayRequestError,
@@ -369,16 +373,19 @@ export async function POST(request: Request) {
     // + button components from the definition. isMessageTemplate
     // guards against a malformed row (e.g. from a partial sync)
     // crashing the send-builder later in the stack.
+    //
+    // resolveTemplateRow tolerates the en / en_US split (wacrm #483): a
+    // row synced as `en` still matches a request for `en_US` or none.
     let templateRow: MessageTemplate | null = null
+    let sendLanguage: string = template_language || 'en_US'
     if (message_type === 'template' && template_name) {
-      const { data } = await supabase
-        .from('message_templates')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('name', template_name)
-        .eq('language', template_language || 'en_US')
-        .maybeSingle()
-      if (data && !isMessageTemplate(data)) {
+      const resolved = await resolveTemplateRow(
+        supabase,
+        accountId,
+        template_name,
+        template_language,
+      )
+      if (resolved.malformed) {
         return NextResponse.json(
           {
             error:
@@ -387,7 +394,8 @@ export async function POST(request: Request) {
           { status: 500 },
         )
       }
-      templateRow = data ?? null
+      templateRow = resolved.row
+      sendLanguage = resolved.language
     }
 
     const attempt = async (phone: string): Promise<string> => {
@@ -397,7 +405,7 @@ export async function POST(request: Request) {
           accessToken,
           to: phone,
           templateName: template_name,
-          language: template_language || 'en_US',
+          language: sendLanguage,
           template: templateRow ?? undefined,
           messageParams: template_message_params ?? undefined,
           // Legacy body-only fallback — only consulted when
@@ -480,6 +488,19 @@ export async function POST(request: Request) {
         .eq('id', contact.id)
     }
 
+    // Templates persist the *substituted* body (wacrm #483). The
+    // composer pre-renders it and posts it as content_text — that wins,
+    // since it knows header/button values; any other caller gets the
+    // body rendered from the local row instead of an empty bubble.
+    const persistedText: string | null =
+      message_type === 'template'
+        ? templateContentText(
+            templateRow,
+            templateBodyParams(template_params, template_message_params),
+            content_text,
+          )
+        : content_text || null
+
     // Insert message into DB — field names MUST match the messages schema
     // (see supabase/migrations/001_initial_schema.sql):
     //   conversation_id, sender_type, content_type, content_text,
@@ -491,7 +512,7 @@ export async function POST(request: Request) {
         sender_type: 'agent',
         sender_id: user.id,
         content_type: message_type,
-        content_text: content_text || null,
+        content_text: persistedText,
         media_url: media_url || null,
         template_name: template_name || null,
         message_id: waMessageId,
@@ -513,7 +534,7 @@ export async function POST(request: Request) {
     await supabase
       .from('conversations')
       .update({
-        last_message_text: content_text || `[${message_type}]`,
+        last_message_text: persistedText || `[${message_type}]`,
         last_message_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })

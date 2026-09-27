@@ -74,18 +74,12 @@ import {
   groupTimelineByDay,
 } from "@/lib/conversations/timeline";
 import { toast } from "sonner";
+import { renderTemplateBody } from "@/lib/whatsapp/template-body";
 
 interface ReplyDraft {
   id: string;
   authorLabel: string;
   preview: string;
-}
-
-function renderTemplateBody(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
-    return params[idx] ?? `{{${raw}}}`;
-  });
 }
 
 interface MessageThreadProps {
