@@ -1,14 +1,17 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { parseBroadcastCsv } from '@/lib/broadcast-csv';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 import {
   Users,
   Tags,
   Filter,
   Upload,
+  FileText,
   Loader2,
   ArrowRight,
   ArrowLeft,
@@ -94,6 +97,16 @@ export function Step2SelectAudience({
   const [loadingCount, setLoadingCount] = useState(false);
   /** Contacts dropped from the estimate because they opted out (migration 030). */
   const [excludedOptedOut, setExcludedOptedOut] = useState(0);
+  // The picked file's name, shown back to the user. The parsed rows
+  // themselves live on `audience.csvContacts` (owned by the wizard) so
+  // they survive stepping forward and back.
+  const [pickedCsvName, setPickedCsvName] = useState<string | null>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+
+  const csvCount = audience.csvContacts?.length ?? 0;
+  // Only meaningful while the rows it produced are still in play —
+  // picking another audience type wipes `csvContacts`.
+  const csvFileName = csvCount > 0 ? pickedCsvName : null;
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -229,6 +242,40 @@ export function Step2SelectAudience({
   useEffect(() => {
     fetchEstimatedCount();
   }, [fetchEstimatedCount]);
+
+  /**
+   * "Importar CSV" had no picker at all (wacrm #512): selecting it
+   * rendered nothing, `csvContacts` stayed undefined and Next stayed
+   * disabled forever.
+   */
+  async function handleCsvChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+
+    const result = parseBroadcastCsv(await selected.text());
+
+    if (!result.ok) {
+      toast.error(
+        result.error === 'missing_phone_column'
+          ? t('The CSV needs a "phone" column header.')
+          : t('No valid phone numbers found in the CSV.'),
+      );
+      // Clear the input so re-picking the same corrected file still
+      // fires `change` (the browser suppresses it for an identical value).
+      e.target.value = '';
+      setPickedCsvName(null);
+      onUpdate({ ...audience, csvContacts: undefined });
+      return;
+    }
+
+    setPickedCsvName(selected.name);
+    onUpdate({ ...audience, csvContacts: result.contacts });
+    if (result.invalid > 0) {
+      toast.warning(
+        `${t('Rows without a valid phone were ignored')}: ${result.invalid}`,
+      );
+    }
+  }
 
   function toggleTag(tagId: string) {
     const current = audience.tagIds ?? [];
@@ -412,6 +459,48 @@ export function Step2SelectAudience({
               />
             </div>
           )}
+        </div>
+      )}
+
+      {audience.type === 'csv' && (
+        <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
+          <div>
+            <p className="text-sm font-medium text-foreground">{t('Upload CSV')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t('A "phone" column is required (with country code, e.g. +55 11 99999-0000); "name" is optional.')}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => csvInputRef.current?.click()}
+            className="group flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center transition-colors hover:border-primary/40 hover:bg-muted/70"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-foreground">
+              {csvFileName ? (
+                <FileText className="h-5 w-5" />
+              ) : (
+                <Upload className="h-5 w-5" />
+              )}
+            </div>
+            <p className="text-sm text-foreground" data-no-translate={csvFileName ? true : undefined}>
+              {csvFileName ?? t('Choose a CSV file')}
+            </p>
+            {csvCount > 0 && (
+              <p className="text-xs text-primary">
+                {t('Contacts found in the file')}: {csvCount}
+              </p>
+            )}
+          </button>
+
+          <input
+            ref={csvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleCsvChange}
+            className="hidden"
+            aria-label={t('Choose a CSV file')}
+          />
         </div>
       )}
 

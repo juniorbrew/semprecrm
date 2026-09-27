@@ -36,6 +36,17 @@ export const DICT_INBOX: Record<string, string> = {
     'Enviar para todos os contatos da sua base',
   'Import CSV': 'Importar CSV',
   'Import a list of phone numbers': 'Importe uma lista de números de telefone',
+  // "Importar CSV" file picker (wacrm #512)
+  'A "phone" column is required (with country code, e.g. +55 11 99999-0000); "name" is optional.':
+    'A coluna "phone" é obrigatória (com código do país, ex.: +55 11 99999-0000); "name" é opcional.',
+  'Choose a CSV file': 'Escolher arquivo CSV',
+  'Contacts found in the file': 'Contatos encontrados no arquivo',
+  'The CSV needs a "phone" column header.':
+    'O CSV precisa de uma coluna com o cabeçalho "phone".',
+  'No valid phone numbers found in the CSV.':
+    'Nenhum telefone válido encontrado no CSV.',
+  'Rows without a valid phone were ignored':
+    'Linhas sem telefone válido foram ignoradas',
 
   // ---- Broadcasts: personalize step — header media (wacrm #298) ----
   'Header media': 'Mídia do cabeçalho',

@@ -88,7 +88,9 @@ const IMPORT_COPY: Record<
     imported: (n: number) => string;
     tagsAssigned: (n: number) => string;
     skipped: (n: number) => string;
+    invalidPhone: (n: number) => string;
     failed: (n: number) => string;
+    failedToImport: (n: number) => string;
     duplicatesSkipped: (n: number) => string;
     unknownTagsSkipped: (sample: string, more: number) => string;
     importButton: (n: number) => string;
@@ -101,7 +103,10 @@ const IMPORT_COPY: Record<
     imported: (n) => `${n} importado${n === 1 ? '' : 's'}`,
     tagsAssigned: (n) => `${n} etiqueta${n === 1 ? '' : 's'} atribuída${n === 1 ? '' : 's'}`,
     skipped: (n) => `${n} ignorado${n === 1 ? '' : 's'}`,
+    invalidPhone: (n) => `${n} sem telefone válido`,
     failed: (n) => `${n} com falha`,
+    failedToImport: (n) =>
+      `${n} contato${n === 1 ? '' : 's'} não importado${n === 1 ? '' : 's'}`,
     duplicatesSkipped: (n) => `${n} duplicado${n === 1 ? '' : 's'} ignorado${n === 1 ? '' : 's'}`,
     unknownTagsSkipped: (sample, more) =>
       `Etiquetas desconhecidas ignoradas (crie-as antes em Configurações): ${sample}${more > 0 ? ` (+${more})` : ''}`,
@@ -114,7 +119,9 @@ const IMPORT_COPY: Record<
     imported: (n) => `${n} imported`,
     tagsAssigned: (n) => `${n} tag${n === 1 ? '' : 's'} assigned`,
     skipped: (n) => `${n} skipped`,
+    invalidPhone: (n) => `${n} without a valid phone`,
     failed: (n) => `${n} failed`,
+    failedToImport: (n) => `${n} contact${n !== 1 ? 's' : ''} failed to import`,
     duplicatesSkipped: (n) => `${n} duplicate${n === 1 ? '' : 's'} skipped`,
     unknownTagsSkipped: (sample, more) =>
       `Unknown tags skipped (create them in Settings first): ${sample}${more > 0 ? ` (+${more} more)` : ''}`,
@@ -193,7 +200,9 @@ export function ImportModal({
   const [result, setResult] = useState<{
     imported: number;
     skipped: number;
+    invalidPhone: number;
     failed: number;
+    failedDetails: { phone: string; name?: string; reason: string }[];
     tagsAssigned: number;
   } | null>(null);
 
@@ -222,11 +231,12 @@ export function ImportModal({
     const text = await selected.text();
     const {
       rows,
+      hasPhoneColumn,
       hasTagsColumn: csvHasTags,
       hasCompanyColumn: csvHasCompany,
     } = parseContactCsv(text);
 
-    if (rows.length === 0) {
+    if (!hasPhoneColumn || rows.length === 0) {
       toast.error(
         'No valid rows found. Ensure CSV has a "phone" column header.'
       );
@@ -274,9 +284,18 @@ export function ImportModal({
       let imported = 0;
       let skipped = 0;
       let failed = 0;
+      const failedDetails: { phone: string; name?: string; reason: string }[] =
+        [];
 
       // 1) De-dupe within the file by normalized phone (keep first).
-      const { unique, duplicates: inFileDupes } = dedupeByPhone(parsedRows);
+      //    Rows with no usable phone are counted separately — they never
+      //    duplicated anything, so lumping them into `skipped` would
+      //    misreport them as dupes (wacrm a0e804b).
+      const {
+        unique,
+        duplicates: inFileDupes,
+        invalid: invalidPhone,
+      } = dedupeByPhone(parsedRows);
       skipped += inFileDupes;
 
       // 2) Skip numbers already in this account. One read of the
@@ -362,6 +381,22 @@ export function ImportModal({
               skipped++;
             } else {
               failed++;
+              // Keep the actual DB error instead of discarding it —
+              // "N contacts failed" with no reason attached left no way
+              // to tell an RLS/constraint failure from a fluke, let alone
+              // which contact it was (wacrm a0e804b).
+              console.error(
+                '[contacts import] insert failed for',
+                row.phone,
+                singleErr
+              );
+              failedDetails.push({
+                phone: row.phone,
+                name: row.name ?? undefined,
+                reason:
+                  (singleErr as { message?: string } | null)?.message ||
+                  'Unknown error',
+              });
             }
           }
         } else {
@@ -394,7 +429,14 @@ export function ImportModal({
         toast.warning('Contacts imported, but some tag assignments failed.');
       }
 
-      setResult({ imported, skipped, failed, tagsAssigned });
+      setResult({
+        imported,
+        skipped,
+        invalidPhone,
+        failed,
+        failedDetails,
+        tagsAssigned,
+      });
       if (imported > 0) {
         toast.success(
           `${imported} contact${imported !== 1 ? 's' : ''} imported`
@@ -414,10 +456,11 @@ export function ImportModal({
       if (skipped > 0) {
         toast.info(copy.duplicatesSkipped(skipped));
       }
+      if (invalidPhone > 0) {
+        toast.warning(copy.invalidPhone(invalidPhone));
+      }
       if (failed > 0) {
-        toast.error(
-          `${failed} contact${failed !== 1 ? 's' : ''} failed to import`
-        );
+        toast.error(copy.failedToImport(failed));
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Import failed';
@@ -664,6 +707,12 @@ export function ImportModal({
                     {copy.skipped(result.skipped)}
                   </div>
                 )}
+                {result.invalidPhone > 0 && (
+                  <div className="flex items-center gap-1.5 text-sm text-amber-400">
+                    <AlertTriangle className="size-4 shrink-0" />
+                    {copy.invalidPhone(result.invalidPhone)}
+                  </div>
+                )}
                 {result.failed > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-red-400">
                     <XCircle className="size-4 shrink-0" />
@@ -671,6 +720,32 @@ export function ImportModal({
                   </div>
                 )}
               </div>
+
+              {result.failedDetails.length > 0 && (
+                <div className="mt-3 space-y-1 border-t border-border/80 pt-3">
+                  <p className="text-[11px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+                    {t('Rows that failed')}
+                  </p>
+                  <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
+                    {result.failedDetails.map((row, i) => (
+                      <li
+                        key={i}
+                        className="flex items-baseline gap-2 text-muted-foreground"
+                      >
+                        <span
+                          data-no-translate
+                          className="shrink-0 font-mono text-popover-foreground"
+                        >
+                          {row.name ? `${row.name} (${row.phone})` : row.phone}
+                        </span>
+                        {/* Postgres/PostgREST message — translated by the
+                            dictionary when it has an entry. */}
+                        <span className="truncate">{t(row.reason)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
