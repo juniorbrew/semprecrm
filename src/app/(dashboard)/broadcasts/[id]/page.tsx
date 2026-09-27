@@ -630,7 +630,9 @@ export default function BroadcastDetailPage() {
               </p>
             )}
             <p className="mt-0.5 text-muted-foreground">
-              {t('The connection to Meta failed or the send was interrupted, so these messages may or may not have been delivered. They are never resent automatically — check them before contacting these people again.')}
+              {uncertainTotal > 0
+                ? t('The connection to Meta failed or the send was interrupted, so these messages may or may not have been delivered. They are never resent automatically — check them before contacting these people again.')
+                : t('Marked failed by the previous version, which failed whole batches even when the server may have sent them — so they are never retried.')}
             </p>
           </div>
           {canSend && orphanedSending > 0 && (
