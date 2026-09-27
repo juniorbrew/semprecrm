@@ -250,3 +250,29 @@ describe('inbound — template quick-reply tap (wacrm #478)', () => {
     expect(h.ingest).not.toHaveBeenCalled()
   })
 })
+
+describe('template lifecycle events (wacrm #534)', () => {
+  it('forwards the entry (WABA) id to the template handler and skips the messaging branch', async () => {
+    const value = {
+      event: 'APPROVED',
+      message_template_id: 123,
+      message_template_name: 'boas_vindas',
+      message_template_language: 'pt_BR',
+    }
+    await post({
+      entry: [
+        { id: 'waba-77', changes: [{ field: 'message_template_status_update', value }] },
+      ],
+    })
+    await settle()
+
+    expect(h.templateChange).toHaveBeenCalledTimes(1)
+    expect(h.templateChange.mock.calls[0][0]).toEqual({
+      field: 'message_template_status_update',
+      value,
+      wabaId: 'waba-77',
+    })
+    expect(h.updates).toEqual([])
+    expect(h.ingest).not.toHaveBeenCalled()
+  })
+})
