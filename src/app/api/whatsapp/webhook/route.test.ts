@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // Meta webhook route — the parts ported from wacrm:
 //   #535  failed status → Meta's reason persisted on messages and
 //         folded into broadcast_recipients.error_message
+//   #478  template quick-reply taps (`type: 'button'`) → interactive
+//         reply handed to the shared inbound pipeline
 // The inbound pipeline itself is covered by src/lib/whatsapp/inbound.test.ts.
 // ------------------------------------------------------------
 
@@ -210,5 +212,41 @@ describe('status webhook — failure reason (wacrm #535)', () => {
     await post(statusPayload({ status: 'delivered', errors }))
     await settle()
     expect(h.updates.find((u) => u.table === 'messages')?.payload).toEqual({ status: 'delivered' })
+  })
+})
+
+describe('inbound — template quick-reply tap (wacrm #478)', () => {
+  it('hands the tap to the pipeline as an interactive reply, scoped to the config account', async () => {
+    await post(
+      messagePayload({
+        type: 'button',
+        button: { text: 'Quero saber mais', payload: 'SABER_MAIS' },
+      }),
+    )
+    await settle()
+
+    expect(h.ingest).toHaveBeenCalledTimes(1)
+    expect(h.ingest.mock.calls[0][0]).toMatchObject({
+      accountId: 'acct-1',
+      userId: 'owner-1',
+      channel: 'official',
+      type: 'button',
+      text: 'Quero saber mais',
+      interactiveReplyId: 'SABER_MAIS',
+    })
+  })
+
+  it('falls back to the label when the template button carries no payload', async () => {
+    await post(messagePayload({ type: 'button', button: { text: 'Sim' } }))
+    await settle()
+    expect(h.ingest.mock.calls[0][0]).toMatchObject({ text: 'Sim', interactiveReplyId: 'Sim' })
+  })
+
+  it('drops the message when no config owns the phone number id', async () => {
+    h.configRows = []
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await post(messagePayload({ type: 'button', button: { text: 'Sim', payload: 'S' } }))
+    await settle()
+    expect(h.ingest).not.toHaveBeenCalled()
   })
 })

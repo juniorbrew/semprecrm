@@ -85,6 +85,7 @@ vi.mock('@/lib/contacts/dedupe', () => ({
 }))
 
 import { ingestInboundMessage, toContentType, toIsoTimestamp } from './inbound'
+import { dispatchInboundToFlows } from '@/lib/flows/engine'
 
 let idSeq = 0
 const nextId = (prefix: string) => `${prefix}-${++idSeq}`
@@ -290,6 +291,81 @@ describe('ingestInboundMessage', () => {
     })
 
     await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, db)
+    expect(h.automationCalls).toHaveLength(0)
+  })
+
+  // wacrm #478 / #490 — a template quick-reply tap (Meta `type: 'button'`)
+  // must travel the same pipeline as any inbound message: stored as an
+  // interactive reply, offered to the Flows engine as a tap, and handed
+  // to the automations exactly once per trigger (no double-firing).
+  it('treats a template quick-reply tap as one interactive inbound message', async () => {
+    const db = makeDb()
+    vi.mocked(dispatchInboundToFlows).mockClear()
+    await ingestInboundMessage(
+      {
+        ...BASE,
+        channel: 'official',
+        messageId: 'wamid-btn',
+        type: 'button',
+        text: 'Quero saber mais',
+        interactiveReplyId: 'SABER_MAIS',
+      },
+      db,
+    )
+
+    expect(h.state.messages).toHaveLength(1)
+    expect(h.state.messages[0]).toMatchObject({
+      content_type: 'interactive',
+      content_text: 'Quero saber mais',
+      interactive_reply_id: 'SABER_MAIS',
+    })
+
+    expect(dispatchInboundToFlows).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(dispatchInboundToFlows).mock.calls[0][0]).toMatchObject({
+      message: {
+        kind: 'interactive_reply',
+        reply_id: 'SABER_MAIS',
+        reply_title: 'Quero saber mais',
+        meta_message_id: 'wamid-btn',
+      },
+    })
+
+    const triggers = h.automationCalls.map((c) => c.triggerType)
+    expect(triggers).toEqual([
+      'first_inbound_message',
+      'new_contact_created',
+      'new_message_received',
+      'keyword_match',
+    ])
+    // Keyword automations see the visible label, like typed text.
+    for (const call of h.automationCalls) {
+      expect(call).toMatchObject({ context: { message_text: 'Quero saber mais' } })
+    }
+  })
+
+  it('suppresses the content triggers for a tap a flow consumed', async () => {
+    const db = makeDb()
+    h.flows.consumed = true
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
+    h.state.conversations.push({ id: 'conv-1', account_id: 'acct-1', contact_id: 'c-1' })
+    h.state.messages.push({
+      id: 'm-old',
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+      message_id: 'older',
+    })
+
+    await ingestInboundMessage(
+      {
+        ...BASE,
+        channel: 'official',
+        messageId: 'wamid-btn-2',
+        type: 'button',
+        text: 'Sim',
+        interactiveReplyId: 'Sim',
+      },
+      db,
+    )
     expect(h.automationCalls).toHaveLength(0)
   })
 
@@ -710,6 +786,7 @@ describe('helpers', () => {
     expect(toContentType('sticker')).toBe('image')
     expect(toContentType('reaction')).toBe('text')
     expect(toContentType('interactive')).toBe('interactive')
+    expect(toContentType('button')).toBe('interactive')
   })
 
   it('toIsoTimestamp accepts seconds, millis, ISO and empty', () => {

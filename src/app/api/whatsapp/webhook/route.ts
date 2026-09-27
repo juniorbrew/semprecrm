@@ -54,6 +54,15 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  /**
+   * Set when the customer taps a QUICK_REPLY button on a *template*
+   * message — a broadcast, or any template send. Meta uses a different
+   * envelope from `interactive` above: `type: 'button'`, the label in
+   * `button.text`, and the payload configured on the template's button
+   * in `button.payload` (Meta's own template editor doesn't ask for a
+   * payload and mirrors the label into it). wacrm #478.
+   */
+  button?: { text?: string; payload?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
 }
@@ -698,6 +707,26 @@ async function parseMessageContent(
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
+    }
+
+    case 'button': {
+      // Quick-reply tap on a TEMPLATE message (broadcast replies). Meta
+      // delivers these under their own `button` envelope, so without this
+      // case they landed in the inbox as "[Unsupported message type:
+      // button]" with no reply id — the Flows engine never saw the tap
+      // and nothing chained off a broadcast reply (wacrm #478).
+      //
+      // `payload` is the stable value (the analogue of
+      // `button_reply.id`); `text` is the visible label. Prefer the
+      // payload for routing and the label for display, each falling
+      // back to the other since a template may carry only one.
+      const payload = message.button?.payload || null
+      const label = message.button?.text || null
+      return {
+        ...empty,
+        contentText: label || payload,
+        interactiveReplyId: payload || label,
+      }
     }
 
     default:
