@@ -29,6 +29,7 @@ import {
   type TaskPriority,
 } from '@/lib/tasks'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import type { AccountPreferences } from '@/types'
 import { parseAccountPreferences } from '@/lib/account-preferences'
@@ -1078,12 +1079,20 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
+      // SSRF guard (wacrm GHSA-8jqh-598v-rfxc): a URL e os headers vêm da
+      // conta e quem faz o request é o servidor — recusa destino que resolve
+      // para loopback, rede privada, link-local (metadata de nuvem) ou reservado.
+      if (!(await isDeliverableUrl(cfg.url))) {
+        throw new Error('send_webhook: destination not allowed')
+      }
       const body = cfg.body_template ? await interpolate(cfg.body_template, args) : JSON.stringify(args.context)
       // A slow endpoint must not stall the automations queued behind it.
       const res = await fetch(cfg.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
         body,
+        // Não segue redirect: uma URL pública poderia 3xx-rebater para uma interna.
+        redirect: 'manual',
         signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`webhook returned ${res.status}`)

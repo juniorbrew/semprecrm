@@ -1,6 +1,7 @@
 import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
-import { mediaUrlForServer } from '@/lib/storage/media-url'
+import { isRelativeMediaUrl, mediaUrlForServer } from '@/lib/storage/media-url'
+import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 
 /**
  * Meta requires an `example.header_handle` (from the Resumable Upload
@@ -37,9 +38,21 @@ export async function ensureImageHeaderHandle(
   // Fetch the sample image bytes (works for our uploaded chat-media URL —
   // possibly origin-relative, resolved through the internal Supabase route —
   // and for a manually-pasted public link).
+  // SSRF guard (wacrm GHSA-6fr5): uma URL ABSOLUTA foi colada por alguém e o
+  // fetch é do servidor — recusa destino interno (loopback, rede privada,
+  // metadata de nuvem). A URL RELATIVA é mídia do próprio SempreCRM e segue
+  // pela rota interna do storage (mediaUrlForServer), sem passar por aqui.
+  // Mesma mensagem do host inalcançável, para a falha não virar oráculo.
+  if (!isRelativeMediaUrl(payload.header_media_url) && !(await isDeliverableUrl(payload.header_media_url))) {
+    throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
+  }
   let res: Response
   try {
-    res = await fetch(mediaUrlForServer(payload.header_media_url))
+    res = await fetch(mediaUrlForServer(payload.header_media_url), {
+      // Não segue redirect: uma URL pública poderia 3xx-rebater para uma interna.
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    })
   } catch {
     throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
   }
