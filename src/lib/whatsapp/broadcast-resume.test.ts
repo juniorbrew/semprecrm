@@ -86,6 +86,13 @@ describe('claimBroadcastDelivery', () => {
     expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(false);
   });
 
+  it('does NOT apply the recent-activity rule to a new-protocol campaign (lock released = idle)', async () => {
+    // A normal stop releases the lock while the campaign may still read
+    // 'sending' with fresh counts — resuming must be allowed right away.
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:59:00.000Z', delivery_protocol: 1 });
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(true);
+  });
+
   it('claims a lock-less "sending" campaign that went quiet', async () => {
     const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z' });
     expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(true);
@@ -129,12 +136,26 @@ describe('planBroadcastResume', () => {
     expect(plan.from).toEqual(['pending']);
   });
 
-  it('"failed" and "all" never include sending or uncertain rows', async () => {
-    const rows = [{}, { status: 'failed' }, { status: 'uncertain' }, { status: 'sending', claimed_at: '2026-09-27T11:59:00Z' }];
+  it('"failed" and "all" never include sending, uncertain or old-code failed rows', async () => {
+    const rows = [
+      {},
+      { status: 'failed', claimed_at: '2026-09-27T10:00:00Z' },
+      { status: 'uncertain' },
+      { status: 'sending', claimed_at: '2026-09-27T11:59:00Z' },
+      { status: 'failed' }, // written by the old code: claimed_at NULL
+    ];
     const failed = await planBroadcastResume(seed(rows).client(), ACCOUNT, BC, 'failed', NOW);
     expect(failed.ids).toEqual(['r1']);
+    expect(failed.remaining).toBe(0);
     const all = await planBroadcastResume(seed(rows).client(), ACCOUNT, BC, 'all', NOW);
     expect(all.ids).toEqual(['r0', 'r1']);
+  });
+
+  it('refuses "retry failed" when the only failures are old-code ones', async () => {
+    const db = seed([{ status: 'failed' }, { status: 'sent' }]);
+    await expect(planBroadcastResume(db.client(), ACCOUNT, BC, 'failed', NOW)).rejects.toMatchObject({
+      code: 'nothing_to_resume',
+    });
   });
 
   it('turns rows abandoned in "sending" into uncertain, not pending', async () => {

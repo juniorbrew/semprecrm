@@ -44,11 +44,28 @@
 --      cabeçalho escolhida no assistente (#298), lida pelo servidor em
 --      toda passada.
 --
+--   6. broadcasts.delivery_protocol — NULL = disparo LEGADO (criado pelo
+--      código anterior a esta versão, que carimbava linhas no navegador);
+--      1 = criado com o protocolo de reivindicação por linha. Só nos
+--      legados a regra "'sending' sem trava + updated_at recente = ainda
+--      ativo" vale (a aba antiga não usava trava); nos novos, trava NULL
+--      significa passada encerrada e a retomada é liberada na hora.
+--      Linhas 'failed' com claimed_at NULL também são do código antigo
+--      (que marcava lotes inteiros como failed mesmo quando o servidor
+--      pode ter enviado) — "Reenviar falhas" NUNCA as pega; a tela mostra
+--      como "falha antiga (não reenviável)". Nenhum dado é reescrito.
+--
+--   7. broadcasts.uncertain_count — contador de linhas 'uncertain',
+--      mantido pelo mesmo gatilho incremental das outras contagens
+--      (_bcast_cols_for_status ganha o caso 'uncertain'). Começa em 0,
+--      correto para todo disparo existente (nenhum tem linha incerta).
+--
 -- Diferença do upstream: NÃO recria create_broadcast_with_recipients (é
 -- da API pública v1, que o SempreCRM não tem).
 --
--- Dados existentes: só colunas anuláveis e uma CHECK mais larga — nenhuma
--- linha é reescrita. Idempotente.
+-- Dados existentes: colunas novas anuláveis (ou DEFAULT 0 constante, sem
+-- reescrita de tabela no PG 11+), uma CHECK mais larga e duas funções de
+-- contagem recriadas — nenhuma linha é reescrita. Idempotente.
 -- ============================================================
 
 -- 1. Status 'sending' / 'uncertain'. A CHECK original (001) é inline, sem
@@ -102,6 +119,58 @@ ALTER TABLE broadcasts
 
 COMMENT ON COLUMN broadcasts.header_media_url IS
   'URL da mídia do cabeçalho (imagem/vídeo/documento) escolhida no assistente; lida pelo servidor em todo envio. NULL = usa a URL guardada no modelo.';
+
+-- 6. Protocolo de entrega (NULL = legado).
+ALTER TABLE broadcasts
+  ADD COLUMN IF NOT EXISTS delivery_protocol SMALLINT;
+
+COMMENT ON COLUMN broadcasts.delivery_protocol IS
+  'NULL = disparo legado (código anterior à 051, carimbava no navegador); 1 = protocolo de reivindicação por linha. Ver 051_broadcast_resume.sql.';
+
+-- 7. Contador de resultado incerto, mantido pelo gatilho de 005.
+ALTER TABLE broadcasts
+  ADD COLUMN IF NOT EXISTS uncertain_count INTEGER DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION public._bcast_cols_for_status(s TEXT)
+RETURNS TEXT[] AS $$
+BEGIN
+  -- 'pending' and 'sending' contribute to nothing.
+  IF s = 'pending' THEN RETURN ARRAY[]::TEXT[]; END IF;
+  IF s = 'sent'      THEN RETURN ARRAY['sent_count']; END IF;
+  IF s = 'delivered' THEN RETURN ARRAY['sent_count','delivered_count']; END IF;
+  IF s = 'read'      THEN RETURN ARRAY['sent_count','delivered_count','read_count']; END IF;
+  IF s = 'replied'   THEN RETURN ARRAY['sent_count','delivered_count','read_count','replied_count']; END IF;
+  IF s = 'failed'    THEN RETURN ARRAY['failed_count']; END IF;
+  IF s = 'uncertain' THEN RETURN ARRAY['uncertain_count']; END IF;
+  RETURN ARRAY[]::TEXT[];
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION public.recompute_broadcast_counts(bid UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE broadcasts b SET
+    sent_count      = agg.sent_count,
+    delivered_count = agg.delivered_count,
+    read_count      = agg.read_count,
+    replied_count   = agg.replied_count,
+    failed_count    = agg.failed_count,
+    uncertain_count = agg.uncertain_count,
+    updated_at      = NOW()
+  FROM (
+    SELECT
+      COUNT(*) FILTER (WHERE status IN ('sent','delivered','read','replied')) AS sent_count,
+      COUNT(*) FILTER (WHERE status IN ('delivered','read','replied'))        AS delivered_count,
+      COUNT(*) FILTER (WHERE status IN ('read','replied'))                    AS read_count,
+      COUNT(*) FILTER (WHERE status = 'replied')                              AS replied_count,
+      COUNT(*) FILTER (WHERE status = 'failed')                               AS failed_count,
+      COUNT(*) FILTER (WHERE status = 'uncertain')                            AS uncertain_count
+    FROM broadcast_recipients
+    WHERE broadcast_id = bid
+  ) agg
+  WHERE b.id = bid;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- A reivindicação e as contagens filtram por (broadcast_id, status). O
 -- índice já existe desde a 003; repetido só para a migração se sustentar

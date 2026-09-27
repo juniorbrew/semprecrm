@@ -61,6 +61,21 @@ export const CLAIM_CHUNK = 10;
 /** Statuses a pass may claim from. 'sending'/'uncertain' never are. */
 export type ClaimableStatus = 'pending' | 'failed';
 
+/**
+ * PostgREST `or()` filter for the claimable rows of the given statuses.
+ *
+ * 'failed' means failed UNDER THIS PROTOCOL (claimed_at set) — i.e. a
+ * confirmed rejection. Rows the old browser-stamped code marked failed
+ * (claimed_at NULL) may have been sent by the server and are never
+ * retried; the detail page lists them as "falha antiga".
+ */
+export function claimableStatusFilter(from: ClaimableStatus[]): string {
+  const terms: string[] = [];
+  if (from.includes('pending')) terms.push('status.eq.pending');
+  if (from.includes('failed')) terms.push('and(status.eq.failed,claimed_at.not.is.null)');
+  return terms.join(',');
+}
+
 export type RowOutcome = 'sent' | 'failed' | 'uncertain';
 
 export interface RowResult {
@@ -176,7 +191,7 @@ export async function claimRecipientRows(
     .update({ status: 'sending', claimed_at: now.toISOString() })
     .eq('broadcast_id', broadcastId)
     .in('id', ids)
-    .in('status', from)
+    .or(claimableStatusFilter(from))
     .select('id, contact_id, template_params');
   if (error) {
     console.error('[broadcast-core] claim failed:', error.message);
@@ -223,16 +238,27 @@ export async function sendClaimedRows(
   }
 
   // Opt-out (migration 030) by number too: another contact row with the
-  // same number may carry the opt-out.
+  // same number may carry the opt-out. Asked only for THIS chunk's numbers
+  // — a blanket "every opted-out contact" read is capped at 1000 rows by
+  // PostgREST and would silently miss the rest.
   const blocked = new Set<string>();
-  const { data: optedOutRows } = await db
-    .from('contacts')
-    .select('phone, phone_normalized')
-    .eq('account_id', ctx.accountId)
-    .not('opted_out_at', 'is', null);
-  for (const r of (optedOutRows ?? []) as { phone?: string | null; phone_normalized?: string | null }[]) {
-    if (r.phone_normalized) blocked.add(r.phone_normalized);
-    if (r.phone) blocked.add(normalizePhone(r.phone));
+  const chunkNumbers = [
+    ...new Set(
+      [...contacts.values()]
+        .map((c) => normalizePhone(c.phone ?? ''))
+        .filter(Boolean),
+    ),
+  ];
+  if (chunkNumbers.length > 0) {
+    const { data: optedOutRows } = await db
+      .from('contacts')
+      .select('phone_normalized')
+      .eq('account_id', ctx.accountId)
+      .not('opted_out_at', 'is', null)
+      .in('phone_normalized', chunkNumbers);
+    for (const r of (optedOutRows ?? []) as { phone_normalized?: string | null }[]) {
+      if (r.phone_normalized) blocked.add(r.phone_normalized);
+    }
   }
 
   const messageParams = ctx.headerMediaUrl ? { headerMediaUrl: ctx.headerMediaUrl } : undefined;
@@ -403,8 +429,9 @@ async function countRows(
  * Flip a broadcast out of `sending` once nothing is pending or in
  * flight. Derived from the rows, not from one pass's counters: a resume
  * sends only leftovers, so "nothing sent this pass" must not condemn a
- * campaign that already reached hundreds. `failed` = every recipient
- * failed; otherwise `sent` (per-row failures/uncertain stay visible).
+ * campaign that already reached hundreds. `sent` needs at least one row
+ * CONFIRMED sent; when every row is failed or uncertain the campaign is
+ * `failed` (the uncertain ones stay visible in uncertain_count).
  */
 export async function finalizeBroadcastStatus(
   db: SupabaseClient,
@@ -416,12 +443,14 @@ export async function finalizeBroadcastStatus(
   if ((await countRows(db, broadcastId, 'sending')) > 0) return;
 
   const failed = await countRows(db, broadcastId, 'failed');
+  const uncertain = await countRows(db, broadcastId, 'uncertain');
   const total = await countRows(db, broadcastId);
+  const confirmedSent = total - failed - uncertain;
 
   await db
     .from('broadcasts')
     .update({
-      status: failed > 0 && failed === total ? 'failed' : 'sent',
+      status: total > 0 && confirmedSent <= 0 ? 'failed' : 'sent',
       updated_at: new Date().toISOString(),
     })
     .eq('id', broadcastId)

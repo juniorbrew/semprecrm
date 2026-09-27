@@ -8,7 +8,7 @@ import {
   batchRetryDelayMs,
 } from '@/lib/broadcast-retry';
 import { headerMediaMessageParams } from '@/lib/broadcast-header-media';
-import { newLockToken, releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
+import { releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
 import { normalizeKey } from '@/lib/contacts/dedupe';
 import { toast } from 'sonner';
 import { useLanguage } from '@/hooks/use-language';
@@ -402,7 +402,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
-      const lockToken = newLockToken();
       const { data: broadcast, error: broadcastError } = await supabase
         .from('broadcasts')
         .insert({
@@ -416,9 +415,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           header_media_url:
             headerMediaMessageParams(payload.template, payload.headerMediaUrl)
               ?.headerMediaUrl ?? null,
-          // This tab is the delivery pass: it holds the lock (renewed by
-          // the server per batch) so "Retomar" can't start while it runs.
-          delivery_locked_at: lockToken,
+          // Per-row claim protocol (migration 051) — not a legacy campaign.
+          delivery_protocol: 1,
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -442,7 +440,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         );
       }
 
-      held = { id: broadcast.id, token: lockToken };
+      // This tab is the delivery pass: the SERVER takes the lock and mints
+      // the first token from its own clock (renewed per batch), so
+      // "Retomar" can't start while this tab sends.
+      const startRes = await fetch(`/api/whatsapp/broadcast/${broadcast.id}/start`, {
+        method: 'POST',
+      });
+      const startData = (await startRes.json().catch(() => ({}))) as BroadcastBatchResponse;
+      if (!startRes.ok || !startData.lock_token) {
+        throw new Error(startData.error || 'Could not start the broadcast');
+      }
+      held = { id: broadcast.id, token: startData.lock_token };
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
       // Custom values are fetched BEFORE the insert so each row can
@@ -491,7 +499,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               delivery_locked_at: null,
             })
             .eq('id', broadcast.id)
-            .eq('delivery_locked_at', lockToken);
+            .eq('delivery_locked_at', held.token);
           held = null;
           throw new Error(
             `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
@@ -513,6 +521,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       for (let i = 0; i < recipientIds.length; i += SEND_BATCH_SIZE) {
         const batchIds = recipientIds.slice(i, i + SEND_BATCH_SIZE);
+        if (!held) break;
+        const token = held.token;
 
         let data: BroadcastBatchResponse = {};
         let ok = false;
@@ -526,7 +536,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               body: JSON.stringify({
                 broadcast_id: broadcast.id,
                 recipient_ids: batchIds,
-                lock_token: held?.token ?? lockToken,
+                lock_token: token,
               }),
             });
             data = await res.json().catch(() => ({}));

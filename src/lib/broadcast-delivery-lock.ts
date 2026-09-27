@@ -42,16 +42,23 @@ export function isDeliveryLockActive(
 }
 
 /**
- * Is somebody still delivering this broadcast? A fresh lock, or — for a
- * campaign started by a tab that predates the lock (NULL lock) — a
- * 'sending' broadcast whose counts moved recently (the count trigger
- * bumps updated_at on every sent/failed stamp).
+ * Is somebody still delivering this broadcast? A fresh lock. A NULL lock
+ * means idle — except on a LEGACY campaign (delivery_protocol NULL,
+ * created by the old browser-stamped code, which never took the lock):
+ * there a 'sending' broadcast whose counts moved recently (the count
+ * trigger bumps updated_at on every stamp) is still that old tab sending.
  */
 export function isDeliveryActive(
-  b: { status: string; delivery_locked_at?: string | null; updated_at?: string | null },
+  b: {
+    status: string;
+    delivery_locked_at?: string | null;
+    updated_at?: string | null;
+    delivery_protocol?: number | null;
+  },
   now: number = Date.now(),
 ): boolean {
   if (b.delivery_locked_at) return isDeliveryLockActive(b.delivery_locked_at, now);
+  if (b.delivery_protocol != null) return false;
   if (b.status !== 'sending' || !b.updated_at) return false;
   const t = Date.parse(b.updated_at);
   return Number.isFinite(t) && now - t < DELIVERY_LOCK_STALE_MS;

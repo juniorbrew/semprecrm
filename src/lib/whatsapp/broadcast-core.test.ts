@@ -237,6 +237,7 @@ describe('outcome classification', () => {
     const db = seed(3);
     const rows = db.table('broadcast_recipients');
     rows[0].status = 'failed';
+    rows[0].claimed_at = '2026-09-27T10:00:00.000Z'; // failed under the claim protocol
     rows[1].status = 'uncertain';
     rows[2].status = 'sent';
     const client = db.client();
@@ -244,6 +245,47 @@ describe('outcome classification', () => {
     await deliverRecipientIds(client, ctx, rows.map((r) => r.id as string), ['failed']);
     expect(sendTemplateMessage).toHaveBeenCalledTimes(1);
     expect(rows.map((r) => r.status)).toEqual(['sent', 'uncertain', 'sent']);
+  });
+
+  it('never retries a "failed" row written by the old browser-stamped code (claimed_at NULL)', async () => {
+    // The old wizard marked a whole batch failed on any error, even when
+    // the server may already have sent it.
+    const db = seed(2);
+    const rows = db.table('broadcast_recipients');
+    rows[0].status = 'failed'; // legacy: no claimed_at
+    rows[1].status = 'failed';
+    rows[1].claimed_at = '2026-09-27T10:00:00.000Z';
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const res = await deliverRecipientIds(client, ctx, ['r0', 'r1'], ['pending', 'failed']);
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(1);
+    expect(res.find((r) => r.id === 'r0')?.outcome).toBe('skipped');
+    expect(rows[0].status).toBe('failed');
+  });
+
+  it('finds an opt-out on another contact row even past the first 1000 opted-out contacts', async () => {
+    const db = seed(1);
+    const others: Row[] = Array.from({ length: 1200 }, (_, i) => ({
+      id: `o${i}`,
+      account_id: ACCOUNT,
+      phone: `+4478${String(10000000 + i)}`,
+      phone_normalized: `4478${String(10000000 + i)}`,
+      opted_out_at: '2026-09-01T00:00:00Z',
+    }));
+    // Same number as contact c0, different contact row, opted out — last.
+    others.push({
+      id: 'dup',
+      account_id: ACCOUNT,
+      phone: phoneOf(0),
+      phone_normalized: phoneOf(0).replace('+', ''),
+      opted_out_at: '2026-09-01T00:00:00Z',
+    });
+    db.seed('contacts', others);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const [res] = await deliverRecipientIds(client, ctx, ['r0'], ['pending']);
+    expect(res).toMatchObject({ outcome: 'failed', error: 'Contact opted out' });
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
   });
 
   it('opted-out contacts and bad phones are failed without a send', async () => {
@@ -334,5 +376,15 @@ describe('finalizeBroadcastStatus', () => {
     const db = withStatuses(['sent', 'failed', 'uncertain']);
     await finalizeBroadcastStatus(db.client(), BC);
     expect(db.table('broadcasts')[0].status).toBe('sent');
+  });
+
+  it('does not call a campaign "sent" when every row is failed or uncertain', async () => {
+    const mixed = withStatuses(['failed', 'uncertain']);
+    await finalizeBroadcastStatus(mixed.client(), BC);
+    expect(mixed.table('broadcasts')[0].status).toBe('failed');
+
+    const allUncertain = withStatuses(['uncertain', 'uncertain']);
+    await finalizeBroadcastStatus(allUncertain.client(), BC);
+    expect(allUncertain.table('broadcasts')[0].status).toBe('failed');
   });
 });

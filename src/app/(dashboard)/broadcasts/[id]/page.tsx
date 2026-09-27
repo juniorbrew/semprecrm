@@ -134,11 +134,20 @@ const RECIPIENT_STATUSES: readonly RecipientStatus[] = [
 interface OutstandingCounts {
   pending: number;
   sending: number;
+  /** Failed under the claim protocol (confirmed) — retryable. */
   failed: number;
+  /** Failed by the old browser-stamped code (claimed_at NULL) — never retried. */
+  legacyFailed: number;
   uncertain: number;
 }
 
-const NO_COUNTS: OutstandingCounts = { pending: 0, sending: 0, failed: 0, uncertain: 0 };
+const NO_COUNTS: OutstandingCounts = {
+  pending: 0,
+  sending: 0,
+  failed: 0,
+  legacyFailed: 0,
+  uncertain: 0,
+};
 
 /**
  * CSV export helper — RFC 4180 quoting. Quote every field so
@@ -206,21 +215,28 @@ export default function BroadcastDetailPage() {
 
       // The list above is capped at 1000 rows by PostgREST; the numbers
       // that drive Resume / Retry come from exact counts instead.
-      const countOf = async (s: keyof OutstandingCounts) => {
-        const { count } = await supabase
+      const countOf = async (
+        s: 'pending' | 'sending' | 'failed' | 'uncertain',
+        claimed?: boolean,
+      ) => {
+        let q = supabase
           .from('broadcast_recipients')
           .select('id', { count: 'exact', head: true })
           .eq('broadcast_id', broadcastId)
           .eq('status', s);
+        if (claimed === true) q = q.not('claimed_at', 'is', null);
+        if (claimed === false) q = q.is('claimed_at', null);
+        const { count } = await q;
         return count ?? 0;
       };
-      const [pending, sending, failed, uncertain] = await Promise.all([
+      const [pending, sending, failed, legacyFailed, uncertain] = await Promise.all([
         countOf('pending'),
         countOf('sending'),
-        countOf('failed'),
+        countOf('failed', true),
+        countOf('failed', false),
         countOf('uncertain'),
       ]);
-      setCounts({ pending, sending, failed, uncertain });
+      setCounts({ pending, sending, failed, legacyFailed, uncertain });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load broadcast');
     } finally {
@@ -387,7 +403,8 @@ export default function BroadcastDetailPage() {
   const status = getBroadcastStatus(broadcast.status);
 
   const pendingCount = counts.pending;
-  // Only CONFIRMED failures are retryable; 'uncertain' never is.
+  // Only CONFIRMED failures (under the claim protocol) are retryable;
+  // 'uncertain' and old-code failures never are.
   const retryableCount = counts.failed;
   // Someone's tab (or a server pass) is still sending — a fresh lock, or
   // a lock-less 'sending' campaign whose counts moved recently. Resuming
@@ -571,12 +588,22 @@ export default function BroadcastDetailPage() {
       {/* Uncertain outcome: Meta may or may not have these. They are never
           resent automatically — a repeated broadcast gets the number
           banned — so the operator reviews them. */}
-      {uncertainTotal > 0 && (
+      {(uncertainTotal > 0 || counts.legacyFailed > 0) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
           <div className="text-sm">
-            <p className="font-medium text-amber-300">
-              {t('Uncertain result')}: {uncertainTotal}
-            </p>
+            {uncertainTotal > 0 && (
+              <p className="font-medium text-amber-300">
+                {t('Uncertain result')}: {uncertainTotal}
+              </p>
+            )}
+            {counts.legacyFailed > 0 && (
+              <p
+                className="font-medium text-amber-300"
+                title={t('Marked failed by the previous version, which failed whole batches even when the server may have sent them — so they are never retried.')}
+              >
+                {t('Old failure (not retryable)')}: {counts.legacyFailed}
+              </p>
+            )}
             <p className="mt-0.5 text-muted-foreground">
               {t('The connection to Meta failed or the send was interrupted, so these messages may or may not have been delivered. They are never resent automatically — check them before contacting these people again.')}
             </p>

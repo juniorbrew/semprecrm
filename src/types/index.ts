@@ -565,6 +565,10 @@ export interface Broadcast {
   delivery_locked_at?: string | null;
   /** Header media URL chosen in the wizard (migration 051). */
   header_media_url?: string | null;
+  /** NULL = legacy campaign (pre-051 code); 1 = per-row claim protocol. */
+  delivery_protocol?: number | null;
+  /** Rows with an uncertain outcome (migration 051, trigger-maintained). */
+  uncertain_count?: number;
   created_at: string;
   updated_at?: string;
 }

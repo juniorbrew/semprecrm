@@ -81,6 +81,10 @@ function parseTerm(term: string): Pred {
       return (r) => r[col] != null && cmp(r[col], val) < 0;
     case 'is':
       return val === 'null' ? (r) => r[col] == null : (r) => String(r[col]) === val;
+    case 'not': {
+      const inner = parseTerm(`${col}.${val}`);
+      return (r) => !inner(r);
+    }
     default:
       throw new Error(`fake-supabase: unsupported or() operator ${op}`);
   }

@@ -41,6 +41,15 @@ describe('isDeliveryActive', () => {
       isDeliveryActive({ status: 'sent', delivery_locked_at: null, updated_at: '2026-09-27T11:58:00Z' }, now),
     ).toBe(false);
   });
+
+  it('a new-protocol campaign with a released lock is idle, even with fresh activity', () => {
+    expect(
+      isDeliveryActive(
+        { status: 'sending', delivery_locked_at: null, updated_at: '2026-09-27T11:59:00Z', delivery_protocol: 1 },
+        now,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe('newLockToken', () => {

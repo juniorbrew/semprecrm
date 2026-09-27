@@ -77,6 +77,11 @@ export const DICT_INBOX: Record<string, string> = {
   'Sending in the background': 'Enviando em segundo plano',
   'Left for another run': 'Restam para outra rodada',
   'Uncertain result': 'Resultado incerto',
+  'Old failure (not retryable)': 'Falha antiga (não reenviável)',
+  'Marked failed by the previous version, which failed whole batches even when the server may have sent them — so they are never retried.':
+    'Marcadas como falha pela versão anterior, que registrava o lote inteiro como falha mesmo quando o servidor pode ter enviado — por isso nunca são reenviadas.',
+  'Meta may or may not have received these messages. They are never resent automatically.':
+    'A Meta pode ou não ter recebido estas mensagens. Elas nunca são reenviadas automaticamente.',
   'The connection to Meta failed or the send was interrupted, so these messages may or may not have been delivered. They are never resent automatically — check them before contacting these people again.':
     'A conexão com a Meta falhou ou o envio foi interrompido, então estas mensagens podem ou não ter sido entregues. Elas nunca são reenviadas automaticamente — confira antes de contatar essas pessoas de novo.',
   'Rows interrupted more than 10 minutes ago are marked as uncertain and the broadcast status is settled.':

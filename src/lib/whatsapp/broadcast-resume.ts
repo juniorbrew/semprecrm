@@ -18,6 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { DELIVERY_LOCK_STALE_MS } from '@/lib/broadcast-delivery-lock';
 import {
   BroadcastError,
+  claimableStatusFilter,
   expireStaleSending,
   loadDeliveryContext,
   type ClaimableStatus,
@@ -47,9 +48,10 @@ export function scopeStatuses(scope: ResumeScope): ClaimableStatus[] {
 
 /**
  * Take the delivery lock with MY token. One conditional UPDATE: it wins
- * only when nobody holds a fresh lock — and, for a campaign started by a
- * tab that predates the lock (NULL lock), only when the campaign isn't
- * still 'sending' with recently-moving counts.
+ * only when nobody holds a fresh lock. A NULL lock means "idle" — except
+ * on a LEGACY campaign (delivery_protocol NULL: its tab never used the
+ * lock), where a 'sending' status with recently-moving counts still
+ * means that old tab is sending.
  */
 export async function claimBroadcastDelivery(
   db: SupabaseClient,
@@ -67,6 +69,7 @@ export async function claimBroadcastDelivery(
     .eq('account_id', accountId)
     .or(
       `delivery_locked_at.lt.${cutoff},` +
+        `and(delivery_locked_at.is.null,delivery_protocol.not.is.null),` +
         `and(delivery_locked_at.is.null,status.neq.sending),` +
         `and(delivery_locked_at.is.null,updated_at.lt.${cutoff})`,
     )
@@ -114,7 +117,7 @@ export async function planBroadcastResume(
       .from('broadcast_recipients')
       .select('id', { count: 'exact', head: true })
       .eq('broadcast_id', broadcastId)
-      .in('status', from)
+      .or(claimableStatusFilter(from))
       .is('template_params', null);
     if ((legacy ?? 0) > 0) {
       throw new BroadcastError(
@@ -129,13 +132,13 @@ export async function planBroadcastResume(
     .from('broadcast_recipients')
     .select('id', { count: 'exact', head: true })
     .eq('broadcast_id', broadcastId)
-    .in('status', from);
+    .or(claimableStatusFilter(from));
 
   const { data: page, error } = await db
     .from('broadcast_recipients')
     .select('id')
     .eq('broadcast_id', broadcastId)
-    .in('status', from)
+    .or(claimableStatusFilter(from))
     // Oldest first, so repeated capped passes walk the backlog in order.
     .order('created_at', { ascending: true })
     .range(0, RESUME_MAX_PER_REQUEST - 1);

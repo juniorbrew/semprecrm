@@ -226,6 +226,7 @@ export const DICT_API: Record<string, string> = {
   'Provide broadcast_id, lock_token and 1–50 recipient_ids. Reload the page if this tab is out of date.':
     'Requisição de envio inválida. Recarregue a página se esta aba estiver desatualizada.',
   'Send interrupted — outcome unknown': 'Envio interrompido — resultado desconhecido',
+  'Could not start the broadcast': 'Não foi possível iniciar o disparo',
   'Meta accepted the request but returned no message id':
     'A Meta aceitou a requisição, mas não devolveu o id da mensagem',
 
