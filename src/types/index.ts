@@ -324,6 +324,14 @@ export interface Message {
    * cue (renders with a "↩ button reply" affordance).
    */
   interactive_reply_id?: string;
+  /**
+   * Meta's reason for a failed send, from the `failed` status webhook's
+   * `errors[0]` (code / title / error_data.details). Only set when
+   * `status === 'failed'`; never cleared by a later status. Migration 052.
+   */
+  error_code?: number | null;
+  error_title?: string | null;
+  error_details?: string | null;
 }
 
 export type ReactionActor = 'customer' | 'agent';
@@ -462,6 +470,12 @@ export interface MessageTemplate {
   rejection_reason?: string;
   quality_score?: 'GREEN' | 'YELLOW' | 'RED';
   submission_error?: string;
+  /**
+   * Stub created by the template webhook for a template that exists on
+   * Meta but was never synced here (migration 053). No body/components
+   * yet — hidden from pickers, refused by senders until a sync clears it.
+   */
+  needs_sync?: boolean;
   last_submitted_at?: string;
   created_at: string;
 }

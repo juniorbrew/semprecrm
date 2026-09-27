@@ -283,4 +283,14 @@ export const DICT_API: Record<string, string> = {
   'Verification failed': 'A verificação falhou',
   'Verification token mismatch': 'O token de verificação não confere',
   'Invalid signature': 'A assinatura da requisição é inválida',
+
+  // ---- Template sends refused for a webhook stub (migration 053) ----------
+  'This template was created directly in Meta and has not been synced yet — run "Sync from Meta" in Settings → Templates before sending it.':
+    'Este modelo foi criado direto na Meta e ainda não foi sincronizado — use "Sincronizar da Meta" em Configurações → Modelos antes de enviá-lo.',
+
+  // ---- POST /api/whatsapp/config — id checks (wacrm #505) ----------------
+  'Phone Number ID must contain only digits — it is the numeric id shown under Meta → WhatsApp → API Setup, not the phone number itself.':
+    'O ID do número de telefone deve ter só dígitos — é o ID numérico mostrado em Meta → WhatsApp → Configuração da API, não o número de telefone.',
+  'WhatsApp Business Account ID must contain only digits — copy it from Meta → WhatsApp → API Setup.':
+    'O ID da conta do WhatsApp Business deve ter só dígitos — copie-o em Meta → WhatsApp → Configuração da API.',
 };

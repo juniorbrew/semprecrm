@@ -248,6 +248,10 @@ const ALLOWED_CONTENT_TYPES = new Set([
 export function toContentType(type: string): string {
   if (ALLOWED_CONTENT_TYPES.has(type)) return type
   if (type === 'sticker') return 'image' // stickers are images
+  // Template quick-reply tap (Meta `type: 'button'`). It IS an
+  // interactive reply — mapping it to 'interactive' keeps its
+  // interactive_reply_id (wacrm #478).
+  if (type === 'button') return 'interactive'
   return 'text' // unknown → text fallback
 }
 

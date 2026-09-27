@@ -15,6 +15,8 @@ import {
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
 import { supabaseServerUrl } from '@/lib/supabase/url'
+import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
+import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,8 +55,26 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  /**
+   * Set when the customer taps a QUICK_REPLY button on a *template*
+   * message — a broadcast, or any template send. Meta uses a different
+   * envelope from `interactive` above: `type: 'button'`, the label in
+   * `button.text`, and the payload configured on the template's button
+   * in `button.payload` (Meta's own template editor doesn't ask for a
+   * payload and mirrors the label into it). wacrm #478.
+   */
+  button?: { text?: string; payload?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+}
+
+/** One entry of a failed status's `errors` array, as Meta sends it. */
+interface MetaStatusError {
+  code: number
+  title: string
+  message?: string
+  error_data?: { details?: string }
+  href?: string
 }
 
 interface WhatsAppWebhookEntry {
@@ -76,6 +96,13 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        /**
+         * Only present when `status === 'failed'`. Meta's reason for the
+         * failure — `code` is a stable numeric error code (e.g. 131049),
+         * `title` a short label, `error_data.details` the human-readable
+         * explanation. wacrm #535.
+         */
+        errors?: MetaStatusError[]
       }>
     }
     field: string
@@ -204,9 +231,18 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       // have a different value shape — route them through the
       // dedicated handler. Skip the messaging branches below so we
       // don't try to read message-shaped fields off a template event.
+      //
+      // `entry.id` is the WABA id for template events — the handler
+      // resolves it server-side to exactly one whatsapp_config row when
+      // the template has no local row yet, and stubs one (wacrm #534).
+      // The body is HMAC-verified above, so the id comes from Meta.
       if (isTemplateWebhookField(change.field)) {
         await handleTemplateWebhookChange(
-          { field: change.field, value: change.value as unknown },
+          {
+            field: change.field,
+            value: change.value as unknown,
+            wabaId: entry.id,
+          },
           supabaseAdmin(),
         )
         continue
@@ -328,21 +364,77 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
   return ii > ci
 }
 
+/** PostgREST "column not in schema cache" / Postgres undefined_column. */
+function isMissingColumnError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code
+  return code === 'PGRST204' || code === '42703'
+}
+
 async function handleStatusUpdate(status: {
   id: string
   status: string
   timestamp: string
   recipient_id: string
+  errors?: MetaStatusError[]
 }) {
-  // 1) Mirror onto messages (legacy behavior) — Meta's status values
-  //    already match the CHECK constraint on messages.status.
-  const { error: msgErr } = await supabaseAdmin()
-    .from('messages')
-    .update({ status: status.status })
-    .eq('message_id', status.id)
+  // Meta's reason for a failed send (wacrm #535). Only read on `failed`;
+  // a later non-failed status for the same wamid leaves the error
+  // columns alone rather than clearing them, so the reason survives.
+  const first = status.status === 'failed' ? status.errors?.[0] : undefined
+  const failure =
+    first && (first.code !== undefined || first.title)
+      ? {
+          code: Number(first.code) || 0,
+          title: String(
+            first.title || first.message || `Meta error ${first.code}`,
+          ).slice(0, 500),
+          details: first.error_data?.details
+            ? String(first.error_data.details).slice(0, 2000)
+            : null,
+        }
+      : null
 
-  if (msgErr) {
-    console.error('Error updating message status:', msgErr)
+  if (failure) {
+    console.warn(
+      `[webhook] WhatsApp message ${status.id} failed: [${failure.code}] ${failure.title}` +
+        (failure.details ? ` — ${failure.details}` : ''),
+    )
+  }
+
+  // 1) Mirror onto messages — forward-only, same ladder the QR ack
+  //    route uses (sending → sent → delivered → read; `failed` only
+  //    from sending/sent and terminal). Meta does not promise ordering
+  //    and replays webhooks: without the guard a late `sent` /
+  //    `delivered` overwrote `failed` and the failure reason vanished
+  //    from the inbox. The `.in('status', …)` filter makes the database
+  //    enforce it atomically. The failure reason rides in the same
+  //    update (migration 052).
+  if (isMessageAckStatus(status.status)) {
+    const messageUpdate: Record<string, unknown> = { status: status.status }
+    if (failure) {
+      messageUpdate.error_code = failure.code
+      messageUpdate.error_title = failure.title
+      messageUpdate.error_details = failure.details
+    }
+    const allowedFrom = statusesBefore(status.status)
+    const runMessageUpdate = (patch: Record<string, unknown>) =>
+      supabaseAdmin()
+        .from('messages')
+        .update(patch)
+        .eq('message_id', status.id)
+        .in('status', allowedFrom)
+
+    let { error: msgErr } = await runMessageUpdate(messageUpdate)
+    if (msgErr && failure && isMissingColumnError(msgErr)) {
+      // Migration 052 not applied yet — don't lose the status itself.
+      console.warn(
+        '[webhook] messages.error_* columns missing (apply migration 052); storing the failed status without the reason',
+      )
+      ;({ error: msgErr } = await runMessageUpdate({ status: status.status }))
+    }
+    if (msgErr) {
+      console.error('Error updating message status:', msgErr)
+    }
   }
 
   // 2) Mirror onto broadcast_recipients via whatsapp_message_id
@@ -371,6 +463,10 @@ async function handleStatusUpdate(status: {
   if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
   if (status.status === 'delivered') update.delivered_at = tsIso
   if (status.status === 'read') update.read_at = tsIso
+  // broadcast_recipients already has a free-text error_message column
+  // (migration 001), so the reason is folded into it rather than adding
+  // columns there — the campaign detail page shows it as-is.
+  if (failure) update.error_message = recipientErrorMessage(failure)
 
   const { error: recUpdateErr } = await supabaseAdmin()
     .from('broadcast_recipients')
@@ -645,6 +741,26 @@ async function parseMessageContent(
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
+    }
+
+    case 'button': {
+      // Quick-reply tap on a TEMPLATE message (broadcast replies). Meta
+      // delivers these under their own `button` envelope, so without this
+      // case they landed in the inbox as "[Unsupported message type:
+      // button]" with no reply id — the Flows engine never saw the tap
+      // and nothing chained off a broadcast reply (wacrm #478).
+      //
+      // `payload` is the stable value (the analogue of
+      // `button_reply.id`); `text` is the visible label. Prefer the
+      // payload for routing and the label for display, each falling
+      // back to the other since a template may carry only one.
+      const payload = message.button?.payload || null
+      const label = message.button?.text || null
+      return {
+        ...empty,
+        contentText: label || payload,
+        interactiveReplyId: payload || label,
+      }
     }
 
     default:

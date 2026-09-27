@@ -17,6 +17,7 @@ import {
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
+import { failureReason } from "@/lib/whatsapp/failure-reason";
 
 interface MessageBubbleProps {
   message: Message;
@@ -29,7 +30,14 @@ interface MessageBubbleProps {
 
 // Delivery state is icon-only; the title/aria-label carry the words
 // ("Sent", "Delivered"…) so the DOM translator can localize them.
-function StatusIcon({ status }: { status: Message["status"] }) {
+function StatusIcon({
+  status,
+  reason,
+}: {
+  status: Message["status"];
+  /** Meta's failure reason, shown as the failed icon's tooltip. */
+  reason?: string | null;
+}) {
   switch (status) {
     case "sending":
       return (
@@ -57,7 +65,7 @@ function StatusIcon({ status }: { status: Message["status"] }) {
       );
     case "failed":
       return (
-        <span title="Failed" aria-label="Failed" role="img">
+        <span title={reason ?? "Failed"} aria-label="Failed" role="img">
           <XCircle className="h-3 w-3 text-red-400" />
         </span>
       );
@@ -140,7 +148,14 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   );
 }
 
-function MessageContent({ message }: { message: Message }) {
+function MessageContent({
+  message,
+  isAgent,
+}: {
+  message: Message;
+  /** Outbound bubbles sit on the primary fill — badges must invert. */
+  isAgent: boolean;
+}) {
   switch (message.content_type) {
     case "text":
       return (
@@ -215,16 +230,37 @@ function MessageContent({ message }: { message: Message }) {
       );
 
     case "template":
+      // Outbound templates sit on the primary fill, where the old
+      // `bg-primary/20 text-primary` chip was invisible; paired with a
+      // null content_text that rendered an empty bubble (wacrm #483).
+      // Invert on the primary fill, and fall back to the template name
+      // for legacy rows stored without a body.
       return (
         <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          <span
+            className={cn(
+              "mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              isAgent
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-primary/20 text-primary",
+            )}
+          >
             <LayoutTemplate className="h-3 w-3" />
             Template
           </span>
-          {message.content_text && (
+          {message.content_text ? (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
               {message.content_text}
             </p>
+          ) : (
+            message.template_name && (
+              <p
+                className="mt-1 break-words text-sm italic opacity-80"
+                data-no-translate
+              >
+                {message.template_name}
+              </p>
+            )
           )}
         </div>
       );
@@ -274,6 +310,7 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
+  const failure = isAgent ? failureReason(message) : null;
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
   // group matches the bubble's content area, not the full row.
@@ -299,7 +336,7 @@ export function MessageBubble({
             onPrimary={isAgent}
           />
         )}
-        <MessageContent message={message} />
+        <MessageContent message={message} isAgent={isAgent} />
         <div
           className={cn(
             "mt-1 flex items-center gap-1",
@@ -318,9 +355,20 @@ export function MessageBubble({
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} />}
+          {isAgent && <StatusIcon status={message.status} reason={failure} />}
         </div>
       </div>
+      {failure && (
+        <p
+          className="mt-0.5 max-w-full px-1 text-[10px] leading-tight text-muted-foreground"
+          title={failure}
+        >
+          {/* Separate nodes: "Not delivered" is a dictionary key; Meta's
+              reason is English from the API and stays as sent. */}
+          <span>Not delivered</span>:{" "}
+          <span data-no-translate>{failure}</span>
+        </p>
+      )}
       {reactions && reactions.length > 0 && onToggleReaction && (
         <MessageReactions
           reactions={reactions}

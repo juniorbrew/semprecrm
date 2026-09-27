@@ -18,6 +18,9 @@ const h = vi.hoisted(() => ({
       contact: { id: 'c-1', phone: '+55 11 99999-0000' },
     } as Record<string, unknown>,
     inserted: [] as Record<string, unknown>[],
+    // Local message_templates rows (wacrm #483 persistence tests).
+    templates: [] as Record<string, unknown>[],
+    convUpdates: [] as Record<string, unknown>[],
     // Papel de quem chama (requireRole lê do profile). Enviar exige 'agent'.
     role: 'agent' as string,
   },
@@ -73,7 +76,10 @@ function builder(table: string) {
       }
     }
     if (table === 'conversations') {
-      if (ops.type === 'update') return { data: null, error: null }
+      if (ops.type === 'update') {
+        h.state.convUpdates.push(ops.payload ?? {})
+        return { data: null, error: null }
+      }
       return { data: h.state.conversation, error: null }
     }
     if (table === 'whatsapp_config') {
@@ -84,7 +90,7 @@ function builder(table: string) {
       h.state.inserted.push(row)
       return { data: row, error: null }
     }
-    if (table === 'message_templates') return { data: null, error: null }
+    if (table === 'message_templates') return { data: h.state.templates, error: null }
     return { data: null, error: null }
   }
   return b
@@ -124,6 +130,8 @@ beforeEach(() => {
     contact: { id: 'c-1', phone: '+55 11 99999-0000' },
   }
   h.state.inserted = []
+  h.state.templates = []
+  h.state.convUpdates = []
   h.state.role = 'agent'
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = 'shh'
@@ -270,5 +278,125 @@ describe('POST /api/whatsapp/send — papel mínimo', () => {
     fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'BAILEYS-1' }))
     const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
     expect(res.status).toBeLessThan(300)
+  })
+})
+
+// wacrm #483 — template sends persist the substituted body so the inbox
+// bubble and the conversation preview are never empty.
+describe('POST /api/whatsapp/send — template persistence', () => {
+  const TEMPLATE = {
+    id: 'tpl-1',
+    user_id: 'user-1',
+    account_id: 'acct-1',
+    name: 'pedido_enviado',
+    language: 'pt_BR',
+    category: 'UTILITY',
+    status: 'APPROVED',
+    body_text: 'Olá {{1}}, seu pedido {{2}} saiu para entrega.',
+  }
+
+  beforeEach(() => {
+    h.state.conversation.channel = 'official'
+    h.meta.sendTemplateMessage.mockClear()
+  })
+
+  it('stores the substituted body when the caller sends no text', async () => {
+    h.state.templates = [TEMPLATE]
+    const res = await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'pedido_enviado',
+        template_language: 'pt_BR',
+        template_params: ['Maria', '#42'],
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(h.state.inserted[0]).toMatchObject({
+      content_type: 'template',
+      content_text: 'Olá Maria, seu pedido #42 saiu para entrega.',
+      template_name: 'pedido_enviado',
+    })
+    expect(h.state.convUpdates.at(-1)).toMatchObject({
+      last_message_text: 'Olá Maria, seu pedido #42 saiu para entrega.',
+    })
+  })
+
+  it('reads body values from the structured params shape too', async () => {
+    h.state.templates = [TEMPLATE]
+    await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'pedido_enviado',
+        template_language: 'pt_BR',
+        template_message_params: { body: ['João', '#7'] },
+      }),
+    )
+    expect(h.state.inserted[0]).toMatchObject({
+      content_text: 'Olá João, seu pedido #7 saiu para entrega.',
+    })
+  })
+
+  it("keeps the composer's pre-rendered text", async () => {
+    h.state.templates = [TEMPLATE]
+    await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'pedido_enviado',
+        template_language: 'pt_BR',
+        template_params: ['Maria', '#42'],
+        content_text: 'texto do compositor',
+      }),
+    )
+    expect(h.state.inserted[0]).toMatchObject({ content_text: 'texto do compositor' })
+  })
+
+  it("sends the local row's language when the caller names none", async () => {
+    h.state.templates = [{ ...TEMPLATE, language: 'en' }]
+    await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'pedido_enviado',
+        template_params: ['Ann', '#1'],
+      }),
+    )
+    expect(h.meta.sendTemplateMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'en' }),
+    )
+    expect(h.state.inserted[0]).toMatchObject({
+      content_text: 'Olá Ann, seu pedido #1 saiu para entrega.',
+    })
+  })
+
+  it('refuses a webhook stub template (needs_sync) with 409 and sends nothing', async () => {
+    h.state.templates = [{ ...TEMPLATE, body_text: '', needs_sync: true }]
+    const res = await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'pedido_enviado',
+        template_language: 'pt_BR',
+      }),
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ code: 'template_needs_sync' })
+    expect(h.meta.sendTemplateMessage).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
+  })
+
+  it('leaves content_text null when there is no local template row', async () => {
+    await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'template',
+        template_name: 'desconhecido',
+        template_language: 'pt_BR',
+      }),
+    )
+    expect(h.state.inserted[0]).toMatchObject({ content_text: null })
+    expect(h.state.convUpdates.at(-1)).toMatchObject({ last_message_text: '[template]' })
   })
 })

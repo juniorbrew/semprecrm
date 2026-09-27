@@ -327,4 +327,33 @@ export const DICT_SETTINGS: Record<string, string> = {
   'NGN — Nigerian naira': 'NGN — Naira nigeriana',
   'SGD — Singapore dollar': 'SGD — Dólar de Singapura',
   'MXN — Mexican peso': 'MXN — Peso mexicano',
+
+  // ---- WhatsApp oficial: why a Meta connection failed (wacrm #505) ----
+  'Last save failed': 'O último salvamento falhou',
+  Step: 'Etapa',
+  'Meta error code': 'Código de erro da Meta',
+  'Trace ID': 'ID de rastreio (trace id)',
+  'Meta said': 'Resposta da Meta',
+  'Quote these details when contacting Meta support.':
+    'Informe estes detalhes ao entrar em contato com o suporte da Meta.',
+  'Reading the phone number': 'Leitura do número de telefone',
+  'Listing the WABA phone numbers': 'Listagem dos números da WABA',
+  'Registering the phone number': 'Registro do número de telefone',
+  'Subscribing the WABA to the app': 'Inscrição da WABA no app',
+  'Reading the WABA subscriptions': 'Leitura das inscrições da WABA',
+  'Phone Number ID must contain only digits. Copy the numeric id from Meta → WhatsApp → API Setup, not the phone number itself.':
+    'O ID do número de telefone deve ter só dígitos. Copie o ID numérico em Meta → WhatsApp → Configuração da API, não o número de telefone.',
+  'WhatsApp Business Account ID must contain only digits. Copy it from Meta → WhatsApp → API Setup.':
+    'O ID da conta do WhatsApp Business deve ter só dígitos. Copie-o em Meta → WhatsApp → Configuração da API.',
+  'The WhatsApp Business Account is subscribed to this app — inbound webhooks can be delivered.':
+    'A conta do WhatsApp Business está inscrita neste app — os webhooks de entrada podem ser entregues.',
+  'The WhatsApp Business Account is subscribed to a different Meta app, not this one, so inbound webhooks go to that app. Save again with an access token from this app to subscribe it.':
+    'A conta do WhatsApp Business está inscrita em outro app da Meta, não neste, então os webhooks de entrada vão para aquele app. Salve de novo com um token de acesso deste app para inscrevê-la.',
+  'Saved, but with a warning': 'Salvo, mas com um aviso',
+  // ---- Templates: webhook stub awaiting sync (migration 053) ----
+  'Needs sync': 'Precisa sincronizar',
+  'Created directly in Meta and not synced yet — click "Sync from Meta" to load its content. Until then it can\'t be sent.':
+    'Criado direto na Meta e ainda não sincronizado — clique em "Sincronizar da Meta" para carregar o conteúdo. Até lá ele não pode ser enviado.',
+  'The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it.':
+    'A conta do WhatsApp Business não está inscrita neste app, então a Meta não entregará os webhooks de entrada. Informe o token de acesso de novo e salve para inscrevê-la.',
 };

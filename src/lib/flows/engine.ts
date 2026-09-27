@@ -110,6 +110,31 @@ export function matchesKeywordTrigger(
   return false;
 }
 
+/**
+ * Does an inbound message start a keyword flow? (wacrm #490)
+ *
+ * Typed text and a button / list tap's visible title go through the
+ * normal keyword semantics (contains / exact, as configured) — the
+ * title is what the customer would have typed had the button not been
+ * there. The tap's reply_id (a template quick-reply payload, or the id
+ * we put on an interactive button) only matches a keyword EXACTLY
+ * (trimmed, case-insensitive): ids are short author slugs like `btn_1`,
+ * and substring matching would let a keyword such as `1` or `btn` fire
+ * on every tap.
+ */
+export function matchesEntryKeyword(
+  message: ParsedInbound,
+  cfg: KeywordTriggerConfig,
+): boolean {
+  if (message.kind === "text") return matchesKeywordTrigger(message.text, cfg);
+  if (message.reply_title?.trim() && matchesKeywordTrigger(message.reply_title, cfg)) {
+    return true;
+  }
+  const id = message.reply_id?.trim().toLowerCase();
+  if (!id) return false;
+  return (cfg.keywords ?? []).some((k) => !!k && k.trim().toLowerCase() === id);
+}
+
 /** Nodes that advance to a next_node_key without waiting for input. */
 export function isAutoAdvancing(node_type: string): boolean {
   return (
@@ -315,9 +340,14 @@ async function findEntryFlow(
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
-  // Only text messages can match an entry trigger. Interactive replies
-  // are responses to existing prompts; they never start a new flow.
-  if (message.kind !== "text") return null;
+  // A tap used to be rejected outright here, on the reasoning that
+  // interactive replies answer existing prompts. That only holds while
+  // a prompt is outstanding — and this function runs solely when the
+  // contact has NO active run, so there is nothing the tap could be
+  // answering. Rejecting it meant a flow keyed on a button's label never
+  // started when the button came from an automation or a template
+  // quick-reply (broadcast), although typing the same words did
+  // (wacrm #490).
 
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
@@ -333,10 +363,8 @@ async function findEntryFlow(
   const typed = flows as FlowRow[];
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
-      if (matchesKeywordTrigger(
-        message.text,
-        flow.trigger_config as KeywordTriggerConfig,
-      )) {
+      const cfg = flow.trigger_config as KeywordTriggerConfig;
+      if (matchesEntryKeyword(message, cfg)) {
         return flow;
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
