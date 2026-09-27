@@ -525,7 +525,21 @@ export interface Deal {
 }
 
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
-export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
+/**
+ * 'sending'   — claimed by a delivery pass (migration 051); never resent.
+ * 'uncertain' — Meta may or may not have it (network/timeout/5xx, or the
+ *               pass died mid-send); never resent automatically.
+ * 'failed'    — CONFIRMED not sent; the only status "Reenviar falhas" retries.
+ */
+export type RecipientStatus =
+  | 'pending'
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'replied'
+  | 'failed'
+  | 'uncertain';
 
 export interface Broadcast {
   id: string;
@@ -552,6 +566,7 @@ export interface Broadcast {
   /** Header media URL chosen in the wizard (migration 051). */
   header_media_url?: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface BroadcastRecipient {
@@ -582,6 +597,8 @@ export interface BroadcastRecipient {
    * Added in migration 051; null on rows created before it.
    */
   template_params?: string[] | null;
+  /** When a delivery pass claimed the row (migration 051). */
+  claimed_at?: string | null;
   created_at: string;
   contact?: Contact;
 }

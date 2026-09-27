@@ -219,6 +219,15 @@ export const DICT_API: Record<string, string> = {
   'Failed to load recipients': 'Não foi possível carregar os destinatários',
   'No valid phone number on contact': 'Contato sem telefone válido',
   'Contact opted out': 'Contato pediu para não receber mensagens',
+  'This broadcast was created before resuming existed and did not save each recipient’s variables. Resuming would send the message without them — create a new broadcast for the remaining contacts.':
+    'Este disparo foi criado antes de existir a retomada e não guardou as variáveis de cada destinatário. Retomar enviaria a mensagem sem elas — crie um novo disparo para os contatos restantes.',
+  'This broadcast is being delivered by another pass. This tab stopped sending — open the broadcast to follow it.':
+    'Este disparo está sendo entregue por outro envio. Esta aba parou de enviar — abra o disparo para acompanhar.',
+  'Provide broadcast_id, lock_token and 1–50 recipient_ids. Reload the page if this tab is out of date.':
+    'Requisição de envio inválida. Recarregue a página se esta aba estiver desatualizada.',
+  'Send interrupted — outcome unknown': 'Envio interrompido — resultado desconhecido',
+  'Meta accepted the request but returned no message id':
+    'A Meta aceitou a requisição, mas não devolveu o id da mensagem',
 
   // ---- WhatsApp: template header media (wacrm #562) ----
   'Could not fetch the header media URL. Make sure it is publicly reachable.':

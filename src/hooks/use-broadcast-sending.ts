@@ -8,7 +8,10 @@ import {
   batchRetryDelayMs,
 } from '@/lib/broadcast-retry';
 import { headerMediaMessageParams } from '@/lib/broadcast-header-media';
+import { newLockToken, releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
 import { normalizeKey } from '@/lib/contacts/dedupe';
+import { toast } from 'sonner';
+import { useLanguage } from '@/hooks/use-language';
 import { Contact, MessageTemplate } from '@/types';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -80,11 +83,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface BroadcastApiResult {
-  phone: string;
-  status: 'sent' | 'failed';
-  whatsapp_message_id?: string;
+/** Response of POST /api/whatsapp/broadcast (row-based, server-stamped). */
+interface BroadcastBatchResponse {
   error?: string;
+  code?: string;
+  lock_token?: string;
+  sent?: number;
+  failed?: number;
+  uncertain?: number;
+  skipped?: number;
 }
 
 /** contactId → (customFieldId → value). */
@@ -158,23 +165,9 @@ async function fetchCustomValueIndex(
   return index;
 }
 
-/** Refresh the wizard's delivery lock (migration 051). Best-effort. */
-async function renewDeliveryLock(
-  supabase: ReturnType<typeof createClient>,
-  broadcastId: string,
-): Promise<void> {
-  await supabase
-    .from('broadcasts')
-    .update({ delivery_locked_at: new Date().toISOString() })
-    .eq('id', broadcastId)
-    .then(
-      () => undefined,
-      () => undefined,
-    );
-}
-
 export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
+  const { t } = useLanguage();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -373,11 +366,11 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     setProgress(0);
 
     const supabase = createClient();
-    // Set once the broadcast row exists and holds the delivery lock
-    // (migration 051); cleared when the lock is released. The finally
-    // block releases it if the send dies half-way, so "Retomar" on the
-    // detail page doesn't have to wait out the staleness window.
-    let lockedBroadcastId: string | null = null;
+    // This tab's delivery lock (migration 051): the broadcast id plus MY
+    // token. The server renews it per batch and hands back the next token;
+    // releasing is conditional on the token, so this tab can never clear a
+    // lock a resume pass took over. Cleared once released.
+    let held: { id: string; token: string } | null = null;
 
     try {
       // ── Step 0: Resolve current user ──────────────────────────────
@@ -406,6 +399,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
+      const lockToken = newLockToken();
       const { data: broadcast, error: broadcastError } = await supabase
         .from('broadcasts')
         .insert({
@@ -419,9 +413,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           header_media_url:
             headerMediaMessageParams(payload.template, payload.headerMediaUrl)
               ?.headerMediaUrl ?? null,
-          // This tab is the delivery pass: hold the lock (renewed per
-          // batch below) so "Retomar" can't double-send while it runs.
-          delivery_locked_at: new Date().toISOString(),
+          // This tab is the delivery pass: it holds the lock (renewed by
+          // the server per batch) so "Retomar" can't start while it runs.
+          delivery_locked_at: lockToken,
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -445,7 +439,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         );
       }
 
-      lockedBroadcastId = broadcast.id;
+      held = { id: broadcast.id, token: lockToken };
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
       // Custom values are fetched BEFORE the insert so each row can
@@ -471,11 +465,15 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         ),
       }));
 
+      // Ids come back from the insert itself — a later SELECT would be
+      // capped at 1000 rows by PostgREST and silently drop the rest.
+      const recipientIds: string[] = [];
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);
-        const { error: recipientError } = await supabase
+        const { data: insertedRows, error: recipientError } = await supabase
           .from('broadcast_recipients')
-          .insert(batch);
+          .insert(batch)
+          .select('id');
         if (recipientError) {
           // Previous impl logged and marched on — the broadcast then ran
           // with an incomplete recipient set, so webhook status updates
@@ -489,179 +487,98 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               failed_count: contacts.length,
               delivery_locked_at: null,
             })
-            .eq('id', broadcast.id);
-          lockedBroadcastId = null;
+            .eq('id', broadcast.id)
+            .eq('delivery_locked_at', lockToken);
+          held = null;
           throw new Error(
             `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
           );
         }
+        for (const r of (insertedRows ?? []) as { id: string }[]) recipientIds.push(r.id);
       }
 
-      // ── Step 4: Fetch recipients back (joined contact) ────────────
+      // ── Step 4: Send, one server-side batch at a time ─────────────
+      // The SERVER claims each row (pending → sending, atomically), sends
+      // it and stamps sent / failed / uncertain itself. This tab only
+      // passes row ids: it never stamps rows, so a reload, a second tab or
+      // a resume pass can't make anyone get the message twice — a row
+      // someone else already claimed just comes back 'skipped'.
       setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
+      const totalRecipients = recipientIds.length;
+      let stopReason: string | null = null;
+      let uncertainCount = 0;
 
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
-      }
+      for (let i = 0; i < recipientIds.length; i += SEND_BATCH_SIZE) {
+        const batchIds = recipientIds.slice(i, i + SEND_BATCH_SIZE);
 
-      let failedCount = 0;
-      const totalRecipients = recipients.length;
-
-      // Media-header templates (image/video/document) require a media
-      // URL on every send (wacrm #298). Collected in the personalize
-      // step and applied to all recipients; the server falls back to the
-      // template's stored URL when omitted.
-      const messageParams = headerMediaMessageParams(
-        payload.template,
-        payload.headerMediaUrl,
-      );
-
-      for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
-        const batch = recipients.slice(i, i + SEND_BATCH_SIZE);
-
-        const apiRecipients = batch
-          .filter((r) => r.contact?.phone)
-          .map((r) => ({
-            phone: r.contact!.phone as string,
-            // Read back off the row rather than re-resolved, so this
-            // pass and any later resume send identical params.
-            params: Array.isArray(r.template_params)
-              ? (r.template_params as unknown[]).filter(
-                  (p): p is string => typeof p === 'string',
-                )
-              : [],
-            ...(messageParams ? { messageParams } : {}),
-          }));
-
-        if (apiRecipients.length === 0) continue;
-
-        // Renew the delivery lock so a long send is never read as
-        // abandoned (DELIVERY_LOCK_STALE_MS in broadcast-resume.ts).
-        await renewDeliveryLock(supabase, broadcast.id);
-
+        let data: BroadcastBatchResponse = {};
+        let ok = false;
         try {
-          // Send the batch, waiting out a 429 rather than writing the
-          // whole batch off as failed. Only 429 is replayed — see
-          // batchRetryDelayMs for why nothing else can be.
-          let data: { error?: string; results?: BroadcastApiResult[] } = {};
+          // Only a 429 is replayed: the route rate-limits BEFORE it
+          // claims or sends anything (see batchRetryDelayMs).
           for (let attempt = 1; ; attempt++) {
             const res = await fetch('/api/whatsapp/broadcast', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                recipients: apiRecipients,
-                template_name: payload.template.name,
-                template_language: payload.template.language ?? 'en_US',
+                broadcast_id: broadcast.id,
+                recipient_ids: batchIds,
+                lock_token: held?.token ?? lockToken,
               }),
             });
-
-            data = await res.json();
-            if (res.ok) break;
-
+            data = await res.json().catch(() => ({}));
+            if (res.ok) {
+              ok = true;
+              break;
+            }
             const retryIn =
               attempt < BATCH_SEND_ATTEMPTS
                 ? batchRetryDelayMs(res.status, res.headers.get('Retry-After'))
                 : null;
-            if (retryIn === null) {
-              throw new Error(data.error || 'Broadcast API request failed');
-            }
+            if (retryIn === null) break;
             await sleep(retryIn);
-            await renewDeliveryLock(supabase, broadcast.id);
-          }
-
-          const resultsByPhone = new Map<string, BroadcastApiResult>();
-          for (const r of (data.results ?? []) as BroadcastApiResult[]) {
-            resultsByPhone.set(r.phone, r);
-          }
-
-          for (const recipient of batch) {
-            const phone = recipient.contact?.phone;
-            const result = phone ? resultsByPhone.get(phone) : undefined;
-
-            if (!result) {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: 'No phone number on contact',
-                })
-                .eq('id', recipient.id);
-              continue;
-            }
-
-            if (result.status === 'sent') {
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'sent',
-                  sent_at: new Date().toISOString(),
-                  whatsapp_message_id: result.whatsapp_message_id ?? null,
-                  error_message: null,
-                })
-                .eq('id', recipient.id);
-            } else {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: result.error ?? 'Unknown error',
-                })
-                .eq('id', recipient.id);
-            }
           }
         } catch (err) {
-          for (const recipient of batch) {
-            failedCount++;
-            await supabase
-              .from('broadcast_recipients')
-              .update({
-                status: 'failed',
-                error_message: err instanceof Error ? err.message : 'Unknown error',
-              })
-              .eq('id', recipient.id);
-          }
+          // Network drop: the server may or may not have processed the
+          // batch. Its rows are stamped (or expire to 'uncertain')
+          // server-side — never re-sent from here.
+          data = { error: err instanceof Error ? err.message : 'Network error' };
         }
 
-        const progressPct =
-          30 + Math.round(((i + batch.length) / totalRecipients) * 60);
-        setProgress(progressPct);
+        if (!ok) {
+          if (data.code === 'delivery_lock_lost') held = null;
+          stopReason = data.error || 'Broadcast API request failed';
+          break;
+        }
+        if (data.lock_token && held) held = { ...held, token: data.lock_token };
+        uncertainCount += data.uncertain ?? 0;
 
-        if (i + SEND_BATCH_SIZE < recipients.length) {
+        setProgress(30 + Math.round(((i + batchIds.length) / totalRecipients) * 65));
+
+        if (i + SEND_BATCH_SIZE < recipientIds.length) {
           await sleep(SEND_BATCH_DELAY_MS);
         }
       }
 
-      // ── Step 5: Finalize status ───────────────────────────────────
-      // Aggregate counts are maintained by the DB trigger (migration
-      // 003); we only flip the final status here.
-      setProgress(95);
-      const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
-      await supabase
-        .from('broadcasts')
-        .update({ status: finalStatus, delivery_locked_at: null })
-        .eq('id', broadcast.id);
-      lockedBroadcastId = null;
-
+      // ── Step 5: Finish ────────────────────────────────────────────
+      // The final status is settled server-side from the rows
+      // (finalizeBroadcastStatus); counts are trigger-owned (003/005).
+      if (stopReason) {
+        toast.warning(
+          `${t('The broadcast stopped before finishing')}: ${stopReason}`,
+        );
+      } else if (uncertainCount > 0) {
+        toast.warning(
+          `${t('Recipients with an uncertain result (not resent)')}: ${uncertainCount}`,
+        );
+      }
       setProgress(100);
       return broadcast.id;
     } finally {
-      if (lockedBroadcastId) {
-        // Died half-way: free the lock so the detail page can resume the
-        // rest right away. Best-effort — a stale lock expires anyway.
-        await supabase
-          .from('broadcasts')
-          .update({ delivery_locked_at: null })
-          .eq('id', lockedBroadcastId)
-          .then(
-            () => undefined,
-            () => undefined,
-          );
+      if (held) {
+        // Release MY lock (a no-op if someone else holds it now), so the
+        // detail page can resume the rest right away.
+        await releaseDeliveryLock(supabase, held.id, held.token).catch(() => undefined);
       }
       setIsProcessing(false);
     }

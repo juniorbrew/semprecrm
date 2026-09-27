@@ -27,6 +27,47 @@ interface MetaErrorResponse {
   error?: { message?: string; code?: number; type?: string }
 }
 
+/**
+ * Thrown by `sendTemplateMessage` once the request has left for Meta.
+ *
+ * `uncertain` is the flag broadcast delivery cares about: a network
+ * error, a timeout, a 5xx or an unreadable 2xx body mean Meta MAY have
+ * accepted the message — it must not be resent automatically (a repeat
+ * broadcast gets the number banned). A 4xx with Meta's error body is a
+ * confirmed rejection (`uncertain: false`): nothing was sent.
+ *
+ * Errors raised before the request (e.g. a template header with no media
+ * link) stay plain `Error`s — they are confirmed "not sent" too.
+ */
+export class MetaSendError extends Error {
+  readonly uncertain: boolean
+  readonly status: number | null
+  constructor(message: string, opts: { uncertain: boolean; status?: number | null }) {
+    super(message)
+    this.name = 'MetaSendError'
+    this.uncertain = opts.uncertain
+    this.status = opts.status ?? null
+  }
+}
+
+/** True when a send error leaves the outcome unknown (see MetaSendError). */
+export function isUncertainSendError(err: unknown): boolean {
+  return err instanceof MetaSendError && err.uncertain
+}
+
+/** Per-send ceiling so one hung request can't outlive a delivery lock. */
+const SEND_TIMEOUT_MS = 30_000
+
+async function metaErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const data = (await response.json()) as MetaErrorResponse
+    if (data.error?.message) return data.error.message
+  } catch {
+    // response body wasn't JSON — keep the fallback
+  }
+  return fallback
+}
+
 async function throwMetaError(response: Response, fallback: string): Promise<never> {
   let message = fallback
   try {
@@ -455,19 +496,47 @@ export async function sendTemplateMessage(
     body.context = { message_id: contextMessageId }
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    })
+  } catch (err) {
+    // Network error / timeout: the request may have reached Meta.
+    throw new MetaSendError(
+      err instanceof Error ? err.message : 'Network error sending to Meta',
+      { uncertain: true },
+    )
   }
-  const data = await response.json()
-  return { messageId: data.messages[0].id }
+  if (!response.ok) {
+    const message = await metaErrorMessage(response, `Meta API error: ${response.status}`)
+    // 4xx = Meta rejected it (confirmed, nothing sent); 5xx = unknown.
+    throw new MetaSendError(message, {
+      uncertain: response.status >= 500,
+      status: response.status,
+    })
+  }
+  let messageId: unknown
+  try {
+    const data = await response.json()
+    messageId = data?.messages?.[0]?.id
+  } catch {
+    messageId = undefined
+  }
+  if (typeof messageId !== 'string' || !messageId) {
+    // 2xx means Meta accepted it; we just can't read the id back.
+    throw new MetaSendError('Meta accepted the request but returned no message id', {
+      uncertain: true,
+      status: response.status,
+    })
+  }
+  return { messageId }
 }
 
 // ============================================================

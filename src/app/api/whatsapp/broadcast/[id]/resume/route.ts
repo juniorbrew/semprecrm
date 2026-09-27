@@ -4,19 +4,23 @@
 // Delivers the recipients of an existing broadcast that still need
 // sending, server-side:
 //
-//   - "Retomar" on a campaign abandoned when its browser tab closed
-//     mid-send (the wizard drives the initial fan-out from the tab);
-//   - "Reenviar falhas";
-//   - both at once (`scope: 'all'`).
+//   scope 'pending' — "Retomar": a campaign abandoned when its tab closed;
+//   scope 'failed'  — "Reenviar falhas": rows with a CONFIRMED error only;
+//   scope 'all'     — both;
+//   scope 'settle'  — no sending: rows a dead pass left in 'sending' past
+//                     the staleness window become 'uncertain' and the
+//                     campaign's final status is settled.
 //
-// Responds 202 as soon as the pass is claimed and planned; the fan-out
-// runs in `after()`. The detail page re-reads the broadcast row for
-// progress.
+// Rows in 'sending' or 'uncertain' are never sent from here. Responds
+// 202 once the pass is planned; the fan-out runs in `after()` through
+// broadcast-core's per-row claim, so it can't resend a row another pass
+// claimed or already sent.
 // ============================================================
 
 import { NextResponse, after } from 'next/server';
 
 import { requireModule, requireRole, toErrorResponse } from '@/lib/auth/account';
+import { newLockToken, releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
 import {
   BroadcastError,
   deliverBroadcast,
@@ -26,7 +30,6 @@ import {
   claimBroadcastDelivery,
   markBroadcastSending,
   planBroadcastResume,
-  releaseBroadcastDelivery,
   RESUME_SCOPES,
   type ResumeScope,
 } from '@/lib/whatsapp/broadcast-resume';
@@ -40,13 +43,11 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  let claimedId: string | null = null;
+  let claimed: { id: string; token: string } | null = null;
 
   try {
     // Same gates as /api/whatsapp/broadcast: sending is an 'agent'
-    // action (viewers are read-only) and the plan must include the
-    // `broadcasts` module (migration 025). Resuming puts real messages
-    // on real phones, so it is no different.
+    // action and the plan must include the `broadcasts` module (025).
     const ctx = await requireRole('agent');
     await requireModule(ctx, 'broadcasts');
     const { supabase, accountId, userId } = ctx;
@@ -56,15 +57,13 @@ export async function POST(
 
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
+    const settle = body?.scope === 'settle';
     const scope: ResumeScope = RESUME_SCOPES.includes(body?.scope) ? body.scope : 'pending';
 
-    // Claim BEFORE planning. Two clicks, or a click while the wizard or
-    // an earlier pass is still sending, would otherwise both build a
-    // plan from the same 'pending' rows and message everyone twice —
-    // and a WhatsApp message cannot be recalled. One conditional
-    // UPDATE, so exactly one caller wins.
-    const claimed = await claimBroadcastDelivery(supabase, accountId, id);
-    if (!claimed) {
+    // Coarse layer: one pass at a time. The per-row claim is what really
+    // prevents duplicates; the lock keeps passes from fighting over rows.
+    const token = newLockToken();
+    if (!(await claimBroadcastDelivery(supabase, accountId, id, token))) {
       return NextResponse.json(
         {
           error:
@@ -74,34 +73,41 @@ export async function POST(
         { status: 409 },
       );
     }
-    claimedId = id;
+    claimed = { id, token };
 
-    const { plan, remaining, unsendable } = await planBroadcastResume(
-      supabase,
-      accountId,
-      id,
-      scope,
-    );
+    if (settle) {
+      await finalizeBroadcastStatus(supabase, id);
+      await releaseDeliveryLock(supabase, id, token);
+      claimed = null;
+      return NextResponse.json({ success: true, broadcast_id: id, settled: true });
+    }
 
+    const plan = await planBroadcastResume(supabase, accountId, id, scope);
     await markBroadcastSending(supabase, id);
-    claimedId = null; // ownership passes to the after() block
+    const owned = claimed;
+    claimed = null; // ownership passes to the after() block
 
     // Service-role client for the fan-out: it outlives the request, and
-    // every id in the plan was already resolved through an
-    // account-scoped (RLS) read above.
+    // the broadcast + every row id were resolved through account-scoped
+    // (RLS) reads above; every row write is also scoped to broadcast_id.
     const admin = supabaseAdmin();
     after(async () => {
+      let lastToken: string | null = owned.token;
       try {
-        await deliverBroadcast(admin, plan);
+        ({ lockToken: lastToken } = await deliverBroadcast(admin, plan.ctx, {
+          ids: plan.ids,
+          from: plan.from,
+          lockToken: owned.token,
+        }));
       } catch (err) {
         console.error(
           '[broadcast-resume] delivery threw:',
           err instanceof Error ? err.message : err,
         );
-        // Don't leave it mid-flight — settle whatever did land.
         await finalizeBroadcastStatus(admin, id).catch(() => {});
       } finally {
-        await releaseBroadcastDelivery(admin, id);
+        // Conditional on MY token — never clears a lock someone else took.
+        if (lastToken) await releaseDeliveryLock(admin, id, lastToken).catch(() => {});
       }
     });
 
@@ -110,20 +116,16 @@ export async function POST(
         success: true,
         broadcast_id: id,
         scope,
-        resuming: plan.planned.length,
-        // > 0 when the backlog exceeded one pass's cap; the UI offers
-        // Resume again rather than silently dropping them.
-        remaining,
-        // Recipients stamped failed up front (no phone / opted out).
-        unsendable,
+        resuming: plan.ids.length,
+        // > 0 when the backlog exceeded one pass's cap.
+        remaining: plan.remaining,
       },
       { status: 202 },
     );
   } catch (error) {
-    // Planning failed after the claim — release it, or the campaign is
-    // locked out of resuming until the staleness window expires.
-    if (claimedId) {
-      await releaseBroadcastDelivery(supabaseAdmin(), claimedId).catch(() => {});
+    // Planning failed after the claim — release MY lock.
+    if (claimed) {
+      await releaseDeliveryLock(supabaseAdmin(), claimed.id, claimed.token).catch(() => {});
     }
     if (error instanceof BroadcastError) {
       return NextResponse.json(

@@ -76,6 +76,16 @@ export const DICT_INBOX: Record<string, string> = {
   'Could not resume': 'Não foi possível retomar',
   'Sending in the background': 'Enviando em segundo plano',
   'Left for another run': 'Restam para outra rodada',
+  'Uncertain result': 'Resultado incerto',
+  'The connection to Meta failed or the send was interrupted, so these messages may or may not have been delivered. They are never resent automatically — check them before contacting these people again.':
+    'A conexão com a Meta falhou ou o envio foi interrompido, então estas mensagens podem ou não ter sido entregues. Elas nunca são reenviadas automaticamente — confira antes de contatar essas pessoas de novo.',
+  'Rows interrupted more than 10 minutes ago are marked as uncertain and the broadcast status is settled.':
+    'Linhas interrompidas há mais de 10 minutos são marcadas como resultado incerto e o status do disparo é atualizado.',
+  'Settle interrupted sends': 'Encerrar envios interrompidos',
+  'Broadcast status updated.': 'Status do disparo atualizado.',
+  'The broadcast stopped before finishing': 'O disparo parou antes de terminar',
+  'Recipients with an uncertain result (not resent)':
+    'Destinatários com resultado incerto (não reenviados)',
 
   // ---- Role gates (GatedButton tooltips) ----
   "Read-only — your role can't create broadcasts":

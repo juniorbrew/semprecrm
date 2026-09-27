@@ -44,7 +44,7 @@ import {
   getBroadcastStatus,
   getRecipientStatus,
 } from '@/lib/broadcast-status';
-import { isDeliveryLockActive } from '@/lib/broadcast-delivery-lock';
+import { isDeliveryActive } from '@/lib/broadcast-delivery-lock';
 import { useCan } from '@/hooks/use-can';
 
 interface StatCardProps {
@@ -121,12 +121,24 @@ function FunnelChart({ title, steps }: { title: string; steps: FunnelStep[] }) {
 
 const RECIPIENT_STATUSES: readonly RecipientStatus[] = [
   'pending',
+  'sending',
   'sent',
   'delivered',
   'read',
   'replied',
   'failed',
+  'uncertain',
 ];
+
+/** Row counts per actionable status — exact, never capped at 1000. */
+interface OutstandingCounts {
+  pending: number;
+  sending: number;
+  failed: number;
+  uncertain: number;
+}
+
+const NO_COUNTS: OutstandingCounts = { pending: 0, sending: 0, failed: 0, uncertain: 0 };
 
 /**
  * CSV export helper — RFC 4180 quoting. Quote every field so
@@ -164,9 +176,10 @@ export default function BroadcastDetailPage() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [resumingScope, setResumingScope] = useState<'pending' | 'failed' | null>(
-    null,
-  );
+  const [resumingScope, setResumingScope] = useState<
+    'pending' | 'failed' | 'settle' | null
+  >(null);
+  const [counts, setCounts] = useState<OutstandingCounts>(NO_COUNTS);
   const canSend = useCan('send-messages');
 
   const fetchData = useCallback(async () => {
@@ -190,6 +203,24 @@ export default function BroadcastDetailPage() {
 
       if (recsError) throw recsError;
       setRecipients(recs ?? []);
+
+      // The list above is capped at 1000 rows by PostgREST; the numbers
+      // that drive Resume / Retry come from exact counts instead.
+      const countOf = async (s: keyof OutstandingCounts) => {
+        const { count } = await supabase
+          .from('broadcast_recipients')
+          .select('id', { count: 'exact', head: true })
+          .eq('broadcast_id', broadcastId)
+          .eq('status', s);
+        return count ?? 0;
+      };
+      const [pending, sending, failed, uncertain] = await Promise.all([
+        countOf('pending'),
+        countOf('sending'),
+        countOf('failed'),
+        countOf('uncertain'),
+      ]);
+      setCounts({ pending, sending, failed, uncertain });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load broadcast');
     } finally {
@@ -274,7 +305,7 @@ export default function BroadcastDetailPage() {
    * 'sending'. This is the recovery, and the same call retries failed
    * recipients.
    */
-  async function handleResume(scope: 'pending' | 'failed') {
+  async function handleResume(scope: 'pending' | 'failed' | 'settle') {
     setResumingScope(scope);
     try {
       const res = await fetch(`/api/whatsapp/broadcast/${broadcastId}/resume`, {
@@ -288,6 +319,12 @@ export default function BroadcastDetailPage() {
         toast.error(
           `${t('Could not resume')}: ${t(payload?.error || `HTTP ${res.status}`)}`,
         );
+        return;
+      }
+
+      if (scope === 'settle') {
+        toast.success(t('Broadcast status updated.'));
+        await fetchData();
         return;
       }
 
@@ -349,16 +386,22 @@ export default function BroadcastDetailPage() {
 
   const status = getBroadcastStatus(broadcast.status);
 
-  const pendingCount = recipients.filter((r) => r.status === 'pending').length;
-  const retryableCount = recipients.filter((r) => r.status === 'failed').length;
-  // Someone's tab (or a server pass) is still sending and renewing the
-  // delivery lock — resuming now would be refused with 409 anyway.
-  const deliveryActive = isDeliveryLockActive(broadcast.delivery_locked_at);
+  const pendingCount = counts.pending;
+  // Only CONFIRMED failures are retryable; 'uncertain' never is.
+  const retryableCount = counts.failed;
+  // Someone's tab (or a server pass) is still sending — a fresh lock, or
+  // a lock-less 'sending' campaign whose counts moved recently. Resuming
+  // now would be refused with 409 anyway.
+  const deliveryActive = isDeliveryActive(broadcast);
   // A campaign whose tab went away sits in 'sending' with recipients
   // still pending and nothing left to move them. Name that state rather
   // than leaving a permanently "sending" badge.
   const isStalled =
     broadcast.status === 'sending' && pendingCount > 0 && !deliveryActive;
+  // Rows claimed by a pass that is no longer running: their outcome is
+  // unknown. Shown for review together with 'uncertain'; never resent.
+  const orphanedSending = deliveryActive ? 0 : counts.sending;
+  const uncertainTotal = counts.uncertain + orphanedSending;
 
   const funnelSteps: FunnelStep[] = [
     { label: t('Sent'), value: broadcast.sent_count, color: 'bg-primary' },
@@ -522,6 +565,35 @@ export default function BroadcastDetailPage() {
               </Button>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Uncertain outcome: Meta may or may not have these. They are never
+          resent automatically — a repeated broadcast gets the number
+          banned — so the operator reviews them. */}
+      {uncertainTotal > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="text-sm">
+            <p className="font-medium text-amber-300">
+              {t('Uncertain result')}: {uncertainTotal}
+            </p>
+            <p className="mt-0.5 text-muted-foreground">
+              {t('The connection to Meta failed or the send was interrupted, so these messages may or may not have been delivered. They are never resent automatically — check them before contacting these people again.')}
+            </p>
+          </div>
+          {canSend && orphanedSending > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleResume('settle')}
+              disabled={resumingScope !== null}
+              className="border-border text-muted-foreground hover:bg-muted"
+              title={t('Rows interrupted more than 10 minutes ago are marked as uncertain and the broadcast status is settled.')}
+            >
+              {resumingScope === 'settle' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t('Settle interrupted sends')}
+            </Button>
+          )}
         </div>
       )}
 

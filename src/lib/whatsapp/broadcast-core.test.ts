@@ -1,195 +1,338 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
+
+vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
 
 const sendTemplateMessage = vi.fn();
-vi.mock('@/lib/whatsapp/meta-api', () => ({
-  sendTemplateMessage: (...args: unknown[]) => sendTemplateMessage(...args),
-}));
-
-import {
-  deliverBroadcast,
-  finalizeBroadcastStatus,
-  DELIVERY_LOCK_HEARTBEAT_EVERY,
-  type BroadcastPlan,
-} from './broadcast-core';
-
-// Ported from wacrm 3376991 (finalizeBroadcastStatus matrix) plus
-// SempreCRM-specific delivery checks (header media, lock heartbeat).
-
-// ============================================================
-// Terminal status (#472). Derived from the recipient rows, not from a
-// counter local to one delivery pass.
-// ============================================================
-
-function statusDb(
-  counts: Record<string, number>,
-  total: number,
-  writes: { update?: Record<string, unknown> },
-) {
+vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/whatsapp/meta-api')>();
   return {
-    from(table: string) {
-      let status: string | null = null;
-      const b: Record<string, unknown> = {
-        select: () => b,
-        eq: (col: string, val: unknown) => {
-          if (col === 'status') status = val as string;
-          return b;
-        },
-        update: (row: Record<string, unknown>) => {
-          if (table === 'broadcasts') writes.update = row;
-          return b;
-        },
-        then: (resolve: (r: { count: number; error: null }) => unknown) =>
-          resolve({
-            count: status === null ? total : (counts[status] ?? 0),
-            error: null,
-          }),
-      };
-      return b;
-    },
-  } as unknown as SupabaseClient;
+    ...real,
+    sendTemplateMessage: (...args: unknown[]) => sendTemplateMessage(...args),
+  };
+});
+
+import { MetaSendError } from '@/lib/whatsapp/meta-api';
+import { newLockToken } from '@/lib/broadcast-delivery-lock';
+import {
+  claimRecipientRows,
+  deliverBroadcast,
+  deliverRecipientIds,
+  expireStaleSending,
+  finalizeBroadcastStatus,
+  loadDeliveryContext,
+} from './broadcast-core';
+import { FakeDb, type Row } from './fake-supabase.testkit';
+
+// SempreCRM redesign of wacrm 3376991: every send path claims rows
+// atomically and the server stamps outcomes. These tests run the real
+// functions against an in-memory PostgREST stand-in with real filter
+// semantics, so "claimed by someone else" really is invisible.
+
+const ACCOUNT = 'acct-1';
+const BC = 'bc-1';
+
+function phoneOf(i: number): string {
+  return `+55119${String(10000000 + i)}`; // valid E.164, distinct per i
 }
 
-describe('finalizeBroadcastStatus', () => {
-  it('leaves a capped pass in "sending" while recipients are still pending', async () => {
-    const writes: { update?: Record<string, unknown> } = {};
-    await finalizeBroadcastStatus(statusDb({ pending: 25 }, 1025, writes), 'b-1');
-    expect(writes.update).toBeUndefined();
-  });
+function seed(n: number, opts: { lock?: string | null; bodyText?: string } = {}): FakeDb {
+  const db = new FakeDb();
+  db.seed('broadcasts', [
+    {
+      id: BC,
+      account_id: ACCOUNT,
+      template_name: 'promo',
+      template_language: 'pt_BR',
+      header_media_url: null,
+      template_variables: { '1': { type: 'field', value: 'name' } },
+      status: 'sending',
+      delivery_locked_at: opts.lock ?? null,
+      updated_at: '2026-09-27T11:00:00.000Z',
+    },
+  ]);
+  db.seed('whatsapp_config', [{ account_id: ACCOUNT, phone_number_id: 'pn-1', access_token: 'enc' }]);
+  db.seed('message_templates', [
+    {
+      id: 'tpl-1',
+      user_id: 'u-1',
+      account_id: ACCOUNT,
+      name: 'promo',
+      language: 'pt_BR',
+      body_text: opts.bodyText ?? 'Olá {{1}}',
+    },
+  ]);
+  const contacts: Row[] = [];
+  const rows: Row[] = [];
+  for (let i = 0; i < n; i++) {
+    contacts.push({ id: `c${i}`, account_id: ACCOUNT, phone: phoneOf(i), opted_out_at: null });
+    rows.push({
+      id: `r${i}`,
+      broadcast_id: BC,
+      contact_id: `c${i}`,
+      status: 'pending',
+      template_params: [`Nome${i}`],
+      created_at: new Date(Date.UTC(2026, 8, 27, 10, 0, i)).toISOString(),
+    });
+  }
+  db.seed('contacts', contacts);
+  db.seed('broadcast_recipients', rows);
+  return db;
+}
 
-  it('marks a fully-failed broadcast failed', async () => {
-    const writes: { update?: Record<string, unknown> } = {};
-    await finalizeBroadcastStatus(statusDb({ pending: 0, failed: 10 }, 10, writes), 'b-1');
-    expect(writes.update?.status).toBe('failed');
-  });
+function rowStatuses(db: FakeDb): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of db.table('broadcast_recipients')) {
+    out[r.status as string] = (out[r.status as string] ?? 0) + 1;
+  }
+  return out;
+}
 
-  it('marks a partially-failed broadcast sent', async () => {
-    const writes: { update?: Record<string, unknown> } = {};
-    await finalizeBroadcastStatus(statusDb({ pending: 0, failed: 3 }, 10, writes), 'b-1');
-    expect(writes.update?.status).toBe('sent');
-  });
+/** Number of sends per destination phone. */
+function sendsPerPhone(): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const [args] of sendTemplateMessage.mock.calls as [{ to: string }][]) {
+    m.set(args.to, (m.get(args.to) ?? 0) + 1);
+  }
+  return m;
+}
 
-  it('does not condemn a campaign whose resume pass sent nothing new', async () => {
-    const writes: { update?: Record<string, unknown> } = {};
-    // 800 delivered on the original pass, the 200-recipient resume all
-    // failed: the campaign still reached 800 people.
-    await finalizeBroadcastStatus(statusDb({ pending: 0, failed: 200 }, 1000, writes), 'b-1');
-    expect(writes.update?.status).toBe('sent');
+beforeEach(() => {
+  sendTemplateMessage.mockReset();
+  let n = 0;
+  // Yield to the event loop inside every send so concurrent passes
+  // genuinely interleave between claim, send and stamp.
+  sendTemplateMessage.mockImplementation(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    n += 1;
+    return { messageId: `wamid.${n}` };
   });
 });
 
-// ============================================================
-// deliverBroadcast
-// ============================================================
+describe('row claim', () => {
+  it('is exclusive: two passes claiming the same rows never share one', async () => {
+    const db = seed(30);
+    const ids = db.table('broadcast_recipients').map((r) => r.id as string);
+    const [a, b] = await Promise.all([
+      claimRecipientRows(db.client(), BC, ids, ['pending']),
+      claimRecipientRows(db.client(), BC, ids, ['pending']),
+    ]);
+    const aIds = new Set(a.map((r) => r.id));
+    expect(b.filter((r) => aIds.has(r.id))).toEqual([]);
+    expect(a.length + b.length).toBe(30);
+  });
 
-interface Write {
-  table: string;
-  row: Record<string, unknown>;
-  id?: unknown;
-}
+  it('never claims sending / uncertain / sent rows', async () => {
+    const db = seed(4);
+    const rows = db.table('broadcast_recipients');
+    rows[0].status = 'sending';
+    rows[1].status = 'uncertain';
+    rows[2].status = 'sent';
+    const claimed = await claimRecipientRows(
+      db.client(),
+      BC,
+      rows.map((r) => r.id as string),
+      ['pending', 'failed'],
+    );
+    expect(claimed.map((r) => r.id)).toEqual(['r3']);
+  });
+});
 
-function deliveryDb(writes: Write[]): SupabaseClient {
-  return {
-    from(table: string) {
-      const w: Write = { table, row: {} };
-      const b: Record<string, unknown> = {
-        select: () => b,
-        update: (row: Record<string, unknown>) => {
-          w.row = row;
-          writes.push(w);
-          return b;
-        },
-        eq: (col: string, val: unknown) => {
-          if (col === 'id') w.id = val;
-          return b;
-        },
-        // Count queries from finalizeBroadcastStatus: nothing pending.
-        then: (resolve: (r: { count: number; error: null }) => unknown) =>
-          resolve({ count: 0, error: null }),
-      };
-      return b;
-    },
-  } as unknown as SupabaseClient;
-}
+describe('no row is sent twice', () => {
+  it('wizard batches racing a resume pass over the same rows', async () => {
+    const token = newLockToken();
+    const db = seed(40, { lock: token });
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const ids = db.table('broadcast_recipients').map((r) => r.id as string);
 
-function plan(overrides: Partial<BroadcastPlan> = {}): BroadcastPlan {
-  return {
-    broadcastId: 'bc-1',
-    templateName: 'promo',
-    templateLanguage: 'pt_BR',
-    phoneNumberId: 'pn-1',
-    accessToken: 'tok',
-    templateRow: null,
-    headerMediaUrl: null,
-    planned: [{ recipientRowId: 'r1', phone: '5511991234567', params: ['Ana'] }],
-    ...overrides,
-  };
-}
+    // Wizard: sequential batches of 10 (as /api/whatsapp/broadcast does).
+    const wizard = (async () => {
+      for (let i = 0; i < ids.length; i += 10) {
+        await deliverRecipientIds(client, ctx, ids.slice(i, i + 10), ['pending']);
+      }
+    })();
+    // Resume pass over everything, concurrently (lock shared on purpose:
+    // this proves the ROW claim alone prevents duplicates).
+    const resume = deliverBroadcast(client, ctx, { ids, from: ['pending'], lockToken: token });
 
-describe('deliverBroadcast', () => {
-  beforeEach(() => {
+    await Promise.all([wizard, resume]);
+
+    const perPhone = sendsPerPhone();
+    expect(perPhone.size).toBe(40);
+    expect([...perPhone.values()].every((n) => n === 1)).toBe(true);
+    expect(rowStatuses(db)).toEqual({ sent: 40 });
+  });
+
+  it('a reloaded tab replaying the same batch sends nothing again', async () => {
+    const db = seed(10);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const ids = db.table('broadcast_recipients').map((r) => r.id as string);
+
+    const first = await deliverRecipientIds(client, ctx, ids, ['pending']);
+    const replay = await deliverRecipientIds(client, ctx, ids, ['pending']);
+
+    expect(first.every((r) => r.outcome === 'sent')).toBe(true);
+    expect(replay.every((r) => r.outcome === 'skipped')).toBe(true);
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(10);
+  });
+
+  it('rows a dead pass left in "sending" become uncertain, never resent', async () => {
+    const db = seed(3);
+    const rows = db.table('broadcast_recipients');
+    rows[0].status = 'sending';
+    rows[0].claimed_at = '2026-09-27T10:00:00.000Z'; // long ago
+    const client = db.client();
+
+    const expired = await expireStaleSending(client, BC, new Date('2026-09-27T12:00:00Z'));
+    expect(expired).toBe(1);
+    expect(rows[0].status).toBe('uncertain');
+
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    await deliverRecipientIds(client, ctx, rows.map((r) => r.id as string), ['pending', 'failed']);
+    expect(sendsPerPhone().has(phoneOf(0).replace('+', ''))).toBe(false);
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('a fresh "sending" row is left alone by expiry', async () => {
+    const db = seed(1);
+    const row = db.table('broadcast_recipients')[0];
+    row.status = 'sending';
+    row.claimed_at = '2026-09-27T11:58:00.000Z';
+    expect(await expireStaleSending(db.client(), BC, new Date('2026-09-27T12:00:00Z'))).toBe(0);
+    expect(row.status).toBe('sending');
+  });
+});
+
+describe('outcome classification', () => {
+  it('an uncertain error (timeout/5xx/network) is stamped uncertain and not retried with another variant', async () => {
     sendTemplateMessage.mockReset();
+    sendTemplateMessage.mockRejectedValue(new MetaSendError('timeout', { uncertain: true }));
+    const db = seed(1);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const [res] = await deliverRecipientIds(client, ctx, ['r0'], ['pending']);
+    expect(res.outcome).toBe('uncertain');
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(1);
+    expect(db.table('broadcast_recipients')[0].status).toBe('uncertain');
   });
 
-  it('sends the frozen params and stamps the row sent', async () => {
-    sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.1' });
-    const writes: Write[] = [];
-    await deliverBroadcast(deliveryDb(writes), plan());
-
-    expect(sendTemplateMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ to: '5511991234567', params: ['Ana'], templateName: 'promo' }),
+  it('a confirmed Meta rejection (4xx) is stamped failed', async () => {
+    sendTemplateMessage.mockReset();
+    sendTemplateMessage.mockRejectedValue(
+      new MetaSendError('(#132000) Number of parameters does not match', { uncertain: false, status: 400 }),
     );
-    expect(sendTemplateMessage.mock.calls[0][0].messageParams).toBeUndefined();
-    const stamp = writes.find((w) => w.table === 'broadcast_recipients');
-    expect(stamp?.id).toBe('r1');
-    expect(stamp?.row).toMatchObject({ status: 'sent', whatsapp_message_id: 'wamid.1' });
-  });
-
-  it('passes the wizard header media URL on every send', async () => {
-    sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.1' });
-    await deliverBroadcast(
-      deliveryDb([]),
-      plan({ headerMediaUrl: 'https://cdn.test/a.jpg' }),
-    );
-    expect(sendTemplateMessage.mock.calls[0][0].messageParams).toEqual({
-      headerMediaUrl: 'https://cdn.test/a.jpg',
+    const db = seed(1);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const [res] = await deliverRecipientIds(client, ctx, ['r0'], ['pending']);
+    expect(res.outcome).toBe('failed');
+    expect(db.table('broadcast_recipients')[0]).toMatchObject({
+      status: 'failed',
+      error_message: '(#132000) Number of parameters does not match',
     });
   });
 
-  it('stamps a failed send with the Meta error and keeps going', async () => {
-    sendTemplateMessage
-      .mockRejectedValueOnce(new Error('(#131026) Message undeliverable'))
-      .mockResolvedValueOnce({ messageId: 'wamid.2' });
-    const writes: Write[] = [];
-    await deliverBroadcast(
-      deliveryDb(writes),
-      plan({
-        planned: [
-          { recipientRowId: 'r1', phone: '5511991234567', params: [] },
-          { recipientRowId: 'r2', phone: '5511998765432', params: [] },
-        ],
-      }),
-    );
-    const rows = writes.filter((w) => w.table === 'broadcast_recipients');
-    expect(rows.map((w) => [w.id, w.row.status])).toEqual([
-      ['r1', 'failed'],
-      ['r2', 'sent'],
-    ]);
-    expect(rows[0].row.error_message).toContain('undeliverable');
+  it('"retry failed" picks confirmed failures only — uncertain rows are never retried', async () => {
+    const db = seed(3);
+    const rows = db.table('broadcast_recipients');
+    rows[0].status = 'failed';
+    rows[1].status = 'uncertain';
+    rows[2].status = 'sent';
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    await deliverRecipientIds(client, ctx, rows.map((r) => r.id as string), ['failed']);
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(1);
+    expect(rows.map((r) => r.status)).toEqual(['sent', 'uncertain', 'sent']);
   });
 
-  it('renews the delivery lock while a long pass runs', async () => {
-    sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.x' });
-    const writes: Write[] = [];
-    const planned = Array.from({ length: DELIVERY_LOCK_HEARTBEAT_EVERY * 2 + 1 }, (_, i) => ({
-      recipientRowId: `r${i}`,
-      phone: '5511991234567',
-      params: [],
-    }));
-    await deliverBroadcast(deliveryDb(writes), plan({ planned }));
-    const heartbeats = writes.filter(
-      (w) => w.table === 'broadcasts' && 'delivery_locked_at' in w.row,
-    );
-    expect(heartbeats).toHaveLength(2);
+  it('opted-out contacts and bad phones are failed without a send', async () => {
+    const db = seed(2);
+    db.table('contacts')[0].opted_out_at = '2026-09-01T00:00:00Z';
+    db.table('contacts')[1].phone = 'n/a';
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const res = await deliverRecipientIds(client, ctx, ['r0', 'r1'], ['pending']);
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
+    expect(res.map((r) => [r.outcome, r.error])).toEqual([
+      ['failed', 'Contact opted out'],
+      ['failed', 'No valid phone number on contact'],
+    ]);
+  });
+
+  it('sends the frozen params and the wizard header media', async () => {
+    const db = seed(1);
+    db.table('broadcasts')[0].header_media_url = 'https://cdn.test/a.jpg';
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    await deliverRecipientIds(client, ctx, ['r0'], ['pending']);
+    expect(sendTemplateMessage.mock.calls[0][0]).toMatchObject({
+      params: ['Nome0'],
+      messageParams: { headerMediaUrl: 'https://cdn.test/a.jpg' },
+      accessToken: 'plain:enc',
+    });
+  });
+});
+
+describe('deliverBroadcast lock handling', () => {
+  it('sends nothing when the lock is not (or no longer) mine', async () => {
+    const db = seed(5, { lock: newLockToken() });
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const { lockToken } = await deliverBroadcast(client, ctx, {
+      ids: ['r0', 'r1', 'r2', 'r3', 'r4'],
+      from: ['pending'],
+      lockToken: newLockToken(new Date('2020-01-01T00:00:00Z')), // someone else's
+    });
+    expect(lockToken).toBeNull();
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
+  });
+
+  it('renews its own lock per chunk and hands back the latest token', async () => {
+    const token = newLockToken();
+    const db = seed(25, { lock: token });
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const ids = db.table('broadcast_recipients').map((r) => r.id as string);
+    const { lockToken } = await deliverBroadcast(client, ctx, { ids, from: ['pending'], lockToken: token });
+    expect(lockToken).not.toBeNull();
+    expect(lockToken).not.toBe(token);
+    expect(db.table('broadcasts')[0].delivery_locked_at).toBe(lockToken);
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(25);
+  });
+});
+
+describe('finalizeBroadcastStatus', () => {
+  function withStatuses(statuses: string[]): FakeDb {
+    const db = seed(statuses.length);
+    db.table('broadcast_recipients').forEach((r, i) => {
+      r.status = statuses[i];
+      if (statuses[i] === 'sending') r.claimed_at = new Date().toISOString();
+    });
+    return db;
+  }
+
+  it('leaves the campaign "sending" while rows are pending', async () => {
+    const db = withStatuses(['sent', 'pending']);
+    await finalizeBroadcastStatus(db.client(), BC);
+    expect(db.table('broadcasts')[0].status).toBe('sending');
+  });
+
+  it('leaves the campaign "sending" while rows are in flight', async () => {
+    const db = withStatuses(['sent', 'sending']);
+    await finalizeBroadcastStatus(db.client(), BC);
+    expect(db.table('broadcasts')[0].status).toBe('sending');
+  });
+
+  it('marks a fully-failed campaign failed', async () => {
+    const db = withStatuses(['failed', 'failed']);
+    await finalizeBroadcastStatus(db.client(), BC);
+    expect(db.table('broadcasts')[0].status).toBe('failed');
+  });
+
+  it('marks a partially-failed / uncertain campaign sent', async () => {
+    const db = withStatuses(['sent', 'failed', 'uncertain']);
+    await finalizeBroadcastStatus(db.client(), BC);
+    expect(db.table('broadcasts')[0].status).toBe('sent');
   });
 });

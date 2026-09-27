@@ -1,31 +1,49 @@
 // ============================================================
-// Server-side broadcast delivery (wacrm #472, upstream 3376991).
+// Server-side broadcast delivery (wacrm #472, upstream 3376991 —
+// redesigned for SempreCRM so NO path can send a recipient twice).
 //
-// Upstream's broadcast-core.ts also carries `createBroadcast()` for its
-// public REST API v1 (#245). SempreCRM has no public broadcast API — the
-// dashboard wizard (use-broadcast-sending) creates the campaign — so
-// only the delivery half is ported here, for the resume route:
+// Every send — the wizard's batches through /api/whatsapp/broadcast and
+// the resume route — goes through the same per-ROW protocol:
 //
-//   deliverBroadcast()        — send each planned recipient's template via
-//                               Meta (phone-variant retry), stamp each
-//                               recipient row, finalize status.
-//   finalizeBroadcastStatus() — terminal status derived from the rows.
+//   1. CLAIM   UPDATE broadcast_recipients SET status='sending',
+//              claimed_at=now() WHERE id IN (...) AND status IN (...)
+//              RETURNING — one statement, so two passes racing for the
+//              same row can't both win it. Only claimed rows are sent.
+//   2. SEND    phone-variant retry, but ONLY after a confirmed rejection.
+//   3. STAMP   the server writes the outcome (WHERE status='sending'):
+//                sent      — Meta returned a message id;
+//                failed    — CONFIRMED not sent (Meta 4xx, bad phone,
+//                            opt-out). Only these are retryable;
+//                uncertain — Meta MAY have it (network, timeout, 5xx,
+//                            unreadable 2xx). Never resent automatically.
 //
-// Recipient rows carry `whatsapp_message_id`, so the inbound webhook's
-// status handler updates delivered/read for resumed sends exactly as it
-// does for the wizard's.
+// A pass that dies leaves its claimed rows in 'sending'; after the
+// staleness window they become 'uncertain' (expireStaleSending), never
+// 'pending' again.
+//
+// Upstream's createBroadcast() belongs to its public REST API v1, which
+// SempreCRM doesn't have — the wizard creates the campaign.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import {
+  DELIVERY_LOCK_STALE_MS,
+  renewDeliveryLock,
+} from '@/lib/broadcast-delivery-lock';
+import { decrypt } from '@/lib/whatsapp/encryption';
+import { isUncertainSendError, sendTemplateMessage } from '@/lib/whatsapp/meta-api';
+import {
+  isValidE164,
+  normalizePhone,
   phoneVariants,
   isRecipientNotAllowedError,
+  sanitizePhoneForMeta,
 } from '@/lib/whatsapp/phone-utils';
+import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 
-/** Caller-visible failure; the route maps it to a JSON error. */
+/** Caller-visible failure; routes map it to a JSON error. */
 export class BroadcastError extends Error {
   readonly code: string;
   readonly status: number;
@@ -37,154 +55,375 @@ export class BroadcastError extends Error {
   }
 }
 
-export interface PlannedRecipient {
-  recipientRowId: string;
-  /** Digits-only phone (sanitizePhoneForMeta). */
-  phone: string;
-  params: string[];
+/** Rows claimed and sent per step (one lock renewal per step). */
+export const CLAIM_CHUNK = 10;
+
+/** Statuses a pass may claim from. 'sending'/'uncertain' never are. */
+export type ClaimableStatus = 'pending' | 'failed';
+
+export type RowOutcome = 'sent' | 'failed' | 'uncertain';
+
+export interface RowResult {
+  id: string;
+  outcome: RowOutcome | 'skipped';
+  error?: string;
 }
 
-export interface BroadcastPlan {
+/** Everything needed to send this broadcast's template. */
+export interface DeliveryContext {
+  accountId: string;
   broadcastId: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
   accessToken: string;
   templateRow: MessageTemplate | null;
-  /**
-   * Header media chosen in the wizard for image/video/document
-   * templates (#298, migration 051). Null → the send builder falls back
-   * to the template's stored URL.
-   */
+  /** Header media chosen in the wizard (#298). Null → template's stored URL. */
   headerMediaUrl: string | null;
-  planned: PlannedRecipient[];
+  /** The template body has {{n}} placeholders. */
+  hasBodyVariables: boolean;
+}
+
+const PLACEHOLDER = /\{\{\s*\d+\s*\}\}/;
+
+/**
+ * Load the broadcast (account-scoped), the WhatsApp config and the
+ * template row. Throws {@link BroadcastError}.
+ */
+export async function loadDeliveryContext(
+  db: SupabaseClient,
+  accountId: string,
+  broadcastId: string,
+): Promise<DeliveryContext> {
+  const { data: broadcast, error: bcError } = await db
+    .from('broadcasts')
+    .select('id, template_name, template_language, header_media_url, template_variables')
+    .eq('id', broadcastId)
+    .eq('account_id', accountId)
+    .maybeSingle();
+  if (bcError || !broadcast) {
+    throw new BroadcastError('not_found', 'Broadcast not found', 404);
+  }
+
+  const { data: config, error: configError } = await db
+    .from('whatsapp_config')
+    .select('*')
+    .eq('account_id', accountId)
+    .single();
+  if (configError || !config) {
+    throw new BroadcastError(
+      'whatsapp_not_configured',
+      'WhatsApp not configured. Please set up your WhatsApp integration first.',
+      400,
+    );
+  }
+
+  const templateLanguage = (broadcast.template_language as string) || 'en_US';
+  const { data: rawTemplateRow } = await db
+    .from('message_templates')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('name', broadcast.template_name)
+    .eq('language', templateLanguage)
+    .maybeSingle();
+  if (rawTemplateRow && !isMessageTemplate(rawTemplateRow)) {
+    throw new BroadcastError(
+      'template_malformed',
+      'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.',
+      500,
+    );
+  }
+  const templateRow = (rawTemplateRow as MessageTemplate | null) ?? null;
+  const mappedVariables =
+    broadcast.template_variables && typeof broadcast.template_variables === 'object'
+      ? Object.keys(broadcast.template_variables as object).length
+      : 0;
+
+  return {
+    accountId,
+    broadcastId,
+    templateName: broadcast.template_name as string,
+    templateLanguage,
+    phoneNumberId: config.phone_number_id,
+    accessToken: decrypt(config.access_token),
+    templateRow,
+    headerMediaUrl: (broadcast.header_media_url as string | null) ?? null,
+    hasBodyVariables:
+      (templateRow ? PLACEHOLDER.test(templateRow.body_text) : false) || mappedVariables > 0,
+  };
+}
+
+interface ClaimedRow {
+  id: string;
+  contact_id: string | null;
+  template_params: unknown;
 }
 
 /**
- * Refresh `delivery_locked_at` every this many recipients so a long pass
- * is never mistaken for an abandoned one (see DELIVERY_LOCK_STALE_MS in
- * broadcast-resume.ts).
+ * Atomically claim rows for THIS pass. Rows already claimed (or sent)
+ * by anyone else simply don't come back — the caller never sends them.
  */
-export const DELIVERY_LOCK_HEARTBEAT_EVERY = 10;
-
-/**
- * Fan out a {@link BroadcastPlan}: send each recipient's template
- * (phone-variant retry) and stamp its `broadcast_recipients` row.
- * Best-effort per recipient — one failure never aborts the rest.
- * Designed to run inside `after()`.
- *
- * The per-status count columns on `broadcasts` are owned by the DB
- * aggregate trigger (migrations 003/005): each recipient-row update
- * below advances them. We never write those columns here — only the
- * terminal `status` — or a manual value would clobber the trigger.
- */
-export async function deliverBroadcast(
+export async function claimRecipientRows(
   db: SupabaseClient,
-  plan: BroadcastPlan,
+  broadcastId: string,
+  ids: string[],
+  from: ClaimableStatus[],
+  now: Date = new Date(),
+): Promise<ClaimedRow[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await db
+    .from('broadcast_recipients')
+    .update({ status: 'sending', claimed_at: now.toISOString() })
+    .eq('broadcast_id', broadcastId)
+    .in('id', ids)
+    .in('status', from)
+    .select('id, contact_id, template_params');
+  if (error) {
+    console.error('[broadcast-core] claim failed:', error.message);
+    return [];
+  }
+  return (data ?? []) as ClaimedRow[];
+}
+
+async function stamp(
+  db: SupabaseClient,
+  rowId: string,
+  patch: Record<string, unknown>,
 ): Promise<void> {
-  const messageParams = plan.headerMediaUrl
-    ? { headerMediaUrl: plan.headerMediaUrl }
-    : undefined;
+  // Only the pass that claimed the row (status 'sending') stamps it.
+  await db
+    .from('broadcast_recipients')
+    .update(patch)
+    .eq('id', rowId)
+    .eq('status', 'sending');
+}
 
-  for (let i = 0; i < plan.planned.length; i++) {
-    const recipient = plan.planned[i];
+function paramsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string') : [];
+}
 
-    if (i > 0 && i % DELIVERY_LOCK_HEARTBEAT_EVERY === 0) {
-      await db
-        .from('broadcasts')
-        .update({ delivery_locked_at: new Date().toISOString() })
-        .eq('id', plan.broadcastId);
-    }
+/** Send the rows THIS pass claimed and stamp each outcome. */
+export async function sendClaimedRows(
+  db: SupabaseClient,
+  ctx: DeliveryContext,
+  rows: ClaimedRow[],
+): Promise<RowResult[]> {
+  if (rows.length === 0) return [];
 
-    const variants = phoneVariants(recipient.phone);
-    let sentMessageId: string | null = null;
-    let lastError: string | null = null;
-
-    for (const variant of variants) {
-      try {
-        const result = await sendTemplateMessage({
-          phoneNumberId: plan.phoneNumberId,
-          accessToken: plan.accessToken,
-          to: variant,
-          templateName: plan.templateName,
-          language: plan.templateLanguage,
-          template: plan.templateRow ?? undefined,
-          params: recipient.params,
-          ...(messageParams ? { messageParams } : {}),
-        });
-        sentMessageId = result.messageId;
-        lastError = null;
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        lastError = message;
-        // Only a "recipient not allowed" error is worth another variant.
-        if (!isRecipientNotAllowedError(message)) break;
-      }
-    }
-
-    if (sentMessageId) {
-      await db
-        .from('broadcast_recipients')
-        .update({
-          status: 'sent',
-          sent_at: new Date().toISOString(),
-          whatsapp_message_id: sentMessageId,
-          error_message: null,
-        })
-        .eq('id', recipient.recipientRowId);
-    } else {
-      await db
-        .from('broadcast_recipients')
-        .update({
-          status: 'failed',
-          error_message: lastError || 'Unknown error',
-        })
-        .eq('id', recipient.recipientRowId);
+  const contactIds = [...new Set(rows.map((r) => r.contact_id).filter(Boolean))] as string[];
+  const contacts = new Map<string, { phone?: string | null; opted_out_at?: string | null }>();
+  if (contactIds.length > 0) {
+    const { data } = await db
+      .from('contacts')
+      .select('id, phone, opted_out_at')
+      .in('id', contactIds);
+    for (const c of (data ?? []) as { id: string; phone?: string | null; opted_out_at?: string | null }[]) {
+      contacts.set(c.id, c);
     }
   }
 
-  await finalizeBroadcastStatus(db, plan.broadcastId);
+  // Opt-out (migration 030) by number too: another contact row with the
+  // same number may carry the opt-out.
+  const blocked = new Set<string>();
+  const { data: optedOutRows } = await db
+    .from('contacts')
+    .select('phone, phone_normalized')
+    .eq('account_id', ctx.accountId)
+    .not('opted_out_at', 'is', null);
+  for (const r of (optedOutRows ?? []) as { phone?: string | null; phone_normalized?: string | null }[]) {
+    if (r.phone_normalized) blocked.add(r.phone_normalized);
+    if (r.phone) blocked.add(normalizePhone(r.phone));
+  }
+
+  const messageParams = ctx.headerMediaUrl ? { headerMediaUrl: ctx.headerMediaUrl } : undefined;
+  const results: RowResult[] = [];
+
+  for (const row of rows) {
+    const contact = row.contact_id ? contacts.get(row.contact_id) : undefined;
+    const phone = sanitizePhoneForMeta(contact?.phone ?? '');
+
+    if (!isValidE164(phone)) {
+      const error = 'No valid phone number on contact';
+      await stamp(db, row.id, { status: 'failed', error_message: error });
+      results.push({ id: row.id, outcome: 'failed', error });
+      continue;
+    }
+    if (contact?.opted_out_at || blocked.has(normalizePhone(phone))) {
+      const error = 'Contact opted out';
+      await stamp(db, row.id, { status: 'failed', error_message: error });
+      results.push({ id: row.id, outcome: 'failed', error });
+      continue;
+    }
+
+    let messageId: string | null = null;
+    let outcome: RowOutcome = 'failed';
+    let lastError = 'Unknown error';
+    for (const variant of phoneVariants(phone)) {
+      try {
+        const res = await sendTemplateMessage({
+          phoneNumberId: ctx.phoneNumberId,
+          accessToken: ctx.accessToken,
+          to: variant,
+          templateName: ctx.templateName,
+          language: ctx.templateLanguage,
+          template: ctx.templateRow ?? undefined,
+          params: paramsOf(row.template_params),
+          ...(messageParams ? { messageParams } : {}),
+        });
+        messageId = res.messageId;
+        outcome = 'sent';
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : 'Unknown error';
+        if (isUncertainSendError(err)) {
+          // Meta may have it. Trying another variant could deliver a
+          // second copy — stop here and leave it for the operator.
+          outcome = 'uncertain';
+          break;
+        }
+        // Confirmed rejection; only "recipient not allowed" is worth
+        // another spelling of the number.
+        if (!isRecipientNotAllowedError(lastError)) break;
+      }
+    }
+
+    if (outcome === 'sent' && messageId) {
+      await stamp(db, row.id, {
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+        whatsapp_message_id: messageId,
+        error_message: null,
+      });
+      results.push({ id: row.id, outcome: 'sent' });
+    } else if (outcome === 'uncertain') {
+      const error = `Outcome unknown: ${lastError}`;
+      await stamp(db, row.id, { status: 'uncertain', error_message: error });
+      results.push({ id: row.id, outcome: 'uncertain', error });
+    } else {
+      await stamp(db, row.id, { status: 'failed', error_message: lastError });
+      results.push({ id: row.id, outcome: 'failed', error: lastError });
+    }
+  }
+  return results;
+}
+
+/** Claim, then send only what was claimed. Unclaimed ids → 'skipped'. */
+export async function deliverRecipientIds(
+  db: SupabaseClient,
+  ctx: DeliveryContext,
+  ids: string[],
+  from: ClaimableStatus[],
+): Promise<RowResult[]> {
+  const claimed = await claimRecipientRows(db, ctx.broadcastId, ids, from);
+  const results = await sendClaimedRows(db, ctx, claimed);
+  const claimedIds = new Set(claimed.map((r) => r.id));
+  for (const id of ids) {
+    if (!claimedIds.has(id)) results.push({ id, outcome: 'skipped' });
+  }
+  return results;
 }
 
 /**
- * Flip a broadcast out of `sending` once no recipient is left pending.
- *
- * Derived from the recipient rows rather than from a counter local to
- * one delivery pass: a resume delivers only the leftovers, so "nothing
- * sent *this* pass" must not mark a campaign failed when 800 of its
- * 1 000 recipients went out earlier. `failed` means every recipient
- * failed; anything else is `sent`, with the per-recipient failures
- * visible in `failed_count`.
+ * Rows left in 'sending' longer than the staleness window belong to a
+ * pass that died. Their outcome is unknown: mark them 'uncertain' —
+ * never back to 'pending', which would resend them.
+ */
+export async function expireStaleSending(
+  db: SupabaseClient,
+  broadcastId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - DELIVERY_LOCK_STALE_MS).toISOString();
+  const { data } = await db
+    .from('broadcast_recipients')
+    .update({
+      status: 'uncertain',
+      error_message: 'Send interrupted — outcome unknown',
+    })
+    .eq('broadcast_id', broadcastId)
+    .eq('status', 'sending')
+    .lt('claimed_at', cutoff)
+    .select('id');
+  return Array.isArray(data) ? data.length : 0;
+}
+
+export interface ResumeDelivery {
+  ids: string[];
+  from: ClaimableStatus[];
+  lockToken: string;
+}
+
+/**
+ * Server-side pass (resume route, inside `after()`): renew MY lock,
+ * claim + send one chunk, repeat. Stops as soon as the lock is no
+ * longer mine. Returns the last token held (for the release).
+ */
+export async function deliverBroadcast(
+  db: SupabaseClient,
+  ctx: DeliveryContext,
+  delivery: ResumeDelivery,
+): Promise<{ lockToken: string | null; results: RowResult[] }> {
+  let token: string | null = delivery.lockToken;
+  const results: RowResult[] = [];
+  for (let i = 0; i < delivery.ids.length; i += CLAIM_CHUNK) {
+    const next: string | null = await renewDeliveryLock(db, ctx.broadcastId, token);
+    if (!next) {
+      token = null;
+      break;
+    }
+    token = next;
+    results.push(
+      ...(await deliverRecipientIds(
+        db,
+        ctx,
+        delivery.ids.slice(i, i + CLAIM_CHUNK),
+        delivery.from,
+      )),
+    );
+  }
+  await finalizeBroadcastStatus(db, ctx.broadcastId);
+  return { lockToken: token, results };
+}
+
+async function countRows(
+  db: SupabaseClient,
+  broadcastId: string,
+  status?: string,
+): Promise<number> {
+  let q = db
+    .from('broadcast_recipients')
+    .select('id', { count: 'exact', head: true })
+    .eq('broadcast_id', broadcastId);
+  if (status) q = q.eq('status', status);
+  const { count } = await q;
+  return count ?? 0;
+}
+
+/**
+ * Flip a broadcast out of `sending` once nothing is pending or in
+ * flight. Derived from the rows, not from one pass's counters: a resume
+ * sends only leftovers, so "nothing sent this pass" must not condemn a
+ * campaign that already reached hundreds. `failed` = every recipient
+ * failed; otherwise `sent` (per-row failures/uncertain stay visible).
  */
 export async function finalizeBroadcastStatus(
   db: SupabaseClient,
   broadcastId: string,
+  now: Date = new Date(),
 ): Promise<void> {
-  const countWhere = async (status: string): Promise<number> => {
-    const { count } = await db
-      .from('broadcast_recipients')
-      .select('id', { count: 'exact', head: true })
-      .eq('broadcast_id', broadcastId)
-      .eq('status', status);
-    return count ?? 0;
-  };
+  await expireStaleSending(db, broadcastId, now);
+  if ((await countRows(db, broadcastId, 'pending')) > 0) return;
+  if ((await countRows(db, broadcastId, 'sending')) > 0) return;
 
-  // Still work outstanding (a capped resume pass) — leave it 'sending'
-  // so the UI keeps offering Resume.
-  if ((await countWhere('pending')) > 0) return;
-
-  const failed = await countWhere('failed');
-  const { count: total } = await db
-    .from('broadcast_recipients')
-    .select('id', { count: 'exact', head: true })
-    .eq('broadcast_id', broadcastId);
+  const failed = await countRows(db, broadcastId, 'failed');
+  const total = await countRows(db, broadcastId);
 
   await db
     .from('broadcasts')
     .update({
-      status: failed > 0 && failed === (total ?? 0) ? 'failed' : 'sent',
+      status: failed > 0 && failed === total ? 'failed' : 'sent',
       updated_at: new Date().toISOString(),
     })
-    .eq('id', broadcastId);
+    .eq('id', broadcastId)
+    .eq('status', 'sending');
 }

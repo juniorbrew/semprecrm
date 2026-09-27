@@ -1,431 +1,190 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { BroadcastError } from './broadcast-core';
+vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
+
+import {
+  newLockToken,
+  releaseDeliveryLock,
+  renewDeliveryLock,
+} from '@/lib/broadcast-delivery-lock';
 import {
   claimBroadcastDelivery,
   planBroadcastResume,
-  releaseBroadcastDelivery,
   RESUME_MAX_PER_REQUEST,
 } from './broadcast-resume';
+import { FakeDb, type Row } from './fake-supabase.testkit';
 
-vi.mock('@/lib/whatsapp/encryption', () => ({
-  decrypt: (v: string) => `decrypted:${v}`,
-}));
+// Ported from wacrm 3376991 (broadcast-resume.test.ts) and rewritten for
+// the SempreCRM row-claim design, against an in-memory PostgREST
+// stand-in with real filter semantics.
 
-// Ported from wacrm 3376991 (broadcast-resume.test.ts), adapted to the
-// SempreCRM plan shape (header media, opt-out, exact template lookup).
+const ACCOUNT = 'acct-1';
+const BC = 'bc-1';
+const NOW = new Date('2026-09-27T12:00:00Z');
 
-// ============================================================
-// Claim / release — the mutex that stops a double-send.
-// ============================================================
-
-interface ClaimCall {
-  update: Record<string, unknown>;
-  filters: Record<string, unknown>;
-  or?: string;
-}
-
-function claimDb(returnedRows: unknown[], calls: ClaimCall[]): SupabaseClient {
-  return {
-    from() {
-      const call: ClaimCall = { update: {}, filters: {} };
-      const b: Record<string, unknown> = {
-        update: (row: Record<string, unknown>) => {
-          call.update = row;
-          calls.push(call);
-          return b;
-        },
-        eq: (col: string, val: unknown) => {
-          call.filters[col] = val;
-          return b;
-        },
-        or: (expr: string) => {
-          call.or = expr;
-          return b;
-        },
-        select: async () => ({ data: returnedRows, error: null }),
-        then: (resolve: (r: { error: null }) => unknown) => resolve({ error: null }),
-      };
-      return b;
+function seed(
+  rows: Partial<Row>[],
+  bc: Partial<Row> = {},
+  bodyText = 'Olá {{1}}',
+): FakeDb {
+  const db = new FakeDb();
+  db.seed('broadcasts', [
+    {
+      id: BC,
+      account_id: ACCOUNT,
+      template_name: 'promo',
+      template_language: 'pt_BR',
+      header_media_url: null,
+      template_variables: bodyText.includes('{{') ? { '1': { type: 'static', value: 'x' } } : {},
+      status: 'sending',
+      delivery_locked_at: null,
+      updated_at: '2026-09-27T10:00:00.000Z',
+      ...bc,
     },
-  } as unknown as SupabaseClient;
+  ]);
+  db.seed('whatsapp_config', [{ account_id: ACCOUNT, phone_number_id: 'pn-1', access_token: 'enc' }]);
+  db.seed('message_templates', [
+    { id: 't', user_id: 'u', account_id: ACCOUNT, name: 'promo', language: 'pt_BR', body_text: bodyText },
+  ]);
+  db.seed(
+    'broadcast_recipients',
+    rows.map((r, i) => ({
+      id: `r${i}`,
+      broadcast_id: BC,
+      contact_id: `c${i}`,
+      status: 'pending',
+      template_params: ['x'],
+      created_at: new Date(Date.UTC(2026, 8, 27, 9, 0, 0, i)).toISOString(),
+      ...r,
+    })),
+  );
+  return db;
 }
 
 describe('claimBroadcastDelivery', () => {
-  it('claims when the conditional UPDATE matched a row', async () => {
-    const calls: ClaimCall[] = [];
-    const ok = await claimBroadcastDelivery(
-      claimDb([{ id: 'bc-1' }], calls),
-      'acct-1',
-      'bc-1',
-      new Date('2026-08-11T12:00:00Z'),
-    );
-
-    expect(ok).toBe(true);
-    expect(calls[0].filters).toEqual({ id: 'bc-1', account_id: 'acct-1' });
-    expect(calls[0].update.delivery_locked_at).toBe('2026-08-11T12:00:00.000Z');
+  it('claims an idle broadcast with my token', async () => {
+    const db = seed([], { status: 'sent' });
+    const token = newLockToken(NOW);
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, token, NOW)).toBe(true);
+    expect(db.table('broadcasts')[0].delivery_locked_at).toBe(token);
   });
 
-  it('refuses when another pass (or the wizard tab) holds the lock', async () => {
-    const ok = await claimBroadcastDelivery(claimDb([], []), 'acct-1', 'bc-1');
-    expect(ok).toBe(false);
+  it('refuses while another pass holds a fresh lock', async () => {
+    const db = seed([], { delivery_locked_at: '2026-09-27T11:55:00.000123Z' });
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(false);
   });
 
-  it('treats a lock older than the staleness window as abandoned', async () => {
-    const calls: ClaimCall[] = [];
-    await claimBroadcastDelivery(
-      claimDb([{ id: 'bc-1' }], calls),
-      'acct-1',
-      'bc-1',
-      new Date('2026-08-11T12:00:00Z'),
-    );
-    // 10 minutes before "now" (SempreCRM renews the lock while sending).
-    expect(calls[0].or).toBe(
-      'delivery_locked_at.is.null,delivery_locked_at.lt.2026-08-11T11:50:00.000Z',
-    );
+  it('takes over a stale lock (a pass that died)', async () => {
+    const db = seed([], { delivery_locked_at: '2026-09-27T11:40:00.000123Z' });
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(true);
   });
 
-  it('is scoped to the account, so another tenant cannot claim it', async () => {
-    const calls: ClaimCall[] = [];
-    await claimBroadcastDelivery(claimDb([], calls), 'acct-9', 'bc-1');
-    expect(calls[0].filters.account_id).toBe('acct-9');
+  it('treats a lock-less "sending" campaign with recent activity as active', async () => {
+    // A tab running a pre-051 bundle never set the lock, but its sends
+    // keep bumping updated_at through the count trigger.
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:58:00.000Z' });
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(false);
+  });
+
+  it('claims a lock-less "sending" campaign that went quiet', async () => {
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z' });
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(true);
+  });
+
+  it('is scoped to the account', async () => {
+    const db = seed([], { status: 'sent' });
+    expect(await claimBroadcastDelivery(db.client(), 'acct-9', BC, newLockToken(NOW), NOW)).toBe(false);
   });
 });
 
-describe('releaseBroadcastDelivery', () => {
-  it('clears the lock', async () => {
-    const calls: ClaimCall[] = [];
-    await releaseBroadcastDelivery(claimDb([], calls), 'bc-1');
-    expect(calls[0].update).toEqual({ delivery_locked_at: null });
-    expect(calls[0].filters).toEqual({ id: 'bc-1' });
+describe('lock ownership (stale tab)', () => {
+  it('a stale tab cannot renew or release a lock a resume took over', async () => {
+    const tabToken = newLockToken(new Date('2026-09-27T11:30:00Z'));
+    const db = seed([], { delivery_locked_at: tabToken });
+    const client = db.client();
+
+    // The tab slept > 10 min; a resume pass takes the lock over.
+    const resumeToken = newLockToken(NOW);
+    expect(await claimBroadcastDelivery(client, ACCOUNT, BC, resumeToken, NOW)).toBe(true);
+
+    // The tab wakes up: its renew fails (→ it must stop sending) …
+    expect(await renewDeliveryLock(client, BC, tabToken)).toBeNull();
+    // … and its release is a no-op.
+    await releaseDeliveryLock(client, BC, tabToken);
+    expect(db.table('broadcasts')[0].delivery_locked_at).toBe(resumeToken);
+
+    // The owner can renew, and release.
+    const next = await renewDeliveryLock(client, BC, resumeToken);
+    expect(next).not.toBeNull();
+    await releaseDeliveryLock(client, BC, next!);
+    expect(db.table('broadcasts')[0].delivery_locked_at).toBeNull();
   });
 });
-
-// ============================================================
-// Planning — which recipients a pass picks up, and with what params.
-// ============================================================
-
-interface PlanFixture {
-  broadcast?: Record<string, unknown> | null;
-  recipients?: Record<string, unknown>[];
-  config?: Record<string, unknown> | null;
-  template?: Record<string, unknown> | null;
-}
-
-interface PlanWrites {
-  statusFilter?: unknown;
-  failedBatches: { ids: unknown; update: Record<string, unknown> }[];
-  templateFilters: Record<string, unknown>;
-}
-
-function newWrites(): PlanWrites {
-  return { failedBatches: [], templateFilters: {} };
-}
-
-function planDb(fx: PlanFixture, writes: PlanWrites = newWrites()): SupabaseClient {
-  return {
-    from(table: string) {
-      let pendingUpdate: Record<string, unknown> | null = null;
-      const b: Record<string, unknown> = {
-        select: () => b,
-        eq: (col: string, val: unknown) => {
-          if (table === 'message_templates') writes.templateFilters[col] = val;
-          return b;
-        },
-        order: () => b,
-        in: (col: string, vals: unknown) => {
-          if (col === 'status') writes.statusFilter = vals;
-          if (col === 'id' && pendingUpdate) {
-            writes.failedBatches.push({ ids: vals, update: pendingUpdate });
-          }
-          return b;
-        },
-        update: (row: Record<string, unknown>) => {
-          pendingUpdate = row;
-          return b;
-        },
-        maybeSingle: async () => {
-          if (table === 'broadcasts') {
-            return { data: fx.broadcast === undefined ? null : fx.broadcast, error: null };
-          }
-          if (table === 'message_templates') {
-            return { data: fx.template ?? null, error: null };
-          }
-          return { data: null, error: null };
-        },
-        single: async () => ({
-          data: fx.config === undefined ? null : fx.config,
-          error: null,
-        }),
-        then: (resolve: (r: { data: unknown[]; error: null }) => unknown) => {
-          if (table === 'broadcast_recipients' && !pendingUpdate) {
-            return resolve({ data: fx.recipients ?? [], error: null });
-          }
-          return resolve({ data: [], error: null });
-        },
-      };
-      return b;
-    },
-  } as unknown as SupabaseClient;
-}
-
-const BROADCAST = {
-  id: 'bc-1',
-  template_name: 'order_update',
-  template_language: 'pt_BR',
-  header_media_url: null,
-};
-
-const CONFIG = { phone_number_id: 'pn-1', access_token: 'tok' };
-
-function recipient(
-  id: string,
-  phone: string | null,
-  params: unknown = ['A123'],
-  optedOutAt: string | null = null,
-) {
-  return {
-    id,
-    template_params: params,
-    contact: phone || optedOutAt ? { phone, opted_out_at: optedOutAt } : null,
-  };
-}
 
 describe('planBroadcastResume', () => {
-  it('plans the outstanding recipients with their frozen params', async () => {
-    const writes = newWrites();
-    const { plan, remaining, unsendable } = await planBroadcastResume(
-      planDb(
-        {
-          broadcast: BROADCAST,
-          config: CONFIG,
-          recipients: [
-            recipient('r1', '+5511991234567', ['A123', 'sexta']),
-            recipient('r2', '+5511998765432', ['B456', 'segunda']),
-          ],
-        },
-        writes,
-      ),
-      'acct-1',
-      'bc-1',
-      'pending',
-    );
-
-    expect(writes.statusFilter).toEqual(['pending']);
-    expect(plan.planned).toEqual([
-      { recipientRowId: 'r1', phone: '5511991234567', params: ['A123', 'sexta'] },
-      { recipientRowId: 'r2', phone: '5511998765432', params: ['B456', 'segunda'] },
-    ]);
-    expect(plan.accessToken).toBe('decrypted:tok');
-    expect(plan.headerMediaUrl).toBeNull();
-    expect(remaining).toBe(0);
-    expect(unsendable).toBe(0);
+  it('plans pending rows only for scope "pending"', async () => {
+    const db = seed([{}, { status: 'failed' }, { status: 'uncertain' }, { status: 'sending', claimed_at: '2026-09-27T11:59:00Z' }]);
+    const plan = await planBroadcastResume(db.client(), ACCOUNT, BC, 'pending', NOW);
+    expect(plan.ids).toEqual(['r0']);
+    expect(plan.from).toEqual(['pending']);
   });
 
-  it('carries the header media URL chosen in the wizard', async () => {
-    const { plan } = await planBroadcastResume(
-      planDb({
-        broadcast: { ...BROADCAST, header_media_url: 'https://cdn.test/promo.jpg' },
-        config: CONFIG,
-        recipients: [recipient('r1', '+5511991234567')],
-      }),
-      'acct-1',
-      'bc-1',
-      'pending',
-    );
-    expect(plan.headerMediaUrl).toBe('https://cdn.test/promo.jpg');
+  it('"failed" and "all" never include sending or uncertain rows', async () => {
+    const rows = [{}, { status: 'failed' }, { status: 'uncertain' }, { status: 'sending', claimed_at: '2026-09-27T11:59:00Z' }];
+    const failed = await planBroadcastResume(seed(rows).client(), ACCOUNT, BC, 'failed', NOW);
+    expect(failed.ids).toEqual(['r1']);
+    const all = await planBroadcastResume(seed(rows).client(), ACCOUNT, BC, 'all', NOW);
+    expect(all.ids).toEqual(['r0', 'r1']);
   });
 
-  it('scopes to failed rows when retrying, and to both for "all"', async () => {
-    const failedWrites = newWrites();
-    await planBroadcastResume(
-      planDb(
-        { broadcast: BROADCAST, config: CONFIG, recipients: [recipient('r1', '+5511991234567')] },
-        failedWrites,
-      ),
-      'acct-1',
-      'bc-1',
-      'failed',
-    );
-    expect(failedWrites.statusFilter).toEqual(['failed']);
-
-    const allWrites = newWrites();
-    await planBroadcastResume(
-      planDb(
-        { broadcast: BROADCAST, config: CONFIG, recipients: [recipient('r1', '+5511991234567')] },
-        allWrites,
-      ),
-      'acct-1',
-      'bc-1',
-      'all',
-    );
-    expect(allWrites.statusFilter).toEqual(['pending', 'failed']);
+  it('turns rows abandoned in "sending" into uncertain, not pending', async () => {
+    const db = seed([{}, { status: 'sending', claimed_at: '2026-09-27T11:00:00Z' }]);
+    const plan = await planBroadcastResume(db.client(), ACCOUNT, BC, 'all', NOW);
+    expect(plan.ids).toEqual(['r0']);
+    expect(db.table('broadcast_recipients')[1].status).toBe('uncertain');
   });
 
-  it('treats a missing or malformed params column as no params', async () => {
-    const { plan } = await planBroadcastResume(
-      planDb({
-        broadcast: BROADCAST,
-        config: CONFIG,
-        recipients: [
-          // Rows created before migration 051 carry NULL.
-          recipient('r1', '+5511991234567', null),
-          recipient('r2', '+5511998765432', 'not-an-array'),
-        ],
-      }),
-      'acct-1',
-      'bc-1',
-      'pending',
-    );
-    expect(plan.planned.map((p) => p.params)).toEqual([[], []]);
+  it('counts more than 1000 pending exactly and caps one pass', async () => {
+    const rows = Array.from({ length: RESUME_MAX_PER_REQUEST + 234 }, () => ({}));
+    const plan = await planBroadcastResume(seed(rows).client(), ACCOUNT, BC, 'pending', NOW);
+    expect(plan.ids).toHaveLength(RESUME_MAX_PER_REQUEST);
+    expect(plan.remaining).toBe(234);
+    expect(plan.ids[0]).toBe('r0'); // oldest first
   });
 
-  it('fails unsendable rows up front so they stop blocking the status', async () => {
-    const writes = newWrites();
-    const { plan, unsendable } = await planBroadcastResume(
-      planDb(
-        {
-          broadcast: BROADCAST,
-          config: CONFIG,
-          recipients: [
-            recipient('r1', '+5511991234567'),
-            recipient('r2', null),
-            recipient('r3', 'nonsense'),
-          ],
-        },
-        writes,
-      ),
-      'acct-1',
-      'bc-1',
-      'pending',
-    );
-
-    expect(unsendable).toBe(2);
-    expect(writes.failedBatches).toEqual([
-      {
-        ids: ['r2', 'r3'],
-        update: { status: 'failed', error_message: 'No valid phone number on contact' },
-      },
-    ]);
-    expect(plan.planned).toHaveLength(1);
+  it('refuses a legacy broadcast (no frozen params) when the template has variables', async () => {
+    const db = seed([{ template_params: null }, {}]);
+    await expect(planBroadcastResume(db.client(), ACCOUNT, BC, 'pending', NOW)).rejects.toMatchObject({
+      code: 'legacy_broadcast',
+      status: 409,
+    });
   });
 
-  it('never sends to a contact who opted out (migration 030)', async () => {
-    const writes = newWrites();
-    const { plan, unsendable } = await planBroadcastResume(
-      planDb(
-        {
-          broadcast: BROADCAST,
-          config: CONFIG,
-          recipients: [
-            recipient('r1', '+5511991234567'),
-            recipient('r2', '+5511998765432', ['x'], '2026-09-01T00:00:00Z'),
-          ],
-        },
-        writes,
-      ),
-      'acct-1',
-      'bc-1',
-      'failed',
-    );
-    expect(plan.planned.map((p) => p.recipientRowId)).toEqual(['r1']);
-    expect(unsendable).toBe(1);
-    expect(writes.failedBatches).toEqual([
-      { ids: ['r2'], update: { status: 'failed', error_message: 'Contact opted out' } },
-    ]);
-  });
-
-  it('caps one pass and reports the leftover', async () => {
-    const many = Array.from({ length: RESUME_MAX_PER_REQUEST + 25 }, (_, i) =>
-      recipient(`r${i}`, '+551199' + String(i).padStart(7, '0')),
-    );
-    const { plan, remaining } = await planBroadcastResume(
-      planDb({ broadcast: BROADCAST, config: CONFIG, recipients: many }),
-      'acct-1',
-      'bc-1',
-      'pending',
-    );
-    expect(plan.planned).toHaveLength(RESUME_MAX_PER_REQUEST);
-    expect(remaining).toBe(25);
-  });
-
-  it('404s a broadcast that is not on this account', async () => {
-    await expect(
-      planBroadcastResume(planDb({ broadcast: null }), 'acct-1', 'bc-1', 'pending'),
-    ).rejects.toMatchObject({ status: 404 });
+  it('allows a legacy broadcast whose template has no variables', async () => {
+    const db = seed([{ template_params: null }], {}, 'Promoção de hoje!');
+    const plan = await planBroadcastResume(db.client(), ACCOUNT, BC, 'pending', NOW);
+    expect(plan.ids).toEqual(['r0']);
   });
 
   it('refuses when there is nothing outstanding', async () => {
-    await expect(
-      planBroadcastResume(
-        planDb({ broadcast: BROADCAST, config: CONFIG, recipients: [] }),
-        'acct-1',
-        'bc-1',
-        'failed',
-      ),
-    ).rejects.toBeInstanceOf(BroadcastError);
-  });
-
-  it('refuses when WhatsApp is not configured', async () => {
-    await expect(
-      planBroadcastResume(
-        planDb({
-          broadcast: BROADCAST,
-          config: null,
-          recipients: [recipient('r1', '+5511991234567')],
-        }),
-        'acct-1',
-        'bc-1',
-        'pending',
-      ),
-    ).rejects.toMatchObject({ code: 'whatsapp_not_configured', status: 400 });
-  });
-
-  it('loads the template row like the broadcast route (account + name + language)', async () => {
-    const writes = newWrites();
-    const template = {
-      id: 'tpl-1',
-      user_id: 'u-1',
-      name: 'order_update',
-      language: 'pt_BR',
-      body_text: 'Seu pedido {{1}} sai {{2}}',
-    };
-    const { plan } = await planBroadcastResume(
-      planDb(
-        {
-          broadcast: BROADCAST,
-          config: CONFIG,
-          recipients: [recipient('r1', '+5511991234567')],
-          template,
-        },
-        writes,
-      ),
-      'acct-1',
-      'bc-1',
-      'pending',
-    );
-    expect(writes.templateFilters).toEqual({
-      account_id: 'acct-1',
-      name: 'order_update',
-      language: 'pt_BR',
+    const db = seed([{ status: 'sent' }, { status: 'uncertain' }]);
+    await expect(planBroadcastResume(db.client(), ACCOUNT, BC, 'failed', NOW)).rejects.toMatchObject({
+      code: 'nothing_to_resume',
     });
-    expect(plan.templateRow).toEqual(template);
+  });
+
+  it('404s a broadcast from another account', async () => {
+    const db = seed([{}]);
+    await expect(planBroadcastResume(db.client(), 'acct-9', BC, 'pending', NOW)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   it('refuses a malformed local template row', async () => {
-    await expect(
-      planBroadcastResume(
-        planDb({
-          broadcast: BROADCAST,
-          config: CONFIG,
-          recipients: [recipient('r1', '+5511991234567')],
-          template: { id: 'tpl-1', name: 'order_update' },
-        }),
-        'acct-1',
-        'bc-1',
-        'pending',
-      ),
-    ).rejects.toMatchObject({ code: 'template_malformed' });
+    const db = seed([{}]);
+    db.table('message_templates')[0].body_text = undefined;
+    await expect(planBroadcastResume(db.client(), ACCOUNT, BC, 'pending', NOW)).rejects.toMatchObject({
+      code: 'template_malformed',
+    });
   });
 });
