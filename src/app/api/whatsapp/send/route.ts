@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { createClient } from '@/lib/supabase/server'
 import {
   sendTextMessage,
@@ -44,6 +45,16 @@ export async function POST(request: Request) {
         { error: 'Unauthorized' },
         { status: 401 }
       )
+    }
+
+    // Papel mínimo (wacrm GHSA-8fv4-vgcc-p8vm, #448): o account_id do profile só
+    // prova que a pessoa é da conta, não o papel. Enviar/reagir/disparar chega
+    // ao cliente pela Meta ANTES de qualquer gravação, então a RLS não segura:
+    // exige 'agent' (canSendMessages) aqui.
+    try {
+      await requireRole('agent')
+    } catch (err) {
+      return toErrorResponse(err)
     }
 
     // Per-user rate limit. Bucket key is scoped to this route so

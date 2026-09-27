@@ -29,6 +29,7 @@ import {
   type TaskPriority,
 } from '@/lib/tasks'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { DestinoNaoPermitido, fetchSeguro } from '@/lib/webhooks/ssrf'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import type { AccountPreferences } from '@/types'
 import { parseAccountPreferences } from '@/lib/account-preferences'
@@ -1079,13 +1080,22 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
       const body = cfg.body_template ? await interpolate(cfg.body_template, args) : JSON.stringify(args.context)
-      // A slow endpoint must not stall the automations queued behind it.
-      const res = await fetch(cfg.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
-        body,
-        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-      })
+      // SSRF guard (wacrm GHSA-8jqh-598v-rfxc): a URL e os headers vêm da
+      // conta e quem faz o request é o servidor — fetchSeguro recusa destino
+      // interno (loopback, rede privada, metadata de nuvem, reservado) antes de
+      // sair e a cada redirect. A slow endpoint must not stall the queue.
+      let res: Response
+      try {
+        res = await fetchSeguro(cfg.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
+          body,
+          signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+        })
+      } catch (err) {
+        if (err instanceof DestinoNaoPermitido) throw new Error('send_webhook: destination not allowed')
+        throw err
+      }
       if (!res.ok) throw new Error(`webhook returned ${res.status}`)
       return `webhook ${res.status}`
     }
