@@ -19,6 +19,11 @@ import {
   uploadAccountMedia,
   MEDIA_MAX_BYTES_BY_KIND,
 } from '@/lib/storage/upload-media';
+import {
+  MEDIA_HEADER_SPECS,
+  isMediaHeaderKind,
+  type MediaHeaderKind,
+} from '@/lib/whatsapp/media-header-types';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,6 +67,23 @@ const HEADER_FORMAT_LABELS: Record<HeaderFormat, string> = {
   image: 'Image',
   video: 'Video',
   document: 'Document',
+};
+
+/** Header-media file picker copy per kind — English i18n keys (wacrm #562). */
+const HEADER_UPLOAD_LABEL: Record<MediaHeaderKind, string> = {
+  image: 'Upload image',
+  video: 'Upload video',
+  document: 'Upload document',
+};
+const HEADER_UPLOAD_HINT: Record<MediaHeaderKind, string> = {
+  image: 'JPEG or PNG, ≤5 MB',
+  video: 'MP4 or 3GPP, ≤16 MB',
+  document: 'PDF, Word, PowerPoint, Excel or text, ≤16 MB',
+};
+const HEADER_INVALID_TYPE_TOAST: Record<MediaHeaderKind, string> = {
+  image: 'Header image must be a JPEG or PNG.',
+  video: 'Header video must be an MP4 or 3GPP file.',
+  document: 'Header document must be a PDF, Word, PowerPoint, Excel or text file.',
 };
 
 /** Meta quality rating → English label key (rendered through t()). */
@@ -490,15 +512,27 @@ export function TemplateManager() {
 
   const headerNeedsMedia =
     form.header_format !== 'none' && form.header_format !== 'text';
+  const headerMediaKind: MediaHeaderKind | null = isMediaHeaderKind(
+    form.header_format,
+  )
+    ? form.header_format
+    : null;
 
-  async function handleHeaderImageFile(file: File) {
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      toast.error('Header image must be a JPEG or PNG.');
+  // Header-media upload (image #230; video/document wacrm #562). Uploads to
+  // the account-scoped chat-media bucket and stores the URL in
+  // header_media_url; the submit route turns it into a Meta handle.
+  async function handleHeaderMediaFile(file: File, kind: MediaHeaderKind) {
+    if (!MEDIA_HEADER_SPECS[kind].mimeTypes.includes(file.type)) {
+      toast.error(t(HEADER_INVALID_TYPE_TOAST[kind]));
       return;
     }
-    if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
+    // The upload lands in the chat-media bucket, whose 16 MB ceiling is
+    // below Meta's 100 MB document cap — so this is the bucket-side
+    // limit, not Meta's. A larger document can still be pasted as a link.
+    const maxBytes = MEDIA_MAX_BYTES_BY_KIND[kind];
+    if (file.size > maxBytes) {
       toast.error(
-        `${t('Image is')} ${(file.size / 1024 / 1024).toFixed(1)} MB — ${t("Meta's limit is 5 MB.")}`,
+        `${t('File is')} ${(file.size / 1024 / 1024).toFixed(1)} MB — ${t('the upload limit is')} ${Math.round(maxBytes / 1024 / 1024)} MB.`,
       );
       return;
     }
@@ -506,7 +540,7 @@ export function TemplateManager() {
     try {
       const { publicUrl } = await uploadAccountMedia('chat-media', file);
       setForm((f) => ({ ...f, header_media_url: publicUrl }));
-      toast.success('Image uploaded.');
+      toast.success(t('File uploaded.'));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
@@ -840,16 +874,16 @@ export function TemplateManager() {
 
               {headerNeedsMedia && (
                 <div className="space-y-2 mt-2">
-                  {form.header_format === 'image' && (
+                  {headerMediaKind && (
                     <div className="flex items-center gap-2">
                       <input
                         ref={headerFileRef}
                         type="file"
-                        accept="image/jpeg,image/png"
+                        accept={MEDIA_HEADER_SPECS[headerMediaKind].mimeTypes.join(',')}
                         className="hidden"
                         onChange={(e) => {
                           const f = e.target.files?.[0];
-                          if (f) void handleHeaderImageFile(f);
+                          if (f) void handleHeaderMediaFile(f, headerMediaKind);
                           e.target.value = '';
                         }}
                       />
@@ -865,10 +899,10 @@ export function TemplateManager() {
                         ) : (
                           <Upload className="h-3.5 w-3.5" />
                         )}
-                        Upload image
+                        {t(HEADER_UPLOAD_LABEL[headerMediaKind])}
                       </Button>
                       <span className="text-[11px] text-muted-foreground">
-                        JPEG or PNG, ≤5 MB
+                        {t(HEADER_UPLOAD_HINT[headerMediaKind])}
                       </span>
                     </div>
                   )}
@@ -891,11 +925,11 @@ export function TemplateManager() {
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
                     {form.header_format === 'image'
                       ? 'Upload a JPEG/PNG (≤5 MB, ≥800×418 px recommended) or paste a public HTTPS link — we upload it to Meta for review automatically.'
-                      : 'Must be a publicly accessible HTTPS link. Meta fetches it once during review, so it needs to stay live for ~24 hrs.'}
+                      : 'Upload a file or paste a public HTTPS link — we upload it to Meta for review automatically.'}
                     {form.header_format === 'video' &&
-                      ' Recommended: MP4 / 3GPP, ≤16 MB, ≤60 seconds.'}
+                      ' MP4 or 3GPP, ≤16 MB, ≤60 seconds recommended.'}
                     {form.header_format === 'document' &&
-                      ' Recommended: PDF, ≤100 MB.'}
+                      ' PDF, Word, PowerPoint, Excel or text, ≤100 MB via link (≤16 MB when uploaded here).'}
                   </p>
                 </div>
               )}

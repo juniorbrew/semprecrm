@@ -220,6 +220,13 @@ export const DICT_API: Record<string, string> = {
   'No valid phone number on contact': 'Contato sem telefone válido',
   'Contact opted out': 'Contato pediu para não receber mensagens',
 
+  // ---- WhatsApp: template header media (wacrm #562) ----
+  'Could not fetch the header media URL. Make sure it is publicly reachable.':
+    'Não foi possível baixar a mídia do cabeçalho. Confira se o link é público.',
+  'Media-header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the media header.':
+    'Modelos com mídia no cabeçalho precisam de META_APP_ID configurado (usado no upload retomável da Meta). Configure-o ou remova a mídia do cabeçalho.',
+  'Header media upload failed.': 'Falha ao enviar a mídia do cabeçalho.',
+
   // ---- WhatsApp: config -------------------------------------------------
   'Failed to fetch configuration': 'Não foi possível carregar a configuração',
   'No WhatsApp configuration saved yet. Fill in the form and click Save Configuration.':
