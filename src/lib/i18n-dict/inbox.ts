@@ -78,6 +78,9 @@ export const DICT_INBOX: Record<string, string> = {
   'Left for another run': 'Restam para outra rodada',
   'Uncertain result': 'Resultado incerto',
   'Old failure (not retryable)': 'Falha antiga (não reenviável)',
+  'Close this broadcast': 'Encerrar esta campanha',
+  'Nothing is sent: the remaining recipients are marked as uncertain for review and the broadcast status is closed.':
+    'Nada é enviado: os destinatários restantes ficam como resultado incerto para revisão e a campanha é encerrada.',
   'Created before this version — cannot be resumed':
     'Criada antes desta versão — não pode ser retomada',
   'Marked failed by the previous version, which failed whole batches even when the server may have sent them — so they are never retried.':

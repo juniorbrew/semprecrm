@@ -543,6 +543,17 @@ export default function BroadcastDetailPage() {
           <p className="mt-0.5 text-muted-foreground">
             {t('This broadcast was created before this version and cannot be resumed safely: the previous version could send a message before recording it. Review the remaining recipients manually.')}
           </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3 border-border text-muted-foreground hover:bg-muted"
+            onClick={() => handleResume('settle')}
+            disabled={resumingScope !== null}
+            title={t('Nothing is sent: the remaining recipients are marked as uncertain for review and the broadcast status is closed.')}
+          >
+            {resumingScope === 'settle' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t('Close this broadcast')}
+          </Button>
         </div>
       )}
 

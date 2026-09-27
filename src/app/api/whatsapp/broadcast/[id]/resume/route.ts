@@ -60,6 +60,30 @@ export async function POST(
     const settle = body?.scope === 'settle';
     const scope: ResumeScope = RESUME_SCOPES.includes(body?.scope) ? body.scope : 'pending';
 
+    // Campanha antiga (anterior a esta versão) nunca ganha a trava. "Encerrar"
+    // nela não envia nada: o que ficou pendente/enviando pode já ter saído pelo
+    // código antigo (que enviava antes de marcar), então vira "incerto" para
+    // revisão e o status final é fechado. Leitura pela RLS = escopo da conta.
+    if (settle) {
+      const { data: bc } = await supabase
+        .from('broadcasts')
+        .select('id, delivery_protocol')
+        .eq('id', id)
+        .eq('account_id', accountId)
+        .maybeSingle();
+      if (!bc) return NextResponse.json({ error: 'Broadcast not found', code: 'not_found' }, { status: 404 });
+      if ((bc as { delivery_protocol: number | null }).delivery_protocol == null) {
+        const { error: upErr } = await supabase
+          .from('broadcast_recipients')
+          .update({ status: 'uncertain' })
+          .eq('broadcast_id', id)
+          .in('status', ['pending', 'sending']);
+        if (upErr) throw upErr;
+        await finalizeBroadcastStatus(supabase, id);
+        return NextResponse.json({ success: true, broadcast_id: id, settled: true, legacy: true });
+      }
+    }
+
     // Coarse layer: one pass at a time. The per-row claim is what really
     // prevents duplicates; the lock keeps passes from fighting over rows.
     const token = newLockToken();
