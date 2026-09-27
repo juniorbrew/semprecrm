@@ -219,8 +219,8 @@ export const DICT_API: Record<string, string> = {
   'Failed to load recipients': 'Não foi possível carregar os destinatários',
   'No valid phone number on contact': 'Contato sem telefone válido',
   'Contact opted out': 'Contato pediu para não receber mensagens',
-  'This broadcast was created before resuming existed and did not save each recipient’s variables. Resuming would send the message without them — create a new broadcast for the remaining contacts.':
-    'Este disparo foi criado antes de existir a retomada e não guardou as variáveis de cada destinatário. Retomar enviaria a mensagem sem elas — crie um novo disparo para os contatos restantes.',
+  'This broadcast was created before this version and cannot be resumed safely: the previous version could send a message before recording it. Review the remaining recipients manually.':
+    'Esta campanha foi criada antes desta versão e não pode ser retomada com segurança: a versão anterior podia enviar a mensagem antes de registrar o envio. Revise os destinatários restantes manualmente.',
   'This broadcast is being delivered by another pass. This tab stopped sending — open the broadcast to follow it.':
     'Este disparo está sendo entregue por outro envio. Esta aba parou de enviar — abra o disparo para acompanhar.',
   'Provide broadcast_id, lock_token and 1–50 recipient_ids. Reload the page if this tab is out of date.':

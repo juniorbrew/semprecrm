@@ -418,6 +418,9 @@ export default function BroadcastDetailPage() {
   // Rows claimed by a pass that is no longer running: their outcome is
   // unknown. Shown for review together with 'uncertain'; never resent.
   const orphanedSending = deliveryActive ? 0 : counts.sending;
+  // Created by the old browser-stamped code: its 'pending' rows may have
+  // been sent already, so it can't be resumed or retried safely.
+  const isLegacy = broadcast.delivery_protocol == null;
   const uncertainTotal = counts.uncertain + orphanedSending;
 
   const funnelSteps: FunnelStep[] = [
@@ -532,7 +535,18 @@ export default function BroadcastDetailPage() {
 
       {/* Resume / retry (wacrm #472). Only rendered when something is
           outstanding and the viewer's role can send. */}
-      {canSend && (pendingCount > 0 || retryableCount > 0) && (
+      {canSend && isLegacy && (pendingCount > 0 || retryableCount > 0) && (
+        <div className="rounded-xl border border-border bg-card p-4 text-sm">
+          <p className="font-medium text-foreground">
+            {t('Created before this version — cannot be resumed')}
+          </p>
+          <p className="mt-0.5 text-muted-foreground">
+            {t('This broadcast was created before this version and cannot be resumed safely: the previous version could send a message before recording it. Review the remaining recipients manually.')}
+          </p>
+        </div>
+      )}
+
+      {canSend && !isLegacy && (pendingCount > 0 || retryableCount > 0) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
           <div className="text-sm">
             <p className="font-medium text-foreground">

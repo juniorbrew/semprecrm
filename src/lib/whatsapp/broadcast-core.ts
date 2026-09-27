@@ -95,11 +95,12 @@ export interface DeliveryContext {
   templateRow: MessageTemplate | null;
   /** Header media chosen in the wizard (#298). Null → template's stored URL. */
   headerMediaUrl: string | null;
-  /** The template body has {{n}} placeholders. */
-  hasBodyVariables: boolean;
+  /**
+   * Created by the old browser-stamped code (delivery_protocol NULL). Its
+   * 'pending' rows may already have been sent — see planBroadcastResume.
+   */
+  isLegacy: boolean;
 }
-
-const PLACEHOLDER = /\{\{\s*\d+\s*\}\}/;
 
 /**
  * Load the broadcast (account-scoped), the WhatsApp config and the
@@ -112,7 +113,7 @@ export async function loadDeliveryContext(
 ): Promise<DeliveryContext> {
   const { data: broadcast, error: bcError } = await db
     .from('broadcasts')
-    .select('id, template_name, template_language, header_media_url, template_variables')
+    .select('id, template_name, template_language, header_media_url, delivery_protocol')
     .eq('id', broadcastId)
     .eq('account_id', accountId)
     .maybeSingle();
@@ -149,10 +150,6 @@ export async function loadDeliveryContext(
     );
   }
   const templateRow = (rawTemplateRow as MessageTemplate | null) ?? null;
-  const mappedVariables =
-    broadcast.template_variables && typeof broadcast.template_variables === 'object'
-      ? Object.keys(broadcast.template_variables as object).length
-      : 0;
 
   return {
     accountId,
@@ -163,8 +160,7 @@ export async function loadDeliveryContext(
     accessToken: decrypt(config.access_token),
     templateRow,
     headerMediaUrl: (broadcast.header_media_url as string | null) ?? null,
-    hasBodyVariables:
-      (templateRow ? PLACEHOLDER.test(templateRow.body_text) : false) || mappedVariables > 0,
+    isLegacy: broadcast.delivery_protocol == null,
   };
 }
 

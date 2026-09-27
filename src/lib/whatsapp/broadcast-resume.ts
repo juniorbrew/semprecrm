@@ -109,23 +109,18 @@ export async function planBroadcastResume(
   // Rows a dead pass left in 'sending' → 'uncertain' (never resent).
   await expireStaleSending(db, broadcastId, now);
 
-  // A campaign created before migration 051 has no frozen params. If the
-  // template has variables, a resume would send "{{1}}"-less messages —
-  // refuse instead.
-  if (ctx.hasBodyVariables) {
-    const { count: legacy } = await db
-      .from('broadcast_recipients')
-      .select('id', { count: 'exact', head: true })
-      .eq('broadcast_id', broadcastId)
-      .or(claimableStatusFilter(from))
-      .is('template_params', null);
-    if ((legacy ?? 0) > 0) {
-      throw new BroadcastError(
-        'legacy_broadcast',
-        'This broadcast was created before resuming existed and did not save each recipient’s variables. Resuming would send the message without them — create a new broadcast for the remaining contacts.',
-        409,
-      );
-    }
+  // A LEGACY campaign (created by the old code, delivery_protocol NULL)
+  // sent each batch server-side and only then stamped the rows from the
+  // browser: a row still 'pending' there may already have been sent.
+  // Resuming it could message people twice, so 'pending' / 'all' are
+  // refused outright. ('failed' needs claimed_at, which legacy rows never
+  // have, so it finds nothing to retry.)
+  if (ctx.isLegacy && from.includes('pending')) {
+    throw new BroadcastError(
+      'legacy_broadcast',
+      'This broadcast was created before this version and cannot be resumed safely: the previous version could send a message before recording it. Review the remaining recipients manually.',
+      409,
+    );
   }
 
   const { count: total } = await db

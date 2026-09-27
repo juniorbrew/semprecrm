@@ -38,6 +38,7 @@ function seed(
       template_variables: bodyText.includes('{{') ? { '1': { type: 'static', value: 'x' } } : {},
       status: 'sending',
       delivery_locked_at: null,
+      delivery_protocol: 1,
       updated_at: '2026-09-27T10:00:00.000Z',
       ...bc,
     },
@@ -82,7 +83,7 @@ describe('claimBroadcastDelivery', () => {
   it('treats a lock-less "sending" campaign with recent activity as active', async () => {
     // A tab running a pre-051 bundle never set the lock, but its sends
     // keep bumping updated_at through the count trigger.
-    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:58:00.000Z' });
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:58:00.000Z', delivery_protocol: null });
     expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(false);
   });
 
@@ -94,7 +95,7 @@ describe('claimBroadcastDelivery', () => {
   });
 
   it('claims a lock-less "sending" campaign that went quiet', async () => {
-    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z' });
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z', delivery_protocol: null });
     expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(true);
   });
 
@@ -173,18 +174,32 @@ describe('planBroadcastResume', () => {
     expect(plan.ids[0]).toBe('r0'); // oldest first
   });
 
-  it('refuses a legacy broadcast (no frozen params) when the template has variables', async () => {
-    const db = seed([{ template_params: null }, {}]);
-    await expect(planBroadcastResume(db.client(), ACCOUNT, BC, 'pending', NOW)).rejects.toMatchObject({
-      code: 'legacy_broadcast',
-      status: 409,
+  // Legacy = created by the old browser-stamped code (delivery_protocol
+  // NULL): its 'pending' rows may already have been sent.
+  it.each(['pending', 'all'] as const)(
+    'refuses scope "%s" for ANY legacy campaign, with or without template variables',
+    async (scope) => {
+      for (const body of ['Olá {{1}}', 'Promoção de hoje!']) {
+        const db = seed([{ template_params: null }, {}], { delivery_protocol: null }, body);
+        await expect(planBroadcastResume(db.client(), ACCOUNT, BC, scope, NOW)).rejects.toMatchObject({
+          code: 'legacy_broadcast',
+          status: 409,
+        });
+      }
+    },
+  );
+
+  it('a legacy campaign has nothing retryable under "failed" (old failures lack claimed_at)', async () => {
+    const db = seed([{ status: 'failed' }, {}], { delivery_protocol: null });
+    await expect(planBroadcastResume(db.client(), ACCOUNT, BC, 'failed', NOW)).rejects.toMatchObject({
+      code: 'nothing_to_resume',
     });
   });
 
-  it('allows a legacy broadcast whose template has no variables', async () => {
-    const db = seed([{ template_params: null }], {}, 'Promoção de hoje!');
-    const plan = await planBroadcastResume(db.client(), ACCOUNT, BC, 'pending', NOW);
-    expect(plan.ids).toEqual(['r0']);
+  it('leaves legacy rows untouched when refusing', async () => {
+    const db = seed([{}, { status: 'failed' }], { delivery_protocol: null });
+    await planBroadcastResume(db.client(), ACCOUNT, BC, 'all', NOW).catch(() => undefined);
+    expect(db.table('broadcast_recipients').map((r) => r.status)).toEqual(['pending', 'failed']);
   });
 
   it('refuses when there is nothing outstanding', async () => {

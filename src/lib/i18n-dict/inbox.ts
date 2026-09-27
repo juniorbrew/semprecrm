@@ -78,6 +78,8 @@ export const DICT_INBOX: Record<string, string> = {
   'Left for another run': 'Restam para outra rodada',
   'Uncertain result': 'Resultado incerto',
   'Old failure (not retryable)': 'Falha antiga (não reenviável)',
+  'Created before this version — cannot be resumed':
+    'Criada antes desta versão — não pode ser retomada',
   'Marked failed by the previous version, which failed whole batches even when the server may have sent them — so they are never retried.':
     'Marcadas como falha pela versão anterior, que registrava o lote inteiro como falha mesmo quando o servidor pode ter enviado — por isso nunca são reenviadas.',
   'Meta may or may not have received these messages. They are never resent automatically.':
