@@ -283,4 +283,10 @@ export const DICT_API: Record<string, string> = {
   'Verification failed': 'A verificação falhou',
   'Verification token mismatch': 'O token de verificação não confere',
   'Invalid signature': 'A assinatura da requisição é inválida',
+
+  // ---- POST /api/whatsapp/config — id checks (wacrm #505) ----------------
+  'Phone Number ID must contain only digits — it is the numeric id shown under Meta → WhatsApp → API Setup, not the phone number itself.':
+    'O ID do número de telefone deve ter só dígitos — é o ID numérico mostrado em Meta → WhatsApp → Configuração da API, não o número de telefone.',
+  'WhatsApp Business Account ID must contain only digits — copy it from Meta → WhatsApp → API Setup.':
+    'O ID da conta do WhatsApp Business deve ter só dígitos — copie-o em Meta → WhatsApp → Configuração da API.',
 };

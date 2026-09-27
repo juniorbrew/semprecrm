@@ -41,6 +41,49 @@ type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
 type ChannelChoice = 'official' | 'qr';
 
+// Meta ids are decimal digit strings — mirrors the server-side check in
+// POST /api/whatsapp/config so the obvious paste mistakes get a named
+// field before a round-trip (wacrm #505).
+const META_ID_RE = /^\d+$/;
+
+// `meta` object the config route attaches to every failed Meta call
+// (wacrm #505): what a user quotes to Meta support.
+type MetaErrorMeta = {
+  code: number | null;
+  subcode: number | null;
+  fbtrace_id: string | null;
+  step: string;
+  field?: string | null;
+  message?: string | null;
+};
+type MetaFailure = { message: string; meta: MetaErrorMeta | null };
+type WabaSubscription = {
+  checked: boolean;
+  subscribed: boolean | null;
+  app_id_match: boolean | null;
+  error?: string;
+  error_pt?: string;
+};
+
+// Static copy — English keys translated through the i18n dictionary.
+const PHONE_ID_NOT_NUMERIC =
+  'Phone Number ID must contain only digits. Copy the numeric id from Meta → WhatsApp → API Setup, not the phone number itself.';
+const WABA_ID_NOT_NUMERIC =
+  'WhatsApp Business Account ID must contain only digits. Copy it from Meta → WhatsApp → API Setup.';
+const WABA_SUBSCRIBED =
+  'The WhatsApp Business Account is subscribed to this app — inbound webhooks can be delivered.';
+const WABA_NOT_SUBSCRIBED =
+  'The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it.';
+
+// Connect-flow step (wire value from the route) → English label key.
+const META_STEP_LABELS: Record<string, string> = {
+  verify_number: 'Reading the phone number',
+  waba_phone_numbers: 'Listing the WABA phone numbers',
+  register: 'Registering the phone number',
+  subscribe_waba: 'Subscribing the WABA to the app',
+  subscribed_apps: 'Reading the WABA subscriptions',
+};
+
 /**
  * Settings → WhatsApp.
  *
@@ -207,6 +250,19 @@ function WhatsAppOfficialConfig() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  // Structured details of the last failed Meta call (health check or
+  // save) — rendered as small muted text under the actionable message.
+  const [statusMeta, setStatusMeta] = useState<MetaErrorMeta | null>(null);
+  const [saveFailure, setSaveFailure] = useState<MetaFailure | null>(null);
+  const [wabaSubscription, setWabaSubscription] = useState<WabaSubscription | null>(null);
+  // The config route's Meta explanations embed ids and Meta's own text,
+  // so the DOM dictionary can't translate them; it sends a pt-BR
+  // rendition alongside (`*_pt`). Pick the one for the active language.
+  const localized = useCallback(
+    (en: string | null | undefined, pt: string | null | undefined): string =>
+      (language === 'pt-BR' ? pt || en : en) || '',
+    [language],
+  );
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
@@ -316,10 +372,14 @@ function WhatsAppOfficialConfig() {
             setConnectionStatus('connected');
             setResetReason(null);
             setStatusMessage('');
+            setStatusMeta(null);
+            setWabaSubscription(payload.waba_subscription ?? null);
           } else {
             setConnectionStatus('disconnected');
             setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
-            setStatusMessage(payload.message || '');
+            setStatusMessage(localized(payload.message, payload.message_pt));
+            setStatusMeta(payload.meta ?? null);
+            setWabaSubscription(null);
           }
         } catch (err) {
           console.error('Health check failed:', err);
@@ -329,6 +389,8 @@ function WhatsAppOfficialConfig() {
         setConnectionStatus('disconnected');
         setResetReason(null);
         setStatusMessage('');
+        setStatusMeta(null);
+        setWabaSubscription(null);
       }
     } catch (err) {
       console.error('fetchConfig error:', err);
@@ -336,7 +398,7 @@ function WhatsAppOfficialConfig() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, t]);
+  }, [supabase, t, localized]);
 
   useEffect(() => {
     // Need both the auth session (`!authLoading`) AND the profile
@@ -355,6 +417,14 @@ function WhatsAppOfficialConfig() {
   async function handleSave() {
     if (!phoneNumberId.trim()) {
       toast.error(t('Phone Number ID is required'));
+      return;
+    }
+    if (!META_ID_RE.test(phoneNumberId.trim())) {
+      toast.error(t(PHONE_ID_NOT_NUMERIC));
+      return;
+    }
+    if (wabaId.trim() && !META_ID_RE.test(wabaId.trim())) {
+      toast.error(t(WABA_ID_NOT_NUMERIC));
       return;
     }
     if (!config && (!accessToken.trim() || !tokenEdited)) {
@@ -400,10 +470,18 @@ function WhatsAppOfficialConfig() {
       const data = await res.json();
 
       if (!res.ok) {
-        toast.error(data.error || t('Failed to save configuration'));
+        // The route names the failing step and which field to check
+        // (wacrm #505). Keep the details on screen — a toast is too
+        // short-lived to copy a trace id out of.
+        const message = data.error_pt || data.meta
+          ? localized(data.error, data.error_pt)
+          : t(data.error || 'Failed to save configuration');
+        setSaveFailure({ message, meta: data.meta ?? null });
+        toast.error(message || t('Failed to save configuration'), { duration: 10000 });
         setSaving(false);
         return;
       }
+      setSaveFailure(null);
 
       // The route now returns a structured outcome:
       //   * registered=true   → number is live, events will flow
@@ -412,8 +490,13 @@ function WhatsAppOfficialConfig() {
       //                         and a retry path. registration_error
       //                         is human-readable from Meta.
       if (data.registered === false && data.registration_error) {
+        const reason = localized(data.registration_error, data.error_pt);
+        setSaveFailure({
+          message: `${t("Saved, but Meta couldn't register the number")}: ${reason}`,
+          meta: data.meta ?? null,
+        });
         toast.error(
-          `${t("Saved, but Meta couldn't register the number")}: ${data.registration_error}`,
+          `${t("Saved, but Meta couldn't register the number")}: ${reason}`,
           { duration: 12000 },
         );
       } else if (data.registration_skipped) {
@@ -457,6 +540,8 @@ function WhatsAppOfficialConfig() {
         setConnectionStatus('connected');
         setResetReason(null);
         setStatusMessage('');
+        setStatusMeta(null);
+        setWabaSubscription(payload.waba_subscription ?? null);
         toast.success(
           payload.phone_info?.verified_name
             ? `${t('Connected to')} ${payload.phone_info.verified_name}`
@@ -465,8 +550,11 @@ function WhatsAppOfficialConfig() {
       } else {
         setConnectionStatus('disconnected');
         setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
-        setStatusMessage(payload.message || '');
-        toast.error(payload.message || t('API connection failed'));
+        const message = localized(payload.message, payload.message_pt);
+        setStatusMessage(message);
+        setStatusMeta(payload.meta ?? null);
+        setWabaSubscription(null);
+        toast.error(message || t('API connection failed'), { duration: 10000 });
       }
     } catch (err) {
       console.error('Test connection error:', err);
@@ -528,6 +616,9 @@ function WhatsAppOfficialConfig() {
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
+      setStatusMeta(null);
+      setSaveFailure(null);
+      setWabaSubscription(null);
     } catch (err) {
       console.error('Reset error:', err);
       toast.error(t('Failed to reset configuration'));
@@ -550,6 +641,40 @@ function WhatsAppOfficialConfig() {
   }
 
   const showResetBanner = resetReason === 'token_corrupted';
+
+  // Step + code + trace id in small muted text, so a user can quote
+  // them to Meta support (wacrm #505). Labels are dictionary keys in
+  // their own nodes; the values (ids, Meta's English text) are not.
+  const renderMetaDetails = (meta: MetaErrorMeta) => (
+    <div className="mt-2 space-y-0.5 text-[11px] leading-relaxed text-muted-foreground break-all">
+      <p>
+        <span>{t('Step')}</span>:{' '}
+        <span>{t(META_STEP_LABELS[meta.step] ?? meta.step)}</span>
+        {meta.code !== null && meta.code !== undefined && (
+          <>
+            {' · '}
+            <span>{t('Meta error code')}</span>:{' '}
+            <code data-no-translate>
+              {meta.code}
+              {meta.subcode !== null && meta.subcode !== undefined ? `/${meta.subcode}` : ''}
+            </code>
+          </>
+        )}
+        {meta.fbtrace_id && (
+          <>
+            {' · '}
+            <span>{t('Trace ID')}</span>: <code data-no-translate>{meta.fbtrace_id}</code>
+          </>
+        )}
+      </p>
+      {meta.message && (
+        <p>
+          <span>{t('Meta said')}</span>: <span data-no-translate>{meta.message}</span>
+        </p>
+      )}
+      <p>{t('Quote these details when contacting Meta support.')}</p>
+    </div>
+  );
 
   return (
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
@@ -590,6 +715,22 @@ function WhatsAppOfficialConfig() {
           </Alert>
         )}
 
+        {/* Last save failed — why, which field, and what to quote to Meta */}
+        {saveFailure && (
+          <Alert className="bg-red-950/30 border-red-700/50">
+            <div className="flex items-start gap-3">
+              <XCircle className="size-5 text-red-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <AlertTitle className="text-red-200 mb-1">{t('Last save failed')}</AlertTitle>
+                <AlertDescription className="text-red-100/80 text-sm" data-no-translate>
+                  {saveFailure.message}
+                </AlertDescription>
+                {saveFailure.meta && renderMetaDetails(saveFailure.meta)}
+              </div>
+            </div>
+          </Alert>
+        )}
+
         {/* Connection Status */}
         <Alert className="bg-card border-border">
           <div className="flex items-center gap-2">
@@ -608,6 +749,21 @@ function WhatsAppOfficialConfig() {
               : statusMessage ||
                 t('Configure your Meta API credentials below to connect your WhatsApp Business account.')}
           </AlertDescription>
+          {connectionStatus === 'connected' && wabaSubscription?.checked && (
+            <p
+              className={cn(
+                'mt-1 text-xs',
+                wabaSubscription.subscribed === false ? 'text-amber-300' : 'text-muted-foreground',
+              )}
+            >
+              {wabaSubscription.subscribed === false
+                ? t(WABA_NOT_SUBSCRIBED)
+                : wabaSubscription.subscribed === true
+                  ? t(WABA_SUBSCRIBED)
+                  : localized(wabaSubscription.error, wabaSubscription.error_pt)}
+            </p>
+          )}
+          {connectionStatus !== 'connected' && statusMeta && renderMetaDetails(statusMeta)}
         </Alert>
 
         {/* Registration Status — the "is it actually live?" check.
