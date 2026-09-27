@@ -170,6 +170,7 @@ export function DealDrawer({
             onEdit={() => setMode("edit")}
             onStatus={handleStatus}
             onAdvance={handleAdvance}
+            onCompanyChanged={onChanged}
           />
         )}
 

@@ -1,3 +1,4 @@
+import type { Company } from "@/lib/companies/types";
 import type { AccountRole } from "@/lib/auth/roles";
 import type { LimitKey, OptionalModule, Plan, PlanStatus } from "@/lib/plans";
 
@@ -530,9 +531,12 @@ export interface Deal {
   /** Why the deal was lost (migration 031). Cleared on reopen / won. */
   loss_reason_id?: string | null;
   lost_note?: string | null;
+  /** Customer company (migration 054). Null when none / deleted. */
+  company_id?: string | null;
   created_at: string;
   updated_at?: string;
   contact?: Contact;
+  company?: Pick<Company, 'id' | 'razao_social' | 'nome_fantasia' | 'cnpj' | 'cidade' | 'uf'> | null;
   stage?: PipelineStage;
   assignee?: Profile;
   loss_reason?: Pick<DealLossReason, 'id' | 'name'> | null;
