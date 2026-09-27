@@ -16,6 +16,7 @@ import {
 } from '@/lib/whatsapp/template-webhook'
 import { supabaseServerUrl } from '@/lib/supabase/url'
 import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
+import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -363,6 +364,12 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
   return ii > ci
 }
 
+/** PostgREST "column not in schema cache" / Postgres undefined_column. */
+function isMissingColumnError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code
+  return code === 'PGRST204' || code === '42703'
+}
+
 async function handleStatusUpdate(status: {
   id: string
   status: string
@@ -394,22 +401,40 @@ async function handleStatusUpdate(status: {
     )
   }
 
-  // 1) Mirror onto messages (legacy behavior) — Meta's status values
-  //    already match the CHECK constraint on messages.status. The
-  //    failure reason rides in the same update (migration 052).
-  const messageUpdate: Record<string, unknown> = { status: status.status }
-  if (failure) {
-    messageUpdate.error_code = failure.code
-    messageUpdate.error_title = failure.title
-    messageUpdate.error_details = failure.details
-  }
-  const { error: msgErr } = await supabaseAdmin()
-    .from('messages')
-    .update(messageUpdate)
-    .eq('message_id', status.id)
+  // 1) Mirror onto messages — forward-only, same ladder the QR ack
+  //    route uses (sending → sent → delivered → read; `failed` only
+  //    from sending/sent and terminal). Meta does not promise ordering
+  //    and replays webhooks: without the guard a late `sent` /
+  //    `delivered` overwrote `failed` and the failure reason vanished
+  //    from the inbox. The `.in('status', …)` filter makes the database
+  //    enforce it atomically. The failure reason rides in the same
+  //    update (migration 052).
+  if (isMessageAckStatus(status.status)) {
+    const messageUpdate: Record<string, unknown> = { status: status.status }
+    if (failure) {
+      messageUpdate.error_code = failure.code
+      messageUpdate.error_title = failure.title
+      messageUpdate.error_details = failure.details
+    }
+    const allowedFrom = statusesBefore(status.status)
+    const runMessageUpdate = (patch: Record<string, unknown>) =>
+      supabaseAdmin()
+        .from('messages')
+        .update(patch)
+        .eq('message_id', status.id)
+        .in('status', allowedFrom)
 
-  if (msgErr) {
-    console.error('Error updating message status:', msgErr)
+    let { error: msgErr } = await runMessageUpdate(messageUpdate)
+    if (msgErr && failure && isMissingColumnError(msgErr)) {
+      // Migration 052 not applied yet — don't lose the status itself.
+      console.warn(
+        '[webhook] messages.error_* columns missing (apply migration 052); storing the failed status without the reason',
+      )
+      ;({ error: msgErr } = await runMessageUpdate({ status: status.status }))
+    }
+    if (msgErr) {
+      console.error('Error updating message status:', msgErr)
+    }
   }
 
   // 2) Mirror onto broadcast_recipients via whatsapp_message_id

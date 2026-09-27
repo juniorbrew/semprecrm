@@ -14,6 +14,10 @@ const h = vi.hoisted(() => ({
   configRows: [] as Record<string, unknown>[],
   recipient: null as { id: string; status: string } | null,
   updates: [] as { table: string; payload: Record<string, unknown>; filters: [string, unknown][] }[],
+  /** Current messages.status for the wamid (drives the `.in` guard). */
+  messageStatus: 'sent' as string,
+  /** Error the next N messages updates resolve with. */
+  messageUpdateErrors: [] as ({ code: string; message: string } | null)[],
   ingest: vi.fn<(...args: unknown[]) => Promise<{ ok: boolean }>>(async () => ({ ok: true })),
   templateChange: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
 }))
@@ -60,9 +64,22 @@ vi.mock('@supabase/supabase-js', () => ({
     from(table: string) {
       const filters: [string, unknown][] = []
       let payload: Record<string, unknown> | null = null
+      let inFilter: unknown[] | null = null
       const resolve = () => {
         if (payload) {
+          if (table === 'messages' && h.messageUpdateErrors.length > 0) {
+            const err = h.messageUpdateErrors.shift() ?? null
+            if (err) return { data: null, error: err }
+          }
+          // Emulate the forward-only `.in('status', …)` guard: a row whose
+          // status is not in the allowed set is simply not updated.
+          if (table === 'messages' && inFilter && !inFilter.includes(h.messageStatus)) {
+            return { data: null, error: null }
+          }
           h.updates.push({ table, payload, filters: [...filters] })
+          if (table === 'messages' && typeof payload.status === 'string') {
+            h.messageStatus = payload.status
+          }
           return { data: null, error: null }
         }
         if (table === 'whatsapp_config') return { data: h.configRows, error: null }
@@ -72,6 +89,7 @@ vi.mock('@supabase/supabase-js', () => ({
         select: () => b,
         update: (p: Record<string, unknown>) => ((payload = p), b),
         eq: (k: string, v: unknown) => (filters.push([k, v]), b),
+        in: (_k: string, v: unknown[]) => ((inFilter = v), b),
         maybeSingle: async () =>
           table === 'broadcast_recipients'
             ? { data: h.recipient, error: null }
@@ -151,6 +169,8 @@ beforeEach(() => {
   h.configRows = [{ id: 'cfg-1', account_id: 'acct-1', user_id: 'owner-1', access_token: 'enc' }]
   h.recipient = null
   h.updates = []
+  h.messageStatus = 'sent'
+  h.messageUpdateErrors = []
   h.ingest.mockClear()
   h.templateChange.mockClear()
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -212,6 +232,52 @@ describe('status webhook — failure reason (wacrm #535)', () => {
     await post(statusPayload({ status: 'delivered', errors }))
     await settle()
     expect(h.updates.find((u) => u.table === 'messages')?.payload).toEqual({ status: 'delivered' })
+  })
+})
+
+describe('status webhook — forward-only messages.status (review fix)', () => {
+  it('does not let a late sent/delivered overwrite failed (keeps the reason)', async () => {
+    h.messageStatus = 'failed'
+    await post(statusPayload({ status: 'delivered' }))
+    await post(statusPayload({ status: 'sent' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'messages')).toEqual([])
+    expect(h.messageStatus).toBe('failed')
+  })
+
+  it('does not move read back to delivered, nor mark a delivered message failed', async () => {
+    h.messageStatus = 'read'
+    await post(statusPayload({ status: 'delivered' }))
+    await settle()
+    h.messageStatus = 'delivered'
+    await post(statusPayload({ status: 'failed', errors: [{ code: 1, title: 'x' }] }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'messages')).toEqual([])
+  })
+
+  it('moves forward normally', async () => {
+    h.messageStatus = 'sent'
+    await post(statusPayload({ status: 'delivered' }))
+    await settle()
+    await post(statusPayload({ status: 'read' }))
+    await settle()
+    expect(h.messageStatus).toBe('read')
+  })
+
+  it('ignores statuses that are not on the ladder', async () => {
+    await post(statusPayload({ status: 'deleted' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'messages')).toEqual([])
+  })
+
+  it('retries without the error columns when migration 052 is missing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.messageUpdateErrors = [{ code: 'PGRST204', message: "Could not find the 'error_code' column" }]
+    await post(statusPayload({ status: 'failed', errors: [{ code: 131026, title: 'Undeliverable' }] }))
+    await settle()
+    const msgs = h.updates.filter((u) => u.table === 'messages')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].payload).toEqual({ status: 'failed' })
   })
 })
 
