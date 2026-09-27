@@ -4,8 +4,9 @@
 // Talks to the public sources on behalf of the browser so the
 // signup page (unauthenticated) never hits them directly: one
 // place to rate-limit, to keep an in-memory cache (CNPJ data
-// changes rarely; CEPs never) and to fall back between CEP
-// providers. Mapping lives in ./lookup (pure, tested).
+// changes rarely; CEPs never) and to fall back between
+// providers (CNPJ: BrasilAPI → CNPJ.ws → ReceitaWS; CEP: BrasilAPI
+// raced against ViaCEP). Mapping lives in ./lookup (pure, tested).
 //
 // `fetchImpl` is injectable for tests; production uses the global.
 // ============================================================
@@ -14,6 +15,8 @@ import {
   isValidCep,
   mapBrasilApiCep,
   mapBrasilApiCnpj,
+  mapCnpjWs,
+  mapReceitaWs,
   mapViaCep,
   normalizeCep,
   type AddressLookup,
@@ -81,6 +84,43 @@ async function getJson(
   }
 }
 
+type CnpjSourceResult = { company: CompanyLookup } | { miss: true } | { failed: true }
+
+/**
+ * One public CNPJ source: GET, classify, map. 404/400 (or a 200 that
+ * carries no company) is a miss; network errors, timeouts, 429 and
+ * 5xx are failures — the next source gets its turn either way.
+ */
+async function fromSource(
+  fetchImpl: FetchLike,
+  url: string,
+  map: (json: Record<string, unknown>) => CompanyLookup | null,
+): Promise<CnpjSourceResult> {
+  const r = await getJson(fetchImpl, url)
+  if (r.status === 404 || r.status === 400) return { miss: true }
+  if (r.status !== 200) return { failed: true }
+  if (!r.json) return { failed: true }
+  const company = map(r.json)
+  return company && company.legalName ? { company } : { miss: true }
+}
+
+/**
+ * Three public, key-less sources in order — BrasilAPI, CNPJ.ws,
+ * ReceitaWS. BrasilAPI is fastest but sometimes lags on newly opened
+ * companies and throttles bursts; each source has its own base and
+ * its own limits. A miss or an outage hands over to the next; the
+ * answer is `not_found` only when some source said so and none found
+ * it, `upstream_error` when every source failed.
+ */
+const CNPJ_SOURCES: { url: (cnpj: string) => string; map: (json: Record<string, unknown>, cnpj: string) => CompanyLookup | null }[] = [
+  { url: (c) => `https://brasilapi.com.br/api/cnpj/v1/${c}`, map: (json) => mapBrasilApiCnpj(json) },
+  { url: (c) => `https://publica.cnpj.ws/cnpj/${c}`, map: (json, c) => mapCnpjWs(json, c) },
+  {
+    url: (c) => `https://receitaws.com.br/v1/cnpj/${c}`,
+    map: (json, c) => (json.status === 'ERROR' ? null : mapReceitaWs(json, c)),
+  },
+]
+
 export async function lookupCnpj(
   raw: string,
   fetchImpl: FetchLike = fetch,
@@ -92,29 +132,41 @@ export async function lookupCnpj(
   const cached = cacheGet<CnpjLookupResult>(key)
   if (cached) return cached
 
-  const r = await getJson(fetchImpl, `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`)
-  if (r.status === 0 || r.status >= 500) return { ok: false, reason: 'upstream_error' }
-  if (r.status === 404 || r.status === 400 || !r.json) {
-    const miss: CnpjLookupResult = { ok: false, reason: 'not_found' }
-    cacheSet(key, miss, CNPJ_TTL_MS)
-    return miss
-  }
-  if (r.status !== 200) return { ok: false, reason: 'upstream_error' }
+  let missed = false
+  let failed = false
+  for (const [index, source] of CNPJ_SOURCES.entries()) {
+    const r = await fromSource(fetchImpl, source.url(cnpj), (json) => source.map(json, cnpj))
+    if ('miss' in r) {
+      missed = true
+      continue
+    }
+    if ('failed' in r) {
+      failed = true
+      continue
+    }
 
-  const company = mapBrasilApiCnpj(r.json)
-  // BrasilAPI usually omits the e-mail the Receita holds; cnpj.ws has
-  // it. Best effort, short budget, silently skipped when rate-limited
-  // (its free tier allows 3 calls a minute).
-  if (!company.email) {
-    const extra = await getJson(fetchImpl, `https://publica.cnpj.ws/cnpj/${cnpj}`, EMAIL_LOOKUP_TIMEOUT_MS)
-    const est = extra.status === 200 && extra.json ? (extra.json.estabelecimento as Record<string, unknown> | undefined) : undefined
-    const email = typeof est?.email === 'string' ? est.email.trim().toLowerCase() : ''
-    if (email) company.email = email
+    const company = r.company
+    // BrasilAPI usually omits the e-mail the Receita holds; cnpj.ws has
+    // it. Best effort, short budget, silently skipped when rate-limited
+    // (its free tier allows 3 calls a minute).
+    if (index === 0 && !company.email) {
+      const extra = await getJson(fetchImpl, `https://publica.cnpj.ws/cnpj/${cnpj}`, EMAIL_LOOKUP_TIMEOUT_MS)
+      const est = extra.status === 200 && extra.json ? (extra.json.estabelecimento as Record<string, unknown> | undefined) : undefined
+      const email = typeof est?.email === 'string' ? est.email.trim().toLowerCase() : ''
+      if (email) company.email = email
+    }
+
+    const hit: CnpjLookupResult = { ok: true, company }
+    cacheSet(key, hit, CNPJ_TTL_MS)
+    return hit
   }
 
-  const hit: CnpjLookupResult = { ok: true, company }
-  cacheSet(key, hit, CNPJ_TTL_MS)
-  return hit
+  if (!missed) return { ok: false, reason: 'upstream_error' }
+  const miss: CnpjLookupResult = { ok: false, reason: 'not_found' }
+  // Only a unanimous miss is cached — a source that was down might
+  // have had it.
+  if (!failed) cacheSet(key, miss, CNPJ_TTL_MS)
+  return miss
 }
 
 export async function lookupCep(

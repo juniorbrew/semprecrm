@@ -6,6 +6,8 @@ import {
   isValidCep,
   mapBrasilApiCep,
   mapBrasilApiCnpj,
+  mapCnpjWs,
+  mapReceitaWs,
   mapViaCep,
   normalizeCep,
   normalizePhone,
@@ -66,6 +68,8 @@ describe('mapBrasilApiCnpj', () => {
     ddd_telefone_2: '',
     email: 'CONTATO@EXEMPLO.COM.BR',
     descricao_situacao_cadastral: 'ATIVA',
+    cnae_fiscal: 9430800,
+    cnae_fiscal_descricao: 'Atividades de associações de defesa de direitos sociais',
   }
 
   it('maps the Receita payload to our company shape, humanised', () => {
@@ -85,6 +89,8 @@ describe('mapBrasilApiCnpj', () => {
       phone: '5136354333',
       email: 'contato@exemplo.com.br',
       status: 'ATIVA',
+      cnae: '9430800',
+      activity: 'Atividades de associações de defesa de direitos sociais',
     })
   })
 
@@ -101,6 +107,75 @@ describe('mapBrasilApiCnpj', () => {
     expect(out.phone).toBe('')
     expect(out.address.number).toBe('S/N')
     expect(out.address.complement).toBe('')
+  })
+})
+
+describe('fallback CNPJ mappers', () => {
+  it('maps CNPJ.ws into the same shape (nested estabelecimento)', () => {
+    const out = mapCnpjWs(
+      {
+        razao_social: 'PADARIA SOL LTDA',
+        estabelecimento: {
+          cnpj: '11222333000181',
+          nome_fantasia: 'PADARIA DO SOL',
+          tipo_logradouro: 'RUA',
+          logradouro: 'GARIBALDI',
+          numero: '70',
+          complemento: 'LOJA   1',
+          bairro: 'CENTRO',
+          cep: '90000000',
+          ddd1: '51',
+          telefone1: '36354333',
+          email: 'Sol@Padaria.com.br',
+          situacao_cadastral: 'Ativa',
+          cidade: { nome: 'Porto Alegre' },
+          estado: { sigla: 'RS' },
+          atividade_principal: { subclasse: '1091102', descricao: 'Fabricação de produtos de padaria' },
+        },
+      },
+      '11222333000181',
+    )
+    expect(out).toMatchObject({
+      taxId: '11222333000181',
+      legalName: 'Padaria Sol LTDA',
+      tradeName: 'Padaria do Sol',
+      address: { cep: '90000000', street: 'Rua Garibaldi', number: '70', complement: 'Loja 1', neighborhood: 'Centro', city: 'Porto Alegre', state: 'RS' },
+      phone: '5136354333',
+      email: 'sol@padaria.com.br',
+      status: 'ATIVA',
+      cnae: '1091102',
+      activity: 'Fabricação de produtos de padaria',
+    })
+  })
+
+  it('maps ReceitaWS (masked fields, first phone only)', () => {
+    const out = mapReceitaWs(
+      {
+        cnpj: '11.222.333/0001-81',
+        nome: 'PADARIA SOL LTDA',
+        fantasia: '',
+        logradouro: 'R GARIBALDI',
+        numero: '70',
+        bairro: 'CENTRO',
+        municipio: 'PORTO ALEGRE',
+        uf: 'RS',
+        cep: '90.000-000',
+        telefone: '(51) 3635-4333 / (51) 3635-0000',
+        email: '',
+        situacao: 'ATIVA',
+        atividade_principal: [{ code: '10.91-1-02', text: 'Fabricação de produtos de padaria' }],
+      },
+      '11222333000181',
+    )
+    expect(out).toMatchObject({
+      taxId: '11222333000181',
+      legalName: 'Padaria Sol LTDA',
+      tradeName: '',
+      address: { cep: '90000000', number: '70', city: 'Porto Alegre', state: 'RS' },
+      phone: '5136354333',
+      cnae: '1091102',
+      activity: 'Fabricação de produtos de padaria',
+    })
   })
 })
 
