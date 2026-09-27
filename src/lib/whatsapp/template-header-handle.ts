@@ -19,6 +19,43 @@ import { fetchSeguro } from '@/lib/webhooks/ssrf'
  * `media-header-types.ts` and mirror Meta's Cloud API media reference.
  */
 
+/**
+ * Read a response body, aborting as soon as it exceeds `maxBytes`.
+ * Falls back to arrayBuffer() (still size-checked) when there is no
+ * readable stream.
+ */
+async function readCapped(
+  res: Response,
+  maxBytes: number,
+  tooLarge: (size: number) => Error,
+): Promise<Uint8Array> {
+  const reader = res.body?.getReader()
+  if (!reader) {
+    const buf = new Uint8Array(await res.arrayBuffer())
+    if (buf.byteLength > maxBytes) throw tooLarge(buf.byteLength)
+    return buf
+  }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      throw tooLarge(total)
+    }
+    chunks.push(value)
+  }
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    out.set(c, offset)
+    offset += c.byteLength
+  }
+  return out
+}
+
 export async function ensureMediaHeaderHandle(
   payload: TemplatePayload,
   accessToken: string,
@@ -75,14 +112,22 @@ export async function ensureMediaHeaderHandle(
     throw new Error(`Header ${kind} must be ${spec.formats} (got ${contentType}).`)
   }
 
-  const bytes = new Uint8Array(await res.arrayBuffer())
+  const tooLarge = (size: number) =>
+    new Error(
+      `Header ${kind} is ${(size / 1024 / 1024).toFixed(1)} MB — Meta's limit is ${spec.maxBytes / 1024 / 1024} MB.`,
+    )
+
+  // Refuse before downloading when the server announces the size, and
+  // never buffer more than the limit even when it doesn't (or lies): a
+  // pasted link must not make the server hold an arbitrary body in memory.
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > spec.maxBytes) {
+    await res.body?.cancel().catch(() => undefined)
+    throw tooLarge(declared)
+  }
+  const bytes = await readCapped(res, spec.maxBytes, tooLarge)
   if (bytes.byteLength === 0) {
     throw new Error(`Header ${kind} is empty.`)
-  }
-  if (bytes.byteLength > spec.maxBytes) {
-    throw new Error(
-      `Header ${kind} is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — Meta's limit is ${spec.maxBytes / 1024 / 1024} MB.`,
-    )
   }
 
   // A sample served without a Content-Type is assumed to be the kind's

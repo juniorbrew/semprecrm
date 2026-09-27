@@ -337,6 +337,59 @@ describe('ensureMediaHeaderHandle', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('refuses on Content-Length above the limit without reading the body', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(10));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === 'content-type'
+              ? 'video/mp4'
+              : h.toLowerCase() === 'content-length'
+                ? String(50 * MB)
+                : null,
+        },
+        arrayBuffer,
+      })),
+    );
+    await expect(
+      ensureMediaHeaderHandle(payload({ header_type: 'video' }), 'tok'),
+    ).rejects.toThrow(/16 MB/);
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(uploadResumableMedia).not.toHaveBeenCalled();
+  });
+
+  it('stops reading a stream once it passes the limit (no Content-Length)', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    let served = 0;
+    const cancel = vi.fn(async () => undefined);
+    const chunk = new Uint8Array(1 * MB);
+    const reader = {
+      read: vi.fn(async () => {
+        served += chunk.byteLength;
+        return { done: false, value: chunk }; // endless body
+      }),
+      cancel,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: (h: string) => (h.toLowerCase() === 'content-type' ? 'image/jpeg' : null) },
+        body: { getReader: () => reader, cancel },
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })),
+    );
+    await expect(ensureMediaHeaderHandle(payload(), 'tok')).rejects.toThrow(/5 MB/);
+    expect(served).toBeLessThanOrEqual(6 * MB);
+    expect(cancel).toHaveBeenCalled();
+  });
+
   it('relative video from our public storage goes through the internal route', async () => {
     vi.stubEnv('META_APP_ID', 'app-1');
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase');
