@@ -95,8 +95,14 @@ describe('claimBroadcastDelivery', () => {
   });
 
   it('claims a lock-less "sending" campaign that went quiet', async () => {
-    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z', delivery_protocol: null });
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z', delivery_protocol: 1 });
     expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(true);
+  });
+
+  it('never grants the lock to a legacy campaign (delivery_protocol NULL), even when quiet', async () => {
+    const db = seed([], { status: 'sending', updated_at: '2026-09-27T11:00:00.000Z', delivery_protocol: null });
+    expect(await claimBroadcastDelivery(db.client(), ACCOUNT, BC, newLockToken(NOW), NOW)).toBe(false);
+    expect(db.table('broadcasts')[0].delivery_locked_at ?? null).toBeNull();
   });
 
   it('is scoped to the account', async () => {

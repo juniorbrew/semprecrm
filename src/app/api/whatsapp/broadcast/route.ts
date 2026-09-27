@@ -113,6 +113,16 @@ export async function POST(request: Request) {
     }
 
     const ctx = await loadDeliveryContext(supabase, accountId, broadcastId)
+    // Campanha anterior a esta versão: o código antigo enviava antes de marcar
+    // a linha, então um 'pending' dela pode já ter saído. Nenhum caminho envia
+    // por ela — nem a retomada nem esta rota chamada direto.
+    if (ctx.isLegacy) {
+      throw new BroadcastError(
+        'legacy_broadcast',
+        'This broadcast was created before this version and cannot be sent safely: the previous version could send a message before recording it. Review the remaining recipients manually.',
+        409,
+      )
+    }
     const results = await deliverRecipientIds(supabase, ctx, ids, ['pending'])
     await finalizeBroadcastStatus(supabase, broadcastId)
 

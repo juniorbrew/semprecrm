@@ -67,6 +67,9 @@ export async function claimBroadcastDelivery(
     .update({ delivery_locked_at: token })
     .eq('id', broadcastId)
     .eq('account_id', accountId)
+    // Campanha antiga (delivery_protocol NULL) nunca ganha a trava: sem ela,
+    // nenhuma passada (start, lote, retomada) envia por essa campanha.
+    .not('delivery_protocol', 'is', null)
     .or(
       `delivery_locked_at.lt.${cutoff},` +
         `and(delivery_locked_at.is.null,delivery_protocol.not.is.null),` +
