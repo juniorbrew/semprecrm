@@ -18,6 +18,8 @@ const h = vi.hoisted(() => ({
       contact: { id: 'c-1', phone: '+55 11 99999-0000' },
     } as Record<string, unknown>,
     inserted: [] as Record<string, unknown>[],
+    // Papel de quem chama (requireRole lê do profile). Enviar exige 'agent'.
+    role: 'agent' as string,
   },
   meta: {
     sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.META' })),
@@ -64,7 +66,12 @@ function builder(table: string) {
       Promise.resolve(resolve()).then(onF, onR),
   }
   function resolve() {
-    if (table === 'profiles') return { data: { account_id: 'acct-1' }, error: null }
+    if (table === 'profiles') {
+      return {
+        data: { account_id: 'acct-1', account_role: h.state.role, account: { id: 'acct-1', name: 'Acme' } },
+        error: null,
+      }
+    }
     if (table === 'conversations') {
       if (ops.type === 'update') return { data: null, error: null }
       return { data: h.state.conversation, error: null }
@@ -117,6 +124,7 @@ beforeEach(() => {
     contact: { id: 'c-1', phone: '+55 11 99999-0000' },
   }
   h.state.inserted = []
+  h.state.role = 'agent'
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = 'shh'
   vi.stubGlobal('fetch', fetchMock)
@@ -242,5 +250,25 @@ describe('POST /api/whatsapp/send — official conversations (unchanged)', () =>
     const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
     expect(res.status).toBe(200)
     expect(h.meta.sendTextMessage).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Portado do wacrm (GHSA-8fv4-vgcc-p8vm, #448): enviar chega ao cliente ANTES de
+// qualquer gravação, então o papel é conferido na rota.
+describe('POST /api/whatsapp/send — papel mínimo', () => {
+  it('visualizador é recusado (403) e nada sai pelo gateway nem pela Meta', async () => {
+    h.state.role = 'viewer'
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(h.meta.sendTextMessage).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
+  })
+
+  it('atendente envia normalmente', async () => {
+    h.state.role = 'agent'
+    fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'BAILEYS-1' }))
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBeLessThan(300)
   })
 })
