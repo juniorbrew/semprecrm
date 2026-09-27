@@ -101,7 +101,7 @@ vi.mock("@/lib/plans-server", () => ({
   accountHasModule: vi.fn(async () => true),
 }));
 
-import { dispatchInboundToFlows, entryTriggerTexts } from "./engine";
+import { dispatchInboundToFlows, matchesEntryKeyword } from "./engine";
 import type { ParsedInbound } from "./types";
 
 const KEYWORD_FLOW = {
@@ -166,45 +166,40 @@ beforeEach(() => {
   engineSendText.mockClear();
 });
 
-describe("entryTriggerTexts", () => {
-  it("offers the typed text for a text message", () => {
-    expect(
-      entryTriggerTexts({
-        kind: "text",
-        text: "order status",
-        meta_message_id: "m1",
-      }),
-    ).toEqual(["order status"]);
+describe("matchesEntryKeyword", () => {
+  const tap = (reply_id: string, reply_title: string): ParsedInbound => ({
+    kind: "interactive_reply",
+    reply_id,
+    reply_title,
+    meta_message_id: "m1",
   });
 
-  it("offers both the button title and its reply id", () => {
+  it("keeps the configured semantics for typed text", () => {
     expect(
-      entryTriggerTexts({
-        kind: "interactive_reply",
-        reply_id: "btn_1",
-        reply_title: "Order status",
-        meta_message_id: "m1",
-      }),
-    ).toEqual(["Order status", "btn_1"]);
+      matchesEntryKeyword(
+        { kind: "text", text: "what is my order status?", meta_message_id: "m1" },
+        { keywords: ["order status"] },
+      ),
+    ).toBe(true);
   });
 
-  it("drops blanks and collapses a title identical to the id", () => {
-    expect(
-      entryTriggerTexts({
-        kind: "interactive_reply",
-        reply_id: "btn_1",
-        reply_title: "btn_1",
-        meta_message_id: "m1",
-      }),
-    ).toEqual(["btn_1"]);
-    expect(
-      entryTriggerTexts({
-        kind: "interactive_reply",
-        reply_id: "btn_1",
-        reply_title: "   ",
-        meta_message_id: "m1",
-      }),
-    ).toEqual(["btn_1"]);
+  it("matches the button title with the configured (contains) semantics", () => {
+    expect(matchesEntryKeyword(tap("btn_1", "Order status please"), { keywords: ["order status"] })).toBe(
+      true,
+    );
+  });
+
+  it("matches the reply id only exactly (trimmed, case-insensitive)", () => {
+    expect(matchesEntryKeyword(tap("ORDER_STATUS", "Where is it?"), { keywords: [" order_status "] })).toBe(
+      true,
+    );
+    // Substrings of an id never fire — `1` / `btn` would match every tap.
+    expect(matchesEntryKeyword(tap("btn_1", "Talk to us"), { keywords: ["1"] })).toBe(false);
+    expect(matchesEntryKeyword(tap("btn_1", "Talk to us"), { keywords: ["btn"] })).toBe(false);
+  });
+
+  it("ignores a blank title", () => {
+    expect(matchesEntryKeyword(tap("btn_1", "   "), { keywords: [" "] })).toBe(false);
   });
 });
 
@@ -229,6 +224,20 @@ describe("dispatchInboundToFlows — entry triggers (#490)", () => {
     expect(h.state.rpcCalls).toContain("increment_flow_execution_count");
     // The flow really ran, not just got created.
     expect(engineSendText).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start a flow on a substring of the reply id", async () => {
+    h.state.flows = [{ ...KEYWORD_FLOW, trigger_config: { keywords: ["btn"] } }];
+
+    const result = await dispatch({
+      kind: "interactive_reply",
+      reply_id: "btn_1",
+      reply_title: "Talk to us",
+      meta_message_id: "m1",
+    });
+
+    expect(result.consumed).toBe(false);
+    expect(startedRuns()).toEqual([]);
   });
 
   it("matches on the reply id when the visible title does not", async () => {
