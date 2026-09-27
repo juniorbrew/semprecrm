@@ -110,6 +110,23 @@ export function matchesKeywordTrigger(
   return false;
 }
 
+/**
+ * The strings an inbound message offers to a flow's *entry* trigger.
+ *
+ * Typed text offers itself. A button / list tap offers two: the visible
+ * title — what the customer would have typed had the button not been
+ * there — and the stable reply_id (a template quick-reply's payload, or
+ * the id we put on an interactive button), so an author keying the flow
+ * on either value reaches it. Same substring semantic keyword triggers
+ * already have for typed text. Ported from wacrm #490.
+ */
+export function entryTriggerTexts(message: ParsedInbound): string[] {
+  if (message.kind === "text") return [message.text];
+  return [...new Set([message.reply_title, message.reply_id])].filter(
+    (v): v is string => Boolean(v && v.trim()),
+  );
+}
+
 /** Nodes that advance to a next_node_key without waiting for input. */
 export function isAutoAdvancing(node_type: string): boolean {
   return (
@@ -315,9 +332,15 @@ async function findEntryFlow(
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
-  // Only text messages can match an entry trigger. Interactive replies
-  // are responses to existing prompts; they never start a new flow.
-  if (message.kind !== "text") return null;
+  // A tap used to be rejected outright here, on the reasoning that
+  // interactive replies answer existing prompts. That only holds while
+  // a prompt is outstanding — and this function runs solely when the
+  // contact has NO active run, so there is nothing the tap could be
+  // answering. Rejecting it meant a flow keyed on a button's label never
+  // started when the button came from an automation or a template
+  // quick-reply (broadcast), although typing the same words did
+  // (wacrm #490).
+  const candidates = entryTriggerTexts(message);
 
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
@@ -333,10 +356,8 @@ async function findEntryFlow(
   const typed = flows as FlowRow[];
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
-      if (matchesKeywordTrigger(
-        message.text,
-        flow.trigger_config as KeywordTriggerConfig,
-      )) {
+      const cfg = flow.trigger_config as KeywordTriggerConfig;
+      if (candidates.some((text) => matchesKeywordTrigger(text, cfg))) {
         return flow;
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
