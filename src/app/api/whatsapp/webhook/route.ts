@@ -15,6 +15,7 @@ import {
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
 import { supabaseServerUrl } from '@/lib/supabase/url'
+import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -57,6 +58,15 @@ interface WhatsAppMessage {
   context?: { id: string }
 }
 
+/** One entry of a failed status's `errors` array, as Meta sends it. */
+interface MetaStatusError {
+  code: number
+  title: string
+  message?: string
+  error_data?: { details?: string }
+  href?: string
+}
+
 interface WhatsAppWebhookEntry {
   id: string
   changes: Array<{
@@ -76,6 +86,13 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        /**
+         * Only present when `status === 'failed'`. Meta's reason for the
+         * failure — `code` is a stable numeric error code (e.g. 131049),
+         * `title` a short label, `error_data.details` the human-readable
+         * explanation. wacrm #535.
+         */
+        errors?: MetaStatusError[]
       }>
     }
     field: string
@@ -333,12 +350,44 @@ async function handleStatusUpdate(status: {
   status: string
   timestamp: string
   recipient_id: string
+  errors?: MetaStatusError[]
 }) {
+  // Meta's reason for a failed send (wacrm #535). Only read on `failed`;
+  // a later non-failed status for the same wamid leaves the error
+  // columns alone rather than clearing them, so the reason survives.
+  const first = status.status === 'failed' ? status.errors?.[0] : undefined
+  const failure =
+    first && (first.code !== undefined || first.title)
+      ? {
+          code: Number(first.code) || 0,
+          title: String(
+            first.title || first.message || `Meta error ${first.code}`,
+          ).slice(0, 500),
+          details: first.error_data?.details
+            ? String(first.error_data.details).slice(0, 2000)
+            : null,
+        }
+      : null
+
+  if (failure) {
+    console.warn(
+      `[webhook] WhatsApp message ${status.id} failed: [${failure.code}] ${failure.title}` +
+        (failure.details ? ` — ${failure.details}` : ''),
+    )
+  }
+
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
-  //    already match the CHECK constraint on messages.status.
+  //    already match the CHECK constraint on messages.status. The
+  //    failure reason rides in the same update (migration 052).
+  const messageUpdate: Record<string, unknown> = { status: status.status }
+  if (failure) {
+    messageUpdate.error_code = failure.code
+    messageUpdate.error_title = failure.title
+    messageUpdate.error_details = failure.details
+  }
   const { error: msgErr } = await supabaseAdmin()
     .from('messages')
-    .update({ status: status.status })
+    .update(messageUpdate)
     .eq('message_id', status.id)
 
   if (msgErr) {
@@ -371,6 +420,10 @@ async function handleStatusUpdate(status: {
   if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
   if (status.status === 'delivered') update.delivered_at = tsIso
   if (status.status === 'read') update.read_at = tsIso
+  // broadcast_recipients already has a free-text error_message column
+  // (migration 001), so the reason is folded into it rather than adding
+  // columns there — the campaign detail page shows it as-is.
+  if (failure) update.error_message = recipientErrorMessage(failure)
 
   const { error: recUpdateErr } = await supabaseAdmin()
     .from('broadcast_recipients')

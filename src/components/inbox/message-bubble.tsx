@@ -17,6 +17,7 @@ import {
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
+import { failureReason } from "@/lib/whatsapp/failure-reason";
 
 interface MessageBubbleProps {
   message: Message;
@@ -29,7 +30,14 @@ interface MessageBubbleProps {
 
 // Delivery state is icon-only; the title/aria-label carry the words
 // ("Sent", "Delivered"…) so the DOM translator can localize them.
-function StatusIcon({ status }: { status: Message["status"] }) {
+function StatusIcon({
+  status,
+  reason,
+}: {
+  status: Message["status"];
+  /** Meta's failure reason, shown as the failed icon's tooltip. */
+  reason?: string | null;
+}) {
   switch (status) {
     case "sending":
       return (
@@ -57,7 +65,7 @@ function StatusIcon({ status }: { status: Message["status"] }) {
       );
     case "failed":
       return (
-        <span title="Failed" aria-label="Failed" role="img">
+        <span title={reason ?? "Failed"} aria-label="Failed" role="img">
           <XCircle className="h-3 w-3 text-red-400" />
         </span>
       );
@@ -274,6 +282,7 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
+  const failure = isAgent ? failureReason(message) : null;
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
   // group matches the bubble's content area, not the full row.
@@ -318,9 +327,20 @@ export function MessageBubble({
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} />}
+          {isAgent && <StatusIcon status={message.status} reason={failure} />}
         </div>
       </div>
+      {failure && (
+        <p
+          className="mt-0.5 max-w-full px-1 text-[10px] leading-tight text-muted-foreground"
+          title={failure}
+        >
+          {/* Separate nodes: "Not delivered" is a dictionary key; Meta's
+              reason is English from the API and stays as sent. */}
+          <span>Not delivered</span>:{" "}
+          <span data-no-translate>{failure}</span>
+        </p>
+      )}
       {reactions && reactions.length > 0 && onToggleReaction && (
         <MessageReactions
           reactions={reactions}

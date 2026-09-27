@@ -8,6 +8,8 @@ export const DICT_INBOX: Record<string, string> = {
   '[Location]': '[Localização]',
   Photo: 'Foto',
   'Voice message': 'Mensagem de voz',
+  // Failed outbound: Meta's reason renders after this label (wacrm #535).
+  'Not delivered': 'Não entregue',
 
   // ---- Message actions (hover toolbar) ----
   'React with': 'Reagir com',
