@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -63,6 +64,16 @@ export async function PATCH(
     } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Papel mínimo (achado da revisão do porte do wacrm #448): editar/apagar
+    // template chama a Meta ANTES da gravação local, então a RLS (admin) não
+    // segura — um visualizador mexia no template aprovado da conta. Exige admin,
+    // como templates/submit e templates/sync.
+    try {
+      await requireRole('admin')
+    } catch (err) {
+      return toErrorResponse(err)
     }
 
     // Resolve the caller's account_id so template + whatsapp_config
@@ -250,6 +261,16 @@ export async function DELETE(
     } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Papel mínimo (achado da revisão do porte do wacrm #448): editar/apagar
+    // template chama a Meta ANTES da gravação local, então a RLS (admin) não
+    // segura — um visualizador mexia no template aprovado da conta. Exige admin,
+    // como templates/submit e templates/sync.
+    try {
+      await requireRole('admin')
+    } catch (err) {
+      return toErrorResponse(err)
     }
 
     // Same account-scoping rationale as the PATCH handler above —

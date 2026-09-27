@@ -7,9 +7,16 @@ vi.mock('./meta-api', () => ({
 
 // The SSRF guard does a real DNS lookup, so stub it — the fixtures below use
 // a `.test` hostname that would never resolve. Each test sets the verdict.
-vi.mock('@/lib/webhooks/ssrf', () => ({
-  isDeliverableUrl: vi.fn(async () => true),
-}));
+vi.mock('@/lib/webhooks/ssrf', () => {
+  const isDeliverableUrl = vi.fn(async (_url: string) => true);
+  // fetchSeguro de verdade é "confere e depois busca": aqui, o mesmo sobre o
+  // isDeliverableUrl de mentira e o fetch do teste.
+  const fetchSeguro = vi.fn(async (url: string, init?: RequestInit) => {
+    if (!(await isDeliverableUrl(url))) throw new Error('destination not allowed');
+    return fetch(url, { ...init, redirect: 'manual' });
+  });
+  return { isDeliverableUrl, fetchSeguro };
+});
 
 import { ensureImageHeaderHandle } from './template-header-handle';
 import { uploadResumableMedia } from './meta-api';

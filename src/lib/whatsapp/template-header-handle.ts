@@ -1,7 +1,7 @@
 import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
 import { isRelativeMediaUrl, mediaUrlForServer } from '@/lib/storage/media-url'
-import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
+import { fetchSeguro } from '@/lib/webhooks/ssrf'
 
 /**
  * Meta requires an `example.header_handle` (from the Resumable Upload
@@ -38,21 +38,23 @@ export async function ensureImageHeaderHandle(
   // Fetch the sample image bytes (works for our uploaded chat-media URL —
   // possibly origin-relative, resolved through the internal Supabase route —
   // and for a manually-pasted public link).
-  // SSRF guard (wacrm GHSA-6fr5): uma URL ABSOLUTA foi colada por alguém e o
-  // fetch é do servidor — recusa destino interno (loopback, rede privada,
-  // metadata de nuvem). A URL RELATIVA é mídia do próprio SempreCRM e segue
-  // pela rota interna do storage (mediaUrlForServer), sem passar por aqui.
-  // Mesma mensagem do host inalcançável, para a falha não virar oráculo.
-  if (!isRelativeMediaUrl(payload.header_media_url) && !(await isDeliverableUrl(payload.header_media_url))) {
-    throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
-  }
+  // SSRF guard (wacrm GHSA-6fr5). Uma URL ABSOLUTA foi colada por alguém e o
+  // fetch é do servidor: fetchSeguro recusa destino interno (loopback, rede
+  // privada, metadata de nuvem) antes de sair e a cada redirect. A URL
+  // RELATIVA é mídia do próprio SempreCRM e vai pela rota interna do storage
+  // (mediaUrlForServer) — mas só para o caminho de objeto público do storage,
+  // senão `/supabase/../rest/v1/…` alcançaria qualquer rota do gateway interno.
+  // Toda recusa usa a mensagem do host inalcançável (a falha não vira oráculo).
+  const INALCANCAVEL = 'Could not fetch the header image URL. Make sure it is publicly reachable.'
   let res: Response
   try {
-    res = await fetch(mediaUrlForServer(payload.header_media_url), {
-      // Não segue redirect: uma URL pública poderia 3xx-rebater para uma interna.
-      redirect: 'manual',
-      signal: AbortSignal.timeout(10_000),
-    })
+    if (isRelativeMediaUrl(payload.header_media_url)) {
+      const interna = new URL(mediaUrlForServer(payload.header_media_url))
+      if (!interna.pathname.startsWith('/storage/v1/object/public/')) throw new Error(INALCANCAVEL)
+      res = await fetch(interna.toString(), { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
+    } else {
+      res = await fetchSeguro(payload.header_media_url, { signal: AbortSignal.timeout(10_000) })
+    }
   } catch {
     throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
   }
