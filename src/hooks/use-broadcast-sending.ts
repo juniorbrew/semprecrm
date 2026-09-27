@@ -9,6 +9,7 @@ import {
 } from '@/lib/broadcast-retry';
 import { headerMediaMessageParams } from '@/lib/broadcast-header-media';
 import { releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
+import { abandonUnstartedBroadcast } from '@/lib/broadcast-abandon';
 import { normalizeKey } from '@/lib/contacts/dedupe';
 import { toast } from 'sonner';
 import { useLanguage } from '@/hooks/use-language';
@@ -443,11 +444,21 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       // This tab is the delivery pass: the SERVER takes the lock and mints
       // the first token from its own clock (renewed per batch), so
       // "Retomar" can't start while this tab sends.
-      const startRes = await fetch(`/api/whatsapp/broadcast/${broadcast.id}/start`, {
-        method: 'POST',
-      });
-      const startData = (await startRes.json().catch(() => ({}))) as BroadcastBatchResponse;
-      if (!startRes.ok || !startData.lock_token) {
+      let startData: BroadcastBatchResponse = {};
+      let started = false;
+      try {
+        const startRes = await fetch(`/api/whatsapp/broadcast/${broadcast.id}/start`, {
+          method: 'POST',
+        });
+        startData = (await startRes.json().catch(() => ({}))) as BroadcastBatchResponse;
+        started = startRes.ok && Boolean(startData.lock_token);
+      } catch (err) {
+        startData = { error: err instanceof Error ? err.message : undefined };
+      }
+      if (!started || !startData.lock_token) {
+        // Don't leave an empty campaign sitting in "Enviando": no rows
+        // exist yet, so it is deleted (or marked failed if that's refused).
+        await abandonUnstartedBroadcast(supabase, broadcast.id).catch(() => undefined);
         throw new Error(startData.error || 'Could not start the broadcast');
       }
       held = { id: broadcast.id, token: startData.lock_token };

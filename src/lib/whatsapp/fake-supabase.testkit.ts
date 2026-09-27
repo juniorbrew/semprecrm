@@ -115,7 +115,7 @@ export class FakeDb {
 
 class Query implements PromiseLike<unknown> {
   private preds: Pred[] = [];
-  private op: 'select' | 'update' | 'insert' = 'select';
+  private op: 'select' | 'update' | 'insert' | 'delete' = 'select';
   private patch: Row = {};
   private inserts: Row[] = [];
   private returning = false;
@@ -143,6 +143,10 @@ class Query implements PromiseLike<unknown> {
   update(patch: Row) {
     this.op = 'update';
     this.patch = patch;
+    return this;
+  }
+  delete() {
+    this.op = 'delete';
     return this;
   }
   insert(rows: Row | Row[]) {
@@ -211,6 +215,14 @@ class Query implements PromiseLike<unknown> {
       const created = this.inserts.map((r) => ({ id: this.db.nextId(), ...r }));
       this.db.table(this.name).push(...created);
       return { data: this.returning ? created.map((r) => ({ ...r })) : null, error: null };
+    }
+    if (this.op === 'delete') {
+      const hit = new Set(this.matches());
+      const table = this.db.table(this.name);
+      const keep = table.filter((r) => !hit.has(r));
+      table.length = 0;
+      table.push(...keep);
+      return { data: null, error: null };
     }
     if (this.op === 'update') {
       const hit = this.matches();
