@@ -37,6 +37,16 @@ export const DICT_INBOX: Record<string, string> = {
   'Import CSV': 'Importar CSV',
   'Import a list of phone numbers': 'Importe uma lista de números de telefone',
 
+  // ---- Broadcasts: personalize step — header media (wacrm #298) ----
+  'Header media': 'Mídia do cabeçalho',
+  'Media URL': 'URL da mídia',
+  'Public URL of the media sent as the message header. Used for every recipient in this broadcast.':
+    'URL pública da mídia enviada como cabeçalho da mensagem. Vale para todos os destinatários deste disparo.',
+  'Header preview': 'Pré-visualização do cabeçalho',
+  'A media URL is required to send this template.':
+    'Informe a URL da mídia para enviar este modelo.',
+  'Enter a valid http(s) URL.': 'Informe uma URL http(s) válida.',
+
   // ---- Role gates (GatedButton tooltips) ----
   "Read-only — your role can't create broadcasts":
     'Somente leitura — seu perfil não pode criar disparos',

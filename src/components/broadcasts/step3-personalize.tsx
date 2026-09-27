@@ -12,8 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, ArrowRight, Eye, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Eye, ImageIcon, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
+import {
+  headerMediaUrlError,
+  mediaHeaderTypeOf,
+} from '@/lib/broadcast-header-media';
 
 type VariableType = 'static' | 'field' | 'custom_field';
 
@@ -26,6 +30,9 @@ interface Step3Props {
   template: MessageTemplate;
   variables: Record<string, VariableMapping>;
   onUpdate: (variables: Record<string, VariableMapping>) => void;
+  /** Media URL for an IMAGE/VIDEO/DOCUMENT header, when the template has one. */
+  headerMediaUrl: string;
+  onHeaderMediaUrlChange: (url: string) => void;
   onNext: () => void;
   onBack: () => void;
 }
@@ -37,6 +44,13 @@ const contactFields = [
   { value: 'email', label: 'Email Address' },
   { value: 'company', label: 'Company' },
 ];
+
+/** Badge label per media header type — English i18n keys. */
+const MEDIA_HEADER_LABELS = {
+  image: 'Image',
+  video: 'Video',
+  document: 'Document',
+} as const;
 
 const SAMPLE_CONTACT: Contact = {
   id: 'sample',
@@ -54,6 +68,8 @@ export function Step3Personalize({
   template,
   variables,
   onUpdate,
+  headerMediaUrl,
+  onHeaderMediaUrlChange,
   onNext,
   onBack,
 }: Step3Props) {
@@ -114,6 +130,27 @@ export function Step3Personalize({
     if (!matches) return [];
     return [...new Set(matches)].sort();
   }, [template.body_text]);
+
+  // Templates with an IMAGE/VIDEO/DOCUMENT header need a media URL at
+  // send time — Meta requires the media component on every delivery and
+  // rejects the broadcast without it (wacrm #298). Hidden for text headers.
+  const mediaHeaderType = mediaHeaderTypeOf(template);
+
+  // Seed the field with the template's stored sample URL the first time
+  // we land on a media-header template, so the common "reuse the
+  // approved media" case needs no typing. Only seeds when empty to avoid
+  // clobbering a URL the user already edited.
+  useEffect(() => {
+    if (mediaHeaderType && !headerMediaUrl && template.header_media_url) {
+      onHeaderMediaUrlChange(template.header_media_url);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaHeaderType, template.header_media_url]);
+
+  const headerMediaError = useMemo(
+    () => headerMediaUrlError(mediaHeaderType, headerMediaUrl),
+    [mediaHeaderType, headerMediaUrl],
+  );
 
   /**
    * A placeholder is "unmapped" if the user hasn't picked either a
@@ -196,13 +233,65 @@ export function Step3Personalize({
         </p>
       </div>
 
-      {placeholders.length === 0 ? (
+      {mediaHeaderType && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <ImageIcon className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">{t('Header media')}</p>
+            <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium uppercase text-primary">
+              {t(MEDIA_HEADER_LABELS[mediaHeaderType])}
+            </span>
+          </div>
+          <label
+            htmlFor="broadcast-header-media-url"
+            className="mb-1.5 block text-xs font-medium text-muted-foreground"
+          >
+            {t('Media URL')}
+          </label>
+          <Input
+            id="broadcast-header-media-url"
+            type="url"
+            value={headerMediaUrl}
+            onChange={(e) => onHeaderMediaUrlChange(e.target.value)}
+            placeholder={`https://example.com/header.${
+              mediaHeaderType === 'image'
+                ? 'jpg'
+                : mediaHeaderType === 'video'
+                  ? 'mp4'
+                  : 'pdf'
+            }`}
+            className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+          />
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {t('Public URL of the media sent as the message header. Used for every recipient in this broadcast.')}
+          </p>
+          {mediaHeaderType === 'image' &&
+            headerMediaError === null &&
+            headerMediaUrl.trim() && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={headerMediaUrl.trim()}
+                alt={t('Header preview')}
+                className="mt-3 max-h-40 rounded-lg border border-border object-contain"
+              />
+            )}
+          {headerMediaError && (
+            <p className="mt-1.5 text-xs text-amber-300">
+              {headerMediaError === 'missing'
+                ? t('A media URL is required to send this template.')
+                : t('Enter a valid http(s) URL.')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {placeholders.length === 0 && !mediaHeaderType ? (
         <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
           <p className="text-sm text-muted-foreground">
             {t('This template has no variables to personalize.')}
           </p>
         </div>
-      ) : (
+      ) : placeholders.length === 0 ? null : (
         <div className="space-y-4">
           {placeholders.map((placeholder) => {
             const key = placeholder.replace(/^\{\{|\}\}$/g, '');
@@ -358,7 +447,7 @@ export function Step3Personalize({
         </Button>
         <Button
           onClick={onNext}
-          disabled={unmappedKeys.length > 0}
+          disabled={unmappedKeys.length > 0 || headerMediaError !== null}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           {t('Next')}
