@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => {
   class FakeSock {
     ev = new EventEmitter();
     user: { id: string; name?: string; notify?: string; phoneNumber?: string } | undefined;
-    sendMessage = vi.fn(async (_jid: string, _content: unknown) => ({ key: { id: "SENT1", fromMe: true } }));
+    sendMessage = vi.fn(async (_jid: string, _content: unknown, _opts?: { messageId?: string }) => ({
+      key: { id: "SENT1", fromMe: true },
+    }));
     onWhatsApp = vi.fn(async (..._n: string[]) => [] as { jid: string; exists: boolean }[]);
     logout = vi.fn(async () => undefined);
     end = vi.fn();
@@ -31,7 +33,8 @@ const mocks = vi.hoisted(() => {
   const saveCreds = vi.fn(async () => undefined);
   const useMultiFileAuthState = vi.fn(async (_dir: string) => ({ state: { creds: {}, keys: {} }, saveCreds }));
   const fetchLatestBaileysVersion = vi.fn(async () => ({ version: [2, 3000, 0], isLatest: true }));
-  return { sockets, FakeSock, makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, saveCreds };
+  const idSeq = { n: 0 };
+  return { sockets, FakeSock, makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, saveCreds, idSeq };
 });
 
 vi.mock("@whiskeysockets/baileys", () => ({
@@ -50,6 +53,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
     timedOut: 408,
   },
   downloadMediaMessage: vi.fn(),
+  generateMessageIDV2: vi.fn(() => `3EBGEN${++mocks.idSeq.n}`),
 }));
 
 import { SessionManager, GatewayError, ackFromStatus, buildContent, toJid } from "./session-manager.js";
@@ -57,6 +61,9 @@ import { AvatarThrottle } from "./avatar.js";
 
 const logger = pino({ level: "silent" });
 const ACCOUNT = "11111111-2222-3333-4444-555555555555";
+
+/** todo envio passa um id gerado por nós (dedupe do eco) */
+const SEND_OPTS = { messageId: expect.stringMatching(/^3EBGEN/) };
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 async function until(pred: () => boolean, ms = 2000): Promise<void> {
@@ -69,7 +76,9 @@ async function until(pred: () => boolean, ms = 2000): Promise<void> {
 
 function makeManager(dataDir: string, extra: { sendWaitMs?: number; markOnline?: boolean } = {}) {
   const appClient = {
-    sendInbound: vi.fn(async () => true),
+    sendInbound: vi.fn(async (_p: unknown) => true),
+    sendEcho: vi.fn(async (_p: unknown) => true),
+    sendRevoke: vi.fn(async (_p: unknown) => true),
     sendStatus: vi.fn(async () => true),
     sendAck: vi.fn(async () => true),
   };
@@ -340,20 +349,122 @@ describe("SessionManager — mensagens", () => {
     );
   });
 
-  it("ignora append, fromMe e grupos", async () => {
+  it("ignora append e grupos", async () => {
     const { appClient, sock } = await connected();
     sock.emit("messages.upsert", {
       type: "append",
-      messages: [{ key: { remoteJid: "5511@s.whatsapp.net", fromMe: false, id: "A" }, message: { conversation: "h" } }],
+      messages: [
+        { key: { remoteJid: "5511@s.whatsapp.net", fromMe: false, id: "A" }, message: { conversation: "h" } },
+        { key: { remoteJid: "5511@s.whatsapp.net", fromMe: true, id: "A2" }, message: { conversation: "eu" } },
+      ],
     });
     sock.emit("messages.upsert", {
       type: "notify",
       messages: [
-        { key: { remoteJid: "5511@s.whatsapp.net", fromMe: true, id: "B" }, message: { conversation: "eu" } },
         { key: { remoteJid: "1-2@g.us", fromMe: false, id: "C" }, message: { conversation: "grupo" } },
+        { key: { remoteJid: "1-2@g.us", fromMe: true, id: "D" }, message: { conversation: "grupo eu" } },
       ],
     });
     await new Promise((r) => setTimeout(r, 20));
+    expect(appClient.sendInbound).not.toHaveBeenCalled();
+    expect(appClient.sendEcho).not.toHaveBeenCalled();
+  });
+
+  it("fromMe enviado pelo celular → POST echo (não inbound), sem guardar chave de leitura", async () => {
+    const { appClient, sock } = await connected();
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe: true, id: "3APHONE" },
+          pushName: "Eu",
+          messageTimestamp: 1_757_700_200,
+          message: { conversation: "respondi pelo celular" },
+        },
+      ],
+    });
+    await until(() => appClient.sendEcho.mock.calls.length === 1);
+    expect(appClient.sendEcho).toHaveBeenCalledWith({
+      account_id: ACCOUNT,
+      message_id: "3APHONE",
+      from: "5511988887777",
+      push_name: "",
+      timestamp: 1_757_700_200,
+      type: "text",
+      text: "respondi pelo celular",
+    });
+    expect(appClient.sendInbound).not.toHaveBeenCalled();
+  });
+
+  it("eco de mídia do celular é baixado como a mídia recebida", async () => {
+    const { appClient, mediaStore, sock } = await connected();
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe: true, id: "3AIMG" },
+          messageTimestamp: 1,
+          message: { imageMessage: { mimetype: "image/jpeg" } },
+        },
+      ],
+    });
+    await until(() => appClient.sendEcho.mock.calls.length === 1);
+    expect(mediaStore.storeInbound).toHaveBeenCalledTimes(1);
+    expect(appClient.sendEcho).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "image", media: expect.objectContaining({ url: "https://cdn.local/chat-media/x.jpg" }) }),
+    );
+  });
+
+  it("o eco de um envio do próprio gateway é descartado, mesmo chegando como notify", async () => {
+    const { manager, appClient, sock } = await connected();
+    let sentId = "";
+    sock.sendMessage.mockImplementationOnce(async (jid: string, _c: unknown, opts?: { messageId?: string }) => {
+      sentId = opts?.messageId ?? "";
+      // pior caso: o eco chega ANTES do sendMessage devolver
+      sock.emit("messages.upsert", {
+        type: "notify",
+        messages: [{ key: { remoteJid: jid, fromMe: true, id: sentId }, messageTimestamp: 1, message: { conversation: "olá" } }],
+      });
+      return { key: { id: sentId, fromMe: true } };
+    });
+    const res = await manager.send(ACCOUNT, { to: "5511988887777", text: "olá" });
+    expect(res).toEqual({ message_id: sentId });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sentId).toMatch(/^3EBGEN/);
+    expect(appClient.sendEcho).not.toHaveBeenCalled();
+    expect(appClient.sendInbound).not.toHaveBeenCalled();
+  });
+
+  it("mensagem para mim mesmo não vira eco", async () => {
+    const { appClient, sock } = await connected();
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [{ key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: true, id: "SELF" }, message: { conversation: "nota" } }],
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(appClient.sendEcho).not.toHaveBeenCalled();
+  });
+
+  it("apagar para todos (REVOKE) → POST revoke com o id original", async () => {
+    const { appClient, sock } = await connected();
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe: false, id: "REV1" },
+          messageTimestamp: 1_757_700_300,
+          message: { protocolMessage: { type: 0, key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe: false, id: "MSG1" } } },
+        },
+      ],
+    });
+    await until(() => appClient.sendRevoke.mock.calls.length === 1);
+    expect(appClient.sendRevoke).toHaveBeenCalledWith({
+      account_id: ACCOUNT,
+      message_id: "MSG1",
+      from: "5511988887777",
+      revoked_by: "customer",
+      timestamp: 1_757_700_300,
+    });
     expect(appClient.sendInbound).not.toHaveBeenCalled();
   });
 
@@ -449,7 +560,7 @@ describe("SessionManager — envio", () => {
     const { manager, sock } = await connected();
     const res = await manager.send(ACCOUNT, { to: "+55 (11) 98888-7777", text: "olá" });
     expect(res).toEqual({ message_id: "SENT1" });
-    expect(sock.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", { text: "olá" });
+    expect(sock.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", { text: "olá" }, SEND_OPTS);
   });
 
   it("mídia: monta image/video/audio/document", () => {
@@ -479,7 +590,7 @@ describe("SessionManager — envio", () => {
     const res = await manager.send(ACCOUNT, { to: "5511988887777", text: "oi" });
     expect(res.message_id).toBe("SENT1");
     expect(sock.onWhatsApp).toHaveBeenCalledWith("5511988887777@s.whatsapp.net");
-    expect(sock.sendMessage).toHaveBeenLastCalledWith("551188887777@s.whatsapp.net", { text: "oi" });
+    expect(sock.sendMessage).toHaveBeenLastCalledWith("551188887777@s.whatsapp.net", { text: "oi" }, SEND_OPTS);
   });
 
   it("número inexistente → 422 not_on_whatsapp", async () => {
@@ -508,11 +619,11 @@ describe("SessionManager — envio", () => {
 
     await manager.send(ACCOUNT, { to: "5511988887777", text: "de novo" });
     expect(sock.onWhatsApp).toHaveBeenCalledTimes(1);
-    expect(sock.sendMessage).toHaveBeenLastCalledWith("551188887777@s.whatsapp.net", { text: "de novo" });
+    expect(sock.sendMessage).toHaveBeenLastCalledWith("551188887777@s.whatsapp.net", { text: "de novo" }, SEND_OPTS);
     // envio normal nunca chama onWhatsApp antes do sendMessage
     await manager.send(ACCOUNT, { to: "5511977776666", text: "x" });
     expect(sock.onWhatsApp).toHaveBeenCalledTimes(1);
-    expect(sock.sendMessage).toHaveBeenLastCalledWith("5511977776666@s.whatsapp.net", { text: "x" });
+    expect(sock.sendMessage).toHaveBeenLastCalledWith("5511977776666@s.whatsapp.net", { text: "x" }, SEND_OPTS);
   });
 
   async function dropConnection(sock: InstanceType<typeof mocks.FakeSock>) {
@@ -539,7 +650,7 @@ describe("SessionManager — envio", () => {
     sock2.emit("connection.update", { connection: "open" });
     await expect(pending).resolves.toEqual({ message_id: "SENT2" });
     expect(sock.sendMessage).not.toHaveBeenCalled();
-    expect(sock2.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", { text: "oi" });
+    expect(sock2.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", { text: "oi" }, SEND_OPTS);
   });
 
   it("send enquanto a reconexão está só agendada (disconnected + timer) também espera", async () => {
@@ -578,10 +689,13 @@ describe("SessionManager — envio", () => {
     await expect(pending).resolves.toEqual({ message_id: "RETRY1" });
     expect(sock.sendMessage).toHaveBeenCalledTimes(1);
     expect(sock2.sendMessage).toHaveBeenCalledTimes(1);
-    expect(sock2.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", {
-      image: { url: "https://x/a.jpg" },
-      mimetype: "image/jpeg",
-    });
+    expect(sock2.sendMessage).toHaveBeenCalledWith(
+      "5511988887777@s.whatsapp.net",
+      { image: { url: "https://x/a.jpg" }, mimetype: "image/jpeg" },
+      SEND_OPTS,
+    );
+    // a nova tentativa reusa o MESMO id: o WhatsApp deduplica e o eco é descartado
+    expect(sock2.sendMessage.mock.calls[0][2]).toEqual(sock.sendMessage.mock.calls[0][2]);
   });
 
   it("send: se a segunda tentativa também falha → 502 (não tenta uma terceira)", async () => {

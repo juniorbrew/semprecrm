@@ -5,6 +5,7 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  generateMessageIDV2,
   useMultiFileAuthState,
   type AnyMessageContent,
   type ConnectionState,
@@ -74,6 +75,12 @@ interface Session {
    * pode chegar como `@lid`; a confirmação de leitura precisa do jid exato.
    */
   inboundKeys: Map<string, InboundKey>;
+  /**
+   * Ids das mensagens que o próprio gateway enviou (gerados ANTES do
+   * `sendMessage`, então nenhum eco chega antes do registro). Um `fromMe`
+   * com um desses ids nunca vira "enviado pelo celular".
+   */
+  ownSendIds: Map<string, true>;
 }
 
 interface InboundKey {
@@ -83,12 +90,15 @@ interface InboundKey {
 
 /** quantas chaves de mensagens recebidas lembramos por sessão (confirmação de leitura) */
 const INBOUND_KEYS_MAX = 5000;
+/** quantos ids de envios próprios lembramos por sessão (dedupe de eco) */
+const OWN_SEND_IDS_MAX = 5000;
 /** teto de ids por pedido de leitura */
 const READ_MAX_IDS = 100;
 
 export interface SessionManagerOptions {
   dataDir: string;
-  appClient: Pick<AppClient, "sendInbound" | "sendStatus" | "sendAck">;
+  appClient: Pick<AppClient, "sendInbound" | "sendStatus" | "sendAck"> &
+    Partial<Pick<AppClient, "sendEcho" | "sendRevoke">>;
   mediaStore: Pick<MediaStore, "storeInbound"> & Partial<Pick<MediaStore, "storeAvatar" | "removeAvatar">>;
   logger: Logger;
   /** Fila das consultas de foto de perfil (injeção para testes). */
@@ -186,6 +196,7 @@ function newSession(accountId: string): Session {
     jidCache: new Map(),
     connectWaiters: [],
     inboundKeys: new Map(),
+    ownSendIds: new Map(),
   };
 }
 
@@ -297,9 +308,14 @@ export class SessionManager {
     let jid = s.jidCache.get(dialed) ?? dialed;
 
     let sock = await this.waitForConnected(s);
+    // Id escolhido por nós e registrado antes do envio: o eco desse id (se
+    // algum aparelho vinculado o repassar) é descartado em `onInbound`.
+    const messageId = generateMessageIDV2(sock.user?.id);
+    this.rememberOwnSend(s, messageId);
+    const sendOpts = { messageId };
     let result: WAMessage | undefined;
     try {
-      result = await sock.sendMessage(jid, content);
+      result = await sock.sendMessage(jid, content, sendOpts);
     } catch (err) {
       if (isNotOnWhatsAppError(err)) {
         // só aqui consultamos o servidor: o envio direto ao jid discado falhou
@@ -310,7 +326,7 @@ export class SessionManager {
         s.jidCache.set(dialed, resolved);
         jid = resolved;
         try {
-          result = await (s.sock ?? sock).sendMessage(jid, content);
+          result = await (s.sock ?? sock).sendMessage(jid, content, sendOpts);
         } catch (err2) {
           throw new GatewayError(`falha ao enviar: ${(err2 as Error).message}`, "send_failed", 502);
         }
@@ -322,7 +338,7 @@ export class SessionManager {
         );
         sock = await this.waitForConnected(s);
         try {
-          result = await sock.sendMessage(jid, content);
+          result = await sock.sendMessage(jid, content, sendOpts);
         } catch (err2) {
           this.log.error({ accountId, jid, err: (err2 as Error).message }, "sendMessage falhou na segunda tentativa");
           throw new GatewayError(`falha ao enviar: ${(err2 as Error).message}`, "send_failed", 502);
@@ -333,6 +349,7 @@ export class SessionManager {
       }
     }
     const id = result?.key?.id;
+    if (id && id !== messageId) this.rememberOwnSend(s, id);
     if (!id) throw new GatewayError("WhatsApp não devolveu id da mensagem", "send_failed", 502);
     return { message_id: id };
   }
@@ -619,13 +636,29 @@ export class SessionManager {
           resolvedPn = undefined;
         }
       }
-      const mapped = mapInboundMessage(accountId, msg, { resolvedPn });
+      const mapped = mapInboundMessage(accountId, msg, {
+        resolvedPn,
+        ownSendIds: s.ownSendIds,
+        selfPhone: s.phone ?? userPhone(sock.user),
+      });
       if (mapped.kind === "skip") {
         this.log.debug({ accountId, reason: mapped.reason, jid, id: msg.key.id }, "mensagem ignorada");
         return;
       }
+      if (mapped.kind === "revoke") {
+        const { sendRevoke } = this.opts.appClient;
+        if (!sendRevoke) return;
+        this.log.info(
+          { accountId, id: mapped.payload.message_id, by: mapped.payload.revoked_by },
+          "mensagem apagada para todos",
+        );
+        await sendRevoke.call(this.opts.appClient, mapped.payload);
+        return;
+      }
       const { payload, media } = mapped;
-      this.rememberInboundKey(s, msg);
+      const isEcho = mapped.kind === "echo";
+      if (isEcho && !this.opts.appClient.sendEcho) return;
+      if (!isEcho) this.rememberInboundKey(s, msg);
       if (media) {
         try {
           const stored = await this.opts.mediaStore.storeInbound(accountId, msg, sock, media);
@@ -635,6 +668,11 @@ export class SessionManager {
           // entrega o texto/legenda mesmo sem a mídia para não perder a mensagem
           payload.text = payload.text ?? `[${payload.type} não disponível]`;
         }
+      }
+      if (isEcho) {
+        this.log.info({ accountId, id: payload.message_id, type: payload.type }, "mensagem enviada pelo celular");
+        await this.opts.appClient.sendEcho!(payload);
+        return;
       }
       await this.opts.appClient.sendInbound(payload);
     } catch (err) {
@@ -758,6 +796,15 @@ export class SessionManager {
       const oldest = s.inboundKeys.keys().next().value;
       if (oldest === undefined) break;
       s.inboundKeys.delete(oldest);
+    }
+  }
+
+  private rememberOwnSend(s: Session, id: string): void {
+    s.ownSendIds.set(id, true);
+    while (s.ownSendIds.size > OWN_SEND_IDS_MAX) {
+      const oldest = s.ownSendIds.keys().next().value;
+      if (oldest === undefined) break;
+      s.ownSendIds.delete(oldest);
     }
   }
 

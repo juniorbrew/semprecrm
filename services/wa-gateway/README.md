@@ -27,6 +27,15 @@ Por isso o canal QR serve só o atendimento 1:1 e as automações de resposta; d
   `POST {APP_URL}/api/channels/qr/inbound`. Mídia é baixada, descriptografada e
   enviada ao bucket `chat-media` do Supabase (`account-<id>/qr/<ts>-<nome>`) com a
   service role; o app recebe a URL pública.
+- Mensagens que a conta envia por FORA do gateway (o celular conectado, o WhatsApp
+  Web ou outro aparelho vinculado — Baileys `fromMe`) viram
+  `POST {APP_URL}/api/channels/qr/echo` (mesmo corpo do inbound; `from` é o cliente,
+  `push_name` vazio). Os envios do próprio gateway usam um id gerado ANTES do
+  `sendMessage` e guardado em memória, então o eco deles é descartado aqui; o app
+  também deduplica por `(conversa, message_id)`. Grupos e "mensagem para mim
+  mesmo" são ignorados.
+- "Apagar para todos" (`protocolMessage` REVOKE) vira
+  `POST {APP_URL}/api/channels/qr/revoke`; o app só marca a mensagem, nunca apaga.
 - Mudanças de estado da sessão viram `POST {APP_URL}/api/channels/qr/status`; os
   recibos das mensagens que nós enviamos viram `POST {APP_URL}/api/channels/qr/ack`
   (`sent` / `delivered` / `read`).
@@ -80,6 +89,8 @@ também só move para frente (`sending → sent → delivered → read`).
 | Evento (app)                        | Corpo |
 | ----------------------------------- | ----- |
 | `POST /api/channels/qr/inbound`     | `{ account_id, message_id, from, push_name, timestamp, type, text?, media?: { url, mimetype, filename? }, quoted_message_id? }` — `timestamp` em segundos Unix (como no webhook da Meta); `type` ∈ text, image, audio, video, document, sticker, location (localização vira `text` com "nome (lat,lng)") |
+| `POST /api/channels/qr/echo`        | mesmo corpo do inbound — mensagem enviada pelo celular / WhatsApp Web; `from` = telefone do cliente, `push_name` = "" |
+| `POST /api/channels/qr/revoke`      | `{ account_id, message_id, from, revoked_by: customer\|phone, timestamp }` — `message_id` é o da mensagem apagada |
 | `POST /api/channels/qr/status`      | `{ account_id, status, phone?, name?, error? }` |
 | `POST /api/channels/qr/ack`         | `{ account_id, message_id, status: sent\|delivered\|read }` |
 

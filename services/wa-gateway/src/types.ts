@@ -71,6 +71,20 @@ export interface InboundPayload {
   quoted_message_id?: string;
 }
 
+/**
+ * `POST /api/channels/qr/revoke` — o cliente (ou o nosso celular) apagou a
+ * mensagem `message_id` para todos. O app marca a linha; nunca apaga.
+ */
+export interface RevokePayload {
+  account_id: string;
+  /** id da mensagem APAGADA (não o do aviso de revogação) */
+  message_id: string;
+  /** telefone do cliente da conversa (dígitos) */
+  from: string;
+  revoked_by: "customer" | "phone";
+  timestamp: number;
+}
+
 export interface StatusEventPayload {
   account_id: string;
   status: SessionStatus;
