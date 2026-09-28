@@ -6,6 +6,7 @@ import { MessageThread } from "./message-thread"
 
 // A signed-in viewer: the header must still show Assumir / Transferir /
 // Lembrar / Resolver, disabled, with the read-only hint.
+const role = vi.hoisted(() => ({ current: "viewer" as "viewer" | "agent" }))
 vi.mock("@/hooks/use-auth", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/use-auth")>()
   return {
@@ -13,7 +14,7 @@ vi.mock("@/hooks/use-auth", async (importOriginal) => {
     useAuth: () => ({
       ...actual.useAuth(),
       user: { id: "viewer-1", email: "v@example.com" },
-      accountRole: "viewer",
+      accountRole: role.current,
     }),
   }
 })
@@ -95,5 +96,19 @@ describe("MessageThread header — viewer", () => {
   it("labels an archived conversation as Arquivada", () => {
     const html = render({ ...conversation, status: "closed", archived_at: "2026-09-27T10:00:00Z" })
     expect(html).toContain("Arquivada")
+  })
+})
+
+describe("MessageThread header — agent", () => {
+  it("localizes the Transferir tooltip (no English \"Assign\" inside)", () => {
+    role.current = "agent"
+    try {
+      const html = render(conversation)
+      expect(html).toContain('title="Responsável: sem responsável · Transferir"')
+      expect(html).not.toContain("Responsável: Assign")
+      expect(buttonWith(html, 'title="Assumir: atribuir esta conversa a você"')).not.toContain('disabled=""')
+    } finally {
+      role.current = "viewer"
+    }
   })
 })

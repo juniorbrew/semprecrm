@@ -61,6 +61,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
+import { updateConversationAssignee } from "@/lib/conversations/assign";
 import { ConversationReminder } from "./conversation-reminder";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
@@ -206,7 +207,11 @@ const THREAD_STATUS_COPY: Record<
     claim: string;
     claimTitle: string;
     claimedToast: string;
+    claimTaken: (who: string) => string;
+    someone: string;
     transferTitle: (assignee: string) => string;
+    noAssignee: string;
+    assignedUnknown: string;
     transferTo: string;
     archive: string;
     unarchive: string;
@@ -245,7 +250,11 @@ const THREAD_STATUS_COPY: Record<
     claim: "Assumir",
     claimTitle: "Assumir: atribuir esta conversa a você",
     claimedToast: "Conversa atribuída a você",
+    claimTaken: (who) => `${who} assumiu esta conversa antes de você`,
+    someone: "Outra pessoa",
     transferTitle: (assignee) => `Responsável: ${assignee} · Transferir`,
+    noAssignee: "sem responsável",
+    assignedUnknown: "atribuída",
     transferTo: "Transferir para",
     archive: "Arquivar",
     unarchive: "Desarquivar",
@@ -285,7 +294,11 @@ const THREAD_STATUS_COPY: Record<
     claim: "Take",
     claimTitle: "Take: assign this conversation to you",
     claimedToast: "Conversation assigned to you",
+    claimTaken: (who) => `${who} took this conversation before you`,
+    someone: "Someone else",
     transferTitle: (assignee) => `Owner: ${assignee} · Transfer`,
+    noAssignee: "nobody",
+    assignedUnknown: "assigned",
     transferTo: "Transfer to",
     archive: "Archive",
     unarchive: "Unarchive",
@@ -839,11 +852,12 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage],
   );
 
+  /** True when the status is now `status` (unchanged counts as success). */
   const handleStatusChange = useCallback(
-    async (status: ConversationStatus) => {
-      if (!conversation) return;
+    async (status: ConversationStatus): Promise<boolean> => {
+      if (!conversation) return false;
 
-      if (conversation.status === status) return;
+      if (conversation.status === status) return true;
 
       const supabase = createClient();
       const { error } = await supabase
@@ -854,16 +868,22 @@ export function MessageThread({
       if (error) {
         console.error("Failed to update status:", error);
         toast.error(t("Failed to update status"));
-        return;
+        return false;
       }
 
       onStatusChange(conversation.id, status);
+      // Leaving "closed" unarchives it in the DB (migration 056 trigger);
+      // mirror that locally so the row leaves the Arquivadas view at once.
+      if (status !== "closed" && conversation.archived_at) {
+        onConversationPatch?.(conversation.id, { archived_at: null });
+      }
       void logEvent({
         event_type: "status_changed",
         payload: { status, previous_status: conversation.status },
       });
+      return true;
     },
-    [conversation, onStatusChange, logEvent, t]
+    [conversation, onStatusChange, onConversationPatch, logEvent, t]
   );
 
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
@@ -873,7 +893,7 @@ export function MessageThread({
     if (!conversation) return;
     const next: ConversationStatus =
       conversation.status === "closed" ? "open" : "closed";
-    await handleStatusChange(next);
+    if (!(await handleStatusChange(next))) return;
     toast.success(
       next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast
     );
@@ -1109,20 +1129,42 @@ export function MessageThread({
     [conversation, user?.id],
   );
 
+  /**
+   * Assign / transfer / unassign. With `expectCurrent`, the update only
+   * applies while the conversation still has the assignee this tab last
+   * saw (compare-and-set) — "Assumir" must not silently steal a thread a
+   * teammate took a second earlier. Returns what happened so callers
+   * only celebrate a real change.
+   */
   const handleAssignChange = useCallback(
-    async (agentId: string | null) => {
-      if (!conversation) return;
+    async (
+      agentId: string | null,
+      opts: { expectCurrent?: boolean } = {},
+    ): Promise<"ok" | "failed" | "conflict"> => {
+      if (!conversation) return "failed";
 
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("conversations")
-        .update({ assigned_agent_id: agentId })
-        .eq("id", conversation.id);
+      const result = await updateConversationAssignee(createClient(), {
+        conversationId: conversation.id,
+        agentId,
+        ...(opts.expectCurrent
+          ? { expectCurrent: conversation.assigned_agent_id ?? null }
+          : {}),
+      });
 
-      if (error) {
-        console.error("Failed to update assignment:", error);
-        toast.error("Failed to update assignment");
-        return;
+      if (result.status === "failed") {
+        console.error("Failed to update assignment:", result.error);
+        toast.error(t("Failed to update assignment"));
+        return "failed";
+      }
+      if (result.status === "conflict") {
+        // Someone else changed it first: show who has it now.
+        onAssignChange(conversation.id, result.assignee);
+        const who =
+          (result.assignee &&
+            profiles.find((p) => p.user_id === result.assignee)?.full_name) ||
+          statusCopy.someone;
+        toast.info(statusCopy.claimTaken(who));
+        return "conflict";
       }
 
       onAssignChange(conversation.id, agentId);
@@ -1143,15 +1185,16 @@ export function MessageThread({
       } else {
         void logEvent({ event_type: "unassigned", payload: {} });
       }
+      return "ok";
     },
-    [conversation, onAssignChange, profiles, logEvent, user?.id],
+    [conversation, onAssignChange, profiles, logEvent, user?.id, t, statusCopy],
   );
 
   // "Assumir": the assign dropdown's shortcut for "me".
   const handleClaim = useCallback(async () => {
     if (!user?.id) return;
-    await handleAssignChange(user.id);
-    toast.success(statusCopy.claimedToast);
+    const outcome = await handleAssignChange(user.id, { expectCurrent: true });
+    if (outcome === "ok") toast.success(statusCopy.claimedToast);
   }, [handleAssignChange, user?.id, statusCopy]);
 
   // Arquivar = resolve + `archived_at` (migration 056); Desarquivar only
@@ -1247,6 +1290,11 @@ export function MessageThread({
     ? (currentAssignee?.full_name ?? "Assigned")
     : "Assign";
   const isArchived = !!conversation.archived_at;
+  // Tooltip copy is language-keyed; the visible chip label above goes
+  // through the DOM catalogue ("Assign" / "Assigned").
+  const assigneeForTitle = assignedAgentId
+    ? (currentAssignee?.full_name ?? statusCopy.assignedUnknown)
+    : statusCopy.noAssignee;
   // Assumir / Transferir / Lembrar / Resolver / Arquivar — agent+ act,
   // viewers see them disabled (lib/conversations/header-actions).
   const actions = conversationHeaderActions({
@@ -1376,8 +1424,8 @@ export function MessageThread({
           <DropdownMenu>
             <DropdownMenuTrigger
               disabled={!actions.transfer.enabled}
-              aria-label={actions.canWrite ? statusCopy.transferTitle(assignLabel) : statusCopy.readOnly}
-              title={actions.canWrite ? statusCopy.transferTitle(assignLabel) : statusCopy.readOnly}
+              aria-label={actions.canWrite ? statusCopy.transferTitle(assigneeForTitle) : statusCopy.readOnly}
+              title={actions.canWrite ? statusCopy.transferTitle(assigneeForTitle) : statusCopy.readOnly}
               className={cn(
                 "inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
                 assignedAgentId ? "text-foreground" : "text-muted-foreground"

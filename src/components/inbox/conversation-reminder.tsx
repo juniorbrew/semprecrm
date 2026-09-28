@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   REMINDER_PRESETS,
   buildReminderTask,
+  canSaveReminder,
   createTask,
   deleteTask,
   formatReminderWhen,
@@ -123,6 +124,10 @@ export function ConversationReminder({
   const [saving, setSaving] = useState(false);
   const [active, setActive] = useState<ActiveReminder | null>(null);
   const { statuses } = useTaskStatuses({ enabled: open });
+  // createTask needs the account's default status; until the statuses
+  // arrive (the popover loads them on open) nothing can be saved.
+  const statusesReady = statuses.length > 0;
+  const busy = !canSaveReminder({ saving, statusesLoaded: statuses.length });
   const userId = user?.id ?? null;
 
   // My next pending reminder on this conversation. A pre-057 schema
@@ -150,6 +155,7 @@ export function ConversationReminder({
 
   const create = useCallback(
     async (when: Date) => {
+      if (!statusesReady) return;
       const problem = validateReminderTime(when);
       if (problem) {
         setError(copy.errors[problem]);
@@ -187,7 +193,7 @@ export function ConversationReminder({
         setSaving(false);
       }
     },
-    [accountId, userId, statuses, contactName, contactId, conversationId, note, language, copy],
+    [accountId, userId, statuses, statusesReady, contactName, contactId, conversationId, note, language, copy],
   );
 
   const cancelActive = useCallback(async () => {
@@ -259,7 +265,7 @@ export function ConversationReminder({
             <button
               key={preset}
               type="button"
-              disabled={saving}
+              disabled={busy}
               onClick={() => void create(reminderPresetTime(preset))}
               className="flex h-8 items-center justify-between rounded-md px-2 text-left text-xs text-popover-foreground transition-colors hover:bg-muted disabled:opacity-50"
             >
@@ -296,10 +302,14 @@ export function ConversationReminder({
             />
             <button
               type="submit"
-              disabled={saving || !custom}
+              disabled={busy || !custom}
               className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : copy.save}
+              {saving || !statusesReady ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                copy.save
+              )}
             </button>
           </div>
           {error && (

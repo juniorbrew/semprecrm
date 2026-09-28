@@ -98,3 +98,11 @@ export function formatReminderWhen(when: Date, language: Language, now: number =
   const date = when.toLocaleDateString(language, { day: '2-digit', month: '2-digit' });
   return `${date} ${time}`;
 }
+
+/**
+ * The reminder can be saved: not already saving, and the account's task
+ * statuses are loaded (`createTask` needs the default status).
+ */
+export function canSaveReminder(state: { saving: boolean; statusesLoaded: number }): boolean {
+  return !state.saving && state.statusesLoaded > 0;
+}

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   REMINDER_MAX_AHEAD_MS,
   buildReminderTask,
+  canSaveReminder,
   formatReminderWhen,
   reminderPresetTime,
   validateReminderTime,
@@ -93,5 +94,13 @@ describe('formatReminderWhen', () => {
     expect(formatReminderWhen(new Date(2026, 8, 13, 9, 0), 'pt-BR', now)).toMatch(/^amanhã 09:00$/);
     expect(formatReminderWhen(new Date(2026, 8, 13, 9, 0), 'en-US', now)).toMatch(/^tomorrow/);
     expect(formatReminderWhen(new Date(2026, 9, 2, 9, 0), 'pt-BR', now)).toMatch(/^02\/10 09:00$/);
+  });
+});
+
+describe('canSaveReminder', () => {
+  it('waits for the task statuses and for a save in flight', () => {
+    expect(canSaveReminder({ saving: false, statusesLoaded: 0 })).toBe(false);
+    expect(canSaveReminder({ saving: true, statusesLoaded: 3 })).toBe(false);
+    expect(canSaveReminder({ saving: false, statusesLoaded: 3 })).toBe(true);
   });
 });
