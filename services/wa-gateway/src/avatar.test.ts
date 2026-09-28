@@ -7,6 +7,7 @@ import {
   ThrottledError,
   downloadAvatar,
   fetchProfilePictureUrl,
+  isAllowedAvatarUrl,
   isNoPictureError,
 } from "./avatar.js";
 import { MediaStore, buildAvatarPath } from "./media.js";
@@ -46,6 +47,57 @@ describe("AvatarThrottle", () => {
     // Waits only the remainder of the interval (the task already took 500 ms).
     expect(sleeps).toEqual([3_500, 3_500]);
     expect(throttle.pending(ACCOUNT)).toBe(0);
+  });
+
+  it("spaces sequential, non-overlapping lookups of one account (regression)", async () => {
+    let clock = 10_000;
+    const sleeps: number[] = [];
+    const throttle = new AvatarThrottle({
+      minIntervalMs: 4_000,
+      now: () => clock,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+    });
+    const starts: number[] = [];
+    const lookup = async () => {
+      starts.push(clock);
+      clock += 100;
+    };
+    // Each request waits for the previous one to finish (the queue drains
+    // in between) — the spacing must still hold.
+    await throttle.run(ACCOUNT, lookup);
+    expect(throttle.pending(ACCOUNT)).toBe(0);
+    clock += 500;
+    await throttle.run(ACCOUNT, lookup);
+    clock += 10_000;
+    await throttle.run(ACCOUNT, lookup);
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(4_000);
+    // After a long pause no extra wait is added.
+    expect(starts[2] - starts[1]).toBeGreaterThanOrEqual(4_000);
+    expect(sleeps).toEqual([3_400]);
+  });
+
+  it("gives up (ThrottledError) when the turn would come after maxWaitMs", async () => {
+    let clock = 0;
+    const throttle = new AvatarThrottle({
+      minIntervalMs: 10_000,
+      maxWaitMs: 15_000,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    const task = vi.fn(async () => "ok");
+    const results = await Promise.allSettled([
+      throttle.run(ACCOUNT, task), // t=0
+      throttle.run(ACCOUNT, task), // t=10s  (waited 10s ≤ 15s)
+      throttle.run(ACCOUNT, task), // t=20s  (would wait 20s > 15s) → throttled
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
+    expect((results[2] as PromiseRejectedResult).reason).toBeInstanceOf(ThrottledError);
+    expect(task).toHaveBeenCalledTimes(2);
   });
 
   it("keeps accounts independent", async () => {
@@ -110,25 +162,60 @@ describe("fetchProfilePictureUrl", () => {
 });
 
 describe("downloadAvatar", () => {
-  const response = (body: Uint8Array, headers: Record<string, string>, status = 200) =>
+  const CDN = "https://pps.whatsapp.net/v/t61/x.jpg?oh=1&oe=2";
+  const response = (body: BodyInit | null, headers: Record<string, string>, status = 200) =>
     new Response(body, { status, headers });
 
-  it("returns the bytes and content type", async () => {
-    const fetchImpl = vi.fn(async () => response(new Uint8Array([1, 2, 3]), { "content-type": "image/jpeg" }));
-    const out = await downloadAvatar("https://pps.whatsapp.net/x.jpg", { fetchImpl: fetchImpl as never });
+  it("returns the bytes and content type, without following redirects", async () => {
+    const fetchImpl = vi.fn(async (_u: string, _i?: RequestInit) =>
+      response(new Uint8Array([1, 2, 3]), { "content-type": "image/jpeg" }),
+    );
+    const out = await downloadAvatar(CDN, { fetchImpl: fetchImpl as never });
     expect(out.contentType).toBe("image/jpeg");
     expect([...out.buffer]).toEqual([1, 2, 3]);
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({ redirect: "manual" });
   });
 
-  it("refuses non-https URLs, non-images, oversize and HTTP errors", async () => {
+  it("only allows https on WhatsApp / Facebook CDN hosts", () => {
+    expect(isAllowedAvatarUrl(CDN)).toBe(true);
+    expect(isAllowedAvatarUrl("https://scontent.xx.fbcdn.net/v/p.jpg")).toBe(true);
+    expect(isAllowedAvatarUrl("http://pps.whatsapp.net/x.jpg")).toBe(false);
+    expect(isAllowedAvatarUrl("https://evil.example/x.jpg")).toBe(false);
+    expect(isAllowedAvatarUrl("https://whatsapp.net.evil.example/x.jpg")).toBe(false);
+    expect(isAllowedAvatarUrl("https://evilwhatsapp.net/x.jpg")).toBe(false);
+    expect(isAllowedAvatarUrl("https://169.254.169.254/latest")).toBe(false);
+    expect(isAllowedAvatarUrl("https://u:p@pps.whatsapp.net/x.jpg")).toBe(false);
+    expect(isAllowedAvatarUrl("https://pps.whatsapp.net:8443/x.jpg")).toBe(false);
+    expect(isAllowedAvatarUrl("not a url")).toBe(false);
+  });
+
+  it("refuses other hosts before fetching, redirects, non-images, oversize and HTTP errors", async () => {
     const ok = vi.fn(async () => response(new Uint8Array([1]), { "content-type": "image/jpeg" }));
-    await expect(downloadAvatar("http://pps.whatsapp.net/x.jpg", { fetchImpl: ok as never })).rejects.toThrow();
+    await expect(downloadAvatar("https://evil.example/x.jpg", { fetchImpl: ok as never })).rejects.toThrow(/inesperada/);
+    expect(ok).not.toHaveBeenCalled();
+    const redirect = vi.fn(async () => response(null, { location: "http://127.0.0.1/" }, 302));
+    await expect(downloadAvatar(CDN, { fetchImpl: redirect as never })).rejects.toThrow(/redirecionamento/);
     const html = vi.fn(async () => response(new Uint8Array([1]), { "content-type": "text/html" }));
-    await expect(downloadAvatar("https://x/y", { fetchImpl: html as never })).rejects.toThrow(/tipo/);
+    await expect(downloadAvatar(CDN, { fetchImpl: html as never })).rejects.toThrow(/tipo/);
     const big = vi.fn(async () => response(new Uint8Array(20), { "content-type": "image/png" }));
-    await expect(downloadAvatar("https://x/y", { fetchImpl: big as never, maxBytes: 10 })).rejects.toThrow(/limite/);
+    await expect(downloadAvatar(CDN, { fetchImpl: big as never, maxBytes: 10 })).rejects.toThrow(/limite/);
     const gone = vi.fn(async () => response(new Uint8Array(), { "content-type": "image/jpeg" }, 403));
-    await expect(downloadAvatar("https://x/y", { fetchImpl: gone as never })).rejects.toThrow(/403/);
+    await expect(downloadAvatar(CDN, { fetchImpl: gone as never })).rejects.toThrow(/403/);
+  });
+
+  it("caps the size while streaming, even without content-length", async () => {
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        if (pulled > 100) return controller.close();
+        controller.enqueue(new Uint8Array(4));
+      },
+    });
+    const fetchImpl = vi.fn(async () => response(stream, { "content-type": "image/jpeg" }));
+    await expect(downloadAvatar(CDN, { fetchImpl: fetchImpl as never, maxBytes: 10 })).rejects.toThrow(/limite/);
+    // Stopped right after crossing the cap instead of reading everything.
+    expect(pulled).toBeLessThan(10);
   });
 });
 

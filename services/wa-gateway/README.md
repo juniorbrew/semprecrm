@@ -37,8 +37,11 @@ Por isso o canal QR serve só o atendimento 1:1 e as automações de resposta; d
   `account-<id>/<contact_id>`, devolvendo a URL pública com `?v=<ts>`. O app chama
   depois de uma mensagem recebida, quando o contato nunca teve a foto verificada
   ou a verificação tem mais de 7 dias. As consultas passam por uma fila por conta
-  (uma a cada 4 s, no máximo 20 esperando → `429 throttled`) para não gerar
-  rajadas que levem a banimento. Privacidade ("só meus contatos") ou contato sem
+  (uma a cada 4 s — também entre pedidos que chegam separados —, no máximo 20
+  esperando e no máximo 25 s de espera → `429 throttled`, sempre dentro do
+  timeout de 60 s do app) para não gerar rajadas que levem a banimento. O
+  download só aceita https em `*.whatsapp.net` / `*.fbcdn.net`, não segue
+  redirecionamento e corta a leitura acima de 1 MB. Privacidade ("só meus contatos") ou contato sem
   foto → `{ url: null }` e a cópia antiga é apagada. A API oficial da Meta não
   expõe foto de perfil; contatos do canal oficial ficam com as iniciais.
 
