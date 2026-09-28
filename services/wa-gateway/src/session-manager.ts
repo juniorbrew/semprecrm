@@ -88,6 +88,13 @@ interface Session {
    * chegaria antes da linha existir e se perderia.
    */
   pendingEchoAcks: Map<string, AckStatus | null>;
+  /**
+   * LID do cliente → JID de telefone, aprendido das mensagens DELE (chat
+   * `@lid` com `remoteJidAlt` de telefone). O eco do celular num chat `@lid`
+   * traz o NOSSO número no alt, e `getPNForLID` nem sempre conhece o
+   * cliente: sem este cache o eco era descartado como `no-phone`.
+   */
+  lidToPn: Map<string, string>;
 }
 
 interface InboundKey {
@@ -97,6 +104,13 @@ interface InboundKey {
 
 /** quantas chaves de mensagens recebidas lembramos por sessão (confirmação de leitura) */
 const INBOUND_KEYS_MAX = 5000;
+const LID_CACHE_MAX = 5000;
+
+/** `123:4@lid` → `123@lid` (chave do cache LID → telefone). */
+function lidKey(jid: string): string {
+  const [user, server] = jid.split("@");
+  return `${user.split(":")[0]}@${server}`;
+}
 /** quantos ids de envios próprios lembramos por sessão (dedupe de eco) */
 const OWN_SEND_IDS_MAX = 5000;
 /** teto de ids por pedido de leitura */
@@ -205,6 +219,7 @@ function newSession(accountId: string): Session {
     inboundKeys: new Map(),
     ownSendIds: new Map(),
     pendingEchoAcks: new Map(),
+    lidToPn: new Map(),
   };
 }
 
@@ -654,6 +669,11 @@ export class SessionManager {
     try {
       let resolvedPn: string | undefined;
       const jid = msg.key.remoteJid ?? "";
+      // Mensagem do cliente num chat @lid com o telefone no alt: guarda o
+      // par para resolver os ecos do celular nesse mesmo chat.
+      if (jid.endsWith("@lid") && !msg.key.fromMe && msg.key.remoteJidAlt?.endsWith("@s.whatsapp.net")) {
+        this.rememberLid(s, jid, msg.key.remoteJidAlt);
+      }
       // fromMe: o alt pode ser o NOSSO número — resolve o LID do cliente
       if (jid.endsWith("@lid") && (msg.key.fromMe || !msg.key.remoteJidAlt)) {
         try {
@@ -661,6 +681,7 @@ export class SessionManager {
         } catch {
           resolvedPn = undefined;
         }
+        resolvedPn = resolvedPn ?? s.lidToPn.get(lidKey(jid));
       }
       const mapped = mapInboundMessage(accountId, msg, {
         resolvedPn,
@@ -668,7 +689,16 @@ export class SessionManager {
         selfPhone: s.phone ?? userPhone(sock.user),
       });
       if (mapped.kind === "skip") {
-        this.log.debug({ accountId, reason: mapped.reason, jid, id: msg.key.id }, "mensagem ignorada");
+        // Ecos descartados vão para o log em info (sem o número): é assim
+        // que se descobre por que uma resposta do celular não apareceu.
+        if (msg.key.fromMe && mapped.reason !== "own-send") {
+          this.log.info(
+            { accountId, reason: mapped.reason, chat: jid.split("@")[1] ?? "", id: msg.key.id },
+            "eco do celular ignorado",
+          );
+        } else {
+          this.log.debug({ accountId, reason: mapped.reason, jid, id: msg.key.id }, "mensagem ignorada");
+        }
         return;
       }
       if (mapped.kind === "revoke") {
@@ -812,6 +842,17 @@ export class SessionManager {
       }
       this.log.warn({ accountId, jid, err: (err as Error).message }, "falha ao buscar foto de perfil");
       throw new GatewayError(`falha ao buscar foto: ${(err as Error).message}`, "send_failed", 502);
+    }
+  }
+
+  private rememberLid(s: Session, lidJid: string, pnJid: string): void {
+    const key = lidKey(lidJid);
+    s.lidToPn.delete(key);
+    s.lidToPn.set(key, pnJid);
+    while (s.lidToPn.size > LID_CACHE_MAX) {
+      const oldest = s.lidToPn.keys().next().value;
+      if (oldest === undefined) break;
+      s.lidToPn.delete(oldest);
     }
   }
 

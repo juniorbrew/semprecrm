@@ -453,6 +453,36 @@ describe("SessionManager — mensagens", () => {
     expect(appClient.sendEcho).toHaveBeenCalledWith(expect.objectContaining({ from: "5511977776666" }));
   });
 
+  it("eco em @lid sem mapeamento no Baileys usa o telefone aprendido da mensagem do cliente", async () => {
+    const { appClient, sock } = await connected();
+    // O cliente escreve num chat @lid com o telefone no alt…
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "77:3@lid", remoteJidAlt: "5573981168008@s.whatsapp.net", fromMe: false, id: "C1" },
+          messageTimestamp: 1,
+          message: { conversation: "ola" },
+        },
+      ],
+    });
+    await until(() => appClient.sendInbound.mock.calls.length === 1);
+    // …e a resposta pelo celular chega com o NOSSO número no alt e sem
+    // mapeamento no Baileys (getPNForLID → null).
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "77@lid", remoteJidAlt: "5511999999999@s.whatsapp.net", fromMe: true, id: "E1" },
+          messageTimestamp: 2,
+          message: { conversation: "oi, tudo bem?" },
+        },
+      ],
+    });
+    await until(() => appClient.sendEcho.mock.calls.length === 1);
+    expect(appClient.sendEcho).toHaveBeenCalledWith(expect.objectContaining({ from: "5573981168008", message_id: "E1" }));
+  });
+
   it("recibo que chega antes do eco terminar (mídia baixando) é repassado DEPOIS do eco", async () => {
     const { appClient, mediaStore, sock } = await connected();
     let release!: () => void;
