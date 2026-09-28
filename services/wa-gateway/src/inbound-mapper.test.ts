@@ -270,6 +270,21 @@ describe("mapInboundMessage — eco do celular (fromMe)", () => {
     expect(out).toEqual({ kind: "skip", reason: "self-chat" });
   });
 
+  it("eco em LID: PN resolvido do LID vem antes do alt, e o alt com o NOSSO número é ignorado", () => {
+    const key = { remoteJid: "42@lid", remoteJidAlt: "5511999999999@s.whatsapp.net", fromMe: true, id: "E3" };
+    const self = { selfPhone: "5511999999999" };
+    const resolved = mapInboundMessage(ACCOUNT, fixture({ key, message: { conversation: "x" } }), {
+      ...self,
+      resolvedPn: "5511977776666@s.whatsapp.net",
+    });
+    expect(resolved.kind === "echo" && resolved.payload.from).toBe("5511977776666");
+    // sem resolução: o alt é o nosso número → não há telefone do cliente
+    expect(mapInboundMessage(ACCOUNT, fixture({ key, message: { conversation: "x" } }), self)).toEqual({
+      kind: "skip",
+      reason: "no-phone",
+    });
+  });
+
   it("eco em LID usa remoteJidAlt", () => {
     const out = mapInboundMessage(
       ACCOUNT,

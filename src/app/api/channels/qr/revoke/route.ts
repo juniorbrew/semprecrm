@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     supabaseAdmin(),
   )
   if (!result.ok) {
-    return NextResponse.json({ error: 'Failed to mark message as deleted' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to mark message as deleted' }, { status: 503 })
   }
   return NextResponse.json({ ok: true, found: result.found })
 }

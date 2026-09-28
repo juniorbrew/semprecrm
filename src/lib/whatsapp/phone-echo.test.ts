@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // customer-side engine is stubbed so we can assert none of them runs.
 // ------------------------------------------------------------
 
+type R = Record<string, unknown>
+
 const h = vi.hoisted(() => ({
   state: {
     contacts: [] as Record<string, unknown>[],
@@ -15,6 +17,8 @@ const h = vi.hoisted(() => ({
     updates: [] as { table: string; payload: Record<string, unknown> }[],
     /** Simulates the race: the next messages insert loses to the unique index. */
     raceOnInsert: null as Record<string, unknown> | null,
+    /** Table whose next read fails (transient DB error). */
+    failRead: null as string | null,
   },
   automations: vi.fn(),
   flows: vi.fn(),
@@ -38,28 +42,27 @@ vi.mock('@/lib/automations/meta-send', () => ({ engineSendText: h.autoReply }))
 vi.mock('@/lib/push/notify', () => ({ notifyInboundMessage: h.push }))
 vi.mock('@/lib/push/send', () => ({ isPushConfigured: () => true }))
 vi.mock('@/lib/assignment/round-robin', () => ({ pickRoundRobinAssignee: vi.fn() }))
-vi.mock('@/lib/contacts/dedupe', () => ({
-  findExistingContact: vi.fn(
-    async (_db: unknown, accountId: string, phone: string) =>
-      h.state.contacts.find((c) => c.account_id === accountId && c.phone === phone) ?? null,
-  ),
-  isUniqueViolation: (err: unknown) =>
-    typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505',
-}))
 
-import { claimEchoedRow, ingestPhoneEcho, markMessageRevoked } from './phone-echo'
+import {
+  claimEchoedRow,
+  ingestPhoneEcho,
+  markMessageRevoked,
+  phoneEchoCountsAsReply,
+} from './phone-echo'
 
 let idSeq = 0
 
+type Filter = (r: R) => boolean
+
 function makeDb() {
   function builder(table: string) {
-    const filters: [string, unknown][] = []
+    const filters: Filter[] = []
     const ops = {
       type: 'select' as 'select' | 'insert' | 'update',
-      payload: undefined as Record<string, unknown> | undefined,
+      payload: undefined as R | undefined,
       returning: false,
     }
-    const src = (): Record<string, unknown>[] =>
+    const src = (): R[] =>
       table === 'contacts'
         ? h.state.contacts
         : table === 'conversations'
@@ -69,9 +72,12 @@ function makeDb() {
             : table === 'flow_runs'
               ? h.state.flowRuns
               : []
-    const rows = () => src().filter((r) => filters.every(([k, v]) => (r[k] ?? null) === v))
+    const rows = () => src().filter((r) => filters.every((f) => f(r)))
     function resolve(): { data: unknown; error: unknown } {
-      if (table === 'accounts') return { data: { owner_user_id: 'owner-1' }, error: null }
+      if (ops.type === 'select' && h.state.failRead === table) {
+        h.state.failRead = null
+        return { data: null, error: { message: 'connection reset' } }
+      }
       if (ops.type === 'insert') {
         const p = ops.payload ?? {}
         if (table === 'messages') {
@@ -84,7 +90,7 @@ function makeDb() {
           )
           if (clash) return { data: null, error: { code: '23505', message: 'duplicate key' } }
         }
-        const row = { id: `${table}-${++idSeq}`, unread_count: 0, ...p }
+        const row = { id: `${table}-${++idSeq}`, ...p }
         src().push(row)
         return { data: row, error: null }
       }
@@ -101,22 +107,30 @@ function makeDb() {
         if (ops.type !== 'select') ops.returning = true
         return b
       },
-      insert: (p: Record<string, unknown>) => ((ops.type = 'insert'), (ops.payload = p), b),
-      update: (p: Record<string, unknown>) => ((ops.type = 'update'), (ops.payload = p), b),
-      eq: (k: string, v: unknown) => (filters.push([k, v]), b),
-      is: (k: string, v: unknown) => (filters.push([k, v]), b),
-      single: () => {
-        const r = resolve()
-        if (ops.type === 'insert') return Promise.resolve(r)
-        const first = (r.data as Record<string, unknown>[] | null)?.[0]
-        return Promise.resolve(
-          first ? { data: first, error: null } : { data: null, error: { code: 'PGRST116' } },
-        )
+      insert: (p: R) => ((ops.type = 'insert'), (ops.payload = p), b),
+      update: (p: R) => ((ops.type = 'update'), (ops.payload = p), b),
+      eq: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) === v), b),
+      neq: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) !== v), b),
+      is: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) === v), b),
+      in: (k: string, vs: unknown[]) => (filters.push((r) => vs.includes(r[k])), b),
+      like: (k: string, pattern: string) => {
+        const suffix = pattern.replace(/^%/, '')
+        filters.push((r) => String(r[k] ?? '').endsWith(suffix))
+        return b
       },
+      // Only the shape phone-echo uses: last_message_at.is.null,last_message_at.lte."<iso>"
+      or: (expr: string) => {
+        const m = expr.match(/lte\."([^"]+)"/)
+        const bound = m ? new Date(m[1]).getTime() : Infinity
+        filters.push(
+          (r) => r.last_message_at == null || new Date(r.last_message_at as string).getTime() <= bound,
+        )
+        return b
+      },
+      order: () => b,
       maybeSingle: () => {
         const r = resolve()
-        if (table === 'accounts') return Promise.resolve(r)
-        const first = (r.data as Record<string, unknown>[] | null)?.[0] ?? null
+        const first = (r.data as R[] | null)?.[0] ?? null
         return Promise.resolve({ data: first, error: r.error })
       },
       then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
@@ -128,16 +142,19 @@ function makeDb() {
   return { from: (table: string) => builder(table) } as any
 }
 
+const T0 = 1_757_700_000 // echo timestamp (epoch s)
+const iso = (s: number) => new Date(s * 1000).toISOString()
+
 const ECHO = {
   accountId: 'acct-1',
   from: '5511999990000',
   messageId: '3APHONE1',
   type: 'text',
   text: 'respondi pelo celular',
-  timestamp: 1_757_700_000,
+  timestamp: T0,
 }
 
-function seedConversation(extra: Record<string, unknown> = {}) {
+function seedConversation(extra: R = {}) {
   h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
   h.state.conversations.push({
     id: 'conv-1',
@@ -146,6 +163,8 @@ function seedConversation(extra: Record<string, unknown> = {}) {
     unread_count: 2,
     status: 'closed',
     channel: 'qr',
+    last_message_at: iso(T0 - 600),
+    last_customer_message_at: iso(T0 - 600),
     ...extra,
   })
 }
@@ -157,15 +176,34 @@ beforeEach(() => {
   h.state.flowRuns = []
   h.state.updates = []
   h.state.raceOnInsert = null
+  h.state.failRead = null
   for (const fn of [h.automations, h.flows, h.push, h.cancelWaits, h.autoReply]) fn.mockReset()
   idSeq = 0
+})
+
+describe('phoneEchoCountsAsReply (mirrors the 059 trigger)', () => {
+  it('within 15 s after the customer → automatic greeting, not a reply', () => {
+    expect(phoneEchoCountsAsReply(iso(T0), iso(T0))).toBe(false)
+    expect(phoneEchoCountsAsReply(iso(T0 + 15), iso(T0))).toBe(false)
+  })
+
+  it('more than 15 s after, before the customer, or no customer message → reply', () => {
+    expect(phoneEchoCountsAsReply(iso(T0 + 16), iso(T0))).toBe(true)
+    expect(phoneEchoCountsAsReply(iso(T0 - 1), iso(T0))).toBe(true)
+    expect(phoneEchoCountsAsReply(iso(T0), null)).toBe(true)
+  })
 })
 
 describe('ingestPhoneEcho', () => {
   it('stores the echo once as an outbound "phone" row', async () => {
     seedConversation()
     const res = await ingestPhoneEcho(ECHO, makeDb())
-    expect(res).toMatchObject({ ok: true, conversationId: 'conv-1', contactId: 'c-1' })
+    expect(res).toMatchObject({
+      ok: true,
+      conversationId: 'conv-1',
+      contactId: 'c-1',
+      countsAsReply: true,
+    })
     expect(h.state.messages).toHaveLength(1)
     expect(h.state.messages[0]).toMatchObject({
       conversation_id: 'conv-1',
@@ -176,7 +214,7 @@ describe('ingestPhoneEcho', () => {
       channel: 'qr',
       message_id: '3APHONE1',
       content_text: 'respondi pelo celular',
-      created_at: new Date(1_757_700_000 * 1000).toISOString(),
+      created_at: iso(T0),
     })
   })
 
@@ -184,11 +222,13 @@ describe('ingestPhoneEcho', () => {
     seedConversation()
     await ingestPhoneEcho(ECHO, makeDb())
     const conv = h.state.updates.find((u) => u.table === 'conversations')!.payload
-    expect(conv).toMatchObject({ last_message_text: 'respondi pelo celular' })
-    expect(conv).not.toHaveProperty('unread_count')
-    expect(conv).not.toHaveProperty('status')
-    expect(conv).not.toHaveProperty('channel')
-    expect(conv).not.toHaveProperty('last_customer_message_at')
+    expect(conv).toMatchObject({
+      last_message_text: 'respondi pelo celular',
+      last_message_at: iso(T0),
+    })
+    for (const key of ['unread_count', 'status', 'channel', 'last_customer_message_at']) {
+      expect(conv).not.toHaveProperty(key)
+    }
     expect(h.state.conversations[0]).toMatchObject({ unread_count: 2, status: 'closed' })
     expect(h.automations).not.toHaveBeenCalled()
     expect(h.flows).not.toHaveBeenCalled()
@@ -197,28 +237,74 @@ describe('ingestPhoneEcho', () => {
     expect(h.autoReply).not.toHaveBeenCalled()
   })
 
-  it('pauses active flow runs — a human replied, like an inbox send', async () => {
-    seedConversation()
+  it('a human reply (> 15 s after the customer) pauses active flow runs', async () => {
+    seedConversation({ last_customer_message_at: iso(T0 - 16) })
     h.state.flowRuns.push({ id: 'run-1', account_id: 'acct-1', contact_id: 'c-1', status: 'active' })
-    await ingestPhoneEcho(ECHO, makeDb())
-    expect(h.state.flowRuns[0]).toMatchObject({ status: 'paused_by_agent', end_reason: 'agent_replied' })
-  })
-
-  it('never renames the contact; a new contact is named after its phone', async () => {
     const res = await ingestPhoneEcho(ECHO, makeDb())
-    expect(res.ok).toBe(true)
-    expect(h.state.contacts).toEqual([
-      expect.objectContaining({ phone: '5511999990000', name: '5511999990000' }),
-    ])
-    expect(h.state.conversations[0]).toMatchObject({ channel: 'qr' })
+    expect(res.countsAsReply).toBe(true)
+    expect(h.state.flowRuns[0]).toMatchObject({
+      status: 'paused_by_agent',
+      end_reason: 'agent_replied',
+    })
   })
 
-  it('a redelivery of the same id is a no-op', async () => {
+  it('a greeting / away message (≤ 15 s after the customer) is stored but pauses nothing', async () => {
+    seedConversation({ last_customer_message_at: iso(T0 - 2) })
+    h.state.flowRuns.push({ id: 'run-1', account_id: 'acct-1', contact_id: 'c-1', status: 'active' })
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, countsAsReply: false })
+    expect(h.state.messages).toHaveLength(1)
+    expect(h.state.flowRuns[0]).toMatchObject({ status: 'active' })
+    // the preview still moves
+    expect(h.state.conversations[0]).toMatchObject({ last_message_at: iso(T0) })
+  })
+
+  it('never creates contacts or conversations (personal chats are skipped)', async () => {
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toEqual({ ok: true, skipped: 'unknown_contact' })
+    expect(h.state.contacts).toHaveLength(0)
+    expect(h.state.conversations).toHaveLength(0)
+    expect(h.state.messages).toHaveLength(0)
+
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000' })
+    expect(await ingestPhoneEcho(ECHO, makeDb())).toEqual({ ok: true, skipped: 'no_conversation' })
+    expect(h.state.conversations).toHaveLength(0)
+    expect(h.state.messages).toHaveLength(0)
+  })
+
+  it('skips anonymised contacts', async () => {
     seedConversation()
-    const db = makeDb()
-    await ingestPhoneEcho(ECHO, db)
-    const again = await ingestPhoneEcho(ECHO, db)
-    expect(again).toMatchObject({ ok: true, duplicate: true })
+    h.state.contacts[0].anonymized_at = iso(T0 - 100)
+    expect(await ingestPhoneEcho(ECHO, makeDb())).toEqual({
+      ok: true,
+      skipped: 'anonymized_contact',
+    })
+    expect(h.state.messages).toHaveLength(0)
+  })
+
+  it('another account with the same phone is not touched', async () => {
+    seedConversation()
+    const res = await ingestPhoneEcho({ ...ECHO, accountId: 'acct-2' }, makeDb())
+    expect(res.skipped).toBe('unknown_contact')
+    expect(h.state.messages).toHaveLength(0)
+  })
+
+  it('never moves the preview backwards', async () => {
+    seedConversation({ last_message_at: iso(T0 + 60), last_message_text: 'mais nova' })
+    await ingestPhoneEcho(ECHO, makeDb())
+    expect(h.state.messages).toHaveLength(1)
+    expect(h.state.conversations[0]).toMatchObject({
+      last_message_at: iso(T0 + 60),
+      last_message_text: 'mais nova',
+    })
+  })
+
+  it('a redelivery of the same id is a no-op, across all conversations of the contact', async () => {
+    seedConversation()
+    h.state.conversations.push({ id: 'conv-2', account_id: 'acct-1', contact_id: 'c-1' })
+    h.state.messages.push({ id: 'm-0', conversation_id: 'conv-2', message_id: '3APHONE1' })
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, duplicate: true })
     expect(h.state.messages).toHaveLength(1)
   })
 
@@ -236,16 +322,30 @@ describe('ingestPhoneEcho', () => {
     expect(h.state.messages[0]).toMatchObject({ sender_id: 'user-9' })
   })
 
+  it('a DB failure on any lookup is ok:false (the route answers 5xx → gateway retries)', async () => {
+    for (const table of ['contacts', 'conversations', 'messages']) {
+      h.state.contacts = []
+      h.state.conversations = []
+      h.state.messages = []
+      seedConversation()
+      h.state.failRead = table
+      const res = await ingestPhoneEcho(ECHO, makeDb())
+      expect(res.ok).toBe(false)
+      expect(h.state.messages).toHaveLength(0)
+    }
+  })
+
   it('media echo keeps the media URL and uses the type as preview', async () => {
     seedConversation()
     await ingestPhoneEcho(
       { ...ECHO, messageId: 'IMG', type: 'image', text: null, mediaUrl: 'https://x/a.jpg' },
       makeDb(),
     )
-    expect(h.state.messages[0]).toMatchObject({ content_type: 'image', media_url: 'https://x/a.jpg' })
-    expect(h.state.updates.find((u) => u.table === 'conversations')!.payload).toMatchObject({
-      last_message_text: '[image]',
+    expect(h.state.messages[0]).toMatchObject({
+      content_type: 'image',
+      media_url: 'https://x/a.jpg',
     })
+    expect(h.state.conversations[0]).toMatchObject({ last_message_text: '[image]' })
   })
 })
 
@@ -259,7 +359,10 @@ describe('claimEchoedRow', () => {
       sender_id: null,
       origin: 'phone',
     })
-    const row = await claimEchoedRow(makeDb(), 'conv-1', 'W1', { sender_type: 'agent', sender_id: 'u-1' })
+    const row = await claimEchoedRow(makeDb(), 'conv-1', 'W1', {
+      sender_type: 'agent',
+      sender_id: 'u-1',
+    })
     expect(row).toMatchObject({ id: 'm-1', sender_id: 'u-1', origin: null })
   })
 
@@ -270,8 +373,15 @@ describe('claimEchoedRow', () => {
 })
 
 describe('markMessageRevoked', () => {
-  it('marks the customer message as deleted and keeps its content', async () => {
-    seedConversation()
+  const REVOKE = {
+    accountId: 'acct-1',
+    messageId: 'MSG1',
+    from: '5511999990000',
+    revokedBy: 'customer' as const,
+    timestamp: T0 + 100,
+  }
+
+  function seedMessage(extra: R) {
     h.state.messages.push({
       id: 'm-1',
       conversation_id: 'conv-1',
@@ -279,42 +389,68 @@ describe('markMessageRevoked', () => {
       content_text: 'segredo',
       sender_type: 'customer',
       revoked_at: null,
+      ...extra,
     })
-    const res = await markMessageRevoked(
-      { accountId: 'acct-1', messageId: 'MSG1', from: '5511999990000', revokedBy: 'customer', timestamp: 1_757_700_100 },
-      makeDb(),
-    )
-    expect(res).toEqual({ ok: true, found: true })
+  }
+
+  it('marks the customer message as deleted and keeps its content', async () => {
+    seedConversation()
+    seedMessage({})
+    expect(await markMessageRevoked(REVOKE, makeDb())).toEqual({ ok: true, found: true })
     expect(h.state.messages).toHaveLength(1)
     expect(h.state.messages[0]).toMatchObject({
       content_text: 'segredo',
       revoked_by: 'customer',
-      revoked_at: new Date(1_757_700_100 * 1000).toISOString(),
+      revoked_at: iso(T0 + 100),
     })
   })
 
-  it('unknown contact / message → found false, nothing written', async () => {
-    const a = await markMessageRevoked(
-      { accountId: 'acct-1', messageId: 'X', from: '5500000000000', revokedBy: 'customer' },
-      makeDb(),
-    )
-    expect(a).toEqual({ ok: true, found: false })
+  it('the customer cannot revoke one of OUR messages (same id)', async () => {
     seedConversation()
-    const b = await markMessageRevoked(
-      { accountId: 'acct-1', messageId: 'NOPE', from: '5511999990000', revokedBy: 'customer' },
-      makeDb(),
-    )
-    expect(b).toEqual({ ok: true, found: false })
+    seedMessage({ sender_type: 'agent' })
+    expect(await markMessageRevoked(REVOKE, makeDb())).toEqual({ ok: true, found: false })
+    expect(h.state.messages[0].revoked_at).toBeNull()
+  })
+
+  it('our phone only revokes outbound rows', async () => {
+    seedConversation()
+    seedMessage({ sender_type: 'customer' })
+    const phone = { ...REVOKE, revokedBy: 'phone' as const }
+    expect(await markMessageRevoked(phone, makeDb())).toEqual({ ok: true, found: false })
+    h.state.messages[0].sender_type = 'agent'
+    expect(await markMessageRevoked(phone, makeDb())).toEqual({ ok: true, found: true })
+    expect(h.state.messages[0]).toMatchObject({ revoked_by: 'phone' })
+  })
+
+  it('finds the message in any conversation of that contact', async () => {
+    seedConversation()
+    h.state.conversations.push({ id: 'conv-2', account_id: 'acct-1', contact_id: 'c-1' })
+    seedMessage({ conversation_id: 'conv-2' })
+    expect(await markMessageRevoked(REVOKE, makeDb())).toEqual({ ok: true, found: true })
+  })
+
+  it('unknown contact / message → found false, nothing written', async () => {
+    expect(await markMessageRevoked(REVOKE, makeDb())).toEqual({ ok: true, found: false })
+    seedConversation()
+    expect(await markMessageRevoked({ ...REVOKE, messageId: 'NOPE' }, makeDb())).toEqual({
+      ok: true,
+      found: false,
+    })
   })
 
   it('is scoped to the account: another tenant with the same phone is untouched', async () => {
     seedConversation()
-    h.state.messages.push({ id: 'm-1', conversation_id: 'conv-1', message_id: 'MSG1', revoked_at: null })
-    const res = await markMessageRevoked(
-      { accountId: 'acct-2', messageId: 'MSG1', from: '5511999990000', revokedBy: 'customer' },
-      makeDb(),
-    )
+    seedMessage({})
+    const res = await markMessageRevoked({ ...REVOKE, accountId: 'acct-2' }, makeDb())
     expect(res.found).toBe(false)
+    expect(h.state.messages[0].revoked_at).toBeNull()
+  })
+
+  it('a DB failure on the lookup is ok:false (retry)', async () => {
+    seedConversation()
+    seedMessage({})
+    h.state.failRead = 'conversations'
+    expect(await markMessageRevoked(REVOKE, makeDb())).toEqual({ ok: false, found: false })
     expect(h.state.messages[0].revoked_at).toBeNull()
   })
 })

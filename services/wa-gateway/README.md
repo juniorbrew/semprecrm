@@ -33,7 +33,11 @@ Por isso o canal QR serve só o atendimento 1:1 e as automações de resposta; d
   `push_name` vazio). Os envios do próprio gateway usam um id gerado ANTES do
   `sendMessage` e guardado em memória, então o eco deles é descartado aqui; o app
   também deduplica por `(conversa, message_id)`. Grupos e "mensagem para mim
-  mesmo" são ignorados.
+  mesmo" são ignorados; o app só grava ecos de contatos que já têm conversa
+  (conversas pessoais não viram contato). Em chat `@lid` o telefone do cliente
+  vem de `getPNForLID` (o `remoteJidAlt` de um `fromMe` pode ser o nosso número).
+  Recibos de um eco que ainda está sendo processado (mídia baixando) só são
+  repassados depois do eco, para o ack não chegar antes da linha existir.
 - "Apagar para todos" (`protocolMessage` REVOKE) vira
   `POST {APP_URL}/api/channels/qr/revoke`; o app só marca a mensagem, nunca apaga.
 - Mudanças de estado da sessão viram `POST {APP_URL}/api/channels/qr/status`; os

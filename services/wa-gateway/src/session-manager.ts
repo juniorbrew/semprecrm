@@ -81,6 +81,13 @@ interface Session {
    * com um desses ids nunca vira "enviado pelo celular".
    */
   ownSendIds: Map<string, true>;
+  /**
+   * Ecos do celular ainda em processamento (LID, download de mídia) →
+   * maior recibo que chegou nesse meio-tempo. O recibo só é repassado
+   * DEPOIS do eco entrar na fila do app (fila serial): senão o ack
+   * chegaria antes da linha existir e se perderia.
+   */
+  pendingEchoAcks: Map<string, AckStatus | null>;
 }
 
 interface InboundKey {
@@ -197,6 +204,7 @@ function newSession(accountId: string): Session {
     connectWaiters: [],
     inboundKeys: new Map(),
     ownSendIds: new Map(),
+    pendingEchoAcks: new Map(),
   };
 }
 
@@ -626,10 +634,28 @@ export class SessionManager {
 
   private async onInbound(s: Session, sock: WASocket, msg: WAMessage): Promise<void> {
     const accountId = s.accountId;
+    const id = msg.key.id;
+    const maybeEcho = !!msg.key.fromMe && !!id && !s.ownSendIds.has(id);
+    // síncrono, antes de qualquer await: recibos desse id esperam o eco
+    if (maybeEcho) s.pendingEchoAcks.set(id, s.pendingEchoAcks.get(id) ?? null);
+    try {
+      await this.processInbound(s, sock, msg);
+    } finally {
+      if (maybeEcho) {
+        const ack = s.pendingEchoAcks.get(id);
+        s.pendingEchoAcks.delete(id);
+        if (ack) void this.opts.appClient.sendAck({ account_id: accountId, message_id: id, status: ack });
+      }
+    }
+  }
+
+  private async processInbound(s: Session, sock: WASocket, msg: WAMessage): Promise<void> {
+    const accountId = s.accountId;
     try {
       let resolvedPn: string | undefined;
       const jid = msg.key.remoteJid ?? "";
-      if (jid.endsWith("@lid") && !msg.key.remoteJidAlt) {
+      // fromMe: o alt pode ser o NOSSO número — resolve o LID do cliente
+      if (jid.endsWith("@lid") && (msg.key.fromMe || !msg.key.remoteJidAlt)) {
         try {
           resolvedPn = (await sock.signalRepository.lidMapping.getPNForLID(jid)) ?? undefined;
         } catch {
@@ -671,7 +697,8 @@ export class SessionManager {
       }
       if (isEcho) {
         this.log.info({ accountId, id: payload.message_id, type: payload.type }, "mensagem enviada pelo celular");
-        await this.opts.appClient.sendEcho!(payload);
+        // enfileira o eco; o recibo pendente (se houver) entra na fila logo depois
+        void this.opts.appClient.sendEcho!(payload);
         return;
       }
       await this.opts.appClient.sendInbound(payload);
@@ -698,6 +725,10 @@ export class SessionManager {
       if (!ack) continue;
       if (!this.advanceAck(s, key.id, ack)) {
         this.log.debug({ accountId: s.accountId, id: key.id, ack }, "recibo ignorado (não avança o status)");
+        continue;
+      }
+      if (s.pendingEchoAcks.has(key.id)) {
+        s.pendingEchoAcks.set(key.id, ack); // repassado depois do eco (onInbound)
         continue;
       }
       await this.opts.appClient.sendAck({ account_id: s.accountId, message_id: key.id, status: ack });

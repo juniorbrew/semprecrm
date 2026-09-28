@@ -14,7 +14,9 @@ import { parseQrMessageBody } from '@/lib/whatsapp/qr-inbound-body'
  *
  * Stored as an outbound "Celular" row (lib/whatsapp/phone-echo) — never
  * as customer activity: no unread, no reopen, no flows / automations /
- * push. Idempotent on `message_id`.
+ * push. Idempotent on `message_id`. Only for contacts that already have
+ * a conversation (personal chats answer 200 `{ skipped }`). A DB
+ * failure answers 503 so the gateway retries.
  */
 export async function POST(request: Request) {
   if (!isGatewayRequest(request)) {
@@ -52,13 +54,14 @@ export async function POST(request: Request) {
   )
 
   if (!result.ok) {
-    // 422 (not 5xx), same as /inbound: the gateway drops it instead of
-    // retrying forever on a message we cannot place.
-    return NextResponse.json({ ok: false, reason: result.reason }, { status: 422 })
+    // Transient (DB) failure: 5xx so the gateway's queue retries with
+    // backoff. Invalid payloads are the only 4xx.
+    return NextResponse.json({ ok: false, reason: result.reason }, { status: 503 })
   }
   return NextResponse.json({
     ok: true,
     duplicate: !!result.duplicate,
-    conversation_id: result.conversationId,
+    ...(result.skipped ? { skipped: result.skipped } : {}),
+    conversation_id: result.conversationId ?? null,
   })
 }

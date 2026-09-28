@@ -206,6 +206,18 @@ export interface MapOptions {
   selfPhone?: string;
 }
 
+/**
+ * Telefone do CLIENTE de uma conversa 1:1. Para `fromMe` num chat `@lid`,
+ * o `remoteJidAlt` pode vir com o NOSSO número: a ordem é o JID de
+ * telefone, depois o PN resolvido do LID (`getPNForLID`), e só então o
+ * alt — sempre ignorando o nosso próprio número.
+ */
+export function resolveChatPhone(key: WAMessage["key"], fromMe: boolean, opts: MapOptions): string | undefined {
+  if (!fromMe) return resolveSenderPhone(key, opts.resolvedPn);
+  const candidates = [jidToPhone(key.remoteJid), jidToPhone(opts.resolvedPn), jidToPhone(key.remoteJidAlt)];
+  return candidates.find((p) => p && p !== opts.selfPhone);
+}
+
 /** `proto.Message.ProtocolMessage.Type.REVOKE` ("apagar para todos"). */
 const PROTOCOL_REVOKE = 0;
 
@@ -231,14 +243,18 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
   if (jid.endsWith("@newsletter")) return { kind: "skip", reason: "newsletter" };
   if (jid.endsWith("@broadcast")) return { kind: "skip", reason: "broadcast" };
 
+  // "mensagem para mim mesmo" — não é conversa com cliente
+  if (fromMe && opts.selfPhone && jidToPhone(key.remoteJid) === opts.selfPhone) {
+    return { kind: "skip", reason: "self-chat" };
+  }
+
   const content = unwrapContent(msg.message);
   if (!content) return { kind: "skip", reason: "no-message" };
 
   const revokedId = revokedMessageId(content);
   if (revokedId) {
-    const from = resolveSenderPhone(key, opts.resolvedPn);
+    const from = resolveChatPhone(key, fromMe, opts);
     if (!from) return { kind: "skip", reason: "no-phone" };
-    if (fromMe && opts.selfPhone && from === opts.selfPhone) return { kind: "skip", reason: "self-chat" };
     return {
       kind: "revoke",
       payload: {
@@ -254,10 +270,9 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
   const extracted = extract(content);
   if ("skip" in extracted) return { kind: "skip", reason: extracted.skip };
 
-  const from = resolveSenderPhone(key, opts.resolvedPn);
+  const from = resolveChatPhone(key, fromMe, opts);
   if (!from) return { kind: "skip", reason: "no-phone" };
   if (!key.id) return { kind: "skip", reason: "no-message" };
-  if (fromMe && opts.selfPhone && from === opts.selfPhone) return { kind: "skip", reason: "self-chat" };
 
   const payload: InboundPayload = {
     account_id: accountId,

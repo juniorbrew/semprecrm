@@ -435,6 +435,50 @@ describe("SessionManager — mensagens", () => {
     expect(appClient.sendInbound).not.toHaveBeenCalled();
   });
 
+  it("eco em @lid resolve o LID mesmo com remoteJidAlt (o alt pode ser o nosso número)", async () => {
+    const { appClient, sock } = await connected();
+    sock.signalRepository.lidMapping.getPNForLID.mockResolvedValueOnce("5511977776666@s.whatsapp.net");
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "42@lid", remoteJidAlt: "5511999999999@s.whatsapp.net", fromMe: true, id: "LIDE" },
+          messageTimestamp: 1,
+          message: { conversation: "oi" },
+        },
+      ],
+    });
+    await until(() => appClient.sendEcho.mock.calls.length === 1);
+    expect(sock.signalRepository.lidMapping.getPNForLID).toHaveBeenCalledWith("42@lid");
+    expect(appClient.sendEcho).toHaveBeenCalledWith(expect.objectContaining({ from: "5511977776666" }));
+  });
+
+  it("recibo que chega antes do eco terminar (mídia baixando) é repassado DEPOIS do eco", async () => {
+    const { appClient, mediaStore, sock } = await connected();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    mediaStore.storeInbound.mockImplementationOnce(async () => {
+      await gate;
+      return { url: "https://cdn.local/chat-media/x.jpg", path: "x.jpg" };
+    });
+    const order: string[] = [];
+    appClient.sendEcho.mockImplementation(async () => (order.push("echo"), true));
+    appClient.sendAck.mockImplementation(async () => (order.push("ack"), true));
+    const key = { remoteJid: "5511988887777@s.whatsapp.net", fromMe: true, id: "3AVID" };
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [{ key, messageTimestamp: 1, message: { imageMessage: { mimetype: "image/jpeg" } } }],
+    });
+    sock.emit("messages.update", [{ key, update: { status: 2 } }]);
+    sock.emit("messages.update", [{ key, update: { status: 3 } }]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual([]);
+    release();
+    await until(() => order.length === 2);
+    expect(order).toEqual(["echo", "ack"]);
+    expect(appClient.sendAck).toHaveBeenCalledWith({ account_id: ACCOUNT, message_id: "3AVID", status: "delivered" });
+  });
+
   it("mensagem para mim mesmo não vira eco", async () => {
     const { appClient, sock } = await connected();
     sock.emit("messages.upsert", {

@@ -332,10 +332,17 @@ describe('POST /echo (sent from the phone)', () => {
     expect(h.after).not.toHaveBeenCalled()
   })
 
-  it('400 on an invalid payload, 422 when it cannot be placed', async () => {
+  it('400 on an invalid payload; a DB failure is 5xx so the gateway retries', async () => {
     expect((await echo(req('echo', { account_id: 'a' }))).status).toBe(400)
-    h.echo.mockResolvedValueOnce({ ok: false, reason: 'account_owner_not_found' })
-    expect((await echo(req('echo', body))).status).toBe(422)
+    h.echo.mockResolvedValueOnce({ ok: false, reason: 'lookup_failed' })
+    expect((await echo(req('echo', body))).status).toBeGreaterThanOrEqual(500)
+  })
+
+  it('a personal chat (unknown contact) is acknowledged as skipped', async () => {
+    h.echo.mockResolvedValueOnce({ ok: true, skipped: 'unknown_contact' })
+    const res = await echo(req('echo', body))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, skipped: 'unknown_contact' })
   })
 })
 
@@ -360,6 +367,11 @@ describe('POST /revoke (deleted for everyone)', () => {
       timestamp: 1_757_700_100,
     })
     expect(h.writes.some((w) => w.op === 'delete')).toBe(false)
+  })
+
+  it('a DB failure is 5xx so the gateway retries', async () => {
+    h.revoke.mockResolvedValueOnce({ ok: false, found: false })
+    expect((await revoke(req('revoke', body))).status).toBeGreaterThanOrEqual(500)
   })
 
   it('rejects an unknown revoked_by and requires the secret', async () => {
