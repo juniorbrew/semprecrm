@@ -18,6 +18,13 @@ import {
   type RadarKey,
 } from "@/lib/radar/classify";
 import {
+  buildQueue,
+  formatQueuePosition,
+  formatQueueWait,
+  queueIndex,
+  type QueueEntry,
+} from "@/lib/radar/queue";
+import {
   Search,
   ChevronDown,
   Check,
@@ -50,12 +57,17 @@ interface ConversationListProps {
   resyncToken?: number;
 }
 
-/** Queue view: what the agent is triaging. */
-type TriageTab = "mine" | "unassigned" | "all";
+/**
+ * Queue view: what the agent is triaging. "queue" (Fila) is the Radar's
+ * `unassigned` bucket ordered by longest wait (lib/radar/queue) — it
+ * replaced the old "Não atribuídas" tab, whose persisted value is
+ * migrated on restore.
+ */
+type TriageTab = "queue" | "mine" | "all";
 /** Status filter applied before the queue tabs are counted. */
 type StatusFilter = ConversationStatus | "all";
 
-const TRIAGE_TABS: TriageTab[] = ["mine", "unassigned", "all"];
+const TRIAGE_TABS: TriageTab[] = ["queue", "mine", "all"];
 const STATUS_FILTERS: StatusFilter[] = ["open", "pending", "closed", "all"];
 
 /**
@@ -90,11 +102,16 @@ const STRIP_COPY: Record<
     radarChips: Record<RadarKey, string>;
     radarClear: string;
     waitingTitle: string;
+    /** Fila tab: the status chip does not apply (the queue is open-only). */
+    queueStatusHint: string;
+    queuePositionTitle: string;
+    queueEmpty: string;
+    queueEmptyHint: string;
   }
 > = {
   "pt-BR": {
     title: "Conversas",
-    tabs: { mine: "Minhas", unassigned: "Não atribuídas", all: "Todas" },
+    tabs: { queue: "Fila", mine: "Minhas", all: "Todas" },
     status: {
       open: "Abertas",
       pending: "Pendentes",
@@ -110,10 +127,14 @@ const STRIP_COPY: Record<
     radarChips: { waiting: "Aguardando", unassigned: "Sem responsável", cooling: "Esfriando" },
     radarClear: "Limpar filtro do radar",
     waitingTitle: "Cliente aguardando resposta além do SLA",
+    queueStatusHint: "A fila mostra só conversas abertas sem responsável",
+    queuePositionTitle: "Posição na fila (maior espera primeiro)",
+    queueEmpty: "Ninguém na fila",
+    queueEmptyHint: "Conversas abertas sem responsável aparecem aqui, a mais antiga primeiro.",
   },
   "en-US": {
     title: "Conversations",
-    tabs: { mine: "Mine", unassigned: "Unassigned", all: "All" },
+    tabs: { queue: "Queue", mine: "Mine", all: "All" },
     status: {
       open: "Open",
       pending: "Pending",
@@ -129,6 +150,10 @@ const STRIP_COPY: Record<
     radarChips: { waiting: "Waiting", unassigned: "Unassigned", cooling: "Cooling" },
     radarClear: "Clear radar filter",
     waitingTitle: "Customer waiting past the SLA",
+    queueStatusHint: "The queue only shows open conversations with no owner",
+    queuePositionTitle: "Position in the queue (longest wait first)",
+    queueEmpty: "Nobody in the queue",
+    queueEmptyHint: "Open conversations with no owner show up here, oldest first.",
   },
 };
 
@@ -247,7 +272,9 @@ export function ConversationList({
       const raw = localStorage.getItem(TRIAGE_STORAGE_KEY);
       if (!raw) return;
       const stored = JSON.parse(raw) as { tab?: unknown; status?: unknown };
-      if (isTriageTab(stored.tab)) setTab(stored.tab);
+      // "unassigned" was the tab before the Fila replaced it.
+      if (stored.tab === "unassigned") setTab("queue");
+      else if (isTriageTab(stored.tab)) setTab(stored.tab);
       if (isStatusFilter(stored.status)) setStatusFilter(stored.status);
     } catch {
       // localStorage can throw in private-browsing / sandboxed contexts.
@@ -391,7 +418,10 @@ export function ConversationList({
   // Status (+ unread) narrow the pool; the queue tabs are counted from
   // that pool so the badges answer "how many open ones are mine /
   // unassigned / total" — exactly what a team lead scans for.
-  const pool = useMemo(() => {
+  // Radar + unread narrow everything; the status chip then narrows the
+  // Minhas / Todas pool. The Fila ignores the status chip — its
+  // definition (Radar `unassigned`) already fixes status = open.
+  const basePool = useMemo(() => {
     let result = conversations;
     if (radar) {
       // A radar bucket replaces the status chip: the bucket definition
@@ -399,14 +429,24 @@ export function ConversationList({
       // only), and this keeps the list in step with the chip / dashboard
       // counts when someone deep-links from the card.
       result = result.filter((c) => matchesRadar(c, radar, preferences, now));
-    } else if (statusFilter !== "all") {
-      result = result.filter((c) => c.status === statusFilter);
     }
     if (unreadOnly) {
       result = result.filter((c) => c.unread_count > 0);
     }
     return result;
-  }, [conversations, statusFilter, unreadOnly, radar, preferences, now]);
+  }, [conversations, unreadOnly, radar, preferences, now]);
+
+  const pool = useMemo(() => {
+    if (radar || statusFilter === "all") return basePool;
+    return basePool.filter((c) => c.status === statusFilter);
+  }, [basePool, radar, statusFilter]);
+
+  // The queue, longest wait first, with 1-based positions.
+  const queue = useMemo(
+    () => buildQueue(basePool, preferences, now),
+    [basePool, preferences, now],
+  );
+  const queueById = useMemo(() => queueIndex(queue), [queue]);
 
   // Radar counts are taken over every conversation the list knows — the
   // same population the dashboard card counts — regardless of the
@@ -419,23 +459,21 @@ export function ConversationList({
 
   const counts = useMemo<Record<TriageTab, number>>(() => {
     let mine = 0;
-    let unassigned = 0;
     for (const c of pool) {
-      if (!c.assigned_agent_id) unassigned += 1;
-      else if (userId && c.assigned_agent_id === userId) mine += 1;
+      if (userId && c.assigned_agent_id === userId) mine += 1;
     }
-    return { mine, unassigned, all: pool.length };
-  }, [pool, userId]);
+    return { queue: queue.length, mine, all: pool.length };
+  }, [pool, queue, userId]);
 
   const filtered = useMemo(() => {
-    let result = pool;
+    let result: Conversation[] = pool;
 
     if (tab === "mine") {
       result = result.filter(
         (c) => !!userId && c.assigned_agent_id === userId
       );
-    } else if (tab === "unassigned") {
-      result = result.filter((c) => !c.assigned_agent_id);
+    } else if (tab === "queue") {
+      result = queue.map((e) => e.conversation);
     }
 
     if (search.trim()) {
@@ -449,7 +487,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [pool, tab, userId, search]);
+  }, [pool, queue, tab, userId, search]);
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -482,7 +520,9 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={copy.status[statusFilter]}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-muted/60 pl-2 pr-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                disabled={tab === "queue"}
+                title={tab === "queue" ? copy.queueStatusHint : undefined}
+                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-muted/60 pl-2 pr-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span
                   className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[statusFilter])}
@@ -637,12 +677,19 @@ export function ConversationList({
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">No conversations found</p>
-            <p className="mt-1 text-xs text-muted-foreground/80">
-              Try another queue tab or status filter.
-            </p>
-          </div>
+          tab === "queue" && !search.trim() ? (
+            <div className="px-4 py-12 text-center" data-no-translate>
+              <p className="text-sm text-muted-foreground">{copy.queueEmpty}</p>
+              <p className="mt-1 text-xs text-muted-foreground/80">{copy.queueEmptyHint}</p>
+            </div>
+          ) : (
+            <div className="px-4 py-12 text-center">
+              <p className="text-sm text-muted-foreground">No conversations found</p>
+              <p className="mt-1 text-xs text-muted-foreground/80">
+                Try another queue tab or status filter.
+              </p>
+            </div>
+          )
         ) : (
           <div className="flex flex-col">
             {filtered.map((conv) => (
@@ -659,6 +706,11 @@ export function ConversationList({
                 moreTags={copy.moreTags}
                 waitingLabel={waitingLabelFor(conv, preferences, now, language)}
                 waitingTitle={copy.waitingTitle}
+                queue={
+                  tab === "queue"
+                    ? queueBadgeFor(queueById.get(conv.id), preferences, now, language, copy.queuePositionTitle)
+                    : null
+                }
               />
             ))}
           </div>
@@ -683,6 +735,33 @@ function waitingLabelFor(
   return formatWaitingAge(c.waitingSince, now, language);
 }
 
+interface QueueBadge {
+  position: string;
+  positionTitle: string;
+  /** "Aguardando há 2 dias" — null when we spoke last. */
+  wait: string | null;
+  /** Past the account's SLA (`inbox_sla_minutes`) — red instead of amber. */
+  overdue: boolean;
+}
+
+function queueBadgeFor(
+  entry: QueueEntry | undefined,
+  preferences: { inbox_sla_minutes: number },
+  now: number,
+  language: Language,
+  positionTitle: string,
+): QueueBadge | null {
+  if (!entry) return null;
+  const since = entry.waitingSince;
+  return {
+    position: formatQueuePosition(entry.position, language),
+    positionTitle,
+    wait: since ? formatQueueWait(since, now, language) : null,
+    overdue:
+      !!since && now - since.getTime() > Math.max(0, preferences.inbox_sla_minutes) * 60_000,
+  };
+}
+
 interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
@@ -696,6 +775,8 @@ interface ConversationItemProps {
   /** Set when the customer is waiting past the SLA ("há 12 min"). */
   waitingLabel: string | null;
   waitingTitle: string;
+  /** Fila tab only: position + wait. */
+  queue: QueueBadge | null;
 }
 
 function ConversationItem({
@@ -710,6 +791,7 @@ function ConversationItem({
   moreTags,
   waitingLabel,
   waitingTitle,
+  queue,
 }: ConversationItemProps) {
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
@@ -802,7 +884,7 @@ function ConversationItem({
             {conversation.last_message_text || "No messages yet"}
           </p>
           <div data-no-translate className="flex shrink-0 items-center gap-1.5">
-            {waitingLabel && (
+            {waitingLabel && !queue && (
               <span
                 title={waitingTitle}
                 className="inline-flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-semibold leading-4 text-red-600 dark:text-red-400"
@@ -830,6 +912,31 @@ function ConversationItem({
             )}
           </div>
         </div>
+        {queue && (
+          <div data-no-translate className="mt-1 flex min-w-0 items-center gap-1.5">
+            <span
+              title={queue.positionTitle}
+              aria-label={queue.positionTitle}
+              className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
+            >
+              {queue.position}
+            </span>
+            {queue.wait && (
+              <span
+                title={queue.overdue ? waitingTitle : undefined}
+                className={cn(
+                  "inline-flex min-w-0 items-center gap-0.5 truncate text-[11px] font-medium leading-4",
+                  queue.overdue
+                    ? "text-red-600 dark:text-red-400"
+                    : "text-amber-600 dark:text-amber-400",
+                )}
+              >
+                <Clock className="h-3 w-3 shrink-0" aria-hidden />
+                <span className="truncate">{queue.wait}</span>
+              </span>
+            )}
+          </div>
+        )}
         {tags.length > 0 && (
           <div data-no-translate className="mt-1 flex items-center gap-1 overflow-hidden">
             {visibleTags.map((tag) => (
