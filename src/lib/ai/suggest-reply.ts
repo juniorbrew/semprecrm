@@ -36,7 +36,6 @@ const MESSAGE_MAX_CHARS = 1500;
 export function sanitizeUntrusted(text: string, max = MESSAGE_MAX_CHARS): string {
   const clean = text
     .replace(/[<>]/g, (c) => (c === '<' ? '‹' : '›'))
-    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;

@@ -29,6 +29,7 @@ import {
   Strikethrough,
   Code,
   Zap,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
@@ -47,6 +48,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
+import { invalidateAiStatus, useAiStatus } from "@/hooks/use-ai-status";
 import { createClient } from "@/lib/supabase/client";
 import {
   findSlashToken,
@@ -66,6 +68,11 @@ import {
   MEDIA_MAX_BYTES_BY_KIND,
 } from "@/lib/storage/upload-media";
 import { ReplyQuote } from "./reply-quote";
+import {
+  SuggestReplyButton,
+  suggestReplyBlock,
+  type SuggestReplyBlock,
+} from "./suggest-reply-button";
 
 /** Media content types an agent can send from the composer. */
 export type ComposerMediaKind = "image" | "video" | "document" | "audio";
@@ -205,6 +212,16 @@ const COMPOSER_COPY: Record<
     fileTooLarge: (sizeMb: string, kind: string, limitMb: number) => string;
     mediaKind: Record<ComposerMediaKind, string>;
     recordingTooLong: string;
+    /** "Sugerir resposta" (AI, migration 058). */
+    suggestReply: string;
+    suggestCancel: string;
+    suggestBlocked: Record<SuggestReplyBlock, string>;
+    suggestReady: string;
+    suggestReplace: string;
+    suggestAppend: string;
+    suggestDiscard: string;
+    suggestFailed: string;
+    suggestRateLimited: string;
   }
 > = {
   "pt-BR": {
@@ -248,6 +265,23 @@ const COMPOSER_COPY: Record<
       `O arquivo possui ${sizeMb} MB — o limite para ${kind} é ${limitMb} MB.`,
     mediaKind: { image: "imagem", video: "vídeo", document: "documento", audio: "áudio" },
     recordingTooLong: "A gravação é longa demais (mais de 16 MB).",
+    suggestReply: "Sugerir resposta",
+    suggestCancel: "Cancelar sugestão",
+    suggestBlocked: {
+      anonymized: "Contato anonimizado (LGPD) — sugestões de IA indisponíveis",
+      read_only: "Somente leitura — seu perfil não pode enviar mensagens",
+      expired: "Janela de 24 h encerrada — só modelos podem ser enviados",
+      checking: "Verificando a IA da conta…",
+      module: "O assistente de IA não está incluído no seu plano",
+      disabled: "A IA não está ativada. Um administrador pode ativá-la em Configurações → Inteligência Artificial",
+      no_key: "Falta a chave de API do provedor de IA. Um administrador pode adicioná-la em Configurações → Inteligência Artificial",
+    },
+    suggestReady: "Sugestão pronta. Já há texto na caixa — o que fazer?",
+    suggestReplace: "Substituir",
+    suggestAppend: "Adicionar ao final",
+    suggestDiscard: "Descartar",
+    suggestFailed: "Não foi possível gerar a sugestão.",
+    suggestRateLimited: "Muitas sugestões em pouco tempo. Aguarde um minuto.",
   },
   "en-US": {
     reply: "Reply",
@@ -290,6 +324,23 @@ const COMPOSER_COPY: Record<
       `File is ${sizeMb} MB — ${kind} limit is ${limitMb} MB.`,
     mediaKind: { image: "image", video: "video", document: "document", audio: "audio" },
     recordingTooLong: "Recording is too long (over 16 MB).",
+    suggestReply: "Suggest reply",
+    suggestCancel: "Cancel suggestion",
+    suggestBlocked: {
+      anonymized: "Contact anonymized (LGPD) — AI suggestions unavailable",
+      read_only: "Read-only — your role can't send messages",
+      expired: "24-hour window closed — only templates can be sent",
+      checking: "Checking the account's AI…",
+      module: "The AI assistant is not included in your plan",
+      disabled: "AI is not enabled. An admin can turn it on in Settings → Artificial Intelligence",
+      no_key: "The AI provider API key is missing. An admin can add it in Settings → Artificial Intelligence",
+    },
+    suggestReady: "Suggestion ready. There is already text in the box — what should we do?",
+    suggestReplace: "Replace",
+    suggestAppend: "Append",
+    suggestDiscard: "Discard",
+    suggestFailed: "Could not generate the suggestion.",
+    suggestRateLimited: "Too many suggestions in a short time. Wait a minute.",
   },
 };
 
@@ -322,9 +373,15 @@ export function MessageComposer({
   onClearReply,
   contactAnonymized = false,
 }: MessageComposerProps) {
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const copy = COMPOSER_COPY[language] ?? COMPOSER_COPY["pt-BR"];
   const [text, setText] = useState("");
+  // Latest text for async callbacks (the AI suggestion decides between
+  // filling the box and asking replace/append when it arrives).
+  const textRef = useRef(text);
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
   const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Reply vs internal note. Reset when the thread changes so a half-typed
@@ -429,6 +486,97 @@ export function MessageComposer({
   const readOnly = !canSend || contactAnonymized;
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
+
+  // ---- "Sugerir resposta" (AI) ----------------------------------------
+  // Asks the server for a suggestion built from this conversation; it
+  // only ever fills the text box — the agent edits and sends as usual.
+  const aiStatus = useAiStatus();
+  const suggestBlock = suggestReplyBlock({
+    status: aiStatus,
+    contactAnonymized,
+    sessionExpired,
+    readOnly,
+  });
+  const [suggesting, setSuggesting] = useState(false);
+  // A suggestion that arrived while the box already had text: the agent
+  // picks replace / append / discard instead of losing their draft.
+  const [pendingSuggestion, setPendingSuggestion] = useState<string | null>(null);
+  const suggestAbortRef = useRef<AbortController | null>(null);
+
+  // A suggestion for contact A must never land in contact B's box.
+  useEffect(() => {
+    suggestAbortRef.current?.abort();
+    suggestAbortRef.current = null;
+    setSuggesting(false);
+    setPendingSuggestion(null);
+  }, [conversationId]);
+  useEffect(() => () => suggestAbortRef.current?.abort(), []);
+
+  const applySuggestion = useCallback(
+    (suggestion: string, how: "replace" | "append") => {
+      setText((prev) =>
+        how === "append" && prev.trim() ? `${prev.trimEnd()}\n\n${suggestion}` : suggestion,
+      );
+      setPendingSuggestion(null);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+      });
+    },
+    [],
+  );
+
+  const cancelSuggestion = useCallback(() => {
+    suggestAbortRef.current?.abort();
+    suggestAbortRef.current = null;
+    setSuggesting(false);
+  }, []);
+
+  const requestSuggestion = useCallback(async () => {
+    if (suggestBlock || suggestAbortRef.current) return;
+    const ctrl = new AbortController();
+    suggestAbortRef.current = ctrl;
+    setSuggesting(true);
+    setPendingSuggestion(null);
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/ai/suggest`, {
+        method: "POST",
+        signal: ctrl.signal,
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { text?: string; error?: string; code?: string }
+        | null;
+      if (suggestAbortRef.current !== ctrl) return; // cancelled / thread switched
+      if (!res.ok || !body?.text) {
+        if (body?.code === "not_enabled" || body?.code === "no_key" || body?.code === "module_not_included") {
+          invalidateAiStatus();
+        }
+        toast.error(
+          body?.error
+            ? t(body.error)
+            : res.status === 429
+              ? copy.suggestRateLimited
+              : copy.suggestFailed,
+        );
+        return;
+      }
+      if (textRef.current.trim()) setPendingSuggestion(body.text);
+      else applySuggestion(body.text, "replace");
+    } catch (err) {
+      if ((err as { name?: string } | null)?.name !== "AbortError") {
+        toast.error(copy.suggestFailed);
+      }
+    } finally {
+      if (suggestAbortRef.current === ctrl) {
+        suggestAbortRef.current = null;
+        setSuggesting(false);
+      }
+    }
+  }, [suggestBlock, conversationId, t, copy, applySuggestion]);
 
   // GC a staged-but-unsent attachment on unmount so it doesn't orphan
   // in the bucket (the recorder hook releases the mic on its own).
@@ -857,6 +1005,48 @@ export function MessageComposer({
         </div>
       )}
 
+      {/* AI suggestion arrived while the agent already had a draft. */}
+      {pendingSuggestion !== null && !isNote && (
+        <div
+          data-no-translate
+          role="status"
+          className="mb-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2"
+        >
+          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+            {copy.suggestReady}
+          </p>
+          <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">
+            {pendingSuggestion}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => applySuggestion(pendingSuggestion, "replace")}
+            >
+              {copy.suggestReplace}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
+              onClick={() => applySuggestion(pendingSuggestion, "append")}
+            >
+              {copy.suggestAppend}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => setPendingSuggestion(null)}
+            >
+              {copy.suggestDiscard}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Hidden file inputs driven by the attach menu. */}
       <input
         ref={imageInputRef}
@@ -1071,6 +1261,21 @@ export function MessageComposer({
             >
               <Zap className="h-4 w-4" />
             </button>
+
+            {/* Sugerir resposta (AI) — replies only; fills the box, never sends. */}
+            {!isNote && (
+              <SuggestReplyButton
+                loading={suggesting}
+                block={suggestBlock}
+                labels={{
+                  suggest: copy.suggestReply,
+                  cancel: copy.suggestCancel,
+                  blocked: copy.suggestBlocked,
+                }}
+                onSuggest={() => void requestSuggestion()}
+                onCancel={cancelSuggestion}
+              />
+            )}
 
             {/* Attach menu — photo / video / document / voice. */}
             <DropdownMenu>
