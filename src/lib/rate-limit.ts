@@ -167,6 +167,10 @@ export const RATE_LIMITS = {
    *  master password impractical on top of the CRM login it already
    *  requires. */
   platformGate: { limit: 10, windowMs: 60_000 },
+  /** "Sugerir resposta" (per user). Each call spends the account's own
+   *  provider credit; 10/min is plenty for an agent clicking the button
+   *  and bounds a script hammering someone else's key. */
+  aiSuggest: { limit: 10, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

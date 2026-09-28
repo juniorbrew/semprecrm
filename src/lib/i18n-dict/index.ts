@@ -7,6 +7,7 @@
 // on duplicate keys, so keep each key in one place.
 // ============================================================
 
+import { DICT_AI } from './ai';
 import { DICT_API } from './api';
 import { DICT_AUTH } from './auth';
 import { DICT_COMPANIES } from './companies';
@@ -18,6 +19,7 @@ import { DICT_MISC } from './misc';
 import { DICT_SETTINGS } from './settings';
 
 export const EN_TO_PT_AREAS: Record<string, string> = {
+  ...DICT_AI,
   ...DICT_API,
   ...DICT_AUTH,
   ...DICT_COMPANIES,
