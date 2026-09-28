@@ -87,6 +87,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       }
       const text = renderTemplateBody(body, input.params ?? [])
       return engineSendViaQr(db, {
+        origin: 'automation',
         accountId: input.accountId,
         conversationId: input.conversationId,
         contactId: input.contactId,
@@ -97,6 +98,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
     }
     return engineSendViaQr(db, {
+      origin: 'automation',
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -216,6 +218,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',
+    origin: 'automation',
     content_type,
     content_text,
     template_name,

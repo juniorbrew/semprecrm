@@ -599,6 +599,18 @@ export async function ingestInboundMessage(
   })
 
   if (msgError) {
+    // A concurrent delivery of the same provider id won the unique
+    // (conversation_id, message_id) index (migration 059): same as the
+    // lookup above — a redelivery, nothing more to do.
+    if (isUniqueViolation(msgError)) {
+      return {
+        ok: true,
+        reason: 'duplicate',
+        contactId: contact.id,
+        conversationId: conversation.id,
+        contactCreated: contactOutcome.wasCreated,
+      }
+    }
     console.error('[inbound] error inserting message:', msgError)
     return {
       ok: false,

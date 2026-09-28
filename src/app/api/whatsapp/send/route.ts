@@ -9,6 +9,8 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { isUniqueViolation } from '@/lib/contacts/dedupe'
+import { claimEchoedRow } from '@/lib/whatsapp/phone-echo'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -245,27 +247,32 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Falha ao enviar pelo canal QR: ${message}` }, { status: 502 })
       }
 
-      const { data: qrRecord, error: qrMsgError } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id,
-          sender_type: 'agent',
-          sender_id: user.id,
-          content_type: message_type,
-          content_text: content_text || null,
-          media_url: media_url || null,
-          message_id: qrMessageId,
-          status: 'sent',
-          channel: 'qr',
-          reply_to_message_id: reply_to_message_id || null,
-        })
-        .select()
-        .single()
+      const qrRow = {
+        conversation_id,
+        sender_type: 'agent',
+        sender_id: user.id,
+        content_type: message_type,
+        content_text: content_text || null,
+        media_url: media_url || null,
+        message_id: qrMessageId,
+        status: 'sent',
+        channel: 'qr',
+        reply_to_message_id: reply_to_message_id || null,
+      }
+      const inserted = await supabase.from('messages').insert(qrRow).select().single()
+      let qrRecord = inserted.data
+      const qrMsgError = inserted.error
+      // The phone echo of this same WhatsApp id was stored first (the
+      // gateway normally drops echoes of its own sends): take that row
+      // over with this agent's attribution instead of failing.
+      if (qrMsgError && isUniqueViolation(qrMsgError)) {
+        qrRecord = await claimEchoedRow(supabase, conversation_id, qrMessageId, qrRow)
+      }
 
-      if (qrMsgError) {
+      if (!qrRecord) {
         console.error('Error inserting sent message:', qrMsgError)
         return NextResponse.json(
-          { error: `Mensagem enviada, mas falhou ao salvar no banco: ${qrMsgError.message}` },
+          { error: `Mensagem enviada, mas falhou ao salvar no banco: ${qrMsgError?.message ?? 'desconhecido'}` },
           { status: 500 },
         )
       }

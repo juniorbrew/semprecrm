@@ -43,6 +43,15 @@ describe("AppClient", () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ account_id: "a", message_id: "m" });
   });
 
+  it("eco do celular e revoke vão para rotas próprias", async () => {
+    const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
+    const { client } = makeClient(fetchImpl);
+    await client.sendEcho({ account_id: "a", message_id: "e", from: "5511", push_name: "", timestamp: 1, type: "text", text: "x" });
+    await client.sendRevoke({ account_id: "a", message_id: "r", from: "5511", revoked_by: "customer", timestamp: 1 });
+    const urls = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(urls).toEqual(["http://app.local/api/channels/qr/echo", "http://app.local/api/channels/qr/revoke"]);
+  });
+
   it("faz retry com backoff em 5xx e falha de rede, depois entrega", async () => {
     let calls = 0;
     const fetchImpl = vi.fn(async () => {

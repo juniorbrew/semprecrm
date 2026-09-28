@@ -72,6 +72,7 @@ export async function engineSendText(
   // QR channel (migration 026) → gateway.
   if ((await conversationChannel(db, args.conversationId)) === 'qr') {
     return engineSendViaQr(db, {
+      origin: 'flow',
       accountId: args.accountId,
       conversationId: args.conversationId,
       contactId: args.contactId,
@@ -141,6 +142,7 @@ export async function engineSendText(
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
     sender_type: 'bot',
+    origin: 'flow',
     content_type: 'text',
     content_text: args.text,
     message_id: waMessageId,
@@ -192,6 +194,7 @@ export async function engineSendMedia(
   // QR channel (migration 026) → gateway media send.
   if ((await conversationChannel(db, args.conversationId)) === 'qr') {
     return engineSendViaQr(db, {
+      origin: 'flow',
       accountId: args.accountId,
       conversationId: args.conversationId,
       contactId: args.contactId,
@@ -276,6 +279,7 @@ export async function engineSendMedia(
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
     sender_type: 'bot',
+    origin: 'flow',
     content_type: args.kind,
     content_text: args.caption ?? null,
     message_id: waMessageId,
@@ -370,6 +374,7 @@ async function sendInteractiveViaMeta(
       footerText: input.footerText,
     })
     return engineSendViaQr(db, {
+      origin: 'flow',
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -471,6 +476,7 @@ async function sendInteractiveViaMeta(
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',
+    origin: 'flow',
     content_type: 'interactive',
     content_text: input.bodyText,
     message_id: waMessageId,

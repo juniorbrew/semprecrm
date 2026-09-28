@@ -1,5 +1,5 @@
 import type { Logger } from "./logger.js";
-import type { AckPayload, InboundPayload, StatusEventPayload } from "./types.js";
+import type { AckPayload, InboundPayload, RevokePayload, StatusEventPayload } from "./types.js";
 
 export const HEADER_SECRET = "x-gateway-secret";
 
@@ -60,6 +60,19 @@ export class AppClient {
 
   sendInbound(payload: InboundPayload): Promise<boolean> {
     return this.enqueue("/api/channels/qr/inbound", payload);
+  }
+
+  /**
+   * Mensagem que mandamos pelo celular / WhatsApp Web / outro aparelho.
+   * Rota própria (e não um flag em /inbound): um app antigo responde 404 e
+   * o evento é descartado, em vez de virar "mensagem do cliente".
+   */
+  sendEcho(payload: InboundPayload): Promise<boolean> {
+    return this.enqueue("/api/channels/qr/echo", payload);
+  }
+
+  sendRevoke(payload: RevokePayload): Promise<boolean> {
+    return this.enqueue("/api/channels/qr/revoke", payload);
   }
 
   sendStatus(payload: StatusEventPayload): Promise<boolean> {

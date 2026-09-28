@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { WAMessage } from "@whiskeysockets/baileys";
-import { extFromMime, jidToPhone, mapInboundMessage, resolveSenderPhone, unwrapContent } from "./inbound-mapper.js";
+import {
+  extFromMime,
+  jidToPhone,
+  mapInboundMessage,
+  resolveSenderPhone,
+  revokedMessageId,
+  unwrapContent,
+} from "./inbound-mapper.js";
 
 const ACCOUNT = "acc-1";
 
@@ -178,9 +185,14 @@ describe("mapInboundMessage", () => {
       mapInboundMessage(ACCOUNT, fixture({ ...base, key: { remoteJid: "1@newsletter", fromMe: false, id: "c" } })),
     ).toEqual({ kind: "skip", reason: "newsletter" });
     expect(
-      mapInboundMessage(ACCOUNT, fixture({ ...base, key: { remoteJid: "5511@s.whatsapp.net", fromMe: true, id: "d" } })),
-    ).toEqual({ kind: "skip", reason: "from-me" });
+      mapInboundMessage(ACCOUNT, fixture({ ...base, key: { remoteJid: "1-2@g.us", fromMe: true, id: "d" } })),
+    ).toEqual({ kind: "skip", reason: "group" });
+    // REVOKE sem key (malformado) e outros protocolMessage continuam ignorados
     expect(mapInboundMessage(ACCOUNT, fixture({ message: { protocolMessage: { type: 0 } } }))).toEqual({
+      kind: "skip",
+      reason: "protocol",
+    });
+    expect(mapInboundMessage(ACCOUNT, fixture({ message: { protocolMessage: { type: 14 } } }))).toEqual({
       kind: "skip",
       reason: "protocol",
     });
@@ -209,5 +221,117 @@ describe("extFromMime", () => {
     expect(extFromMime("audio/ogg; codecs=opus")).toBe("ogg");
     expect(extFromMime("application/vnd.ms-excel")).toBe("vndmsexcel");
     expect(extFromMime("weird")).toBe("bin");
+  });
+});
+
+describe("mapInboundMessage — eco do celular (fromMe)", () => {
+  const phoneKey = { remoteJid: "5511988887777@s.whatsapp.net", fromMe: true, id: "3A0PHONE1" };
+
+  it("fromMe que não saiu do gateway vira echo, com o telefone do cliente e sem pushName", () => {
+    const out = mapInboundMessage(ACCOUNT, fixture({ key: phoneKey, pushName: "Minha Loja", message: { conversation: "já te mando" } }));
+    expect(out).toEqual({
+      kind: "echo",
+      payload: {
+        account_id: ACCOUNT,
+        message_id: "3A0PHONE1",
+        from: "5511988887777",
+        push_name: "",
+        timestamp: 1_757_700_000,
+        type: "text",
+        text: "já te mando",
+      },
+    });
+  });
+
+  it("eco de mídia descreve a mídia pendente igual a uma recebida", () => {
+    const out = mapInboundMessage(ACCOUNT, fixture({ key: phoneKey, message: { imageMessage: { mimetype: "image/png", caption: "catálogo" } } }));
+    expect(out.kind).toBe("echo");
+    if (out.kind !== "echo") return;
+    expect(out.media).toEqual({ mimetype: "image/png", filename: "image.png" });
+    expect(out.payload.text).toBe("catálogo");
+  });
+
+  it("eco de um envio do próprio gateway é descartado (own-send)", () => {
+    const own = new Set(["3EBGATEWAY1"]);
+    const out = mapInboundMessage(
+      ACCOUNT,
+      fixture({ key: { ...phoneKey, id: "3EBGATEWAY1" }, message: { conversation: "oi" } }),
+      { ownSendIds: own },
+    );
+    expect(out).toEqual({ kind: "skip", reason: "own-send" });
+  });
+
+  it("mensagem para mim mesmo (self-chat) não vira conversa", () => {
+    const out = mapInboundMessage(
+      ACCOUNT,
+      fixture({ key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: true, id: "N1" }, message: { conversation: "nota" } }),
+      { selfPhone: "5511999999999" },
+    );
+    expect(out).toEqual({ kind: "skip", reason: "self-chat" });
+  });
+
+  it("eco em LID: PN resolvido do LID vem antes do alt, e o alt com o NOSSO número é ignorado", () => {
+    const key = { remoteJid: "42@lid", remoteJidAlt: "5511999999999@s.whatsapp.net", fromMe: true, id: "E3" };
+    const self = { selfPhone: "5511999999999" };
+    const resolved = mapInboundMessage(ACCOUNT, fixture({ key, message: { conversation: "x" } }), {
+      ...self,
+      resolvedPn: "5511977776666@s.whatsapp.net",
+    });
+    expect(resolved.kind === "echo" && resolved.payload.from).toBe("5511977776666");
+    // sem resolução: o alt é o nosso número → não há telefone do cliente
+    expect(mapInboundMessage(ACCOUNT, fixture({ key, message: { conversation: "x" } }), self)).toEqual({
+      kind: "skip",
+      reason: "no-phone",
+    });
+  });
+
+  it("eco em LID usa remoteJidAlt", () => {
+    const out = mapInboundMessage(
+      ACCOUNT,
+      fixture({ key: { remoteJid: "42@lid", remoteJidAlt: "5511977776666@s.whatsapp.net", fromMe: true, id: "E2" }, message: { conversation: "x" } }),
+    );
+    expect(out.kind).toBe("echo");
+    if (out.kind === "echo") expect(out.payload.from).toBe("5511977776666");
+  });
+});
+
+describe("mapInboundMessage — apagar para todos (REVOKE)", () => {
+  const revoke = (fromMe: boolean, id = "R1") =>
+    fixture({
+      key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe, id },
+      message: { protocolMessage: { type: 0, key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe, id: "ORIG1" } } },
+    });
+
+  it("cliente apagou: revoke com o id da mensagem ORIGINAL", () => {
+    expect(mapInboundMessage(ACCOUNT, revoke(false))).toEqual({
+      kind: "revoke",
+      payload: {
+        account_id: ACCOUNT,
+        message_id: "ORIG1",
+        from: "5511988887777",
+        revoked_by: "customer",
+        timestamp: 1_757_700_000,
+      },
+    });
+  });
+
+  it("apagado pelo nosso celular: revoked_by phone", () => {
+    const out = mapInboundMessage(ACCOUNT, revoke(true));
+    expect(out.kind).toBe("revoke");
+    if (out.kind === "revoke") expect(out.payload.revoked_by).toBe("phone");
+  });
+
+  it("revoke em grupo é ignorado como o resto do grupo", () => {
+    const out = mapInboundMessage(
+      ACCOUNT,
+      fixture({ key: { remoteJid: "1-2@g.us", fromMe: false, id: "G" }, message: { protocolMessage: { type: 0, key: { id: "X" } } } }),
+    );
+    expect(out).toEqual({ kind: "skip", reason: "group" });
+  });
+
+  it("revokedMessageId só reconhece o tipo REVOKE", () => {
+    expect(revokedMessageId({ protocolMessage: { type: 0, key: { id: "A" } } })).toBe("A");
+    expect(revokedMessageId({ protocolMessage: { type: 14, key: { id: "A" } } })).toBeUndefined();
+    expect(revokedMessageId({ conversation: "x" })).toBeUndefined();
   });
 });

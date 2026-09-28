@@ -1,5 +1,5 @@
 import type { proto, WAMessage } from "@whiskeysockets/baileys";
-import type { InboundPayload, InboundType } from "./types.js";
+import type { InboundPayload, InboundType, RevokePayload } from "./types.js";
 
 /**
  * Mídia que o gateway ainda precisa baixar/subir antes de entregar ao app.
@@ -11,7 +11,8 @@ export interface PendingMedia {
 }
 
 export type SkipReason =
-  | "from-me"
+  | "own-send"
+  | "self-chat"
   | "no-message"
   | "group"
   | "status-broadcast"
@@ -21,8 +22,18 @@ export type SkipReason =
   | "protocol"
   | "unsupported-type";
 
+/**
+ * - `message`: mensagem do cliente → `POST /api/channels/qr/inbound`.
+ * - `echo`: mensagem que NÓS mandamos por fora do gateway (o celular
+ *   conectado, o WhatsApp Web ou outro aparelho vinculado) →
+ *   `POST /api/channels/qr/echo`. `from` é o telefone do CLIENTE (a
+ *   conversa), não o nosso; `push_name` vai vazio (seria o nosso nome).
+ * - `revoke`: "apagar para todos" → `POST /api/channels/qr/revoke`.
+ */
 export type MappedInbound =
   | { kind: "message"; payload: InboundPayload; media?: PendingMedia }
+  | { kind: "echo"; payload: InboundPayload; media?: PendingMedia }
+  | { kind: "revoke"; payload: RevokePayload }
   | { kind: "skip"; reason: SkipReason };
 
 const PN_SUFFIX = "@s.whatsapp.net";
@@ -186,28 +197,80 @@ function extract(content: proto.IMessage): Extracted | { skip: SkipReason } {
 export interface MapOptions {
   /** JID de telefone já resolvido para um remoteJid LID (opcional). */
   resolvedPn?: string;
+  /**
+   * Ids que o próprio gateway enviou (`send()`). Um `fromMe` com um desses
+   * ids é o eco do nosso envio — o app já gravou (ou vai gravar) a linha.
+   */
+  ownSendIds?: { has(id: string): boolean };
+  /** Nosso número (dígitos). "Mensagem para mim mesmo" não é conversa. */
+  selfPhone?: string;
 }
 
 /**
- * Converte uma WAMessage do Baileys no payload de `POST /api/channels/qr/inbound`.
+ * Telefone do CLIENTE de uma conversa 1:1. Para `fromMe` num chat `@lid`,
+ * o `remoteJidAlt` pode vir com o NOSSO número: a ordem é o JID de
+ * telefone, depois o PN resolvido do LID (`getPNForLID`), e só então o
+ * alt — sempre ignorando o nosso próprio número.
+ */
+export function resolveChatPhone(key: WAMessage["key"], fromMe: boolean, opts: MapOptions): string | undefined {
+  if (!fromMe) return resolveSenderPhone(key, opts.resolvedPn);
+  const candidates = [jidToPhone(key.remoteJid), jidToPhone(opts.resolvedPn), jidToPhone(key.remoteJidAlt)];
+  return candidates.find((p) => p && p !== opts.selfPhone);
+}
+
+/** `proto.Message.ProtocolMessage.Type.REVOKE` ("apagar para todos"). */
+const PROTOCOL_REVOKE = 0;
+
+/** Id da mensagem apagada, quando `content` é um "apagar para todos". */
+export function revokedMessageId(content: proto.IMessage | undefined): string | undefined {
+  const pm = content?.protocolMessage;
+  if (!pm || pm.type !== PROTOCOL_REVOKE) return undefined;
+  return pm.key?.id || undefined;
+}
+
+/**
+ * Classifica uma WAMessage do Baileys: mensagem do cliente, eco de algo que
+ * mandamos pelo celular, "apagar para todos" ou descarte (ver MappedInbound).
  * Puro: não faz I/O; mídia volta como `media` pendente para o chamador baixar.
  */
 export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOptions = {}): MappedInbound {
   const key = msg.key;
-  if (key.fromMe) return { kind: "skip", reason: "from-me" };
+  const fromMe = !!key.fromMe;
+  if (fromMe && key.id && opts.ownSendIds?.has(key.id)) return { kind: "skip", reason: "own-send" };
   const jid = key.remoteJid ?? "";
   if (jid.endsWith("@g.us")) return { kind: "skip", reason: "group" };
   if (jid === "status@broadcast") return { kind: "skip", reason: "status-broadcast" };
   if (jid.endsWith("@newsletter")) return { kind: "skip", reason: "newsletter" };
   if (jid.endsWith("@broadcast")) return { kind: "skip", reason: "broadcast" };
 
+  // "mensagem para mim mesmo" — não é conversa com cliente
+  if (fromMe && opts.selfPhone && jidToPhone(key.remoteJid) === opts.selfPhone) {
+    return { kind: "skip", reason: "self-chat" };
+  }
+
   const content = unwrapContent(msg.message);
   if (!content) return { kind: "skip", reason: "no-message" };
+
+  const revokedId = revokedMessageId(content);
+  if (revokedId) {
+    const from = resolveChatPhone(key, fromMe, opts);
+    if (!from) return { kind: "skip", reason: "no-phone" };
+    return {
+      kind: "revoke",
+      payload: {
+        account_id: accountId,
+        message_id: revokedId,
+        from,
+        revoked_by: fromMe ? "phone" : "customer",
+        timestamp: toUnixSeconds(msg.messageTimestamp),
+      },
+    };
+  }
 
   const extracted = extract(content);
   if ("skip" in extracted) return { kind: "skip", reason: extracted.skip };
 
-  const from = resolveSenderPhone(key, opts.resolvedPn);
+  const from = resolveChatPhone(key, fromMe, opts);
   if (!from) return { kind: "skip", reason: "no-phone" };
   if (!key.id) return { kind: "skip", reason: "no-message" };
 
@@ -215,7 +278,8 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
     account_id: accountId,
     message_id: key.id,
     from,
-    push_name: msg.pushName ?? "",
+    // num eco o pushName é o NOSSO nome — não pode renomear o contato
+    push_name: fromMe ? "" : (msg.pushName ?? ""),
     timestamp: toUnixSeconds(msg.messageTimestamp),
     type: extracted.type,
   };
@@ -223,5 +287,6 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
   const quoted = extracted.contextInfo?.stanzaId;
   if (quoted) payload.quoted_message_id = quoted;
 
-  return extracted.media ? { kind: "message", payload, media: extracted.media } : { kind: "message", payload };
+  const kind = fromMe ? "echo" : "message";
+  return extracted.media ? { kind, payload, media: extracted.media } : { kind, payload };
 }

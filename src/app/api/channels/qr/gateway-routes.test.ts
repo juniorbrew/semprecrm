@@ -10,11 +10,18 @@ const h = vi.hoisted(() => ({
   ingest: vi.fn(),
   after: vi.fn(),
   refreshAvatar: vi.fn(async () => 'photo'),
+  echo: vi.fn(),
+  revoke: vi.fn(),
   writes: [] as { table: string; op: string; payload: unknown; filters: [string, unknown][] }[],
 }))
 
 vi.mock('@/lib/whatsapp/inbound', () => ({
   ingestInboundMessage: h.ingest,
+}))
+
+vi.mock('@/lib/whatsapp/phone-echo', () => ({
+  ingestPhoneEcho: h.echo,
+  markMessageRevoked: h.revoke,
 }))
 
 // `after()` needs a request scope; record the callback instead.
@@ -50,6 +57,8 @@ import { POST as inbound } from './inbound/route'
 import { POST as ack } from './ack/route'
 import { POST as statusEvent } from './status-event/route'
 import { POST as statusPost } from './status/route'
+import { POST as echo } from './echo/route'
+import { POST as revoke } from './revoke/route'
 
 const SECRET = 'a-very-long-shared-secret'
 
@@ -70,6 +79,10 @@ beforeEach(() => {
   h.writes.length = 0
   h.ingest.mockReset()
   h.ingest.mockResolvedValue({ ok: true, conversationId: 'conv-1' })
+  h.echo.mockReset()
+  h.echo.mockResolvedValue({ ok: true, conversationId: 'conv-1' })
+  h.revoke.mockReset()
+  h.revoke.mockResolvedValue({ ok: true, found: true })
 })
 
 describe('gateway secret', () => {
@@ -277,5 +290,92 @@ describe('inbound → contact photo refresh', () => {
     h.ingest.mockResolvedValue({ ok: false, reason: 'contact_failed' })
     await inbound(req('inbound', body))
     expect(h.after).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /echo (sent from the phone)', () => {
+  const body = {
+    account_id: 'acct-1',
+    message_id: '3APHONE',
+    from: '5511999990000',
+    push_name: '',
+    timestamp: 1_757_700_000,
+    type: 'text',
+    text: 'respondi pelo celular',
+  }
+
+  it('401 without the gateway secret', async () => {
+    const res = await echo(req('echo', body, null))
+    expect(res.status).toBe(401)
+    expect(h.echo).not.toHaveBeenCalled()
+  })
+
+  it('stores through ingestPhoneEcho — never the customer pipeline', async () => {
+    const res = await echo(req('echo', body))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, duplicate: false, conversation_id: 'conv-1' })
+    expect(h.ingest).not.toHaveBeenCalled()
+    expect(h.echo.mock.calls[0][0]).toMatchObject({
+      accountId: 'acct-1',
+      from: '5511999990000',
+      messageId: '3APHONE',
+      type: 'text',
+      text: 'respondi pelo celular',
+    })
+  })
+
+  it('reports a redelivery as duplicate and schedules no avatar refresh', async () => {
+    h.echo.mockResolvedValueOnce({ ok: true, duplicate: true, conversationId: 'conv-1' })
+    h.after.mockClear()
+    const res = await echo(req('echo', body))
+    expect(await res.json()).toMatchObject({ duplicate: true })
+    expect(h.after).not.toHaveBeenCalled()
+  })
+
+  it('400 on an invalid payload; a DB failure is 5xx so the gateway retries', async () => {
+    expect((await echo(req('echo', { account_id: 'a' }))).status).toBe(400)
+    h.echo.mockResolvedValueOnce({ ok: false, reason: 'lookup_failed' })
+    expect((await echo(req('echo', body))).status).toBeGreaterThanOrEqual(500)
+  })
+
+  it('a personal chat (unknown contact) is acknowledged as skipped', async () => {
+    h.echo.mockResolvedValueOnce({ ok: true, skipped: 'unknown_contact' })
+    const res = await echo(req('echo', body))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, skipped: 'unknown_contact' })
+  })
+})
+
+describe('POST /revoke (deleted for everyone)', () => {
+  const body = {
+    account_id: 'acct-1',
+    message_id: 'MSG1',
+    from: '5511999990000',
+    revoked_by: 'customer',
+    timestamp: 1_757_700_100,
+  }
+
+  it('marks the message, never deletes it', async () => {
+    const res = await revoke(req('revoke', body))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, found: true })
+    expect(h.revoke.mock.calls[0][0]).toEqual({
+      accountId: 'acct-1',
+      messageId: 'MSG1',
+      from: '5511999990000',
+      revokedBy: 'customer',
+      timestamp: 1_757_700_100,
+    })
+    expect(h.writes.some((w) => w.op === 'delete')).toBe(false)
+  })
+
+  it('a DB failure is 5xx so the gateway retries', async () => {
+    h.revoke.mockResolvedValueOnce({ ok: false, found: false })
+    expect((await revoke(req('revoke', body))).status).toBeGreaterThanOrEqual(500)
+  })
+
+  it('rejects an unknown revoked_by and requires the secret', async () => {
+    expect((await revoke(req('revoke', { ...body, revoked_by: 'agent' }))).status).toBe(400)
+    expect((await revoke(req('revoke', body, 'nope'))).status).toBe(401)
   })
 })
