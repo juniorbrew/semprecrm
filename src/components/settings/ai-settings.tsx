@@ -32,6 +32,8 @@ import {
   AI_PROVIDERS,
   AI_SUGGESTED_MODELS,
   isValidModelId,
+  modelMatchesProvider,
+  parseBudgetInput,
   type AiProvider,
 } from "@/lib/ai/providers";
 import { cn } from "@/lib/utils";
@@ -72,15 +74,9 @@ async function readError(res: Response): Promise<string> {
   return body?.error ?? `HTTP ${res.status}`;
 }
 
-function centsToInput(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
-
-function inputToCents(value: string): number | null {
-  const n = Number(value.replace(",", "."));
-  if (!Number.isFinite(n) || n < 0) return null;
-  const cents = Math.round(n * 100);
-  return cents <= AI_LIMITS.budgetMaxCents ? cents : null;
+/** Cents → "1.000,50" (pt-BR) / "1,000.50" (en) for the budget field. */
+function centsToInput(cents: number, language: string = "pt-BR"): string {
+  return new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(cents / 100);
 }
 
 /**
@@ -104,7 +100,7 @@ export function AiSettings() {
   const [provider, setProvider] = useState<AiProvider>("openai");
   const [model, setModel] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [budget, setBudget] = useState(centsToInput(AI_LIMITS.budgetDefaultCents));
+  const [budget, setBudget] = useState(centsToInput(AI_LIMITS.budgetDefaultCents, language));
   const [history, setHistory] = useState(String(AI_LIMITS.historyDefault));
   const [consent, setConsent] = useState(false);
   const [enabled, setEnabled] = useState(false);
@@ -121,11 +117,11 @@ export function AiSettings() {
     setProvider(p);
     setModel(s.settings.model ?? AI_DEFAULT_MODELS[p]);
     setInstructions(s.settings.instructions ?? "");
-    setBudget(centsToInput(s.settings.monthly_budget_cents));
+    setBudget(centsToInput(s.settings.monthly_budget_cents, language));
     setHistory(String(s.settings.suggest_history_messages));
     setConsent(!!s.settings.consented_at && s.settings.consent_provider === p);
     setEnabled(s.settings.enabled);
-  }, []);
+  }, [language]);
 
   const load = useCallback(async () => {
     setLoadError(false);
@@ -159,11 +155,11 @@ export function AiSettings() {
     setAvailableModels([]);
   }
 
-  const budgetCents = inputToCents(budget);
+  const budgetCents = parseBudgetInput(budget);
   const historyNum = Number(history);
   const historyValid =
     Number.isInteger(historyNum) && historyNum >= AI_LIMITS.historyMin && historyNum <= AI_LIMITS.historyMax;
-  const modelValid = isValidModelId(model.trim());
+  const modelValid = isValidModelId(model.trim()) && modelMatchesProvider(provider, model.trim());
   const instructionsValid = instructions.length <= AI_LIMITS.instructionsMaxChars;
 
   const missing: string[] = [];
@@ -586,10 +582,9 @@ export function AiSettings() {
                 </Label>
                 <Input
                   id="ai-budget"
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step="0.01"
+                  autoComplete="off"
                   value={budget}
                   onChange={(e) => setBudget(e.target.value)}
                   aria-invalid={budgetCents === null || undefined}

@@ -17,7 +17,7 @@ const store = vi.hoisted(() => ({
 vi.mock('./store', () => store);
 
 import { AiError } from './errors';
-import { runModelCall } from './run-model-call';
+import { callProfile, runModelCall } from './run-model-call';
 
 const db = {} as SupabaseClient;
 const SETTINGS = {
@@ -129,7 +129,11 @@ describe('runModelCall', () => {
         }),
     );
     await expect(call({ timeoutMs: 10 })).rejects.toMatchObject({ code: 'timeout' });
-    expect(store.recordUsage.mock.calls[0][1]).toMatchObject({ status: 'error', errorCode: 'timeout' });
+    const rec = store.recordUsage.mock.calls[0][1];
+    expect(rec).toMatchObject({ status: 'error', errorCode: 'timeout', outputTokens: 0 });
+    // The input may have been processed: charged at the estimate.
+    expect(rec.inputTokens).toBeGreaterThan(0);
+    expect(rec.costCents).toBeGreaterThan(0);
   });
 
   it('client cancel is reported as cancelled', async () => {
@@ -141,12 +145,52 @@ describe('runModelCall', () => {
           ctrl.abort();
         }),
     );
-    await expect(call({ signal: ctrl.signal })).rejects.toMatchObject({ code: 'cancelled' });
+    await expect(call({ signal: ctrl.signal, prompt: 'x'.repeat(4000) })).rejects.toMatchObject({ code: 'cancelled' });
+    // Cancel spam is not free: the estimated input is recorded.
+    expect(store.recordUsage.mock.calls[0][1].inputTokens).toBeGreaterThanOrEqual(1000);
+    expect(store.recordUsage.mock.calls[0][1].costCents).toBeGreaterThan(0);
   });
 
   it('empty text is an error (tokens still recorded)', async () => {
     generateText.mockResolvedValueOnce({ text: '   ', usage: { inputTokens: 10, outputTokens: 0 } });
     await expect(call()).rejects.toMatchObject({ code: 'empty_response' });
     expect(store.recordUsage.mock.calls[0][1]).toMatchObject({ status: 'error', errorCode: 'empty_response', inputTokens: 10 });
+  });
+});
+
+describe('callProfile', () => {
+  it('plain chat models: 600 tokens, store:false on OpenAI', () => {
+    expect(callProfile('openai', 'gpt-4.1-mini')).toEqual({ maxOutputTokens: 600, providerOptions: { openai: { store: false } } });
+    expect(callProfile('anthropic', 'claude-haiku-4-5')).toEqual({ maxOutputTokens: 600, providerOptions: {} });
+  });
+
+  it('reasoning models: low effort and a bigger cap', () => {
+    for (const m of ['gpt-5-mini', 'gpt-5', 'o3-mini', 'o4-mini']) {
+      const p = callProfile('openai', m);
+      expect(p.maxOutputTokens).toBeGreaterThan(600);
+      expect(p.providerOptions).toEqual({ openai: { store: false, reasoningEffort: 'low' } });
+    }
+    for (const m of ['claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1']) {
+      const p = callProfile('anthropic', m);
+      expect(p.maxOutputTokens).toBeGreaterThan(600);
+      expect(p.providerOptions).toEqual({ anthropic: { effort: 'low' } });
+    }
+  });
+
+  it('is passed to the SDK', async () => {
+    store.loadAiSettings.mockResolvedValueOnce({ ...SETTINGS, model: 'gpt-5-mini' });
+    generateText.mockResolvedValueOnce({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
+    await call();
+    const args = generateText.mock.calls[0][0];
+    expect(args.maxOutputTokens).toBe(4000);
+    expect(args.providerOptions).toEqual({ openai: { store: false, reasoningEffort: 'low' } });
+  });
+
+  it('refused-before-processing errors are not billed', async () => {
+    generateText.mockRejectedValueOnce(
+      new APICallError({ message: 'x', url: 'u', requestBodyValues: {}, statusCode: 429, responseBody: 'rate limit' }),
+    );
+    await expect(call()).rejects.toMatchObject({ code: 'rate_limited' });
+    expect(store.recordUsage.mock.calls[0][1]).toMatchObject({ inputTokens: 0, costCents: 0 });
   });
 });

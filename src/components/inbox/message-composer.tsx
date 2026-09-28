@@ -555,11 +555,13 @@ export function MessageComposer({
         if (body?.code === "not_enabled" || body?.code === "no_key" || body?.code === "module_not_included") {
           invalidateAiStatus();
         }
+        // 429 first: the rate limiter's body is an English
+        // "Rate limit exceeded" with no pt-BR entry.
         toast.error(
-          body?.error
-            ? t(body.error)
-            : res.status === 429
-              ? copy.suggestRateLimited
+          res.status === 429
+            ? copy.suggestRateLimited
+            : body?.error
+              ? t(body.error)
               : copy.suggestFailed,
         );
         return;

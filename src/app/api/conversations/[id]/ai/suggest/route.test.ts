@@ -113,6 +113,7 @@ beforeEach(() => {
     messages: [
       { conversation_id: CONV_A, sender_type: 'customer', content_type: 'text', content_text: 'Vocês entregam hoje?', created_at: '2026-09-28T10:00:00Z' },
       { conversation_id: CONV_A, sender_type: 'agent', content_type: 'text', content_text: 'Oi Maria!', created_at: '2026-09-28T10:01:00Z' },
+      { conversation_id: CONV_A, sender_type: 'agent', content_type: 'text', content_text: 'ENVIO QUE FALHOU', status: 'failed', created_at: '2026-09-28T10:01:30Z' },
       { conversation_id: CONV_A2, sender_type: 'customer', content_type: 'text', content_text: 'MENSAGEM DE OUTRA CONVERSA', created_at: '2026-09-28T10:02:00Z' },
       { conversation_id: CONV_B, sender_type: 'customer', content_type: 'text', content_text: 'MENSAGEM DA CONTA B', created_at: '2026-09-28T10:03:00Z' },
     ],
@@ -137,6 +138,7 @@ describe('POST /api/conversations/:id/ai/suggest', () => {
     expect(input.prompt).toContain('Vocês entregam hoje?');
     expect(input.prompt.indexOf('Vocês entregam hoje?')).toBeLessThan(input.prompt.indexOf('Oi Maria!'));
     expect(input.prompt).not.toContain('MENSAGEM DE OUTRA CONVERSA');
+    expect(input.prompt).not.toContain('ENVIO QUE FALHOU');
     expect(input.prompt).not.toContain('MENSAGEM DA CONTA B');
     expect(input.system).toContain('Entregamos no bairro.');
     expect(input.system).not.toContain('SEGREDO DA CONTA B');

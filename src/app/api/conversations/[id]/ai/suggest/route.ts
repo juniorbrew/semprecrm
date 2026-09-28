@@ -20,7 +20,7 @@ import { AiError } from '@/lib/ai/errors';
 import { aiErrorResponse } from '@/lib/ai/http';
 import { AI_LIMITS } from '@/lib/ai/providers';
 import { runModelCall } from '@/lib/ai/run-model-call';
-import { buildSuggestReplyPrompt, type SuggestMessage } from '@/lib/ai/suggest-reply';
+import { buildSuggestReplyPrompt, isPromptableMessage, type SuggestMessage } from '@/lib/ai/suggest-reply';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -71,12 +71,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
     const { data: rows, error: msgErr } = await ctx.supabase
       .from('messages')
-      .select('sender_type, content_type, content_text, template_name, created_at')
+      .select('sender_type, content_type, content_text, template_name, status, created_at')
       .eq('conversation_id', id)
       .order('created_at', { ascending: false })
-      .limit(historyLimit);
+      // Over-fetch a little so failed sends (dropped below) don't eat the window.
+      .limit(historyLimit + 20);
     if (msgErr) throw new Error(`messages read failed: ${msgErr.message}`);
-    const messages = ((rows ?? []) as SuggestMessage[]).slice().reverse();
+    // Newest N that reached the customer (failed sends never did), oldest first.
+    const messages = ((rows ?? []) as SuggestMessage[])
+      .filter(isPromptableMessage)
+      .slice(0, historyLimit)
+      .reverse();
     if (messages.length === 0) {
       return NextResponse.json(
         { error: 'There are no messages in this conversation to reply to yet.', code: 'no_messages' },

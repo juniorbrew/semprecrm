@@ -40,6 +40,7 @@ export const DICT_AI: Record<string, string> = {
 
   // ---- settings validation ----------------------------------------------
   'Invalid model id': 'Identificador de modelo inválido',
+  'This model does not belong to the selected provider': 'Este modelo não pertence ao provedor escolhido',
   'Instructions must be text of at most 4000 characters': 'As instruções devem ter no máximo 4000 caracteres',
   'The monthly budget must be a whole number of cents between 0 and 1000000':
     'O orçamento mensal deve ser um valor entre US$ 0,00 e US$ 10.000,00',

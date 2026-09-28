@@ -73,6 +73,24 @@ DO $$ BEGIN
   RAISE EXCEPTION 'unknown feature accepted';
 EXCEPTION WHEN check_violation THEN NULL; END $$;
 
+-- ---- privileges ------------------------------------------
+SELECT pg_temp.assert_true(
+  NOT has_table_privilege('authenticated', 'ai_provider_credentials_public', 'INSERT')
+  AND NOT has_table_privilege('authenticated', 'ai_provider_credentials_public', 'UPDATE')
+  AND NOT has_table_privilege('authenticated', 'ai_provider_credentials_public', 'DELETE')
+  AND has_table_privilege('authenticated', 'ai_provider_credentials_public', 'SELECT'),
+  'credentials view is read-only for authenticated');
+SELECT pg_temp.assert_true(
+  NOT has_table_privilege('anon', 'ai_provider_credentials_public', 'SELECT'),
+  'anon cannot read the credentials view');
+SELECT pg_temp.assert_true(
+  NOT has_function_privilege('anon', 'public.ai_usage_summary(uuid, timestamptz)', 'EXECUTE'),
+  'anon cannot call ai_usage_summary');
+SELECT pg_temp.assert_true(
+  NOT has_table_privilege('authenticated', 'ai_usage', 'INSERT')
+  AND NOT has_table_privilege('authenticated', 'ai_provider_credentials', 'SELECT'),
+  'usage/credentials base tables closed to authenticated');
+
 -- ---- summary (service path) --------------------------------
 SELECT pg_temp.assert_true(
   (SELECT calls = 2 AND errors = 1 AND input_tokens = 1000 AND cost_cents = 0.5
@@ -102,6 +120,22 @@ SELECT pg_temp.assert_true(
      FROM ai_settings WHERE account_id = (SELECT acc_a FROM ids)),
   'consent stamped with the caller and the server clock');
 UPDATE ai_settings SET enabled = true WHERE account_id = (SELECT acc_a FROM ids);
+-- An unrelated update cannot forge who accepted the notice.
+UPDATE ai_settings SET consented_by = '58000000-0000-4000-8000-00000000000b', updated_by = '58000000-0000-4000-8000-00000000000b'
+ WHERE account_id = (SELECT acc_a FROM ids);
+SELECT pg_temp.assert_true(
+  (SELECT consented_by = '58000000-0000-4000-8000-00000000000a' AND updated_by = '58000000-0000-4000-8000-00000000000a'
+     FROM ai_settings WHERE account_id = (SELECT acc_a FROM ids)),
+  'consented_by / updated_by cannot be forged');
+-- Writes through the credentials view are refused.
+DO $$ BEGIN
+  UPDATE ai_provider_credentials_public SET account_id = (SELECT acc_b FROM ids) WHERE provider = 'openai';
+  RAISE EXCEPTION 'credential moved through the view';
+EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
+DO $$ BEGIN
+  DELETE FROM ai_provider_credentials_public;
+  RAISE EXCEPTION 'credential deleted through the view';
+EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 SELECT pg_temp.assert_true(
   (SELECT enabled FROM ai_settings WHERE account_id = (SELECT acc_a FROM ids)),
   'admin enables after consent');

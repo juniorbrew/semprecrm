@@ -4,8 +4,8 @@ import { APICallError, RetryError } from 'ai';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { budgetMonthKey, isBudgetExhausted, monthStartInTimeZone } from './budget';
 import { AiError, mapProviderError } from './errors';
-import { computeCostCents, resolveModelPrice, UNKNOWN_MODEL_PRICE } from './pricing';
-import { AI_DEFAULT_MODELS, isValidModelId } from './providers';
+import { computeCostCents, MODEL_PRICES, resolveModelPrice, UNKNOWN_MODEL_PRICE } from './pricing';
+import { AI_DEFAULT_MODELS, isValidModelId, modelMatchesProvider, parseBudgetInput } from './providers';
 import { AI_SETTINGS_ERRORS, parseAiSettingsUpdate } from './settings';
 import { encryptApiKey, isPlausibleApiKey, keyLast4, type AiSettingsRow } from './store';
 
@@ -73,6 +73,26 @@ describe('pricing', () => {
 
   it('charges unknown models at the conservative default', () => {
     expect(resolveModelPrice('some-new-model')).toEqual({ price: UNKNOWN_MODEL_PRICE, known: false });
+    // No generic prefix fallback: a pricier sibling is never priced as its base.
+    expect(resolveModelPrice('gpt-5-pro-preview').known).toBe(false);
+    expect(resolveModelPrice('claude-opus-4-9').known).toBe(false);
+    for (const p of Object.values(MODEL_PRICES)) {
+      expect(UNKNOWN_MODEL_PRICE.input).toBeGreaterThanOrEqual(p.input);
+      expect(UNKNOWN_MODEL_PRICE.output).toBeGreaterThanOrEqual(p.output);
+    }
+  });
+
+  it('prices the expensive tiers explicitly', () => {
+    expect(resolveModelPrice('claude-opus-4-1').price).toEqual({ input: 1500, output: 7500 });
+    expect(resolveModelPrice('claude-opus-4-1-20250805').price).toEqual({ input: 1500, output: 7500 });
+    expect(resolveModelPrice('claude-opus-4-0').price).toEqual({ input: 1500, output: 7500 });
+    expect(resolveModelPrice('claude-opus-4-20250514').price).toEqual({ input: 1500, output: 7500 });
+    expect(resolveModelPrice('gpt-5-pro').price.output).toBe(12000);
+    expect(resolveModelPrice('o1-pro').price.input).toBe(15000);
+    expect(resolveModelPrice('o3-pro').price.input).toBe(2000);
+    expect(resolveModelPrice('gpt-5').price.input).toBe(125);
+    expect(resolveModelPrice('claude-opus-5-5').known).toBe(true);
+    expect(resolveModelPrice('claude-sonnet-4-5-latest').known).toBe(true);
   });
 
   it('computes cents and rounds up', () => {
@@ -175,6 +195,16 @@ describe('parseAiSettingsUpdate', () => {
     expect(r.ok && r.write.consented_at).toBe(null);
   });
 
+  it('rejects a model from the other provider', () => {
+    expect(parseAiSettingsUpdate(BASE, { model: 'claude-haiku-4-5' }, keys)).toEqual({ ok: false, error: AI_SETTINGS_ERRORS.modelProvider });
+    expect(parseAiSettingsUpdate(BASE, { provider: 'anthropic', model: 'gpt-4.1-mini' }, keys)).toEqual({
+      ok: false,
+      error: AI_SETTINGS_ERRORS.modelProvider,
+    });
+    expect(modelMatchesProvider('openai', 'o3-mini')).toBe(true);
+    expect(modelMatchesProvider('anthropic', 'claude-sonnet-5')).toBe(true);
+  });
+
   it('validates fields', () => {
     expect(parseAiSettingsUpdate(BASE, { provider: 'gemini' }, keys)).toEqual({ ok: false, error: AI_SETTINGS_ERRORS.provider });
     expect(parseAiSettingsUpdate(BASE, { model: 'bad model' }, keys)).toEqual({ ok: false, error: AI_SETTINGS_ERRORS.model });
@@ -184,5 +214,24 @@ describe('parseAiSettingsUpdate', () => {
     expect(parseAiSettingsUpdate(BASE, [], keys)).toEqual({ ok: false, error: AI_SETTINGS_ERRORS.body });
     const ok = parseAiSettingsUpdate(null, { provider: 'anthropic', model: 'claude-sonnet-5', monthly_budget_cents: 0 }, keys);
     expect(ok.ok && ok.write).toMatchObject({ provider: 'anthropic', model: 'claude-sonnet-5', monthly_budget_cents: 0, enabled: false });
+  });
+});
+
+describe('parseBudgetInput', () => {
+  it.each([
+    ['10', 1000],
+    ['10,5', 1050],
+    ['1.000,50', 100050],
+    ['1.000', 100000],
+    ['1000.50', 100050],
+    ['1,000.50', 100050],
+    ['US$ 25,00', 2500],
+    ['0', 0],
+  ])('%s -> %i cents', (raw, cents) => {
+    expect(parseBudgetInput(raw)).toBe(cents);
+  });
+
+  it.each(['', 'abc', '-5', '1,2,3', '10,555', '99999999'])('rejects %s', (raw) => {
+    expect(parseBudgetInput(raw)).toBeNull();
   });
 });

@@ -6,13 +6,21 @@
 // rules the DB can't see (a key must exist to enable).
 // ============================================================
 
-import { AI_DEFAULT_MODELS, AI_LIMITS, isAiProvider, isValidModelId, type AiProvider } from './providers';
+import {
+  AI_DEFAULT_MODELS,
+  AI_LIMITS,
+  isAiProvider,
+  isValidModelId,
+  modelMatchesProvider,
+  type AiProvider,
+} from './providers';
 import type { AiSettingsRow } from './store';
 
 export const AI_SETTINGS_ERRORS = {
   body: 'Body must be a JSON object',
   provider: 'Unknown AI provider',
   model: 'Invalid model id',
+  modelProvider: 'This model does not belong to the selected provider',
   instructions: 'Instructions must be text of at most 4000 characters',
   budget: 'The monthly budget must be a whole number of cents between 0 and 1000000',
   history: 'The number of messages must be between 1 and 50',
@@ -77,6 +85,9 @@ export function parseAiSettingsUpdate(
   // empty): fall back to the new provider's default.
   if (provider && (!model || ('provider' in b && provider !== current?.provider && !('model' in b)))) {
     model = AI_DEFAULT_MODELS[provider];
+  }
+  if (provider && model && !modelMatchesProvider(provider, model)) {
+    return { ok: false, error: AI_SETTINGS_ERRORS.modelProvider };
   }
 
   let instructions: string | null = current?.instructions ?? null;

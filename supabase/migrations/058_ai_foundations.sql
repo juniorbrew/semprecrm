@@ -68,7 +68,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON ai_provider_credentials
 -- RLS on, no policies: the encrypted key never reaches PostgREST for
 -- anon/authenticated. The service role bypasses RLS.
 ALTER TABLE ai_provider_credentials ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE ai_provider_credentials FROM anon, authenticated;
+REVOKE ALL ON TABLE ai_provider_credentials FROM PUBLIC, anon, authenticated;
 GRANT ALL ON TABLE ai_provider_credentials TO service_role;
 
 -- What an admin may see: everything but the ciphertext. Owned by
@@ -90,7 +90,12 @@ WITH (security_barrier = true) AS
   WHERE is_account_member(account_id, 'admin');
 
 ALTER VIEW ai_provider_credentials_public OWNER TO postgres;
-REVOKE ALL ON ai_provider_credentials_public FROM anon;
+ALTER VIEW ai_provider_credentials_public SET (security_barrier = true);
+-- A simple view is auto-updatable and Supabase's default privileges
+-- hand INSERT/UPDATE/DELETE to `authenticated`: through the view an
+-- admin could rewrite `account_id` and move a key into another account
+-- (the view owner bypasses the base table's RLS). Read-only, always.
+REVOKE ALL ON ai_provider_credentials_public FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON ai_provider_credentials_public TO authenticated, service_role;
 
 -- ============================================================
@@ -160,7 +165,9 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON ai_settings
 
 -- Consent stamp: when a signed-in user sets/changes the consent, the
 -- server clock and the caller's uid win over whatever was sent, so the
--- record says who actually accepted the notice and when.
+-- record says who actually accepted the notice and when. Any other
+-- update by a signed-in user keeps the previous stamp (no forging
+-- `consented_by`), and `updated_by` is always the caller.
 CREATE OR REPLACE FUNCTION public.ai_settings_stamp_consent()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -177,6 +184,11 @@ BEGIN
     IF auth.uid() IS NOT NULL THEN
       NEW.consented_by := auth.uid();
     END IF;
+  ELSIF auth.uid() IS NOT NULL THEN
+    NEW.consented_by := OLD.consented_by;
+  END IF;
+  IF auth.uid() IS NOT NULL THEN
+    NEW.updated_by := auth.uid();
   END IF;
   RETURN NEW;
 END;
@@ -205,7 +217,7 @@ DROP POLICY IF EXISTS ai_settings_delete ON ai_settings;
 CREATE POLICY ai_settings_delete ON ai_settings FOR DELETE
   USING (is_account_member(account_id, 'admin'));
 
-REVOKE ALL ON TABLE ai_settings FROM anon;
+REVOKE ALL ON TABLE ai_settings FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ai_settings TO authenticated;
 GRANT ALL ON TABLE ai_settings TO service_role;
 
@@ -262,7 +274,7 @@ CREATE POLICY ai_usage_select ON ai_usage FOR SELECT
 
 -- Writes: service role only (no INSERT/UPDATE/DELETE policy and no
 -- grant for authenticated).
-REVOKE ALL ON TABLE ai_usage FROM anon, authenticated;
+REVOKE ALL ON TABLE ai_usage FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON TABLE ai_usage TO authenticated;
 GRANT ALL ON TABLE ai_usage TO service_role;
 
@@ -297,7 +309,7 @@ AS $$
     AND u.created_at >= p_since;
 $$;
 
-REVOKE ALL ON FUNCTION public.ai_usage_summary(UUID, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.ai_usage_summary(UUID, TIMESTAMPTZ) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.ai_usage_summary(UUID, TIMESTAMPTZ) TO authenticated, service_role;
 
 -- ============================================================

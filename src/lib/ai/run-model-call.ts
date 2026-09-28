@@ -16,13 +16,54 @@ import { generateText } from 'ai';
 
 import { monthStartInTimeZone, isBudgetExhausted } from './budget';
 import { createLanguageModel } from './client';
-import { AiError, mapProviderError } from './errors';
+import { AiError, mapProviderError, type AiErrorCode } from './errors';
 import { computeCostCents } from './pricing';
 import type { AiFeature, AiProvider } from './providers';
 import { loadAiSettings, loadDecryptedKey, recordUsage, usageSummarySince } from './store';
 
 export const AI_CALL_TIMEOUT_MS = 30_000;
 export const AI_DEFAULT_MAX_OUTPUT_TOKENS = 600;
+/** Reasoning models spend output tokens thinking before the text. */
+export const AI_REASONING_MAX_OUTPUT_TOKENS = 4000;
+
+type ProviderOptions = Record<string, Record<string, string | boolean>>;
+
+/**
+ * Per-model call profile. Reasoning models (OpenAI gpt-5* / o-series,
+ * Anthropic models with adaptive thinking) get low effort and a bigger
+ * output cap — with 600 tokens they can think the whole budget away and
+ * return an empty suggestion.
+ */
+export function callProfile(
+  provider: AiProvider,
+  model: string,
+): { maxOutputTokens: number; providerOptions: ProviderOptions } {
+  const id = model.toLowerCase();
+  if (provider === 'openai') {
+    const reasoning = /^(gpt-5|o\d)/.test(id);
+    return {
+      maxOutputTokens: reasoning ? AI_REASONING_MAX_OUTPUT_TOKENS : AI_DEFAULT_MAX_OUTPUT_TOKENS,
+      // store:false — OpenAI must not retain conversation text (LGPD).
+      providerOptions: { openai: reasoning ? { store: false, reasoningEffort: 'low' } : { store: false } },
+    };
+  }
+  const effortCapable = /^claude-(opus-5|fable|sonnet-5|opus-4-[5-8]|sonnet-4-6)/.test(id);
+  return {
+    maxOutputTokens: effortCapable ? AI_REASONING_MAX_OUTPUT_TOKENS : AI_DEFAULT_MAX_OUTPUT_TOKENS,
+    providerOptions: effortCapable ? { anthropic: { effort: 'low' } } : {},
+  };
+}
+
+/** Rough token estimate (~4 chars/token) for calls that fail mid-way. */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+// Failures where the provider refused before processing the prompt —
+// nothing billed. Everything else (timeout, cancel, 5xx, unknown) may
+// have consumed the input, so it is charged at the estimated input
+// cost; otherwise spamming "cancel" would bypass the budget.
+const NOT_BILLED = new Set(['invalid_key', 'quota', 'rate_limited', 'model_not_found']);
 
 export interface RunModelCallInput {
   /** Service-role client. */
@@ -108,18 +149,17 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     else input.signal.addEventListener('abort', onClientAbort, { once: true });
   }
 
+  const profile = callProfile(provider, model);
   const started = Date.now();
   try {
     const result = await generateText({
       model: createLanguageModel(provider, apiKey, model),
       system: input.system,
       prompt: input.prompt,
-      maxOutputTokens: input.maxOutputTokens ?? AI_DEFAULT_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: input.maxOutputTokens ?? profile.maxOutputTokens,
       maxRetries: 1,
       abortSignal: ctrl.signal,
-      // OpenAI's Responses API keeps requests server-side by default;
-      // opt out so conversation text is not retained there (LGPD).
-      providerOptions: provider === 'openai' ? { openai: { store: false } } : undefined,
+      providerOptions: Object.keys(profile.providerOptions).length ? profile.providerOptions : undefined,
     });
     const inputTokens = result.usage?.inputTokens ?? 0;
     const outputTokens = result.usage?.outputTokens ?? 0;
@@ -140,12 +180,14 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     return { text, provider, model, inputTokens, outputTokens, costCents };
   } catch (err) {
     if (err instanceof AiError) throw err;
-    const code = mapProviderError(err, { timedOut });
+    const code: AiErrorCode = mapProviderError(err, { timedOut });
+    const billed = !NOT_BILLED.has(code);
+    const inputTokens = billed ? estimateTokens(input.system) + estimateTokens(input.prompt) : 0;
     await recordUsage(input.db, {
       ...base,
-      inputTokens: 0,
+      inputTokens,
       outputTokens: 0,
-      costCents: 0,
+      costCents: billed ? computeCostCents(model, inputTokens, 0) : 0,
       status: 'error',
       errorCode: code,
       latencyMs: Date.now() - started,
