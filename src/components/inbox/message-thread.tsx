@@ -206,6 +206,8 @@ const THREAD_STATUS_COPY: Record<
     /** Queue actions (Assumir / Transferir / Arquivar). */
     claim: string;
     claimTitle: string;
+    claimMine: string;
+    transfer: string;
     claimedToast: string;
     claimTaken: (who: string) => string;
     someone: string;
@@ -249,6 +251,8 @@ const THREAD_STATUS_COPY: Record<
     },
     claim: "Assumir",
     claimTitle: "Assumir: atribuir esta conversa a você",
+    claimMine: "Esta conversa já é sua",
+    transfer: "Transferir",
     claimedToast: "Conversa atribuída a você",
     claimTaken: (who) => `${who} assumiu esta conversa antes de você`,
     someone: "Outra pessoa",
@@ -293,6 +297,8 @@ const THREAD_STATUS_COPY: Record<
     },
     claim: "Take",
     claimTitle: "Take: assign this conversation to you",
+    claimMine: "This conversation is already yours",
+    transfer: "Transfer",
     claimedToast: "Conversation assigned to you",
     claimTaken: (who) => `${who} took this conversation before you`,
     someone: "Someone else",
@@ -1411,12 +1417,12 @@ export function MessageThread({
               data-no-translate
               onClick={() => void handleClaim()}
               disabled={!actions.claim.enabled}
-              aria-label={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
-              title={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
+              aria-label={!actions.canWrite ? statusCopy.readOnly : actions.claimIsMine ? statusCopy.claimMine : statusCopy.claimTitle}
+              title={!actions.canWrite ? statusCopy.readOnly : actions.claimIsMine ? statusCopy.claimMine : statusCopy.claimTitle}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <UserCheck className="h-3.5 w-3.5" />
-              <span className="hidden @lg:inline">{statusCopy.claim}</span>
+              <span>{statusCopy.claim}</span>
             </button>
           )}
           {/* Assignee / Transferir — ghost chip. Name shows once the thread
@@ -1438,8 +1444,8 @@ export function MessageThread({
               ) : (
                 <UserPlus className="h-3.5 w-3.5" />
               )}
-              <span className="hidden max-w-28 truncate @xl:inline">{assignLabel}</span>
-              <ChevronDown className="hidden h-3 w-3 text-muted-foreground @xl:inline" />
+              <span>{statusCopy.transfer}</span>
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
