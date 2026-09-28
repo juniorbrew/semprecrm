@@ -48,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ContactAvatar } from "./contact-avatar";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -838,7 +839,6 @@ function ConversationItem({
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Unknown contact";
-  const initials = displayName.charAt(0).toUpperCase();
   const isUnread = conversation.unread_count > 0;
   const status = conversation.status;
 
@@ -860,17 +860,11 @@ function ConversationItem({
     >
       {/* Avatar + channel badge */}
       <div className="relative shrink-0">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-          {contact?.avatar_url ? (
-            <img
-              src={contact.avatar_url}
-              alt={displayName}
-              className="h-9 w-9 rounded-full object-cover"
-            />
-          ) : (
-            initials
-          )}
-        </div>
+        <ContactAvatar
+          src={contact?.avatar_url}
+          name={displayName}
+          className="h-9 w-9 text-sm"
+        />
         <span
           data-no-translate
           title={`${channelLabel} · ${channelChip[channel]}`}

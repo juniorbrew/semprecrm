@@ -4,6 +4,21 @@ import type { Logger } from "./logger.js";
 import type { PendingMedia } from "./inbound-mapper.js";
 
 export const CHAT_MEDIA_BUCKET = "chat-media";
+/** Fotos de perfil dos contatos (migration 055): pública, só a service role grava. */
+export const CONTACT_AVATARS_BUCKET = "contact-avatars";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Caminho da foto de um contato: `account-<id>/<contact_id>`. Um arquivo por
+ * contato (sobrescrito a cada atualização); o id do contato, e não o
+ * telefone, para não expor números em URLs públicas.
+ */
+export function buildAvatarPath(accountId: string, contactId: string): string {
+  if (!UUID_RE.test(contactId)) throw new Error("contact_id inválido");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(accountId)) throw new Error("account_id inválido");
+  return `account-${accountId}/${contactId.toLowerCase()}`;
+}
 
 /**
  * Caminho no bucket: `account-<id>/qr/<ts>-<nome>`. O primeiro segmento
@@ -80,11 +95,45 @@ export class MediaStore {
     }
     const { data } = this.client.storage.from(CHAT_MEDIA_BUCKET).getPublicUrl(path);
     this.log.debug({ accountId, path, bytes: buffer.length }, "mídia armazenada");
+    return { url: this.toPublicUrl(data.publicUrl), path };
+  }
+
+  /**
+   * Grava (sobrescreve) a foto do contato no bucket `contact-avatars`. A URL
+   * devolvida leva `?v=<ts>` para o navegador não mostrar a versão antiga do
+   * cache depois de uma troca de foto.
+   */
+  async storeAvatar(
+    accountId: string,
+    contactId: string,
+    buffer: Buffer,
+    contentType: string,
+    now: number = Date.now(),
+  ): Promise<{ url: string; path: string }> {
+    const path = buildAvatarPath(accountId, contactId);
+    const { error } = await this.client.storage.from(CONTACT_AVATARS_BUCKET).upload(path, buffer, {
+      contentType,
+      upsert: true,
+      cacheControl: "3600",
+    });
+    if (error) {
+      throw new Error(`upload no bucket ${CONTACT_AVATARS_BUCKET} falhou: ${error.message}`);
+    }
+    const { data } = this.client.storage.from(CONTACT_AVATARS_BUCKET).getPublicUrl(path);
+    return { url: `${this.toPublicUrl(data.publicUrl)}?v=${now}`, path };
+  }
+
+  /** Apaga a foto guardada (o contato tirou a foto ou escondeu por privacidade). */
+  async removeAvatar(accountId: string, contactId: string): Promise<void> {
+    const path = buildAvatarPath(accountId, contactId);
+    const { error } = await this.client.storage.from(CONTACT_AVATARS_BUCKET).remove([path]);
+    if (error) this.log.debug({ accountId, path, err: error.message }, "remoção da foto falhou (ignorado)");
+  }
+
+  private toPublicUrl(publicUrl: string): string {
     const publicBase = (this.publicUrl ?? "").replace(/\/+$/, "");
-    const url =
-      publicBase && data.publicUrl.startsWith(this.baseUrl)
-        ? publicBase + data.publicUrl.slice(this.baseUrl.length)
-        : data.publicUrl;
-    return { url, path };
+    return publicBase && publicUrl.startsWith(this.baseUrl)
+      ? publicBase + publicUrl.slice(this.baseUrl.length)
+      : publicUrl;
   }
 }

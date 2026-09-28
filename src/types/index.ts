@@ -198,6 +198,11 @@ export interface Contact {
   company?: string;
   avatar_url?: string;
   /**
+   * Last profile-photo lookup through the QR gateway (migration 055);
+   * re-checked after ~7 days. Official-channel contacts never get one.
+   */
+  avatar_checked_at?: string | null;
+  /**
    * Set when the customer asked to stop receiving messages ("PARAR")
    * — migration 030. Automations skip send steps and broadcasts drop
    * the contact while this is set; admin+ can clear it ("Reativar").

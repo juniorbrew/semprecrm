@@ -31,6 +31,16 @@ Por isso o canal QR serve só o atendimento 1:1 e as automações de resposta; d
   recibos das mensagens que nós enviamos viram `POST {APP_URL}/api/channels/qr/ack`
   (`sent` / `delivered` / `read`).
 - `POST /sessions/:accountId/send` envia texto ou mídia por URL.
+- `POST /sessions/:accountId/avatar` busca a foto de perfil de um contato
+  (`profilePictureUrl(jid, "image")`), baixa da CDN do WhatsApp (as URLs de lá
+  expiram) e grava uma cópia no bucket `contact-avatars` (migration 055) em
+  `account-<id>/<contact_id>`, devolvendo a URL pública com `?v=<ts>`. O app chama
+  depois de uma mensagem recebida, quando o contato nunca teve a foto verificada
+  ou a verificação tem mais de 7 dias. As consultas passam por uma fila por conta
+  (uma a cada 4 s, no máximo 20 esperando → `429 throttled`) para não gerar
+  rajadas que levem a banimento. Privacidade ("só meus contatos") ou contato sem
+  foto → `{ url: null }` e a cópia antiga é apagada. A API oficial da Meta não
+  expõe foto de perfil; contatos do canal oficial ficam com as iniciais.
 
 Todos os requests, nos dois sentidos, levam o header `x-gateway-secret` com o valor
 de `WA_GATEWAY_SECRET`. Eventos para o app passam por uma fila em memória com retry e
@@ -45,9 +55,10 @@ backoff exponencial (erros 5xx/rede); 4xx são descartados com log.
 | `GET /sessions/:id`                 | → `{ status: disconnected\|qr\|connecting\|connected, qr?, phone?, name?, connected_at? }` |
 | `POST /sessions/:id/logout`         | → `{ status: "disconnected" }` |
 | `POST /sessions/:id/send`           | `{ to: "5511999999999", text?, media?: { url, mimetype, filename?, caption?, ptt? } }` → `{ message_id }` |
+| `POST /sessions/:id/avatar`         | `{ to: "5511999999999", contact_id: "<uuid>" }` → `{ url: string \| null }` |
 
 Erros: `401` sem secret; `400 invalid_request`; `409 not_connected`;
-`422 not_on_whatsapp`; `502 send_failed`.
+`422 not_on_whatsapp`; `429 throttled` (fila de fotos cheia); `502 send_failed`.
 
 `send` durante uma reconexão (queda de rede, reinício) não devolve 409 na hora:
 espera até 15 s a sessão voltar a `connected` e, se o socket cair no meio do

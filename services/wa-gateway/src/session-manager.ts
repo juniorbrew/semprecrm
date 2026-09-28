@@ -15,11 +15,20 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import QRCode from "qrcode";
 import type { AppClient } from "./app-client.js";
+import {
+  AvatarThrottle,
+  ThrottledError,
+  downloadAvatar as defaultDownloadAvatar,
+  fetchProfilePictureUrl,
+  type DownloadedAvatar,
+} from "./avatar.js";
 import { jidToPhone, mapInboundMessage } from "./inbound-mapper.js";
 import type { Logger } from "./logger.js";
 import type { MediaStore } from "./media.js";
 import type {
   AckStatus,
+  AvatarRequest,
+  AvatarResponse,
   ReadRequest,
   ReadResponse,
   SendRequest,
@@ -31,7 +40,7 @@ import type {
 export class GatewayError extends Error {
   constructor(
     message: string,
-    readonly code: "not_connected" | "not_on_whatsapp" | "invalid_request" | "send_failed",
+    readonly code: "not_connected" | "not_on_whatsapp" | "invalid_request" | "send_failed" | "throttled",
     readonly httpStatus: number,
   ) {
     super(message);
@@ -80,8 +89,12 @@ const READ_MAX_IDS = 100;
 export interface SessionManagerOptions {
   dataDir: string;
   appClient: Pick<AppClient, "sendInbound" | "sendStatus" | "sendAck">;
-  mediaStore: Pick<MediaStore, "storeInbound">;
+  mediaStore: Pick<MediaStore, "storeInbound"> & Partial<Pick<MediaStore, "storeAvatar" | "removeAvatar">>;
   logger: Logger;
+  /** Fila das consultas de foto de perfil (injeção para testes). */
+  avatarThrottle?: AvatarThrottle;
+  /** Download da foto na CDN do WhatsApp (injeção para testes). */
+  downloadAvatar?: (url: string) => Promise<DownloadedAvatar>;
   /** injeção para testes */
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
@@ -183,9 +196,13 @@ export class SessionManager {
   private readonly reconnectMaxMs: number;
   private readonly sendWaitMs: number;
   private versionPromise?: Promise<WAVersion | undefined>;
+  private readonly avatarThrottle: AvatarThrottle;
+  private readonly downloadAvatar: (url: string) => Promise<DownloadedAvatar>;
 
   constructor(private readonly opts: SessionManagerOptions) {
     this.log = opts.logger.child({ module: "session-manager" });
+    this.avatarThrottle = opts.avatarThrottle ?? new AvatarThrottle();
+    this.downloadAvatar = opts.downloadAvatar ?? ((url) => defaultDownloadAvatar(url));
     this.reconnectBaseMs = opts.reconnectBaseMs ?? 2000;
     this.reconnectMaxMs = opts.reconnectMaxMs ?? 60_000;
     this.sendWaitMs = opts.sendWaitMs ?? 15_000;
@@ -678,6 +695,55 @@ export class SessionManager {
       throw new GatewayError(`falha ao marcar como lida: ${(err as Error).message}`, "send_failed", 502);
     }
     return { read: keys.length };
+  }
+
+  /**
+   * Foto de perfil do contato → bucket `contact-avatars` (ver avatar.ts).
+   * Só com a sessão `connected` (não espera reconexão: o app tenta de novo
+   * mais tarde). Consultas passam pela fila por conta com intervalo mínimo;
+   * fila cheia → 429 `throttled`. Sem foto visível (privacidade / sem foto)
+   * → `{ url: null }` e a cópia antiga, se houver, é apagada.
+   */
+  async fetchAvatar(accountId: string, req: AvatarRequest): Promise<AvatarResponse> {
+    const s = this.sessions.get(accountId);
+    if (!s || !s.sock || s.status !== "connected") {
+      throw new GatewayError("sessão não conectada", "not_connected", 409);
+    }
+    const { storeAvatar, removeAvatar } = this.opts.mediaStore;
+    if (!storeAvatar || !removeAvatar) {
+      throw new GatewayError("armazenamento de fotos indisponível", "send_failed", 502);
+    }
+    const dialed = toJid(req.to);
+    const jid = s.jidCache.get(dialed) ?? dialed;
+    try {
+      return await this.avatarThrottle.run(accountId, async () => {
+        const sock = s.sock;
+        if (!sock || s.status !== "connected") {
+          throw new GatewayError("sessão não conectada", "not_connected", 409);
+        }
+        const cdnUrl = await fetchProfilePictureUrl(sock, jid);
+        if (!cdnUrl) {
+          await removeAvatar.call(this.opts.mediaStore, accountId, req.contact_id);
+          return { url: null };
+        }
+        const image = await this.downloadAvatar(cdnUrl);
+        const stored = await storeAvatar.call(
+          this.opts.mediaStore,
+          accountId,
+          req.contact_id,
+          image.buffer,
+          image.contentType,
+        );
+        return { url: stored.url };
+      });
+    } catch (err) {
+      if (err instanceof GatewayError) throw err;
+      if (err instanceof ThrottledError) {
+        throw new GatewayError(err.message, "throttled", 429);
+      }
+      this.log.warn({ accountId, jid, err: (err as Error).message }, "falha ao buscar foto de perfil");
+      throw new GatewayError(`falha ao buscar foto: ${(err as Error).message}`, "send_failed", 502);
+    }
   }
 
   private rememberInboundKey(s: Session, msg: WAMessage): void {

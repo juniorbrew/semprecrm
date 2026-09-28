@@ -63,6 +63,7 @@ import { CustomFieldValue } from "./custom-field-value";
 import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
 import { ContactCompanies } from "@/components/companies/contact-companies";
 import { TeamNoteComposer } from "./team-note-composer";
+import { ContactAvatar } from "./contact-avatar";
 import { toast } from "sonner";
 
 // Same preset palette as Settings › Tags; picked round-robin for inline creation.
@@ -663,7 +664,6 @@ export function ContactSidebar({
   }
 
   const displayName = contact.name || contact.phone;
-  const initials = displayName.charAt(0).toUpperCase();
   const otherConversations = previous.filter((c) => c.id !== conversationId);
   const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
   const hiddenNotes = notes.length - panelNotes.length;
@@ -684,18 +684,12 @@ export function ContactSidebar({
         <div className="p-4">
           {/* Identity */}
           <div className="flex flex-col items-center text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
-              {contact.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={contact.avatar_url}
-                  alt={displayName}
-                  className="h-16 w-16 rounded-full object-cover"
-                />
-              ) : (
-                initials
-              )}
-            </div>
+            <ContactAvatar
+              key={contact.id}
+              src={contact.avatar_url}
+              name={displayName}
+              className="h-16 w-16 text-lg font-semibold"
+            />
             <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
             {contact.anonymized_at && (
               <span
