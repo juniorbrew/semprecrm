@@ -35,7 +35,9 @@ describe('conversationHeaderActions — permissions', () => {
 describe('conversationHeaderActions — visibility', () => {
   it('hides Assumir on my own or a closed conversation, shows it on a teammate’s', () => {
     const base = { role: 'agent' as const, userId: 'u1', tasksEnabled: true }
-    expect(conversationHeaderActions({ ...base, conversation: { status: 'open', assigned_agent_id: 'u1' } }).claim.visible).toBe(false)
+    const mine = conversationHeaderActions({ ...base, conversation: { status: 'open', assigned_agent_id: 'u1' } })
+    expect(mine.claim).toEqual({ visible: true, enabled: false })
+    expect(mine.claimIsMine).toBe(true)
     expect(conversationHeaderActions({ ...base, conversation: { status: 'closed', assigned_agent_id: undefined } }).claim.visible).toBe(false)
     expect(conversationHeaderActions({ ...base, conversation: { status: 'pending', assigned_agent_id: 'u2' } }).claim.visible).toBe(true)
   })

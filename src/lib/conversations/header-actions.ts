@@ -29,6 +29,8 @@ export interface HeaderActions {
   /** Agent+ — false for viewers and while the role is unknown. */
   canWrite: boolean
   claim: HeaderActionState
+  /** The thread is already assigned to the current user. */
+  claimIsMine: boolean
   transfer: HeaderActionState
   remind: HeaderActionState
   close: HeaderActionState
@@ -52,8 +54,10 @@ export function conversationHeaderActions(params: {
 
   return {
     canWrite,
-    // Nothing to take over on a closed thread or one that is already mine.
-    claim: state(!closed && !mine && !!userId),
+    // Always shown on an open thread so the queue action is findable;
+    // disabled when it is already mine (nothing to take over).
+    claim: { visible: !closed && !!userId, enabled: !closed && !!userId && !mine && canWrite },
+    claimIsMine: mine,
     transfer: state(true),
     remind: state(tasksEnabled && !!userId),
     close: state(true),

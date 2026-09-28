@@ -113,11 +113,15 @@ export function AiSettings() {
 
   const seed = useCallback((s: AiState) => {
     setState(s);
-    // No provider saved yet: open on the one that already has a key, so
-    // "Ativar" isn't blocked by the empty OpenAI tab.
-    const p = s.settings.provider ?? s.credentials[0]?.provider ?? "openai";
+    // Open on a provider that has a key: the saved one if it has a key,
+    // otherwise the first provider with a key (e.g. settings saved on the
+    // OpenAI tab while the key was saved for Anthropic). Otherwise
+    // "Ativar" stays blocked by a tab with no key.
+    const withKey = new Set(s.credentials.map((c) => c.provider));
+    const saved = s.settings.provider;
+    const p = saved && withKey.has(saved) ? saved : s.credentials[0]?.provider ?? saved ?? "openai";
     setProvider(p);
-    setModel(s.settings.model ?? AI_DEFAULT_MODELS[p]);
+    setModel(p === saved && s.settings.model ? s.settings.model : AI_DEFAULT_MODELS[p]);
     setInstructions(s.settings.instructions ?? "");
     setBudget(centsToInput(s.settings.monthly_budget_cents, language));
     setHistory(String(s.settings.suggest_history_messages));
