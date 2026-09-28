@@ -96,6 +96,13 @@ describe('validateCompanyForm', () => {
   });
 });
 
+describe('number length (companies.numero CHECK ≤ 20)', () => {
+  it('rejects a number over 20 characters in the form', () => {
+    const out = validateCompanyForm({ ...filled(), address: { ...filled().address, number: '1'.repeat(21) } });
+    expect(out).toEqual({ ok: false, errors: { number: 'too_long' } });
+  });
+});
+
 describe('applyCnpjLookup', () => {
   const found: CompanyLookup = {
     taxId: '11222333000181',
@@ -120,6 +127,21 @@ describe('applyCnpjLookup', () => {
     expect(out.address.city).toBe('Porto Alegre');
     expect(out.atividade).toBe('Fabricação de produtos de padaria');
     expect(out.notes).toBe('VIP');
+  });
+
+  it('cuts the Receita text to what the form and the table accept', () => {
+    const long = {
+      ...found,
+      legalName: 'L'.repeat(250),
+      activity: 'A'.repeat(400),
+      address: { ...found.address, number: 'KM 12 LOTE 3 QUADRA 45 GALPAO 2', street: 'S'.repeat(150) },
+    };
+    const out = applyCnpjLookup(emptyCompanyForm(), long);
+    expect(out.razao_social).toHaveLength(200);
+    expect(out.atividade).toHaveLength(300);
+    expect(out.address.number).toHaveLength(20);
+    expect(out.address.street).toHaveLength(120);
+    expect(validateCompanyForm(out).ok).toBe(true);
   });
 
   it('keeps a hand-typed address when the Receita has none', () => {

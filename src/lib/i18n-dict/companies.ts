@@ -19,7 +19,7 @@ export const DICT_COMPANIES: Record<string, string> = {
   Page: 'Página',
   'Previous page': 'Página anterior',
   'Next page': 'Próxima página',
-  'add companies': 'cadastrar empresas',
+  "Read-only — your role can't add companies": 'Somente leitura — seu perfil não pode cadastrar empresas',
   'Its contacts and deals are kept; they just stop pointing to this company. This cannot be undone.':
     'Os contatos e negócios dela são mantidos; só deixam de apontar para esta empresa. Esta ação não pode ser desfeita.',
 
@@ -40,6 +40,17 @@ export const DICT_COMPANIES: Record<string, string> = {
     'Não foi possível consultar os serviços de CNPJ — preencha à mão',
   'This CNPJ is already registered in this account:': 'Este CNPJ já está cadastrado nesta conta:',
   'Check the highlighted fields': 'Confira os campos destacados',
+  'The CNPJ lookup took too long — try again or fill in by hand':
+    'A consulta do CNPJ demorou demais — tente de novo ou preencha à mão',
+  'max. 20 characters': 'máx. 20 caracteres',
+  'Link this company': 'Vincular esta empresa',
+  'The company data was rejected — check the CNPJ, CEP, UF and field sizes':
+    'Os dados da empresa foram recusados — confira CNPJ, CEP, UF e o tamanho dos campos',
+  "The contact's primary company was changed at the same time — please try again":
+    'A empresa principal do contato foi alterada ao mesmo tempo — tente de novo',
+  'Failed to load deals': 'Não foi possível carregar os negócios',
+  'Deals loaded without their companies — reload the page to try again':
+    'Negócios carregados sem as empresas — recarregue a página para tentar de novo',
   Required: 'Obrigatório',
   'Too long': 'Muito longo',
 

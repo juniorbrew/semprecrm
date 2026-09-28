@@ -9,6 +9,10 @@ import {
   deleteCompany,
   findCompanyByCnpj,
   getPrimaryCompany,
+  getCompany,
+  isUuid,
+  listCompanyContacts,
+  listCompanyDeals,
   linkContactCompany,
   listCompanies,
   listContactCompanies,
@@ -221,6 +225,61 @@ describe('primary-company rules (client side)', () => {
     expect(ok.calls[1].ops[0]).toEqual(['delete']);
     await expect(setPrimaryCompany(fakeDb({ data: [] }).db, 'c', 'x')).rejects.toMatchObject({ code: 'forbidden' });
     await expect(unlinkContactCompany(fakeDb({ data: [] }).db, 'c', 'x')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+});
+
+describe('review fixes', () => {
+  it('maps a malformed id (22P02) to not_found and never queries a non-UUID company id', async () => {
+    expect(companyErrorFromDb({ code: '22P02' }, 'duplicate_cnpj').code).toBe('not_found');
+    const { db, calls } = fakeDb({ data: { id: 'x' } });
+    expect(await getCompany(db, 'abc')).toBeNull();
+    expect(await listCompanyContacts(db, 'abc')).toEqual([]);
+    expect(await listCompanyDeals(db, 'abc')).toEqual([]);
+    expect(calls).toHaveLength(0);
+    expect(isUuid('7b1c2e4a-0000-4000-8000-000000000001')).toBe(true);
+  });
+
+  it('gives a check violation its own message (nothing is highlighted on the form)', () => {
+    expect(companyErrorMessage(companyErrorFromDb({ code: '23514' }, 'duplicate_cnpj'))).toBe(
+      'The company data was rejected — check the CNPJ, CEP, UF and field sizes',
+    );
+  });
+
+  it('tells a lost race on the primary index apart from a duplicate link', () => {
+    const race = companyErrorFromDb(
+      { code: '23505', message: 'duplicate key value violates unique constraint "idx_contact_companies_one_primary"' },
+      'already_linked',
+    );
+    expect(race.code).toBe('primary_conflict');
+    expect(companyErrorMessage(race)).toMatch(/try again/);
+    expect(
+      companyErrorFromDb({ code: '23505', message: 'violates unique constraint "contact_companies_pkey"' }, 'already_linked').code,
+    ).toBe('already_linked');
+  });
+
+  it('retries a mark-primary that lost the race once, and reports a second loss', async () => {
+    const race = { code: '23505', message: 'unique constraint "idx_contact_companies_one_primary"' };
+    let n = 0;
+    const flaky = {
+      from: () => {
+        const b: Record<string, unknown> = {};
+        for (const op of ['update', 'eq', 'select', 'insert']) b[op] = () => b;
+        b.then = (resolve: (v: unknown) => unknown) => {
+          n += 1;
+          return Promise.resolve(n === 1 ? { data: null, error: race } : { data: [{ company_id: 'co' }], error: null }).then(resolve);
+        };
+        return b;
+      },
+    } as unknown as CompaniesClient;
+    await expect(setPrimaryCompany(flaky, 'c', 'co')).resolves.toBeUndefined();
+    expect(n).toBe(2);
+
+    const { db, calls } = fakeDb({ error: race });
+    await expect(setPrimaryCompany(db, 'c', 'co')).rejects.toMatchObject({ code: 'primary_conflict' });
+    expect(calls).toHaveLength(2);
+    await expect(linkContactCompany(fakeDb({ error: race }).db, 'c', 'co', { primary: true })).rejects.toMatchObject({
+      code: 'primary_conflict',
+    });
   });
 });
 

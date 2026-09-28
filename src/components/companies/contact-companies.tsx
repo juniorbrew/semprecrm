@@ -189,6 +189,17 @@ export function ContactCompanies({
         open={creating}
         onOpenChange={setCreating}
         onSaved={(company) => void link(company.id)}
+        // The CNPJ already exists: link that company instead of leaving
+        // the user stuck in front of the duplicate warning.
+        onOpenExisting={(id) => {
+          if (linkedIds.has(id)) {
+            toast.info(t('This contact is already linked to this company'));
+            setPicking(false);
+            return;
+          }
+          void link(id);
+        }}
+        openExistingLabel={t('Link this company')}
       />
     </div>
   );

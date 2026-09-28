@@ -46,7 +46,12 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 
-type LookupStatus = 'idle' | 'loading' | 'found' | 'not_found' | 'error' | 'rate_limited';
+type LookupStatus = 'idle' | 'loading' | 'found' | 'not_found' | 'error' | 'rate_limited' | 'timeout';
+
+const ADDRESS_LABEL = { street: 'Street', complement: 'Complement', neighborhood: 'Neighbourhood', city: 'City' } as const;
+
+/** The server may walk three CNPJ sources; past this the user types. */
+const LOOKUP_TIMEOUT_MS = 20_000;
 
 interface CompanyFormDialogProps {
   open: boolean;
@@ -56,6 +61,8 @@ interface CompanyFormDialogProps {
   onSaved: (company: Company) => void;
   /** "Open" on the duplicate-CNPJ warning. Hidden when not given. */
   onOpenExisting?: (companyId: string) => void;
+  /** Label of that action — "Abrir empresa" by default. */
+  openExistingLabel?: string;
 }
 
 /**
@@ -65,7 +72,14 @@ interface CompanyFormDialogProps {
  * CNPJ; typing a CEP fills street / bairro / cidade / UF and moves the
  * cursor to the number (AddressFields, shared with Settings → Empresa).
  */
-export function CompanyFormDialog({ open, onOpenChange, company, onSaved, onOpenExisting }: CompanyFormDialogProps) {
+export function CompanyFormDialog({
+  open,
+  onOpenChange,
+  company,
+  onSaved,
+  onOpenExisting,
+  openExistingLabel,
+}: CompanyFormDialogProps) {
   const { t } = useLanguage();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -87,6 +101,7 @@ export function CompanyFormDialog({ open, onOpenChange, company, onSaved, onOpen
               onOpenChange(false);
               onSaved(saved);
             }}
+            openExistingLabel={openExistingLabel}
             onOpenExisting={
               onOpenExisting
                 ? (id) => {
@@ -119,6 +134,8 @@ function lookupHint(
       return { text: 'Too many lookups — wait a minute and try again', tone: 'warn' };
     case 'error':
       return { text: 'Could not reach the CNPJ services — fill in by hand', tone: 'warn' };
+    case 'timeout':
+      return { text: 'The CNPJ lookup took too long — try again or fill in by hand', tone: 'warn' };
     default:
       return null;
   }
@@ -129,11 +146,13 @@ export function CompanyFormBody({
   onSaved,
   onCancel,
   onOpenExisting,
+  openExistingLabel,
 }: {
   company: Company | null;
   onSaved: (company: Company) => void;
   onCancel: () => void;
   onOpenExisting?: (companyId: string) => void;
+  openExistingLabel?: string;
 }) {
   const { t, language } = useLanguage();
   const { accountId, user } = useAuth();
@@ -188,6 +207,11 @@ export function CompanyFormBody({
     lookupAbort.current = controller;
     setLookupStatus('loading');
     setLookupFound(null);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, LOOKUP_TIMEOUT_MS);
     try {
       const res = await fetch(`/api/companies/lookup/${encodeURIComponent(cnpjDigits)}`, {
         signal: controller.signal,
@@ -195,7 +219,10 @@ export function CompanyFormBody({
       const json = (await res.json().catch(() => null)) as
         | { ok?: boolean; company?: CompanyLookup; existing?: CompanySummary | null }
         | null;
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        if (timedOut) setLookupStatus('timeout');
+        return;
+      }
       const existing = json?.existing ?? null;
       if (existing && existing.id !== company?.id) setDuplicate(existing);
       if (res.ok && json?.company) {
@@ -211,8 +238,13 @@ export function CompanyFormBody({
         setLookupStatus('error');
       }
     } catch (err) {
-      if ((err as { name?: string })?.name === 'AbortError') return;
+      if ((err as { name?: string })?.name === 'AbortError') {
+        if (timedOut) setLookupStatus('timeout');
+        return;
+      }
       setLookupStatus('error');
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -345,7 +377,7 @@ export function CompanyFormBody({
                 onClick={() => onOpenExisting(duplicate.id)}
                 className="border-amber-500/40 bg-transparent"
               >
-                {t('Open company')}
+                {openExistingLabel ?? t('Open company')}
               </Button>
             ) : null}
           </div>
@@ -412,6 +444,17 @@ export function CompanyFormBody({
         errors={contactErrors}
         onChange={(address) => set({ address })}
         inputClassName="border-border bg-muted text-foreground"
+      />
+      {/* AddressFields only flags CEP and UF; say what else is wrong. */}
+      <FieldError
+        message={
+          errors.number
+            ? `${t('Number')}: ${t(companyFieldErrorMessage('number', errors.number))} (${t('max. 20 characters')})`
+            : (['street', 'complement', 'neighborhood', 'city'] as const)
+                .filter((f) => errors[f])
+                .map((f) => `${t(ADDRESS_LABEL[f])}: ${t(companyFieldErrorMessage(f, errors[f]!))}`)
+                .join(' · ') || null
+        }
       />
 
       <div className="flex flex-col gap-2">

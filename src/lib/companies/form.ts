@@ -20,6 +20,11 @@ import type { Company, CompanyFormValues, CompanyRow, CompanySummary } from './t
 export const MAX_COMPANY_NAME_LEN = 200;
 export const MAX_ACTIVITY_LEN = 300;
 export const MAX_NOTES_LEN = 5000;
+/** `companies.numero` (migration 054 CHECK). */
+export const MAX_NUMBER_LEN = 20;
+/** Street, complement, neighbourhood, city (same as the account address). */
+export const MAX_ADDRESS_FIELD_LEN = 120;
+export const MAX_EMAIL_LEN = 120;
 
 export type CompanyField =
   | 'cnpj'
@@ -78,18 +83,32 @@ export function companyToForm(company: Company): CompanyFormValues {
  * never touched.
  */
 export function applyCnpjLookup(values: CompanyFormValues, found: CompanyLookup): CompanyFormValues {
-  const pick = (next: string, current: string) => (next.trim() ? next : current);
-  const hasAddress = [found.address.cep, found.address.street, found.address.city].some((v) => v.trim());
+  // Programmatic fills bypass the inputs' maxLength, so the Receita's
+  // text is cut to what the form (and the table's CHECK) accepts.
+  const cut = (v: string, max: number) => v.trim().slice(0, max);
+  const pick = (next: string, current: string, max: number) => (next.trim() ? cut(next, max) : current);
+  const a = found.address;
+  const hasAddress = [a.cep, a.street, a.city].some((v) => v.trim());
   return {
     ...values,
     cnpj: formatTaxId('pj', found.taxId || values.cnpj),
-    razao_social: pick(found.legalName, values.razao_social),
-    nome_fantasia: pick(found.tradeName, values.nome_fantasia),
-    email: pick(found.email, values.email),
-    phone: pick(found.phone, values.phone),
-    address: hasAddress ? { ...found.address } : values.address,
-    cnae: pick(found.cnae, values.cnae),
-    atividade: pick(found.activity, values.atividade),
+    razao_social: pick(found.legalName, values.razao_social, MAX_COMPANY_NAME_LEN),
+    nome_fantasia: pick(found.tradeName, values.nome_fantasia, MAX_COMPANY_NAME_LEN),
+    email: pick(found.email, values.email, MAX_EMAIL_LEN),
+    phone: pick(found.phone, values.phone, 20),
+    address: hasAddress
+      ? {
+          cep: a.cep,
+          street: cut(a.street, MAX_ADDRESS_FIELD_LEN),
+          number: cut(a.number, MAX_NUMBER_LEN),
+          complement: cut(a.complement, MAX_ADDRESS_FIELD_LEN),
+          neighborhood: cut(a.neighborhood, MAX_ADDRESS_FIELD_LEN),
+          city: cut(a.city, MAX_ADDRESS_FIELD_LEN),
+          state: a.state,
+        }
+      : values.address,
+    cnae: pick(found.cnae, values.cnae, 20),
+    atividade: pick(found.activity, values.atividade, MAX_ACTIVITY_LEN),
   };
 }
 
@@ -123,6 +142,8 @@ export function validateCompanyForm(values: CompanyFormValues): CompanyValidatio
     address: values.address,
   });
   if (!contact.ok) Object.assign(errors, contact.errors);
+  // The account address allows 120; the company table caps the number at 20.
+  if (!errors.number && (values.address?.number ?? '').trim().length > MAX_NUMBER_LEN) errors.number = 'too_long';
 
   if (Object.keys(errors).length > 0 || !contact.ok) return { ok: false, errors };
 

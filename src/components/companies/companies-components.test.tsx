@@ -103,3 +103,14 @@ describe('company display', () => {
     );
   });
 });
+
+describe('pt-BR copy for the review fixes', () => {
+  it('translates the Empresas role gate like the contacts one', async () => {
+    const { translateLiteral } = await import('@/lib/i18n');
+    expect(translateLiteral("Read-only — your role can't add companies", 'pt-BR')).toBe(
+      'Somente leitura — seu perfil não pode cadastrar empresas',
+    );
+    expect(translateLiteral("Read-only — your role can't add or import contacts", 'pt-BR')).toMatch(/^Somente leitura — seu perfil não pode/);
+    expect(translateLiteral('Link this company', 'pt-BR')).toBe('Vincular esta empresa');
+  });
+});

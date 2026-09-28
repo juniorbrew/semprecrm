@@ -45,6 +45,7 @@ export type CompanyErrorCode =
   | 'not_found'
   | 'forbidden'
   | 'invalid'
+  | 'primary_conflict'
   | 'failed';
 
 export class CompanyError extends Error {
@@ -62,18 +63,35 @@ interface PgError {
   details?: string | null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A well-formed id (a `?company=abc` deep link is not worth a query). */
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
+
+/** The partial unique index behind "one primary company per contact". */
+const PRIMARY_INDEX = 'idx_contact_companies_one_primary';
+
 /**
  * PostgREST / Postgres error → our code.
- *   23505 unique_violation     — CNPJ taken in the account, or link exists
+ *   23505 unique_violation     — CNPJ taken in the account, or link exists;
+ *                                on the primary index: two concurrent
+ *                                "mark primary" (retryable)
  *   23503 foreign_key_violation — the cross-account triggers (054) or a
  *                                 row that no longer exists
+ *   22P02 invalid_text_representation — a malformed id: nothing to find
  *   42501 insufficient_privilege — RLS said no (viewer, other account)
  *   23514 check_violation / 22xxx — shape rejected by the table
  */
 export function companyErrorFromDb(error: PgError, onUnique: 'duplicate_cnpj' | 'already_linked'): CompanyError {
   const code = error.code ?? '';
-  if (code === '23505') return new CompanyError(onUnique, error.message);
-  if (code === '23503') return new CompanyError('not_found', error.message);
+  if (code === '23505') {
+    const where = `${error.message ?? ''} ${error.details ?? ''}`;
+    if (where.includes(PRIMARY_INDEX)) return new CompanyError('primary_conflict', error.message);
+    return new CompanyError(onUnique, error.message);
+  }
+  if (code === '23503' || code === '22P02') return new CompanyError('not_found', error.message);
   if (code === '42501') return new CompanyError('forbidden', error.message);
   if (code === '23514' || code.startsWith('22')) return new CompanyError('invalid', error.message);
   return new CompanyError('failed', error.message);
@@ -92,7 +110,9 @@ export function companyErrorMessage(err: unknown): string {
     case 'forbidden':
       return 'You do not have permission to change companies';
     case 'invalid':
-      return 'Check the highlighted fields';
+      return 'The company data was rejected — check the CNPJ, CEP, UF and field sizes';
+    case 'primary_conflict':
+      return "The contact's primary company was changed at the same time — please try again";
     default:
       return 'Something went wrong. Please try again.';
   }
@@ -180,6 +200,7 @@ export async function searchCompanies(
 }
 
 export async function getCompany(db: CompaniesClient, id: string): Promise<Company | null> {
+  if (!isUuid(id)) return null;
   const { data, error } = await db.from('companies').select(COMPANY_COLUMNS).eq('id', id).maybeSingle();
   if (error) throw companyErrorFromDb(error, 'duplicate_cnpj');
   return (data as Company | null) ?? null;
@@ -289,27 +310,46 @@ export async function getPrimaryCompany(db: CompaniesClient, contactId: string):
  * primary whatever `primary` says (trigger); `primary: true` moves the
  * flag here. `account_id` is filled by the trigger from the contact.
  */
+/**
+ * Run a write once more when it lost a race on the primary index —
+ * two tabs marking different primaries, or linking the contact's first
+ * company, at the same moment. The second attempt sees the committed
+ * state, so the triggers resolve it; a second loss is reported.
+ */
+async function retryOnPrimaryConflict<T>(attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (err) {
+    if (err instanceof CompanyError && err.code === 'primary_conflict') return attempt();
+    throw err;
+  }
+}
+
 export async function linkContactCompany(
   db: CompaniesClient,
   contactId: string,
   companyId: string,
   { primary = false }: { primary?: boolean } = {},
 ): Promise<void> {
-  const { error } = await db
-    .from('contact_companies')
-    .insert({ contact_id: contactId, company_id: companyId, is_primary: primary });
-  if (error) throw companyErrorFromDb(error, 'already_linked');
+  await retryOnPrimaryConflict(async () => {
+    const { error } = await db
+      .from('contact_companies')
+      .insert({ contact_id: contactId, company_id: companyId, is_primary: primary });
+    if (error) throw companyErrorFromDb(error, 'already_linked');
+  });
 }
 
 export async function setPrimaryCompany(db: CompaniesClient, contactId: string, companyId: string): Promise<void> {
-  const { data, error } = await db
-    .from('contact_companies')
-    .update({ is_primary: true })
-    .eq('contact_id', contactId)
-    .eq('company_id', companyId)
-    .select('company_id');
-  if (error) throw companyErrorFromDb(error, 'already_linked');
-  if (!data || (data as unknown[]).length === 0) throw new CompanyError('forbidden');
+  await retryOnPrimaryConflict(async () => {
+    const { data, error } = await db
+      .from('contact_companies')
+      .update({ is_primary: true })
+      .eq('contact_id', contactId)
+      .eq('company_id', companyId)
+      .select('company_id');
+    if (error) throw companyErrorFromDb(error, 'already_linked');
+    if (!data || (data as unknown[]).length === 0) throw new CompanyError('forbidden');
+  });
 }
 
 export async function unlinkContactCompany(db: CompaniesClient, contactId: string, companyId: string): Promise<void> {
@@ -346,6 +386,7 @@ export async function listCompanyContacts(
   db: CompaniesClient,
   companyId: string,
 ): Promise<CompanyContactLink[]> {
+  if (!isUuid(companyId)) return [];
   const { data, error } = await db
     .from('contact_companies')
     .select('is_primary, created_at, contact:contacts(id, name, phone, email, avatar_url)')
@@ -367,6 +408,7 @@ export async function listCompanyContacts(
 // ------------------------------------------------------------
 
 export async function listCompanyDeals(db: CompaniesClient, companyId: string, limit = 100): Promise<CompanyDeal[]> {
+  if (!isUuid(companyId)) return [];
   const { data, error } = await db
     .from('deals')
     .select('id, title, value, currency, status, pipeline_id, updated_at, stage:pipeline_stages(name, color)')

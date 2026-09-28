@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Briefcase,
@@ -85,8 +85,13 @@ export function CompanyDetailSheet({
   const [linking, setLinking] = useState(false);
   const [busyContact, setBusyContact] = useState<string | null>(null);
 
+  // The id the latest load is for — a slower answer for a company the
+  // user already left is dropped.
+  const latestId = useRef(companyId);
+
   const load = useCallback(async () => {
     if (!companyId) return;
+    latestId.current = companyId;
     setLoading(true);
     const db = createClient();
     try {
@@ -95,20 +100,34 @@ export function CompanyDetailSheet({
         listCompanyContacts(db, companyId),
         listCompanyDeals(db, companyId),
       ]);
+      if (latestId.current !== companyId) return;
       setCompany(c);
       setMissing(!c);
       setContacts(links);
       setDeals(ds);
     } catch (err) {
+      if (latestId.current !== companyId) return;
+      setMissing(true);
       toast.error(t(companyErrorMessage(err)));
     } finally {
-      setLoading(false);
+      if (latestId.current === companyId) setLoading(false);
     }
   }, [companyId, t]);
 
+  // A different company: drop the previous one first, so the header's
+  // Edit / Delete can never act on it while the new one loads.
+  const [shownId, setShownId] = useState(companyId);
+  if (shownId !== companyId) {
+    setShownId(companyId);
+    setCompany(null);
+    setContacts([]);
+    setDeals([]);
+    setMissing(false);
+    setLinking(false);
+  }
+
   useEffect(() => {
     if (!open || !companyId) return;
-    setLinking(false);
     void load();
   }, [open, companyId, reloadKey, load]);
 
