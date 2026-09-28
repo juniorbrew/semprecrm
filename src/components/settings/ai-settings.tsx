@@ -113,7 +113,9 @@ export function AiSettings() {
 
   const seed = useCallback((s: AiState) => {
     setState(s);
-    const p = s.settings.provider ?? "openai";
+    // No provider saved yet: open on the one that already has a key, so
+    // "Ativar" isn't blocked by the empty OpenAI tab.
+    const p = s.settings.provider ?? s.credentials[0]?.provider ?? "openai";
     setProvider(p);
     setModel(s.settings.model ?? AI_DEFAULT_MODELS[p]);
     setInstructions(s.settings.instructions ?? "");
