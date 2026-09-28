@@ -7,6 +7,11 @@ import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, WhatsAppChannel } from "@/types";
 import type { Language } from "@/lib/i18n";
 import { useAuth } from "@/hooks/use-auth";
+import {
+  companyDisplayName,
+  listPrimaryCompanies,
+  onContactCompaniesChanged,
+} from "@/lib/companies";
 import { useLanguage } from "@/hooks/use-language";
 import {
   classifyConversation,
@@ -33,6 +38,7 @@ import {
   Clock,
   UserX,
   Snowflake,
+  Building2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -258,6 +264,16 @@ export function ConversationList({
   const [tagsByContact, setTagsByContact] = useState<Map<string, RowTag[]>>(
     () => new Map()
   );
+  // Primary company name per contact (migration 054), shown under the
+  // contact name. Refetched when the panel links / unlinks a company.
+  const [companyByContact, setCompanyByContact] = useState<Map<string, string>>(
+    () => new Map()
+  );
+  const [companiesVersion, setCompaniesVersion] = useState(0);
+  useEffect(
+    () => onContactCompaniesChanged(() => setCompaniesVersion((v) => v + 1)),
+    []
+  );
 
   // The persisted queue view is restored inside the fetch effect below,
   // right before the first batch of conversations lands — so tabs and
@@ -414,6 +430,28 @@ export function ConversationList({
       cancelled = true;
     };
   }, [contactIdsKey, resyncToken]);
+
+  useEffect(() => {
+    if (!contactIdsKey) return;
+    const ids = contactIdsKey.split(",");
+    let cancelled = false;
+    listPrimaryCompanies(createClient(), ids)
+      .then((map) => {
+        if (cancelled) return;
+        const next = new Map<string, string>();
+        for (const [contactId, company] of map) {
+          next.set(contactId, companyDisplayName(company));
+        }
+        setCompanyByContact(next);
+      })
+      .catch((err) => {
+        // A plan / schema without companies just shows no company line.
+        console.error("Failed to fetch primary companies:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contactIdsKey, resyncToken, companiesVersion]);
 
   // Status (+ unread) narrow the pool; the queue tabs are counted from
   // that pool so the badges answer "how many open ones are mine /
@@ -700,6 +738,7 @@ export function ConversationList({
                 onSelect={handleSelect}
                 age={formatAge(conv.last_message_at, language, now)}
                 tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
+                companyName={companyByContact.get(conv.contact_id) ?? null}
                 rowStatus={copy.rowStatus}
                 channelLabel={copy.channel}
                 channelChip={copy.channelChip}
@@ -768,6 +807,8 @@ interface ConversationItemProps {
   onSelect: (conversation: Conversation) => void;
   age: string;
   tags: RowTag[];
+  /** Primary company (nome fantasia, else razão social), if any. */
+  companyName: string | null;
   rowStatus: Record<Exclude<ConversationStatus, "open">, string>;
   channelLabel: string;
   channelChip: Record<WhatsAppChannel, string>;
@@ -785,6 +826,7 @@ function ConversationItem({
   onSelect,
   age,
   tags,
+  companyName,
   rowStatus,
   channelLabel,
   channelChip,
@@ -874,6 +916,16 @@ function ConversationItem({
             {age}
           </span>
         </div>
+        {companyName && (
+          <p
+            data-no-translate
+            title={companyName}
+            className="flex min-w-0 items-center gap-1 text-[11px] leading-4 text-muted-foreground"
+          >
+            <Building2 className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{companyName}</span>
+          </p>
+        )}
         <div className="flex items-center justify-between gap-2">
           <p
             className={cn(

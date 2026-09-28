@@ -61,6 +61,7 @@ import type { Task } from "@/lib/tasks";
 import { NewCustomFieldDialog } from "./new-custom-field-dialog";
 import { CustomFieldValue } from "./custom-field-value";
 import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
+import { ContactCompanies } from "@/components/companies/contact-companies";
 import { TeamNoteComposer } from "./team-note-composer";
 import { toast } from "sonner";
 
@@ -94,6 +95,7 @@ const PANEL_COPY: Record<
     newTagPlaceholder: string;
     createTag: string;
     tagCreateFailed: string;
+    companies: string;
     customFields: string;
     noCustomFields: string;
     emptyValue: string;
@@ -131,6 +133,7 @@ const PANEL_COPY: Record<
     newTagPlaceholder: "Nova etiqueta…",
     createTag: "Criar",
     tagCreateFailed: "Não foi possível criar a etiqueta",
+    companies: "Empresas",
     customFields: "Campos personalizados",
     noCustomFields: "Nenhum campo personalizado definido",
     emptyValue: "—",
@@ -166,6 +169,7 @@ const PANEL_COPY: Record<
     newTagPlaceholder: "New label…",
     createTag: "Create",
     tagCreateFailed: "Could not create the label",
+    companies: "Companies",
     customFields: "Custom fields",
     noCustomFields: "No custom fields defined",
     emptyValue: "—",
@@ -759,6 +763,30 @@ export function ContactSidebar({
               </div>
             )}
           </div>
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Companies (migration 054) — primary first, each linking to
+              /companies?company=<id>; agent+ links / unlinks / marks the
+              primary through the shared data layer. */}
+          <ContactCompanies
+            key={contact.id}
+            contactId={contact.id}
+            readOnly={!canWrite}
+            compact
+            header={({ count, togglePicker, readOnly }) => (
+              <SectionHeader
+                icon={Building2}
+                label={copy.companies}
+                count={count}
+                action={
+                  readOnly ? undefined : (
+                    <SectionAddButton label={t("Link company")} onClick={togglePicker} />
+                  )
+                }
+              />
+            )}
+          />
 
           <div className="my-4 border-t border-border" />
 

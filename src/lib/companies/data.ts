@@ -277,6 +277,37 @@ export function primaryCompanyId(links: readonly Pick<ContactCompanyLink, 'is_pr
   return links.find((l) => l.is_primary)?.company.id ?? null;
 }
 
+/** Largest `in (...)` list sent in one request (URL length). */
+const PRIMARY_BATCH = 200;
+
+/**
+ * The primary company of each contact, in one query per 200 ids —
+ * the inbox list shows it under the contact name. Contacts without a
+ * primary company are simply absent from the map.
+ */
+export async function listPrimaryCompanies(
+  db: CompaniesClient,
+  contactIds: readonly string[],
+): Promise<Map<string, CompanySummary>> {
+  const ids = [...new Set(contactIds.filter(isUuid))];
+  const out = new Map<string, CompanySummary>();
+  for (let i = 0; i < ids.length; i += PRIMARY_BATCH) {
+    const chunk = ids.slice(i, i + PRIMARY_BATCH);
+    const { data, error } = await db
+      .from('contact_companies')
+      .select(`contact_id, company:companies(${COMPANY_SUMMARY_COLUMNS})`)
+      .eq('is_primary', true)
+      .in('contact_id', chunk);
+    if (error) throw companyErrorFromDb(error, 'already_linked');
+    type Row = { contact_id: string; company: CompanySummary | CompanySummary[] | null };
+    for (const row of (data ?? []) as unknown as Row[]) {
+      const company = one(row.company);
+      if (company) out.set(row.contact_id, company);
+    }
+  }
+  return out;
+}
+
 export async function listContactCompanies(
   db: CompaniesClient,
   contactId: string,
