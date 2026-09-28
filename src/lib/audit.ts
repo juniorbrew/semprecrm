@@ -46,6 +46,9 @@ export const AUDIT_ACTIONS = {
   PLAN_CHANGED: 'plan.changed',
   MFA_ENROLLED: 'mfa.enrolled',
   MFA_DISABLED: 'mfa.disabled',
+  AI_SETTINGS_UPDATED: 'ai.settings_updated',
+  AI_KEY_SAVED: 'ai.key_saved',
+  AI_KEY_REMOVED: 'ai.key_removed',
 } as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS]
@@ -88,6 +91,9 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'plan.changed': 'Plano alterado',
     'mfa.enrolled': 'Verificação em duas etapas ativada',
     'mfa.disabled': 'Verificação em duas etapas desativada',
+    'ai.settings_updated': 'Configurações de IA atualizadas',
+    'ai.key_saved': 'Chave de API de IA salva',
+    'ai.key_removed': 'Chave de API de IA removida',
   },
   'en-US': {
     'member.invited': 'Member invited',
@@ -115,6 +121,9 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'plan.changed': 'Plan changed',
     'mfa.enrolled': 'Two-step verification enabled',
     'mfa.disabled': 'Two-step verification disabled',
+    'ai.settings_updated': 'AI settings updated',
+    'ai.key_saved': 'AI API key saved',
+    'ai.key_removed': 'AI API key removed',
   },
 }
 
@@ -202,6 +211,15 @@ export const AUDIT_FIELD_LABELS: Record<Language, Record<string, string>> = {
     fri: 'Sexta',
     sat: 'Sábado',
     sun: 'Domingo',
+    // AI (migration 058)
+    enabled: 'Ativado',
+    provider: 'Provedor',
+    model: 'Modelo',
+    instructions: 'Instruções do assistente',
+    monthly_budget_cents: 'Orçamento mensal (centavos de US$)',
+    suggest_history_messages: 'Mensagens de contexto',
+    consent: 'Aviso de tratamento de dados',
+    last4: 'Final da chave',
   },
   'en-US': {
     plan: 'Plan',
@@ -267,6 +285,14 @@ export const AUDIT_FIELD_LABELS: Record<Language, Record<string, string>> = {
     fri: 'Friday',
     sat: 'Saturday',
     sun: 'Sunday',
+    enabled: 'Enabled',
+    provider: 'Provider',
+    model: 'Model',
+    instructions: 'Assistant instructions',
+    monthly_budget_cents: 'Monthly budget (US$ cents)',
+    suggest_history_messages: 'Context messages',
+    consent: 'Data-processing notice',
+    last4: 'Key ending',
   },
 }
 
@@ -294,6 +320,8 @@ export const AUDIT_ENTITY_LABELS: Record<Language, Record<string, string>> = {
     branding: 'Marca',
     plan: 'Plano',
     mfa: 'Verificação em duas etapas',
+    ai_settings: 'Inteligência Artificial',
+    ai_credential: 'Chave de API de IA',
   },
   'en-US': {
     account: 'Account',
@@ -309,6 +337,8 @@ export const AUDIT_ENTITY_LABELS: Record<Language, Record<string, string>> = {
     branding: 'Branding',
     plan: 'Plan',
     mfa: 'Two-step verification',
+    ai_settings: 'Artificial Intelligence',
+    ai_credential: 'AI API key',
   },
 }
 
@@ -348,6 +378,8 @@ export const AUDIT_ENTITY_TYPES = [
   'branding',
   'plan',
   'mfa',
+  'ai_settings',
+  'ai_credential',
 ] as const
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number]

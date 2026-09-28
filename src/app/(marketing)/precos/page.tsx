@@ -76,6 +76,7 @@ const MODULE_LABELS_PT: Record<Module, string> = {
   white_label: "Marca própria",
   internal_chat: "Chat interno",
   calendar: "Agenda",
+  ai: "Assistente de IA",
 };
 
 // pt-BR plural forms per limit; null = unlimited.
