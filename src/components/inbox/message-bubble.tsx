@@ -13,11 +13,13 @@ import {
   LayoutTemplate,
   ImageOff,
   CornerDownLeft,
+  Ban,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
 import { failureReason } from "@/lib/whatsapp/failure-reason";
+import type { SenderLabel } from "./sender-label";
 
 interface MessageBubbleProps {
   message: Message;
@@ -26,6 +28,8 @@ interface MessageBubbleProps {
   reactions?: MessageReaction[];
   currentUserId?: string;
   onToggleReaction?: (emoji: string) => void;
+  /** Who sent an outbound bubble (see sender-label.ts). */
+  senderLabel?: SenderLabel | null;
 }
 
 // Delivery state is icon-only; the title/aria-label carry the words
@@ -307,10 +311,17 @@ export function MessageBubble({
   reactions,
   currentUserId,
   onToggleReaction,
+  senderLabel,
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
   const failure = isAgent ? failureReason(message) : null;
+  // Deleted for everyone on WhatsApp: the content stays readable for the
+  // team, struck through, with who deleted it.
+  const revoked = !!message.revoked_at;
+  const revokedText =
+    message.revoked_by === "phone" ? "Deleted from the phone" : "Deleted by customer";
+  const label = isAgent ? senderLabel : null;
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
   // group matches the bubble's content area, not the full row.
@@ -336,13 +347,44 @@ export function MessageBubble({
             onPrimary={isAgent}
           />
         )}
-        <MessageContent message={message} isAgent={isAgent} />
+        <div
+          className={cn(revoked && "line-through decoration-1 opacity-60")}
+          data-revoked={revoked ? "" : undefined}
+        >
+          <MessageContent message={message} isAgent={isAgent} />
+        </div>
+        {revoked && (
+          <p
+            className={cn(
+              "mt-1 flex items-center gap-1 text-[10px] font-medium italic",
+              isAgent ? "text-primary-foreground/80" : "text-muted-foreground",
+            )}
+          >
+            <Ban className="h-3 w-3 shrink-0" aria-hidden />
+            <span>{revokedText}</span>
+          </p>
+        )}
         <div
           className={cn(
             "mt-1 flex items-center gap-1",
             isAgent ? "justify-end" : "justify-start",
           )}
         >
+          {label && (
+            <>
+              <span
+                className="max-w-40 truncate text-[10px] font-medium text-primary-foreground/80"
+                title={label.hint ?? (label.translate ? undefined : label.text)}
+                data-sender-kind={label.kind}
+                {...(label.translate ? {} : { "data-no-translate": true })}
+              >
+                {label.text}
+              </span>
+              <span aria-hidden className="text-[10px] text-primary-foreground/50">
+                ·
+              </span>
+            </>
+          )}
           <span
             className={cn(
               "text-[10px]",

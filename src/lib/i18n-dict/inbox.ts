@@ -10,6 +10,12 @@ export const DICT_INBOX: Record<string, string> = {
   'Voice message': 'Mensagem de voz',
   // Failed outbound: Meta's reason renders after this label (wacrm #535).
   'Not delivered': 'Não entregue',
+  // Sender label on outbound bubbles + deleted-for-everyone (migration 059).
+  'Mobile phone': 'Celular',
+  'Sent from the phone or WhatsApp Web': 'Enviada pelo celular ou pelo WhatsApp Web',
+  Bot: 'Bot',
+  'Deleted by customer': 'Apagada pelo cliente',
+  'Deleted from the phone': 'Apagada pelo celular',
 
   // ---- Message actions (hover toolbar) ----
   'React with': 'Reagir com',

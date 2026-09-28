@@ -64,6 +64,7 @@ import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { updateConversationAssignee } from "@/lib/conversations/assign";
 import { ConversationReminder } from "./conversation-reminder";
 import { MessageBubble } from "./message-bubble";
+import { senderLabelFor } from "./sender-label";
 import { MessageActions } from "./message-actions";
 import {
   MessageComposer,
@@ -746,6 +747,8 @@ export function MessageThread({
         id: tempId,
         conversation_id: conversation.id,
         sender_type: "agent",
+        // optimistic bubble reads "Você" until the real row lands
+        sender_id: user?.id,
         content_type: "text",
         content_text: text,
         status: "sending",
@@ -789,7 +792,7 @@ export function MessageThread({
         onUpdateMessage(tempId, { status: "failed" });
       }
     },
-    [conversation, onNewMessage, onUpdateMessage]
+    [conversation, onNewMessage, onUpdateMessage, user?.id]
   );
 
   const handleSendMedia = useCallback(
@@ -809,6 +812,8 @@ export function MessageThread({
         id: tempId,
         conversation_id: conversation.id,
         sender_type: "agent",
+        // optimistic bubble reads "Você" until the real row lands
+        sender_id: user?.id,
         content_type: payload.kind,
         content_text: contentText,
         media_url: payload.mediaUrl,
@@ -855,7 +860,7 @@ export function MessageThread({
         void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(() => {});
       }
     },
-    [conversation, onNewMessage, onUpdateMessage],
+    [conversation, onNewMessage, onUpdateMessage, user?.id],
   );
 
   /** True when the status is now `status` (unchanged counts as success). */
@@ -976,6 +981,8 @@ export function MessageThread({
         id: tempId,
         conversation_id: conversation.id,
         sender_type: "agent",
+        // optimistic bubble reads "Você" until the real row lands
+        sender_id: user?.id,
         content_type: "template",
         content_text: renderedBody,
         template_name: template.name,
@@ -1025,7 +1032,7 @@ export function MessageThread({
         onUpdateMessage(tempId, { status: "failed" });
       }
     },
-    [conversation, onNewMessage, onUpdateMessage],
+    [conversation, onNewMessage, onUpdateMessage, user?.id],
   );
 
   // Build a quick id → Message map so reply quotes can be rendered without
@@ -1237,6 +1244,13 @@ export function MessageThread({
       toast.success(archive ? statusCopy.archivedToast : statusCopy.unarchivedToast);
     },
     [conversation, onStatusChange, onConversationPatch, logEvent, statusCopy],
+  );
+
+  // Teammate name for a message's sender label ("You" is decided by
+  // senderLabelFor, so no self special case here).
+  const profileNameFor = useCallback(
+    (userId: string) => profiles.find((p) => p.user_id === userId)?.full_name || undefined,
+    [profiles],
   );
 
   // Name lookup shared by the baseline pills and note headers.
@@ -1821,6 +1835,10 @@ export function MessageThread({
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
+                          senderLabel={senderLabelFor(msg, {
+                            currentUserId: user?.id,
+                            nameFor: profileNameFor,
+                          })}
                         />
                       </MessageActions>
                     );
