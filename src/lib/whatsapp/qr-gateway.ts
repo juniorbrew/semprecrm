@@ -7,6 +7,7 @@
 //   GET  /sessions/:accountId          → { status, qr?, phone?, name?, connected_at? }
 //   POST /sessions/:accountId/logout   → {}
 //   POST /sessions/:accountId/send     → { message_id }
+//   POST /sessions/:accountId/avatar   → { url | null }   (profile photo)
 // Every request carries `x-gateway-secret: WA_GATEWAY_SECRET`; the
 // gateway calls us back with the same header.
 //
@@ -17,6 +18,7 @@
 import { timingSafeEqual } from 'crypto'
 
 import type { WaQrSessionStatus } from '@/types'
+import type { AvatarLookup } from '@/lib/whatsapp/contact-avatar'
 
 export const GATEWAY_SECRET_HEADER = 'x-gateway-secret'
 
@@ -243,6 +245,56 @@ export async function markReadViaGateway(input: {
     { method: 'POST', body: { to: input.to, message_ids: input.messageIds } },
   )
   return { read: res.read ?? 0 }
+}
+
+/**
+ * Profile photo of a QR-channel contact (migration 055). The gateway
+ * looks it up on WhatsApp Web, stores a copy in `contact-avatars` and
+ * returns its public URL, or `null` when the contact has no photo
+ * visible to us (privacy). Throttled (429), offline (409) or failing
+ * lookups come back as `unavailable` so the caller retries later.
+ * The official Cloud API has no equivalent — Meta never exposes a
+ * customer's profile photo.
+ */
+export async function fetchContactAvatarViaGateway(input: {
+  accountId: string
+  contactId: string
+  /** Digits only. */
+  phone: string
+}): Promise<AvatarLookup> {
+  try {
+    const res = await gatewayFetch<{ url?: string | null }>(
+      `/sessions/${encodeURIComponent(input.accountId)}/avatar`,
+      {
+        method: 'POST',
+        body: { to: input.phone, contact_id: input.contactId },
+        // The gateway queues lookups per account (spaced a few seconds
+        // apart) and gives up after 25 s in the queue + ~2 × 8 s of work,
+        // so it always answers inside this timeout (AVATAR_APP_TIMEOUT_MS
+        // in services/wa-gateway/src/avatar.ts).
+        timeoutMs: 60_000,
+      },
+    )
+    return typeof res.url === 'string' && res.url
+      ? { kind: 'photo', url: res.url }
+      : { kind: 'none' }
+  } catch (err) {
+    // Not on WhatsApp, or a phone the gateway cannot dial (bad length) —
+    // asking again will not change the answer.
+    if (
+      err instanceof GatewayRequestError &&
+      (err.code === 'not_on_whatsapp' || err.code === 'invalid_request')
+    ) {
+      return { kind: 'none' }
+    }
+    const reason =
+      err instanceof GatewayRequestError || err instanceof GatewayUnreachableError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    return { kind: 'unavailable', reason }
+  }
 }
 
 // ------------------------------------------------------------

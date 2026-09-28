@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     end = vi.fn();
     updateMediaMessage = vi.fn();
     readMessages = vi.fn(async (_keys: unknown[]) => undefined);
+    profilePictureUrl = vi.fn(async (_jid: string, _type?: string, _t?: number) => "https://pps.whatsapp.net/v/p.jpg" as string | undefined);
     signalRepository = { lidMapping: { getPNForLID: vi.fn(async () => null as string | null) } };
     emit(event: string, payload: unknown) {
       this.ev.emit(event, payload);
@@ -52,6 +53,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
 }));
 
 import { SessionManager, GatewayError, ackFromStatus, buildContent, toJid } from "./session-manager.js";
+import { AvatarThrottle } from "./avatar.js";
 
 const logger = pino({ level: "silent" });
 const ACCOUNT = "11111111-2222-3333-4444-555555555555";
@@ -648,6 +650,93 @@ describe("SessionManager — envio", () => {
     const { manager } = await connected();
     await manager.logout(ACCOUNT);
     await expect(manager.send(ACCOUNT, { to: "5511988887777", text: "oi" })).rejects.toMatchObject({
+      code: "not_connected",
+    });
+  });
+});
+
+describe("SessionManager — foto de perfil (fetchAvatar)", () => {
+  const CONTACT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+  async function connectedWithAvatars(throttle?: AvatarThrottle) {
+    const appClient = {
+      sendInbound: vi.fn(async () => true),
+      sendStatus: vi.fn(async () => true),
+      sendAck: vi.fn(async () => true),
+    };
+    const mediaStore = {
+      storeInbound: vi.fn(async () => ({ url: "u", path: "p" })),
+      storeAvatar: vi.fn(async () => ({ url: "https://sb/contact-avatars/x?v=1", path: "x" })),
+      removeAvatar: vi.fn(async () => undefined),
+    };
+    const downloadAvatar = vi.fn(async (_url: string) => ({ buffer: Buffer.from("img"), contentType: "image/jpeg" }));
+    const manager = new SessionManager({
+      dataDir,
+      appClient,
+      mediaStore,
+      logger,
+      reconnectBaseMs: 5,
+      reconnectMaxMs: 20,
+      sendWaitMs: 300,
+      downloadAvatar,
+      avatarThrottle: throttle ?? new AvatarThrottle({ minIntervalMs: 0 }),
+    });
+    await manager.connect(ACCOUNT);
+    const sock = mocks.sockets[0];
+    sock.user = { id: "5511999999999@s.whatsapp.net" };
+    sock.emit("connection.update", { connection: "open" });
+    await until(() => manager.getStatus(ACCOUNT).status === "connected");
+    return { manager, mediaStore, downloadAvatar, sock };
+  }
+
+  it("baixa a foto em alta e grava no bucket pelo id do contato", async () => {
+    const { manager, mediaStore, downloadAvatar, sock } = await connectedWithAvatars();
+    const res = await manager.fetchAvatar(ACCOUNT, { to: "+55 11 98888-7777", contact_id: CONTACT });
+    expect(res).toEqual({ url: "https://sb/contact-avatars/x?v=1" });
+    expect(sock.profilePictureUrl).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", "image", expect.any(Number));
+    expect(downloadAvatar).toHaveBeenCalledWith("https://pps.whatsapp.net/v/p.jpg");
+    expect(mediaStore.storeAvatar).toHaveBeenCalledWith(ACCOUNT, CONTACT, expect.any(Buffer), "image/jpeg");
+  });
+
+  it("privacidade / sem foto → url null e apaga a cópia antiga", async () => {
+    const { manager, mediaStore, sock } = await connectedWithAvatars();
+    sock.profilePictureUrl.mockRejectedValueOnce(new Boom("not-authorized", { statusCode: 401 }));
+    await expect(manager.fetchAvatar(ACCOUNT, { to: "5511988887777", contact_id: CONTACT })).resolves.toEqual({
+      url: null,
+    });
+    expect(mediaStore.removeAvatar).toHaveBeenCalledWith(ACCOUNT, CONTACT);
+    expect(mediaStore.storeAvatar).not.toHaveBeenCalled();
+  });
+
+  it("erro de rede/CDN vira send_failed (502), sem derrubar a sessão", async () => {
+    const { manager, downloadAvatar } = await connectedWithAvatars();
+    downloadAvatar.mockRejectedValueOnce(new Error("CDN respondeu HTTP 403"));
+    await expect(manager.fetchAvatar(ACCOUNT, { to: "5511988887777", contact_id: CONTACT })).rejects.toMatchObject({
+      code: "send_failed",
+      httpStatus: 502,
+    });
+    expect(manager.getStatus(ACCOUNT).status).toBe("connected");
+  });
+
+  it("fila cheia → throttled (429)", async () => {
+    const { manager, sock } = await connectedWithAvatars(new AvatarThrottle({ minIntervalMs: 0, maxPending: 1 }));
+    let release!: () => void;
+    sock.profilePictureUrl.mockImplementationOnce(
+      () => new Promise<string>((r) => (release = () => r("https://pps.whatsapp.net/v/p.jpg"))),
+    );
+    const first = manager.fetchAvatar(ACCOUNT, { to: "5511988887777", contact_id: CONTACT });
+    await expect(manager.fetchAvatar(ACCOUNT, { to: "5511988886666", contact_id: CONTACT })).rejects.toMatchObject({
+      code: "throttled",
+      httpStatus: 429,
+    });
+    await until(() => typeof release === "function");
+    release();
+    await expect(first).resolves.toMatchObject({ url: expect.any(String) });
+  });
+
+  it("sem sessão conectada → not_connected na hora", async () => {
+    const { manager } = makeManager(dataDir);
+    await expect(manager.fetchAvatar(ACCOUNT, { to: "5511988887777", contact_id: CONTACT })).rejects.toMatchObject({
       code: "not_connected",
     });
   });

@@ -4,6 +4,7 @@ import { renderToString } from 'react-dom/server';
 import type { Company, CompanySummary } from '@/lib/companies';
 import { companyAddressLine } from './company-detail-sheet';
 import { CompanyFormBody } from './company-form-dialog';
+import { ContactCompanies } from './contact-companies';
 import { CompanyLine } from './company-pickers';
 import { DealCompanyField } from './deal-company-field';
 
@@ -112,5 +113,22 @@ describe('pt-BR copy for the review fixes', () => {
     );
     expect(translateLiteral("Read-only — your role can't add or import contacts", 'pt-BR')).toMatch(/^Somente leitura — seu perfil não pode/);
     expect(translateLiteral('Link this company', 'pt-BR')).toBe('Vincular esta empresa');
+  });
+});
+
+describe('ContactCompanies (inbox panel variant)', () => {
+  it('renders the panel header with the read-only flag instead of the built-in one', () => {
+    const html = renderToString(
+      <ContactCompanies
+        contactId="c-1"
+        compact
+        readOnly
+        header={({ count, readOnly }) => (
+          <p data-testid="panel-header">{`Empresas ${count} ${readOnly ? 'ro' : 'rw'}`}</p>
+        )}
+      />,
+    );
+    expect(html).toContain('Empresas 0 ro');
+    expect(html).not.toContain('Vincular empresa');
   });
 });

@@ -8,11 +8,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   ingest: vi.fn(),
+  after: vi.fn(),
+  refreshAvatar: vi.fn(async () => 'photo'),
   writes: [] as { table: string; op: string; payload: unknown; filters: [string, unknown][] }[],
 }))
 
 vi.mock('@/lib/whatsapp/inbound', () => ({
   ingestInboundMessage: h.ingest,
+}))
+
+// `after()` needs a request scope; record the callback instead.
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: (fn: () => unknown) => h.after(fn),
+}))
+
+vi.mock('@/lib/whatsapp/contact-avatar', () => ({
+  refreshContactAvatar: h.refreshAvatar,
 }))
 
 vi.mock('@/lib/flows/admin-client', () => ({
@@ -232,5 +244,38 @@ describe('POST /status-event (and /status alias)', () => {
   it('rejects an unknown status', async () => {
     const res = await statusEvent(req('status-event', { account_id: 'a', status: 'weird' }))
     expect(res.status).toBe(400)
+  })
+})
+
+describe('inbound → contact photo refresh', () => {
+  const body = {
+    account_id: 'acc-1',
+    message_id: 'M1',
+    from: '+55 11 98888-7777',
+    push_name: 'Cliente',
+    timestamp: 1_757_700_100,
+    type: 'text',
+    text: 'oi',
+  }
+
+  it('schedules the avatar refresh after the response for a new message', async () => {
+    h.ingest.mockResolvedValue({ ok: true, contactId: 'contact-1', conversationId: 'conv-1' })
+    const res = await inbound(req('inbound', body))
+    expect(res.status).toBe(200)
+    expect(h.after).toHaveBeenCalledTimes(1)
+    await h.after.mock.calls[0][0]()
+    expect(h.refreshAvatar).toHaveBeenCalledWith(
+      expect.anything(),
+      { accountId: 'acc-1', contactId: 'contact-1', phone: '5511988887777' },
+      expect.any(Function),
+    )
+  })
+
+  it('does not schedule it for a redelivered (duplicate) message or a failure', async () => {
+    h.ingest.mockResolvedValue({ ok: true, reason: 'duplicate', contactId: 'contact-1', conversationId: 'conv-1' })
+    await inbound(req('inbound', body))
+    h.ingest.mockResolvedValue({ ok: false, reason: 'contact_failed' })
+    await inbound(req('inbound', body))
+    expect(h.after).not.toHaveBeenCalled()
   })
 })

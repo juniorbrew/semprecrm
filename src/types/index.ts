@@ -198,6 +198,11 @@ export interface Contact {
   company?: string;
   avatar_url?: string;
   /**
+   * Last profile-photo lookup through the QR gateway (migration 055);
+   * re-checked after ~7 days. Official-channel contacts never get one.
+   */
+  avatar_checked_at?: string | null;
+  /**
    * Set when the customer asked to stop receiving messages ("PARAR")
    * — migration 030. Automations skip send steps and broadcasts drop
    * the contact while this is set; admin+ can clear it ("Reativar").
@@ -284,6 +289,11 @@ export interface Conversation {
    */
   last_customer_message_at?: string | null;
   last_agent_message_at?: string | null;
+  /**
+   * Set by "Arquivar" in the inbox (migration 056, with status closed);
+   * cleared by a DB trigger when the customer writes again or it reopens.
+   */
+  archived_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;

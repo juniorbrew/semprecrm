@@ -16,6 +16,7 @@ import {
   linkContactCompany,
   listCompanies,
   listContactCompanies,
+  listPrimaryCompanies,
   primaryCompanyId,
   sanitizeCompanySearch,
   setDealCompany,
@@ -42,7 +43,7 @@ function fakeDb(result: Result) {
       calls.push(entry);
       const settled = { data: result.data ?? null, error: result.error ?? null, count: result.count ?? null };
       const builder: Record<string, unknown> = {};
-      for (const op of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'or', 'order', 'range', 'limit']) {
+      for (const op of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'or', 'order', 'range', 'limit']) {
         builder[op] = (...args: unknown[]) => {
           entry.ops.push([op, ...args]);
           return builder;
@@ -297,5 +298,44 @@ describe('deal company', () => {
     await expect(setDealCompany(fakeDb({ error: { code: '23503' } }).db, 'd1', 'x')).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+});
+
+describe('listPrimaryCompanies (inbox list rows)', () => {
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+  it('maps contact id → primary company in one query', async () => {
+    const { db, calls } = fakeDb({
+      data: [
+        { contact_id: uuid(1), company: { id: 'co-1', razao_social: 'ACME LTDA', nome_fantasia: 'Acme' } },
+        { contact_id: uuid(2), company: [{ id: 'co-2', razao_social: 'Beta SA', nome_fantasia: null }] },
+        { contact_id: uuid(3), company: null },
+      ],
+    });
+    const map = await listPrimaryCompanies(db, [uuid(1), uuid(2), uuid(3), uuid(1)]);
+    expect(map.get(uuid(1))).toMatchObject({ id: 'co-1' });
+    expect(map.get(uuid(2))).toMatchObject({ id: 'co-2' });
+    expect(map.has(uuid(3))).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].table).toBe('contact_companies');
+    expect(calls[0].ops).toContainEqual(['eq', 'is_primary', true]);
+    // Duplicates collapsed before the `in` list is sent.
+    expect(calls[0].ops).toContainEqual(['in', 'contact_id', [uuid(1), uuid(2), uuid(3)]]);
+  });
+
+  it('skips the round-trip without valid ids and chunks long lists', async () => {
+    const empty = fakeDb({ data: [] });
+    expect((await listPrimaryCompanies(empty.db, ['not-a-uuid'])).size).toBe(0);
+    expect(empty.calls).toHaveLength(0);
+
+    const many = fakeDb({ data: [] });
+    await listPrimaryCompanies(many.db, Array.from({ length: 450 }, (_, i) => uuid(i + 1)));
+    expect(many.calls).toHaveLength(3);
+  });
+
+  it('throws a CompanyError on a database error', async () => {
+    await expect(listPrimaryCompanies(fakeDb({ error: { code: '42501' } }).db, [uuid(1)])).rejects.toBeInstanceOf(
+      CompanyError,
+    );
   });
 });

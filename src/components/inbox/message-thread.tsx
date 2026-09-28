@@ -36,16 +36,33 @@ import {
   MoreVertical,
   CheckSquare,
   CalendarPlus,
+  UserCheck,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { conversationHeaderActions } from "@/lib/conversations/header-actions";
+import { updateConversationAssignee } from "@/lib/conversations/assign";
+import { ConversationReminder } from "./conversation-reminder";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
 import {
@@ -58,6 +75,7 @@ import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { InternalNoteBubble } from "./internal-note-bubble";
 import { SystemEventPill } from "./system-event-pill";
+import { ContactAvatar } from "./contact-avatar";
 import { useConversationEvents } from "@/hooks/use-conversation-events";
 import {
   deriveBaselineEvents,
@@ -94,6 +112,12 @@ interface MessageThreadProps {
     conversationId: string,
     assignedAgentId: string | null,
   ) => void;
+  /**
+   * Local patch after a header action the parent's handlers above do not
+   * cover (archive / unarchive — `archived_at`, migration 056). Optional;
+   * the realtime UPDATE brings the same row anyway.
+   */
+  onConversationPatch?: (conversationId: string, patch: Partial<Conversation>) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
    * hidden. This callback lets the page deselect the active conversation
@@ -179,6 +203,27 @@ const THREAD_STATUS_COPY: Record<
     /** Channel chip + tooltip in the header (migration 026). */
     channelChip: Record<WhatsAppChannel, string>;
     channelTitle: Record<WhatsAppChannel, string>;
+    /** Queue actions (Assumir / Transferir / Arquivar). */
+    claim: string;
+    claimTitle: string;
+    claimedToast: string;
+    claimTaken: (who: string) => string;
+    someone: string;
+    transferTitle: (assignee: string) => string;
+    noAssignee: string;
+    assignedUnknown: string;
+    transferTo: string;
+    archive: string;
+    unarchive: string;
+    archiveTitle: string;
+    archiveBody: string;
+    archiveOpenBody: string;
+    archivedToast: string;
+    unarchivedToast: string;
+    archiveFailed: string;
+    archivedLabel: string;
+    cancel: string;
+    readOnly: string;
   }
 > = {
   "pt-BR": {
@@ -202,6 +247,28 @@ const THREAD_STATUS_COPY: Record<
       official: "Canal: API oficial do WhatsApp",
       qr: "Canal: WhatsApp via QR code (sem janela de 24 h nem modelos)",
     },
+    claim: "Assumir",
+    claimTitle: "Assumir: atribuir esta conversa a você",
+    claimedToast: "Conversa atribuída a você",
+    claimTaken: (who) => `${who} assumiu esta conversa antes de você`,
+    someone: "Outra pessoa",
+    transferTitle: (assignee) => `Responsável: ${assignee} · Transferir`,
+    noAssignee: "sem responsável",
+    assignedUnknown: "atribuída",
+    transferTo: "Transferir para",
+    archive: "Arquivar",
+    unarchive: "Desarquivar",
+    archiveTitle: "Arquivar esta conversa?",
+    archiveBody:
+      "Ela sai das listas e fica em Arquivadas. Se o cliente escrever de novo, volta sozinha.",
+    archiveOpenBody:
+      "Arquivar também resolve o atendimento. Ela sai das listas e fica em Arquivadas; se o cliente escrever de novo, volta sozinha.",
+    archivedToast: "Conversa arquivada",
+    unarchivedToast: "Conversa desarquivada",
+    archiveFailed: "Não foi possível arquivar a conversa",
+    archivedLabel: "Arquivada",
+    cancel: "Cancelar",
+    readOnly: "Somente leitura — seu perfil não pode alterar conversas",
   },
   "en-US": {
     labels: { open: "Open", pending: "Pending", closed: "Resolved" },
@@ -224,6 +291,28 @@ const THREAD_STATUS_COPY: Record<
       official: "Channel: official WhatsApp API",
       qr: "Channel: WhatsApp via QR code (no 24-hour window or templates)",
     },
+    claim: "Take",
+    claimTitle: "Take: assign this conversation to you",
+    claimedToast: "Conversation assigned to you",
+    claimTaken: (who) => `${who} took this conversation before you`,
+    someone: "Someone else",
+    transferTitle: (assignee) => `Owner: ${assignee} · Transfer`,
+    noAssignee: "nobody",
+    assignedUnknown: "assigned",
+    transferTo: "Transfer to",
+    archive: "Archive",
+    unarchive: "Unarchive",
+    archiveTitle: "Archive this conversation?",
+    archiveBody:
+      "It leaves the lists and goes to Archived. If the customer writes again, it comes back on its own.",
+    archiveOpenBody:
+      "Archiving also resolves it. It leaves the lists and goes to Archived; if the customer writes again, it comes back on its own.",
+    archivedToast: "Conversation archived",
+    unarchivedToast: "Conversation unarchived",
+    archiveFailed: "Could not archive the conversation",
+    archivedLabel: "Archived",
+    cancel: "Cancel",
+    readOnly: "Read-only — your role can't change conversations",
   },
 };
 
@@ -248,13 +337,14 @@ export function MessageThread({
   onUpdateMessage,
   onStatusChange,
   onAssignChange,
+  onConversationPatch,
   onBack,
   resyncToken = 0,
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
-  const { user, profile, accountId } = useAuth();
+  const { user, profile, accountId, accountRole } = useAuth();
   const { language, t } = useLanguage();
   const statusCopy = THREAD_STATUS_COPY[language] ?? THREAD_STATUS_COPY["pt-BR"];
   const [loading, setLoading] = useState(false);
@@ -762,11 +852,12 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage],
   );
 
+  /** True when the status is now `status` (unchanged counts as success). */
   const handleStatusChange = useCallback(
-    async (status: ConversationStatus) => {
-      if (!conversation) return;
+    async (status: ConversationStatus): Promise<boolean> => {
+      if (!conversation) return false;
 
-      if (conversation.status === status) return;
+      if (conversation.status === status) return true;
 
       const supabase = createClient();
       const { error } = await supabase
@@ -777,16 +868,22 @@ export function MessageThread({
       if (error) {
         console.error("Failed to update status:", error);
         toast.error(t("Failed to update status"));
-        return;
+        return false;
       }
 
       onStatusChange(conversation.id, status);
+      // Leaving "closed" unarchives it in the DB (migration 056 trigger);
+      // mirror that locally so the row leaves the Arquivadas view at once.
+      if (status !== "closed" && conversation.archived_at) {
+        onConversationPatch?.(conversation.id, { archived_at: null });
+      }
       void logEvent({
         event_type: "status_changed",
         payload: { status, previous_status: conversation.status },
       });
+      return true;
     },
-    [conversation, onStatusChange, logEvent, t]
+    [conversation, onStatusChange, onConversationPatch, logEvent, t]
   );
 
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
@@ -796,7 +893,7 @@ export function MessageThread({
     if (!conversation) return;
     const next: ConversationStatus =
       conversation.status === "closed" ? "open" : "closed";
-    await handleStatusChange(next);
+    if (!(await handleStatusChange(next))) return;
     toast.success(
       next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast
     );
@@ -1032,20 +1129,42 @@ export function MessageThread({
     [conversation, user?.id],
   );
 
+  /**
+   * Assign / transfer / unassign. With `expectCurrent`, the update only
+   * applies while the conversation still has the assignee this tab last
+   * saw (compare-and-set) — "Assumir" must not silently steal a thread a
+   * teammate took a second earlier. Returns what happened so callers
+   * only celebrate a real change.
+   */
   const handleAssignChange = useCallback(
-    async (agentId: string | null) => {
-      if (!conversation) return;
+    async (
+      agentId: string | null,
+      opts: { expectCurrent?: boolean } = {},
+    ): Promise<"ok" | "failed" | "conflict"> => {
+      if (!conversation) return "failed";
 
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("conversations")
-        .update({ assigned_agent_id: agentId })
-        .eq("id", conversation.id);
+      const result = await updateConversationAssignee(createClient(), {
+        conversationId: conversation.id,
+        agentId,
+        ...(opts.expectCurrent
+          ? { expectCurrent: conversation.assigned_agent_id ?? null }
+          : {}),
+      });
 
-      if (error) {
-        console.error("Failed to update assignment:", error);
-        toast.error("Failed to update assignment");
-        return;
+      if (result.status === "failed") {
+        console.error("Failed to update assignment:", result.error);
+        toast.error(t("Failed to update assignment"));
+        return "failed";
+      }
+      if (result.status === "conflict") {
+        // Someone else changed it first: show who has it now.
+        onAssignChange(conversation.id, result.assignee);
+        const who =
+          (result.assignee &&
+            profiles.find((p) => p.user_id === result.assignee)?.full_name) ||
+          statusCopy.someone;
+        toast.info(statusCopy.claimTaken(who));
+        return "conflict";
       }
 
       onAssignChange(conversation.id, agentId);
@@ -1066,8 +1185,52 @@ export function MessageThread({
       } else {
         void logEvent({ event_type: "unassigned", payload: {} });
       }
+      return "ok";
     },
-    [conversation, onAssignChange, profiles, logEvent, user?.id],
+    [conversation, onAssignChange, profiles, logEvent, user?.id, t, statusCopy],
+  );
+
+  // "Assumir": the assign dropdown's shortcut for "me".
+  const handleClaim = useCallback(async () => {
+    if (!user?.id) return;
+    const outcome = await handleAssignChange(user.id, { expectCurrent: true });
+    if (outcome === "ok") toast.success(statusCopy.claimedToast);
+  }, [handleAssignChange, user?.id, statusCopy]);
+
+  // Arquivar = resolve + `archived_at` (migration 056); Desarquivar only
+  // clears `archived_at` (the thread stays resolved). The DB trigger
+  // unarchives by itself when the customer writes again or it reopens.
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const handleArchive = useCallback(
+    async (archive: boolean) => {
+      if (!conversation) return;
+      setArchiveBusy(true);
+      const patch: Partial<Conversation> = archive
+        ? { status: "closed", archived_at: new Date().toISOString() }
+        : { archived_at: null };
+      const { error } = await createClient()
+        .from("conversations")
+        .update(patch)
+        .eq("id", conversation.id);
+      setArchiveBusy(false);
+      setArchiveConfirmOpen(false);
+      if (error) {
+        console.error("Failed to archive conversation:", error);
+        toast.error(statusCopy.archiveFailed);
+        return;
+      }
+      if (archive && conversation.status !== "closed") {
+        onStatusChange(conversation.id, "closed");
+        void logEvent({
+          event_type: "status_changed",
+          payload: { status: "closed", previous_status: conversation.status },
+        });
+      }
+      onConversationPatch?.(conversation.id, { archived_at: patch.archived_at ?? null });
+      toast.success(archive ? statusCopy.archivedToast : statusCopy.unarchivedToast);
+    },
+    [conversation, onStatusChange, onConversationPatch, logEvent, statusCopy],
   );
 
   // Name lookup shared by the baseline pills and note headers.
@@ -1126,6 +1289,20 @@ export function MessageThread({
   const assignLabel = assignedAgentId
     ? (currentAssignee?.full_name ?? "Assigned")
     : "Assign";
+  const isArchived = !!conversation.archived_at;
+  // Tooltip copy is language-keyed; the visible chip label above goes
+  // through the DOM catalogue ("Assign" / "Assigned").
+  const assigneeForTitle = assignedAgentId
+    ? (currentAssignee?.full_name ?? statusCopy.assignedUnknown)
+    : statusCopy.noAssignee;
+  // Assumir / Transferir / Lembrar / Resolver / Arquivar — agent+ act,
+  // viewers see them disabled (lib/conversations/header-actions).
+  const actions = conversationHeaderActions({
+    role: accountRole,
+    userId: user?.id,
+    conversation,
+    tasksEnabled,
+  });
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the
@@ -1160,9 +1337,12 @@ export function MessageThread({
               <ArrowLeft className="h-5 w-5" />
             </button>
           )}
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-            {displayName.charAt(0).toUpperCase()}
-          </div>
+          <ContactAvatar
+            key={contact.id}
+            src={contact.avatar_url}
+            name={displayName}
+            className="h-9 w-9 text-sm"
+          />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold leading-5 text-foreground">
               {displayName}
@@ -1186,7 +1366,7 @@ export function MessageThread({
                 )}
               >
                 <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])} />
-                {statusCopy.labels[status]}
+                {isArchived ? statusCopy.archivedLabel : statusCopy.labels[status]}
               </span>
               {/* Channel chip — QR vs official (migration 026). */}
               <span
@@ -1223,14 +1403,31 @@ export function MessageThread({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {/* Assignee — ghost chip. Name shows once the thread is >= 36rem
-              wide; below that the icon + tooltip carry it. */}
+          {/* Assumir — outline, one click to own the thread. Hidden when it
+              is already mine or resolved; disabled for viewers. */}
+          {actions.claim.visible && (
+            <button
+              type="button"
+              data-no-translate
+              onClick={() => void handleClaim()}
+              disabled={!actions.claim.enabled}
+              aria-label={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
+              title={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              <span className="hidden @lg:inline">{statusCopy.claim}</span>
+            </button>
+          )}
+          {/* Assignee / Transferir — ghost chip. Name shows once the thread
+              is >= 36rem wide; below that the icon + tooltip carry it. */}
           <DropdownMenu>
             <DropdownMenuTrigger
-              aria-label={assignLabel}
-              title={assignLabel}
+              disabled={!actions.transfer.enabled}
+              aria-label={actions.canWrite ? statusCopy.transferTitle(assigneeForTitle) : statusCopy.readOnly}
+              title={actions.canWrite ? statusCopy.transferTitle(assigneeForTitle) : statusCopy.readOnly}
               className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-muted hover:text-foreground",
+                "inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
                 assignedAgentId ? "text-foreground" : "text-muted-foreground"
               )}
             >
@@ -1248,6 +1445,9 @@ export function MessageThread({
               align="end"
               className="border-border bg-popover"
             >
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{statusCopy.transferTo}</DropdownMenuLabel>
+              </DropdownMenuGroup>
               {profiles.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-muted-foreground">
                   No teammates available
@@ -1305,10 +1505,17 @@ export function MessageThread({
             <button
               type="button"
               onClick={handleResolveToggle}
+              disabled={!actions.close.enabled}
               aria-label={isResolved ? statusCopy.reopen : statusCopy.resolve}
-              title={isResolved ? statusCopy.reopen : statusCopy.resolve}
+              title={
+                !actions.canWrite
+                  ? statusCopy.readOnly
+                  : isResolved
+                    ? statusCopy.reopen
+                    : statusCopy.resolve
+              }
               className={cn(
-                "inline-flex items-center gap-1.5 pl-2.5 pr-2 transition-colors @md:pr-2.5",
+                "inline-flex items-center gap-1.5 pl-2.5 pr-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60 @md:pr-2.5",
                 isResolved ? "hover:bg-muted" : "hover:bg-primary/90"
               )}
             >
@@ -1323,10 +1530,11 @@ export function MessageThread({
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger
+                disabled={!actions.close.enabled}
                 aria-label={statusCopy.changeStatus}
-                title={statusCopy.changeStatus}
+                title={actions.canWrite ? statusCopy.changeStatus : statusCopy.readOnly}
                 className={cn(
-                  "inline-flex w-6 items-center justify-center border-l transition-colors",
+                  "inline-flex w-6 items-center justify-center border-l transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                   isResolved
                     ? "border-border hover:bg-muted"
                     : "border-primary-foreground/20 hover:bg-primary/90"
@@ -1357,6 +1565,17 @@ export function MessageThread({
             </DropdownMenu>
           </div>
 
+          {/* Lembrar — reminder task at a chosen time (Tasks module). */}
+          {actions.remind.visible && (
+            <ConversationReminder
+              key={conversation.id}
+              conversationId={conversation.id}
+              contactId={contact.id}
+              contactName={displayName}
+              disabled={!actions.remind.enabled}
+            />
+          )}
+
           {/* Utilities — ghost icon buttons, visually a step below the
               actions. Hidden on phones where the header is at its
               tightest. */}
@@ -1375,42 +1594,66 @@ export function MessageThread({
               />
             </button>
           )}
-          {/* Overflow — actions that are not queue operations: "Criar
-              tarefa" (Tasks module) and "Agendar" (Calendar module), agent+. */}
-          {(canCreateTask || canSchedule) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label={t("More actions")}
-                title={t("More actions")}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground"
-              >
-                <MoreVertical className="h-4 w-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                className="min-w-44 border-border bg-popover"
-              >
-                {canCreateTask && (
-                  <DropdownMenuItem
-                    onClick={() => setTaskDrawerOpen(true)}
-                    className="gap-2 text-sm text-popover-foreground"
-                  >
-                    <CheckSquare className="h-4 w-4" />
-                    {t("Create task")}
-                  </DropdownMenuItem>
-                )}
-                {canSchedule && (
-                  <DropdownMenuItem
-                    onClick={() => setEventDrawerOpen(true)}
-                    className="gap-2 text-sm text-popover-foreground"
-                  >
-                    <CalendarPlus className="h-4 w-4" />
-                    {t("Schedule appointment")}
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          {/* Overflow — "Criar tarefa" (Tasks module) and "Agendar"
+              (Calendar module), agent+, then Arquivar / Desarquivar
+              (disabled for viewers). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label={t("More actions")}
+              title={t("More actions")}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="min-w-44 border-border bg-popover"
+            >
+              {canCreateTask && (
+                <DropdownMenuItem
+                  onClick={() => setTaskDrawerOpen(true)}
+                  className="gap-2 text-sm text-popover-foreground"
+                >
+                  <CheckSquare className="h-4 w-4" />
+                  {t("Create task")}
+                </DropdownMenuItem>
+              )}
+              {canSchedule && (
+                <DropdownMenuItem
+                  onClick={() => setEventDrawerOpen(true)}
+                  className="gap-2 text-sm text-popover-foreground"
+                >
+                  <CalendarPlus className="h-4 w-4" />
+                  {t("Schedule appointment")}
+                </DropdownMenuItem>
+              )}
+              {(canCreateTask || canSchedule) && (
+                <DropdownMenuSeparator className="bg-border" />
+              )}
+              {actions.archive.visible && (
+                <DropdownMenuItem
+                  disabled={!actions.archive.enabled || archiveBusy}
+                  onClick={() => setArchiveConfirmOpen(true)}
+                  className="gap-2 text-sm text-popover-foreground"
+                  data-no-translate
+                >
+                  <Archive className="h-4 w-4" />
+                  {statusCopy.archive}
+                </DropdownMenuItem>
+              )}
+              {actions.unarchive.visible && (
+                <DropdownMenuItem
+                  disabled={!actions.unarchive.enabled || archiveBusy}
+                  onClick={() => void handleArchive(false)}
+                  className="gap-2 text-sm text-popover-foreground"
+                  data-no-translate
+                >
+                  <ArchiveRestore className="h-4 w-4" />
+                  {statusCopy.unarchive}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* Contact-panel toggle — desktop only (the panel is xl-only,
               issue #258). */}
           {onToggleContactPanel && (
@@ -1436,6 +1679,26 @@ export function MessageThread({
           )}
         </div>
       </div>
+
+      <Dialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
+        <DialogContent data-no-translate>
+          <DialogHeader>
+            <DialogTitle>{statusCopy.archiveTitle}</DialogTitle>
+            <DialogDescription>
+              {isResolved ? statusCopy.archiveBody : statusCopy.archiveOpenBody}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setArchiveConfirmOpen(false)}>
+              {statusCopy.cancel}
+            </Button>
+            <Button disabled={archiveBusy} onClick={() => void handleArchive(true)}>
+              <Archive />
+              {statusCopy.archive}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {canCreateTask && (
         <TaskDrawer

@@ -12,6 +12,7 @@ function makeApp() {
     getStatus: vi.fn((_id: string) => ({ status: "qr" as const, qr: "data:image/png;base64,AAA" })),
     send: vi.fn(async (_id: string, _req: unknown) => ({ message_id: "M1" })),
     markRead: vi.fn(async (_id: string, _req: unknown) => ({ read: 1 })),
+    fetchAvatar: vi.fn(async (_id: string, _req: unknown) => ({ url: "https://x/y?v=1" as string | null })),
     listAccountIds: vi.fn(() => ["a"]),
   };
   const app = createApp({ secret: SECRET, sessions, logger: pino({ level: "silent" }) });
@@ -101,5 +102,28 @@ describe("HTTP", () => {
     const { app } = makeApp();
     const res = await app.request("/sessions/..%2Fetc/connect", { method: "POST", headers: auth });
     expect(res.status).toBe(400);
+  });
+
+  it("POST avatar valida to e contact_id, repassa e mapeia throttled para 429", async () => {
+    const { app, sessions } = makeApp();
+    const post = (body: unknown) =>
+      app.request("/sessions/acc-1/avatar", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ contact_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" })).status).toBe(400);
+    expect((await post({ to: "5511999999999", contact_id: "../etc" })).status).toBe(400);
+    const ok = await post({ to: "5511999999999", contact_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ url: "https://x/y?v=1" });
+    expect(sessions.fetchAvatar).toHaveBeenCalledWith("acc-1", {
+      to: "5511999999999",
+      contact_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    });
+    sessions.fetchAvatar.mockRejectedValueOnce(new GatewayError("fila cheia", "throttled", 429));
+    const throttled = await post({ to: "5511999999999", contact_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" });
+    expect(throttled.status).toBe(429);
+    expect(await throttled.json()).toMatchObject({ error: "throttled" });
   });
 });

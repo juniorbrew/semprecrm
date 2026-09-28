@@ -2,15 +2,19 @@ import { Hono } from "hono";
 import { HEADER_SECRET } from "./app-client.js";
 import type { Logger } from "./logger.js";
 import { GatewayError, type SessionManager } from "./session-manager.js";
-import type { ReadRequest, SendRequest } from "./types.js";
+import type { AvatarRequest, ReadRequest, SendRequest } from "./types.js";
 
 export interface ServerDeps {
   secret: string;
-  sessions: Pick<SessionManager, "connect" | "logout" | "getStatus" | "send" | "markRead" | "listAccountIds">;
+  sessions: Pick<
+    SessionManager,
+    "connect" | "logout" | "getStatus" | "send" | "markRead" | "fetchAvatar" | "listAccountIds"
+  >;
   logger: Logger;
 }
 
 const ACCOUNT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -37,7 +41,7 @@ export function createApp(deps: ServerDeps): Hono {
 
   app.onError((err, c) => {
     if (err instanceof GatewayError) {
-      return c.json({ error: err.code, message: err.message }, err.httpStatus as 400 | 409 | 422 | 502);
+      return c.json({ error: err.code, message: err.message }, err.httpStatus as 400 | 409 | 422 | 429 | 502);
     }
     log.error({ err: err.message, path: c.req.path }, "erro não tratado");
     return c.json({ error: "internal", message: err.message }, 500);
@@ -103,6 +107,23 @@ export function createApp(deps: ServerDeps): Hono {
       throw new GatewayError("message_ids precisa ser uma lista de ids", "invalid_request", 400);
     }
     const result = await deps.sessions.markRead(c.req.param("accountId"), body);
+    return c.json(result);
+  });
+
+  app.post("/sessions/:accountId/avatar", async (c) => {
+    let body: AvatarRequest;
+    try {
+      body = (await c.req.json()) as AvatarRequest;
+    } catch {
+      throw new GatewayError("JSON inválido", "invalid_request", 400);
+    }
+    if (!body || typeof body.to !== "string" || !body.to.trim()) {
+      throw new GatewayError("campo `to` obrigatório", "invalid_request", 400);
+    }
+    if (typeof body.contact_id !== "string" || !UUID_RE.test(body.contact_id)) {
+      throw new GatewayError("contact_id precisa ser um uuid", "invalid_request", 400);
+    }
+    const result = await deps.sessions.fetchAvatar(c.req.param("accountId"), body);
     return c.json(result);
   });
 

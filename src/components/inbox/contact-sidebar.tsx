@@ -38,6 +38,8 @@ import {
   ExternalLink,
   Ban,
   ShieldCheck,
+  CalendarPlus,
+  UserRound,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -56,12 +58,14 @@ import {
   TaskQuickCreate,
   useLinkedTasks,
 } from "@/components/tasks";
-import { LinkedEvents } from "@/components/calendar";
+import { EventDrawer, LinkedEvents } from "@/components/calendar";
 import type { Task } from "@/lib/tasks";
 import { NewCustomFieldDialog } from "./new-custom-field-dialog";
 import { CustomFieldValue } from "./custom-field-value";
 import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
+import { ContactCompanies } from "@/components/companies/contact-companies";
 import { TeamNoteComposer } from "./team-note-composer";
+import { ContactAvatar } from "./contact-avatar";
 import { toast } from "sonner";
 
 // Same preset palette as Settings › Tags; picked round-robin for inline creation.
@@ -94,6 +98,14 @@ const PANEL_COPY: Record<
     newTagPlaceholder: string;
     createTag: string;
     tagCreateFailed: string;
+    companies: string;
+    /** Shortcut row under the contact's reach (Deskcomm-style). */
+    shortcuts: string;
+    scheduleAppointment: string;
+    newDeal: string;
+    viewContact: string;
+    readOnly: string;
+    serviceTitle: (name: string) => string;
     customFields: string;
     noCustomFields: string;
     emptyValue: string;
@@ -131,6 +143,13 @@ const PANEL_COPY: Record<
     newTagPlaceholder: "Nova etiqueta…",
     createTag: "Criar",
     tagCreateFailed: "Não foi possível criar a etiqueta",
+    companies: "Empresas",
+    shortcuts: "Atalhos do contato",
+    scheduleAppointment: "Marcar compromisso",
+    newDeal: "Novo negócio",
+    viewContact: "Ver contato",
+    readOnly: "Somente leitura — seu perfil não pode criar compromissos nem negócios",
+    serviceTitle: (name) => `Atendimento: ${name}`,
     customFields: "Campos personalizados",
     noCustomFields: "Nenhum campo personalizado definido",
     emptyValue: "—",
@@ -166,6 +185,13 @@ const PANEL_COPY: Record<
     newTagPlaceholder: "New label…",
     createTag: "Create",
     tagCreateFailed: "Could not create the label",
+    companies: "Companies",
+    shortcuts: "Contact shortcuts",
+    scheduleAppointment: "Book appointment",
+    newDeal: "New deal",
+    viewContact: "View contact",
+    readOnly: "Read-only — your role can't create appointments or deals",
+    serviceTitle: (name) => `Service: ${name}`,
     customFields: "Custom fields",
     noCustomFields: "No custom fields defined",
     emptyValue: "—",
@@ -274,6 +300,44 @@ function SectionHeader({
   );
 }
 
+/** One tile of the contact shortcut row. */
+function ShortcutButton({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+  busy,
+  title,
+  hidden,
+}: {
+  icon: typeof TagIcon;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  title: string;
+  /** Module not on the plan — the tile is left out. */
+  hidden?: boolean;
+}) {
+  if (hidden) return null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="flex flex-col items-center gap-1 rounded-lg border border-border px-1 py-2 text-center text-[11px] font-medium leading-tight text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {busy ? (
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+      ) : (
+        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+      )}
+      {label}
+    </button>
+  );
+}
+
 export function ContactSidebar({
   contact,
   conversationId = null,
@@ -369,6 +433,10 @@ export function ContactSidebar({
   const [taskAddOpen, setTaskAddOpen] = useState(false);
   const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  // "Marcar compromisso" shortcut: the agenda's create sheet prefilled
+  // with this contact + thread; bumping the key refreshes LinkedEvents.
+  const [eventDrawerOpen, setEventDrawerOpen] = useState(false);
+  const [eventsVersion, setEventsVersion] = useState(0);
 
   const contactId = contact?.id ?? null;
   const linkedTasks = useLinkedTasks({ contactId, enabled: tasksEnabled });
@@ -659,7 +727,6 @@ export function ContactSidebar({
   }
 
   const displayName = contact.name || contact.phone;
-  const initials = displayName.charAt(0).toUpperCase();
   const otherConversations = previous.filter((c) => c.id !== conversationId);
   const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
   const hiddenNotes = notes.length - panelNotes.length;
@@ -680,18 +747,12 @@ export function ContactSidebar({
         <div className="p-4">
           {/* Identity */}
           <div className="flex flex-col items-center text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
-              {contact.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={contact.avatar_url}
-                  alt={displayName}
-                  className="h-16 w-16 rounded-full object-cover"
-                />
-              ) : (
-                initials
-              )}
-            </div>
+            <ContactAvatar
+              key={contact.id}
+              src={contact.avatar_url}
+              name={displayName}
+              className="h-16 w-16 text-lg font-semibold"
+            />
             <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
             {contact.anonymized_at && (
               <span
@@ -759,6 +820,79 @@ export function ContactSidebar({
               </div>
             )}
           </div>
+
+          {/* Shortcuts — book an appointment (agenda sheet), open a deal
+              (deal sheet; its company defaults to the contact's primary
+              one) and jump to the contact page. Viewers see the first two
+              disabled. */}
+          <div
+            role="group"
+            aria-label={copy.shortcuts}
+            className="mt-3 grid grid-cols-3 gap-1.5"
+          >
+            <ShortcutButton
+              icon={CalendarPlus}
+              label={copy.scheduleAppointment}
+              onClick={() => setEventDrawerOpen(true)}
+              disabled={!canWrite || !calendarEnabled}
+              title={!canWrite ? copy.readOnly : copy.scheduleAppointment}
+              hidden={!calendarEnabled}
+            />
+            <ShortcutButton
+              icon={DollarSign}
+              label={copy.newDeal}
+              onClick={() => void openNewDeal()}
+              disabled={!canWrite || !pipelinesEnabled || dealTargetLoading}
+              busy={dealTargetLoading}
+              title={!canWrite ? copy.readOnly : copy.newDeal}
+              hidden={!pipelinesEnabled}
+            />
+            <Link
+              href={`/contacts?contact=${encodeURIComponent(contact.id)}`}
+              title={copy.viewContact}
+              className="flex flex-col items-center gap-1 rounded-lg border border-border px-1 py-2 text-center text-[11px] font-medium leading-tight text-foreground transition-colors hover:bg-muted"
+            >
+              <UserRound className="h-4 w-4 text-muted-foreground" aria-hidden />
+              {copy.viewContact}
+            </Link>
+          </div>
+          {calendarEnabled && canWrite && (
+            <EventDrawer
+              open={eventDrawerOpen}
+              onOpenChange={setEventDrawerOpen}
+              event={null}
+              defaults={{
+                contact_id: contact.id,
+                conversation_id: conversationId ?? undefined,
+                title: copy.serviceTitle(displayName),
+              }}
+              onCreated={() => setEventsVersion((v) => v + 1)}
+            />
+          )}
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Companies (migration 054) — primary first, each linking to
+              /companies?company=<id>; agent+ links / unlinks / marks the
+              primary through the shared data layer. */}
+          <ContactCompanies
+            key={contact.id}
+            contactId={contact.id}
+            readOnly={!canWrite}
+            compact
+            header={({ count, togglePicker, readOnly }) => (
+              <SectionHeader
+                icon={Building2}
+                label={copy.companies}
+                count={count}
+                action={
+                  readOnly ? undefined : (
+                    <SectionAddButton label={t("Link company")} onClick={togglePicker} />
+                  )
+                }
+              />
+            )}
+          />
 
           <div className="my-4 border-t border-border" />
 
@@ -1046,6 +1180,7 @@ export function ContactSidebar({
               {/* Agenda — the contact's next appointments; "+" reveals the
                   inline title + when creator linked to the contact and thread. */}
               <LinkedEvents
+                key={`${contact.id}:${eventsVersion}`}
                 contactId={contact.id}
                 defaults={{ conversation_id: conversationId ?? undefined }}
                 readOnly={!canWrite}

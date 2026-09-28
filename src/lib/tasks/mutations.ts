@@ -74,6 +74,8 @@ export async function createTask(
       conversation_id: input.conversation_id || null,
       deal_id: input.deal_id || null,
       due_at: input.due_at || null,
+      // Only sent when set, so plain tasks keep working on a pre-057 schema.
+      ...(input.remind_at ? { remind_at: input.remind_at } : {}),
     })
     .select(TASK_SELECT)
     .single();
@@ -101,6 +103,7 @@ export async function updateTask(
   if (patch.conversation_id !== undefined) row.conversation_id = patch.conversation_id || null;
   if (patch.deal_id !== undefined) row.deal_id = patch.deal_id || null;
   if (patch.due_at !== undefined) row.due_at = patch.due_at || null;
+  if (patch.remind_at !== undefined) row.remind_at = patch.remind_at || null;
 
   const { data, error } = await db
     .from('tasks')

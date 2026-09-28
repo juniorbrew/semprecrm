@@ -1,8 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { ingestInboundMessage } from '@/lib/whatsapp/inbound'
-import { isGatewayRequest } from '@/lib/whatsapp/qr-gateway'
+import { fetchContactAvatarViaGateway, isGatewayRequest } from '@/lib/whatsapp/qr-gateway'
+import { refreshContactAvatar } from '@/lib/whatsapp/contact-avatar'
+import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 
 const INBOUND_TYPES = new Set([
   'text',
@@ -33,7 +35,9 @@ interface InboundBody {
  * text?, media?: { url, mimetype, filename? }, quoted_message_id? }`.
  * Media is already in the `chat-media` bucket — `media.url` is public.
  *
- * Runs the shared ingestion pipeline with `channel: 'qr'`.
+ * Runs the shared ingestion pipeline with `channel: 'qr'`. After the
+ * response, fills the contact's profile photo when it was never
+ * checked or is older than a week (lib/whatsapp/contact-avatar).
  */
 export async function POST(request: Request) {
   if (!isGatewayRequest(request)) {
@@ -90,6 +94,20 @@ export async function POST(request: Request) {
     // 422 (not 5xx) so the gateway does not retry forever on a message
     // we cannot place (unknown account, no owner...).
     return NextResponse.json({ ok: false, reason: result.reason }, { status: 422 })
+  }
+
+  // Profile photo, off the response path: the gateway answers only after
+  // its per-account queue reaches this lookup. The claim inside
+  // `refreshContactAvatar` makes redeliveries / bursts a no-op.
+  const contactId = result.contactId
+  if (contactId && result.reason !== 'duplicate') {
+    after(() =>
+      refreshContactAvatar(
+        supabaseAdmin(),
+        { accountId, contactId, phone: normalizePhone(from) },
+        fetchContactAvatarViaGateway,
+      ).then(() => undefined),
+    )
   }
   return NextResponse.json({
     ok: true,

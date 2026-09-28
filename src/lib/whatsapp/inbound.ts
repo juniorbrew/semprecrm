@@ -111,6 +111,13 @@ export interface ContactOutcome {
   wasCreated: boolean
 }
 
+/**
+ * Contact photos: only the QR channel can fill `contacts.avatar_url`
+ * (the route calls lib/whatsapp/contact-avatar after the response). The
+ * Meta Cloud API never exposes a customer's profile photo — webhooks
+ * carry `contacts[].profile.name` only — so official-channel contacts
+ * keep the initials fallback in the inbox.
+ */
 export async function findOrCreateContact(
   db: SupabaseClient,
   accountId: string,

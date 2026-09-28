@@ -6,7 +6,12 @@ import type { AutomationContext } from '@/lib/automations/engine'
 import { scanInactiveConversations } from '@/lib/automations/inactivity'
 import { drainAutomationEvents, pruneAutomationEvents } from '@/lib/automations/event-queue'
 import { AUDIT_RETENTION_DAYS } from '@/lib/audit'
-import { notifyCalendarReminders, notifyTasksDueSoon, notifyNewLeads } from '@/lib/push/notify'
+import {
+  notifyCalendarReminders,
+  notifyNewLeads,
+  notifyTaskReminders,
+  notifyTasksDueSoon,
+} from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
 
 /** Retention for the lead-capture webhook log (spec §2). */
@@ -160,6 +165,17 @@ export async function GET(request: Request) {
     }
   }
 
+  // Browser push: inbox "Lembrar" reminders at their exact `remind_at`
+  // (migration 057), once each (`tasks.reminded_at`).
+  let taskReminders: { scanned: number; notified: number } | null = null
+  if (isPushConfigured()) {
+    try {
+      taskReminders = await notifyTaskReminders(admin, new Date())
+    } catch (err) {
+      console.error('[cron] task reminder push threw:', err)
+    }
+  }
+
   const leadNotifications = await notifyNewLeads(admin)
 
   return NextResponse.json({
@@ -168,6 +184,7 @@ export async function GET(request: Request) {
     lead_notifications: leadNotifications,
     tasks_due: tasksDue,
     calendar_reminders: calendarReminders,
+    task_reminders: taskReminders,
     inactivity: {
       automations: inactivity.automations,
       fired: inactivity.fired,

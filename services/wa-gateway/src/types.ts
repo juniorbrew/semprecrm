@@ -38,6 +38,19 @@ export interface ReadResponse {
   read: number;
 }
 
+/** `POST /sessions/:id/avatar` — foto de perfil do contato (canal QR). */
+export interface AvatarRequest {
+  /** telefone do contato (dígitos) */
+  to: string;
+  /** `contacts.id` no app — nome do arquivo no bucket `contact-avatars` */
+  contact_id: string;
+}
+
+/** `url: null` = o contato não tem foto visível para nós (privacidade ou sem foto). */
+export interface AvatarResponse {
+  url: string | null;
+}
+
 export interface SendResponse {
   message_id: string;
 }

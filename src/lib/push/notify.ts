@@ -16,6 +16,8 @@
 //                                     internal team chat, migration 038
 //   (f) notifyCalendarReminders     — /api/automations/cron
 //                                     agenda reminders, migration 040
+//   (g) notifyTaskReminders         — /api/automations/cron
+//                                     inbox "Lembrar", migration 057
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -234,9 +236,11 @@ export async function notifyTasksDueSoon(
     // Look back one hour so a task whose window passed during downtime
     // still gets its (late) reminder; older ones are left alone.
     const floor = new Date(now.getTime() - 60 * 60_000).toISOString()
+    // `*` rather than a column list: `remind_at` only exists from
+    // migration 057 on, and naming it would break this scan before it.
     const { data, error } = await admin
       .from('tasks')
-      .select('id, account_id, title, assignee_user_id, due_at')
+      .select('*')
       .is('reminded_at', null)
       .is('completed_at', null)
       .not('assignee_user_id', 'is', null)
@@ -250,13 +254,14 @@ export async function notifyTasksDueSoon(
       }
       return result
     }
-    const tasks = (data ?? []) as {
+    const tasks = ((data ?? []) as {
       id: string
       account_id: string
       title: string
       assignee_user_id: string
       due_at: string
-    }[]
+      remind_at?: string | null
+    }[]).filter((t) => !t.remind_at) // reminders push at remind_at — (g)
     result.scanned = tasks.length
     if (tasks.length === 0) return result
 
@@ -288,6 +293,86 @@ export async function notifyTasksDueSoon(
     return result
   } catch (err) {
     console.error('[push] notifyTasksDueSoon threw:', err)
+    return result
+  }
+}
+
+// ------------------------------------------------------------
+// (g) Conversation reminders — exact time (cron)
+// ------------------------------------------------------------
+
+export interface TaskRemindersResult {
+  scanned: number
+  notified: number
+}
+
+/**
+ * Open tasks whose `remind_at` (migration 057, set by the inbox
+ * "Lembrar") is now or past and not reminded yet. Same claim-first
+ * pattern and one-hour look-back as the other scans; the push opens
+ * the linked conversation when there is one. Honours the assignee's
+ * `task_due` preference.
+ */
+export async function notifyTaskReminders(
+  admin: SupabaseClient,
+  now: Date = new Date(),
+): Promise<TaskRemindersResult> {
+  const result: TaskRemindersResult = { scanned: 0, notified: 0 }
+  try {
+    const floor = new Date(now.getTime() - 60 * 60_000).toISOString()
+    const { data, error } = await admin
+      .from('tasks')
+      .select('id, account_id, title, description, assignee_user_id, remind_at, conversation_id')
+      .is('reminded_at', null)
+      .is('completed_at', null)
+      .not('assignee_user_id', 'is', null)
+      .gte('remind_at', floor)
+      .lte('remind_at', now.toISOString())
+      .order('remind_at', { ascending: true })
+      .limit(200)
+    if (error) {
+      // Pre-057 schema (no remind_at) → skip silently.
+      if (!/42P01|42703|PGRST|does not exist|schema cache/i.test(`${error.code} ${error.message}`)) {
+        console.error('[push] task reminder scan failed:', error.message)
+      }
+      return result
+    }
+    const rows = (data ?? []) as {
+      id: string
+      account_id: string
+      title: string
+      description: string | null
+      assignee_user_id: string
+      remind_at: string
+      conversation_id: string | null
+    }[]
+    result.scanned = rows.length
+    const stamp = now.toISOString()
+    for (const task of rows) {
+      const { data: claimed } = await admin
+        .from('tasks')
+        .update({ reminded_at: stamp })
+        .eq('id', task.id)
+        .is('reminded_at', null)
+        .select('id')
+        .maybeSingle()
+      if (!claimed) continue
+
+      const profiles = await loadProfiles(admin, task.account_id, [task.assignee_user_id])
+      const recipients = allowed(profiles, 'task_due')
+      if (recipients.length === 0) continue
+      const note = task.description?.replace(/\s+/g, ' ').trim()
+      const res = await sendPushToUsers(admin, recipients, {
+        title: `⏰ ${task.title}`,
+        body: note ? (note.length > 140 ? `${note.slice(0, 139)}…` : note) : tr('Reminder'),
+        url: task.conversation_id ? conversationUrl(task.conversation_id) : taskUrl(task.id),
+        tag: `task:${task.id}`,
+      })
+      if (res.sent > 0) result.notified++
+    }
+    return result
+  } catch (err) {
+    console.error('[push] notifyTaskReminders threw:', err)
     return result
   }
 }
