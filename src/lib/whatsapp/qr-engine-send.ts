@@ -16,6 +16,8 @@ import type { WhatsAppChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
 import { sendViaGateway, type GatewayMedia } from './qr-gateway'
 import { mediaUrlForServer } from '@/lib/storage/media-url'
+import { isUniqueViolation } from '@/lib/contacts/dedupe'
+import { claimEchoedRow } from './phone-echo'
 
 /** `official` for rows that predate migration 026 or can't be read. */
 export async function conversationChannel(
@@ -82,6 +84,8 @@ export interface EngineQrSendInput {
   templateName?: string | null
   /** Conversation-list preview; defaults to `text`. */
   preview?: string
+  /** Which engine sent it — drives the bubble's sender label (migration 059). */
+  origin?: 'automation' | 'flow'
 }
 
 /**
@@ -114,9 +118,10 @@ export async function engineSendViaQr(
     ...(input.media ? { media: { ...input.media, url: mediaUrlForServer(input.media.url) } } : {}),
   })
 
-  const { error: msgErr } = await db.from('messages').insert({
+  const row = {
     conversation_id: input.conversationId,
     sender_type: 'bot',
+    origin: input.origin ?? null,
     content_type: input.contentType,
     content_text: input.text ?? input.media?.caption ?? null,
     media_url: input.media?.url ?? null,
@@ -124,8 +129,15 @@ export async function engineSendViaQr(
     message_id,
     status: 'sent',
     channel: 'qr',
-  })
-  if (msgErr) {
+  }
+  const { error: msgErr } = await db.from('messages').insert(row)
+  // The phone echo of this very id got stored first (should not happen:
+  // the gateway drops echoes of its own sends) — take that row over.
+  const claimed =
+    msgErr && isUniqueViolation(msgErr)
+      ? await claimEchoedRow(db, input.conversationId, message_id, row)
+      : null
+  if (msgErr && !claimed) {
     throw new Error(`sent via gateway but DB insert failed: ${msgErr.message}`)
   }
 

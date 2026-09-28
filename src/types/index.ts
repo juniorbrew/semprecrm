@@ -301,6 +301,12 @@ export interface Conversation {
 }
 
 export type SenderType = 'customer' | 'agent' | 'bot';
+/**
+ * Where an outbound message came from, beyond `sender_type` (migration
+ * 059). `phone` = sent from the connected phone / WhatsApp Web (QR echo,
+ * sender_type 'agent', no sender_id). NULL/absent = inbox send or legacy.
+ */
+export type MessageOrigin = 'phone' | 'automation' | 'flow' | 'system';
 export type ContentType =
   | 'text'
   | 'image'
@@ -343,6 +349,14 @@ export interface Message {
   error_code?: number | null;
   error_title?: string | null;
   error_details?: string | null;
+  /** Migration 059 — see MessageOrigin. */
+  origin?: MessageOrigin | null;
+  /**
+   * Deleted for everyone on WhatsApp (migration 059). The row keeps its
+   * content; the bubble shows it struck through with a label.
+   */
+  revoked_at?: string | null;
+  revoked_by?: 'customer' | 'phone' | null;
 }
 
 export type ReactionActor = 'customer' | 'agent';
