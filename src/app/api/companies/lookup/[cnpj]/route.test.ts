@@ -88,7 +88,7 @@ describe('GET /api/companies/lookup/[cnpj]', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('private, no-store')
     expect(await res.json()).toEqual({ ok: true, company, existing: h.existing })
-    expect(h.lookup).toHaveBeenCalledWith('11222333000181')
+    expect(h.lookup).toHaveBeenCalledWith('11222333000181', undefined, { enrichEmail: false })
     expect(h.queries[0]).toContainEqual(['eq', 'cnpj', '11222333000181'])
     expect(h.queries[0]).toContainEqual(['eq', 'account_id', 'acct-1'])
   })
@@ -106,10 +106,10 @@ describe('GET /api/companies/lookup/[cnpj]', () => {
     expect((await res.json()).existing).toEqual(h.existing)
   })
 
-  it('rate-limits per user', async () => {
+  it('rate-limits per user at 10 a minute', async () => {
     h.lookup.mockResolvedValue({ ok: true, company })
     let last: Response | null = null
-    for (let i = 0; i < 61; i++) last = await call('11222333000181')
+    for (let i = 0; i < 11; i++) last = await call('11222333000181')
     expect(last?.status).toBe(429)
     // Another user has their own bucket.
     h.role = 'admin'

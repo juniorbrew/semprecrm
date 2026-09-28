@@ -111,6 +111,32 @@ describe('lookupCnpj', () => {
   })
 })
 
+describe('lookupCnpj — quota protection', () => {
+  it('skips the e-mail enrichment call when asked to', async () => {
+    const fetchMock = vi.fn(async () => res(200, { ...cnpjBody, email: null }))
+    expect(await lookupCnpj('11222333000181', fetchMock, { enrichEmail: false })).toMatchObject({ ok: true, company: { email: '' } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a source that answered 429 alone for a minute (fallback and enrichment)', async () => {
+    const limited = vi.fn(async (url: string) => {
+      if (url.includes('brasilapi')) return res(503, {})
+      if (url.includes('cnpj.ws')) return res(429, {})
+      return res(200, { nome: 'PADARIA SOL LTDA', status: 'OK' })
+    })
+    expect((await lookupCnpj('11222333000181', limited)).ok).toBe(true)
+    expect(limited.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('cnpj.ws'))).toHaveLength(1)
+
+    // Another CNPJ within the minute (no reset, so the cooldown holds):
+    // cnpj.ws is not called at all — neither as fallback nor for e-mail.
+    const next = vi.fn(async (url: string) =>
+      url.includes('brasilapi') ? res(200, { ...cnpjBody, cnpj: '11444777000161', email: null }) : res(200, {}),
+    )
+    expect((await lookupCnpj('11444777000161', next)).ok).toBe(true)
+    expect(next.mock.calls.map((c) => String(c[0]))).toEqual(['https://brasilapi.com.br/api/cnpj/v1/11444777000161'])
+  })
+})
+
 describe('lookupCep', () => {
   it('uses BrasilAPI v2 and maps it', async () => {
     const fetchMock = vi.fn(async () => res(200, { cep: '01001000', state: 'SP', city: 'São Paulo', neighborhood: 'Sé', street: 'Praça da Sé' }))

@@ -61,6 +61,31 @@ function cacheSet(key: string, value: unknown, ttl: number) {
 /** Test-only: clear the shared cache between cases. */
 export function __resetLookupCacheForTests() {
   cache.clear()
+  cooldownUntil.clear()
+}
+
+// A source that answered 429 is left alone for a minute: the free tiers
+// (cnpj.ws, ReceitaWS: ~3 calls/min) only get worse when hammered, and
+// skipping them keeps the fallback fast. Per process, like the cache.
+const RATE_LIMIT_COOLDOWN_MS = 60_000
+const cooldownUntil = new Map<string, number>()
+
+function hostOf(url: string): string {
+  return new URL(url).host
+}
+
+function coolingDown(url: string): boolean {
+  const until = cooldownUntil.get(hostOf(url))
+  if (until === undefined) return false
+  if (until <= Date.now()) {
+    cooldownUntil.delete(hostOf(url))
+    return false
+  }
+  return true
+}
+
+function noteStatus(url: string, status: number) {
+  if (status === 429) cooldownUntil.set(hostOf(url), Date.now() + RATE_LIMIT_COOLDOWN_MS)
 }
 
 async function getJson(
@@ -89,14 +114,17 @@ type CnpjSourceResult = { company: CompanyLookup } | { miss: true } | { failed: 
 /**
  * One public CNPJ source: GET, classify, map. 404/400 (or a 200 that
  * carries no company) is a miss; network errors, timeouts, 429 and
- * 5xx are failures — the next source gets its turn either way.
+ * 5xx are failures — the next source gets its turn either way. A
+ * source cooling down after a 429 counts as failed without a request.
  */
 async function fromSource(
   fetchImpl: FetchLike,
   url: string,
   map: (json: Record<string, unknown>) => CompanyLookup | null,
 ): Promise<CnpjSourceResult> {
+  if (coolingDown(url)) return { failed: true }
   const r = await getJson(fetchImpl, url)
+  noteStatus(url, r.status)
   if (r.status === 404 || r.status === 400) return { miss: true }
   if (r.status !== 200) return { failed: true }
   if (!r.json) return { failed: true }
@@ -121,9 +149,19 @@ const CNPJ_SOURCES: { url: (cnpj: string) => string; map: (json: Record<string, 
   },
 ]
 
+export interface LookupCnpjOptions {
+  /**
+   * When BrasilAPI answers without an e-mail, spend one cnpj.ws call to
+   * fetch it (default true — signup / Settings). Skipped anyway while
+   * cnpj.ws is cooling down after a 429.
+   */
+  enrichEmail?: boolean
+}
+
 export async function lookupCnpj(
   raw: string,
   fetchImpl: FetchLike = fetch,
+  { enrichEmail = true }: LookupCnpjOptions = {},
 ): Promise<CnpjLookupResult> {
   const cnpj = normalizeTaxId(raw)
   if (!isValidCnpj(cnpj)) return { ok: false, reason: 'invalid' }
@@ -149,8 +187,10 @@ export async function lookupCnpj(
     // BrasilAPI usually omits the e-mail the Receita holds; cnpj.ws has
     // it. Best effort, short budget, silently skipped when rate-limited
     // (its free tier allows 3 calls a minute).
-    if (index === 0 && !company.email) {
-      const extra = await getJson(fetchImpl, `https://publica.cnpj.ws/cnpj/${cnpj}`, EMAIL_LOOKUP_TIMEOUT_MS)
+    const enrichUrl = `https://publica.cnpj.ws/cnpj/${cnpj}`
+    if (enrichEmail && index === 0 && !company.email && !coolingDown(enrichUrl)) {
+      const extra = await getJson(fetchImpl, enrichUrl, EMAIL_LOOKUP_TIMEOUT_MS)
+      noteStatus(enrichUrl, extra.status)
       const est = extra.status === 200 && extra.json ? (extra.json.estabelecimento as Record<string, unknown> | undefined) : undefined
       const email = typeof est?.email === 'string' ? est.email.trim().toLowerCase() : ''
       if (email) company.email = email

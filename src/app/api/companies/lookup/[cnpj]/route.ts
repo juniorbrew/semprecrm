@@ -11,8 +11,8 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 // form (Empresas). Agent+, since only writers fill that form.
 //
 // Same upstream chain and cache as the public /api/lookup/cnpj (the
-// signup page's), but authenticated and rate-limited per user rather
-// than per IP, and it also answers whether the caller's account
+// signup page's), but authenticated and rate-limited per user (10/min)
+// rather than per IP, and it also answers whether the caller's account
 // already has a company with this CNPJ — so the form can warn before
 // the user retypes a company that exists.
 //
@@ -40,7 +40,7 @@ export async function GET(
   try {
     const ctx = await requireRole('agent')
 
-    const limit = checkRateLimit(`lookup:cnpj:user:${ctx.userId}`, RATE_LIMITS.lookup)
+    const limit = checkRateLimit(`lookup:cnpj:user:${ctx.userId}`, RATE_LIMITS.companyLookup)
     if (!limit.success) return rateLimitResponse(limit)
 
     const { cnpj: raw } = await params
@@ -50,7 +50,9 @@ export async function GET(
     }
 
     const [result, existing] = await Promise.all([
-      lookupCnpj(cnpj),
+      // No e-mail enrichment here: the user types the e-mail, and the
+      // spare cnpj.ws call would eat the fallback's small quota.
+      lookupCnpj(cnpj, undefined, { enrichEmail: false }),
       findCompanyByCnpj(ctx.supabase, cnpj, { accountId: ctx.accountId }).catch((err) => {
         console.error('[GET /api/companies/lookup] duplicate check failed:', err)
         return null
