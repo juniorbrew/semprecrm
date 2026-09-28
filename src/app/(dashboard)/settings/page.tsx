@@ -24,6 +24,7 @@ import { NotificationsSettings } from '@/components/settings/notifications-setti
 import { CalendarSettings } from '@/components/settings/calendar-settings';
 import { BrandingSettings } from '@/components/settings/branding-settings';
 import { CompanySettings } from '@/components/settings/company-settings';
+import { AiSettings } from '@/components/settings/ai-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { PlanPanel } from '@/components/settings/plan-panel';
 import {
@@ -79,6 +80,7 @@ export default function SettingsPage() {
     audit: <AuditLogSettings />,
     branding: <BrandingSettings />,
     company: <CompanySettings />,
+    ai: <AiSettings />,
     members: <MembersTab />,
     plan: <PlanPanel />,
   };

@@ -254,6 +254,15 @@ export function SettingsOverview({
               ? `${account.person_type === 'pj' ? 'CNPJ' : 'CPF'} ${formatTaxId(account.person_type === 'pj' ? 'pj' : 'pf', account.tax_id)}`
               : t('Add your CPF or CNPJ'),
           },
+          ...(entitlements.modules.ai
+            ? [
+                {
+                  section: 'ai' as const,
+                  loading: false,
+                  subtitle: t('Reply suggestions with your own AI key'),
+                },
+              ]
+            : []),
         ]
       : []),
     {

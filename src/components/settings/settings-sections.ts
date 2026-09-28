@@ -12,6 +12,7 @@ import {
   PlugZap,
   ScrollText,
   Shield,
+  Sparkles,
   Tags,
   Timer,
   User,
@@ -49,6 +50,7 @@ export const SETTINGS_SECTIONS = [
   'audit',
   'branding',
   'company',
+  'ai',
   'members',
   'plan',
 ] as const;
@@ -87,6 +89,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   audit: { id: 'audit', label: 'Auditoria', icon: ScrollText, group: 'workspace', adminOnly: true },
   branding: { id: 'branding', label: 'Marca', icon: Paintbrush, group: 'workspace', adminOnly: true },
   company: { id: 'company', label: 'Empresa', icon: Building2, group: 'workspace', adminOnly: true },
+  ai: { id: 'ai', label: 'Inteligência Artificial', icon: Sparkles, group: 'workspace', adminOnly: true, module: 'ai' },
   members: { id: 'members', label: 'Membros da equipe', icon: UsersRound, group: 'workspace' },
   plan: { id: 'plan', label: 'Plano', icon: CreditCard, group: 'workspace' },
 };
