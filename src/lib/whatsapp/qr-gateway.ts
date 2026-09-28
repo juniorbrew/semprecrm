@@ -268,7 +268,10 @@ export async function fetchContactAvatarViaGateway(input: {
       {
         method: 'POST',
         body: { to: input.phone, contact_id: input.contactId },
-        // The gateway queues lookups per account (spaced a few seconds apart).
+        // The gateway queues lookups per account (spaced a few seconds
+        // apart) and gives up after 25 s in the queue + ~2 × 8 s of work,
+        // so it always answers inside this timeout (AVATAR_APP_TIMEOUT_MS
+        // in services/wa-gateway/src/avatar.ts).
         timeoutMs: 60_000,
       },
     )
@@ -276,7 +279,14 @@ export async function fetchContactAvatarViaGateway(input: {
       ? { kind: 'photo', url: res.url }
       : { kind: 'none' }
   } catch (err) {
-    if (err instanceof GatewayRequestError && err.code === 'not_on_whatsapp') return { kind: 'none' }
+    // Not on WhatsApp, or a phone the gateway cannot dial (bad length) —
+    // asking again will not change the answer.
+    if (
+      err instanceof GatewayRequestError &&
+      (err.code === 'not_on_whatsapp' || err.code === 'invalid_request')
+    ) {
+      return { kind: 'none' }
+    }
     const reason =
       err instanceof GatewayRequestError || err instanceof GatewayUnreachableError
         ? err.message

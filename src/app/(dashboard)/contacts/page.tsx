@@ -241,6 +241,19 @@ export default function ContactsPage() {
     setDeleteConfirmOpen(true);
   }
 
+  /**
+   * Stored WhatsApp profile photos of deleted contacts live in a
+   * service-role-only bucket (migration 055); the server removes them.
+   * Best effort — a failure only leaves an orphaned image behind.
+   */
+  function purgeDeletedAvatars(ids: string[]) {
+    void fetch('/api/contacts/avatars/purge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }).catch(() => {});
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -259,6 +272,7 @@ export default function ContactsPage() {
         entityId: deleteTarget.id,
         metadata: { contact_name: deleteTarget.name ?? null, phone: deleteTarget.phone },
       });
+      if (deleteTarget.avatar_url) purgeDeletedAvatars([deleteTarget.id]);
       toast.success(t('Contact deleted'));
       // The detail sheet may be showing the contact we just removed.
       if (detailContactId === deleteTarget.id) {
@@ -315,6 +329,7 @@ export default function ContactsPage() {
         entityId: ids.length === 1 ? ids[0] : null,
         metadata: { count: ids.length, ids: ids.slice(0, 200), bulk: true },
       });
+      for (let i = 0; i < ids.length; i += 500) purgeDeletedAvatars(ids.slice(i, i + 500));
       toast.success(`${ids.length} contact${ids.length === 1 ? '' : 's'} deleted`);
       setSelected(new Set());
       fetchContacts();

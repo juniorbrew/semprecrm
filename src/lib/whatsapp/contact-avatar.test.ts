@@ -6,7 +6,9 @@ import {
   avatarPatch,
   isAvatarStale,
   isStoredContactAvatar,
+  purgeDeletedContactAvatars,
   refreshContactAvatar,
+  removeContactAvatarObjects,
   type AvatarFetcher,
 } from './contact-avatar'
 import { fetchContactAvatarViaGateway } from './qr-gateway'
@@ -55,9 +57,23 @@ describe('avatarPatch', () => {
 
 // A PostgREST-ish recorder: the first `contacts` update (claim) resolves
 // with `claim`, the second (write) with `write`.
-function fakeDb(claim: { data: unknown; error?: { code?: string; message: string } | null }, writeError: unknown = null) {
+function fakeDb(
+  claim: { data: unknown; error?: { code?: string; message: string } | null },
+  writeError: unknown = null,
+  /** Rows the guarded write matched (empty = anonymised / deleted meanwhile). */
+  writeRows: unknown[] = [{ id: 'contact-1' }],
+) {
   const updates: { patch: Record<string, unknown>; ops: [string, ...unknown[]][] }[] = []
+  const removed: [string, string[]][] = []
   const db = {
+    storage: {
+      from: (bucket: string) => ({
+        remove: async (paths: string[]) => {
+          removed.push([bucket, paths])
+          return { data: [], error: null }
+        },
+      }),
+    },
     from(table: string) {
       expect(table).toBe('contacts')
       const entry = { patch: {} as Record<string, unknown>, ops: [] as [string, ...unknown[]][] }
@@ -67,11 +83,12 @@ function fakeDb(claim: { data: unknown; error?: { code?: string; message: string
       }
       b.update = (patch: Record<string, unknown>) => ((entry.patch = patch), updates.push(entry), b)
       b.maybeSingle = async () => ({ data: claim.data, error: claim.error ?? null })
-      b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: writeError }).then(res)
+      b.then = (res: (v: unknown) => unknown) =>
+        Promise.resolve({ data: writeError ? null : writeRows, error: writeError }).then(res)
       return b
     },
   }
-  return { db: db as never, updates }
+  return { db: db as never, updates, removed }
 }
 
 const INPUT = { accountId: 'acc-1', contactId: 'contact-1', phone: '5511988887777' }
@@ -93,6 +110,21 @@ describe('refreshContactAvatar', () => {
     ])
     expect(fetcher).toHaveBeenCalledWith(INPUT)
     expect(updates[1].patch).toEqual({ avatar_url: STORED, avatar_checked_at: iso(NOW) })
+    // The write is guarded against an anonymisation that happened meanwhile.
+    expect(updates[1].ops).toContainEqual(['is', 'anonymized_at', null])
+  })
+
+  it('drops the freshly stored copy when the contact was anonymised during the lookup', async () => {
+    const CONTACT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const { db, removed } = fakeDb({ data: { id: CONTACT, avatar_url: null } }, null, [])
+    const out = await refreshContactAvatar(
+      db,
+      { ...INPUT, contactId: CONTACT },
+      async () => ({ kind: 'photo', url: STORED }),
+      NOW,
+    )
+    expect(out).toBe('skipped')
+    expect(removed).toEqual([['contact-avatars', [`account-acc-1/${CONTACT}`]]])
   })
 
   it('skips without calling the gateway when the claim finds nothing (fresh, claimed, anonymised)', async () => {
@@ -155,6 +187,9 @@ describe('fetchContactAvatarViaGateway', () => {
     await expect(fetchContactAvatarViaGateway({ accountId: 'a', contactId: 'c', phone: '1' })).resolves.toEqual({ kind: 'none' })
     vi.stubGlobal('fetch', reply(422, { error: 'not_on_whatsapp' }))
     await expect(fetchContactAvatarViaGateway({ accountId: 'a', contactId: 'c', phone: '1' })).resolves.toEqual({ kind: 'none' })
+    // A phone the gateway cannot dial (bad length) will never have a photo.
+    vi.stubGlobal('fetch', reply(400, { error: 'invalid_request' }))
+    await expect(fetchContactAvatarViaGateway({ accountId: 'a', contactId: 'c', phone: '1' })).resolves.toEqual({ kind: 'none' })
     for (const [status, code] of [
       [429, 'throttled'],
       [409, 'not_connected'],
@@ -170,5 +205,71 @@ describe('fetchContactAvatarViaGateway', () => {
     await expect(fetchContactAvatarViaGateway({ accountId: 'a', contactId: 'c', phone: '1' })).resolves.toMatchObject({
       kind: 'unavailable',
     })
+  })
+})
+
+describe('stored photo removal', () => {
+  const A = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+  const B = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+
+  function storage(error: { message: string } | null = null) {
+    const removed: [string, string[]][] = []
+    return {
+      removed,
+      admin: {
+        storage: {
+          from: (bucket: string) => ({
+            remove: async (paths: string[]) => {
+              removed.push([bucket, paths])
+              return { data: [], error }
+            },
+          }),
+        },
+      } as never,
+    }
+  }
+
+  it('removes account-scoped paths for valid ids only, never throws', async () => {
+    const { admin, removed } = storage()
+    await expect(removeContactAvatarObjects(admin, 'acc', [A, A, '../x', 'nope'])).resolves.toBe(1)
+    expect(removed).toEqual([['contact-avatars', [`account-acc/${A}`]]])
+    const failing = storage({ message: 'denied' })
+    await expect(removeContactAvatarObjects(failing.admin, 'acc', [A])).resolves.toBe(0)
+    await expect(removeContactAvatarObjects({}, 'acc', [A])).resolves.toBe(0)
+  })
+
+  it('purges only the ids the caller can no longer see (really deleted)', async () => {
+    const { admin, removed } = storage()
+    const ops: unknown[][] = []
+    const userDb = {
+      from: (table: string) => {
+        expect(table).toBe('contacts')
+        const b: Record<string, unknown> = {
+          select: (...a: unknown[]) => (ops.push(['select', ...a]), b),
+          in: (...a: unknown[]) => (ops.push(['in', ...a]), b),
+          then: (res: (v: unknown) => unknown) => Promise.resolve({ data: [{ id: B }], error: null }).then(res),
+        }
+        return b
+      },
+    } as never
+    await expect(purgeDeletedContactAvatars(userDb, admin, 'acc', [A, B, 'x'])).resolves.toBe(1)
+    expect(ops).toContainEqual(['in', 'id', [A, B]])
+    expect(removed).toEqual([['contact-avatars', [`account-acc/${A}`]]])
+  })
+
+  it('does nothing when the lookup fails', async () => {
+    const { admin, removed } = storage()
+    const userDb = {
+      from: () => {
+        const b: Record<string, unknown> = {
+          select: () => b,
+          in: () => b,
+          then: (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { message: 'x' } }).then(res),
+        }
+        return b
+      },
+    } as never
+    await expect(purgeDeletedContactAvatars(userDb, admin, 'acc', [A])).resolves.toBe(0)
+    expect(removed).toEqual([])
   })
 })

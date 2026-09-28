@@ -32,6 +32,7 @@ function makeDb(state: {
 }) {
   const calls: Call[] = []
   const removed: string[][] = []
+  const removedFrom: string[] = []
   const updateErrors = [...(state.updateErrors ?? [])]
 
   function builder(table: string) {
@@ -107,16 +108,17 @@ function makeDb(state: {
   const db = {
     from: (table: string) => builder(table),
     storage: {
-      from: () => ({
+      from: (bucket: string) => ({
         remove: async (paths: string[]) => {
           removed.push(paths)
+          removedFrom.push(bucket)
           return { data: paths.map((name) => ({ name })), error: null }
         },
       }),
     },
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { db: db as any, calls, removed }
+  return { db: db as any, calls, removed, removedFrom }
 }
 
 const PUBLIC =
@@ -171,7 +173,7 @@ describe('anonymizeContact', () => {
   })
 
   it('scrubs messages, deletes media/notes/custom values and rewrites the contact', async () => {
-    const { db, calls, removed } = makeDb({
+    const { db, calls, removed, removedFrom } = makeDb({
       contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
       conversations: [{ id: 'conv1' }, { id: 'conv2' }],
       media: [
@@ -196,7 +198,9 @@ describe('anonymizeContact', () => {
       customValuesDeleted: 3,
       warnings: [],
     })
-    expect(removed).toEqual([['account-abc/1700000000-foto.jpg']])
+    // Chat media, then the stored WhatsApp profile photo (migration 055).
+    expect(removed).toEqual([['account-abc/1700000000-foto.jpg'], ['account-acc/c1']])
+    expect(removedFrom).toEqual(['chat-media', 'contact-avatars'])
 
     const msgUpdate = calls.find((c) => c.table === 'messages' && c.op === 'update')!
     expect(msgUpdate.payload).toEqual({ content_text: REMOVED_CONTENT, media_url: null })
@@ -238,7 +242,8 @@ describe('anonymizeContact', () => {
     const res = await anonymizeContact(db, 'acc', 'c1', { now })
     expect(res.conversations).toBe(0)
     expect(res.messagesScrubbed).toBe(0)
-    expect(removed).toEqual([])
+    // No chat media to remove — only the (possibly absent) profile photo.
+    expect(removed).toEqual([['account-acc/c1']])
   })
 
   it('retries the phone on a unique violation and gives up on other errors', async () => {

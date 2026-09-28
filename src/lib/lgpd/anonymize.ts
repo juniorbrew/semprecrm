@@ -6,7 +6,9 @@
 //   1. Collects the contact's conversations; scrubs every message
 //      (content_text → "[conteúdo removido]", media_url → null) and
 //      removes the `chat-media` objects those URLs pointed at.
-//   2. Deletes contact_notes and contact_custom_values.
+//   2. Deletes contact_notes and contact_custom_values, and the stored
+//      WhatsApp profile photo (`contact-avatars/account-<acc>/<id>`,
+//      migration 055).
 //   3. contacts: name → "Contato anonimizado", phone → `anon-<8 hex>`
 //      (random so the per-account uniqueness on `phone_normalized`
 //      holds), email / company / avatar_url → null, opted_out_at and
@@ -22,6 +24,8 @@
 
 import { randomBytes } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+
+import { CONTACT_AVATARS_BUCKET, contactAvatarPath } from '@/lib/whatsapp/contact-avatar'
 
 export const ANONYMIZED_NAME = 'Contato anonimizado'
 export const REMOVED_CONTENT = '[conteúdo removido]'
@@ -168,6 +172,15 @@ export async function anonymizeContact(
       .select('id')
     if (error) warnings.push(`notes: ${error.message}`)
     else notesDeleted = data?.length ?? 0
+  }
+
+  // Stored profile photo (QR channel). Removing a missing object is a
+  // no-op for Storage, so this runs for every contact.
+  {
+    const { error } = await admin.storage
+      .from(CONTACT_AVATARS_BUCKET)
+      .remove([contactAvatarPath(accountId, contactId)])
+    if (error) warnings.push(`avatar remove: ${error.message}`)
   }
 
   let customValuesDeleted = 0

@@ -29,6 +29,16 @@ export const AVATAR_RETRY_MS = 60 * 60 * 1000
 /** Storage bucket the gateway writes to (migration 055). */
 export const CONTACT_AVATARS_BUCKET = 'contact-avatars'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Object path of a contact's stored photo — the same layout the gateway
+ * writes (services/wa-gateway/src/media.ts `buildAvatarPath`).
+ */
+export function contactAvatarPath(accountId: string, contactId: string): string {
+  return `account-${accountId}/${contactId.toLowerCase()}`
+}
+
 export type AvatarLookup =
   /** Stored copy's public URL. */
   | { kind: 'photo'; url: string }
@@ -89,7 +99,7 @@ export function avatarPatch(
   }
 }
 
-type Db = Pick<SupabaseClient, 'from'>
+type Db = Pick<SupabaseClient, 'from'> & Partial<Pick<SupabaseClient, 'storage'>>
 
 /**
  * Claim → lookup → write. Returns what happened; never throws (a photo
@@ -131,18 +141,91 @@ export async function refreshContactAvatar(
     }
 
     const patch = avatarPatch(lookup, (claimed as { avatar_url?: string | null }).avatar_url, now)
-    const { error: writeError } = await db
+    // Guarded again: the contact may have been anonymised (LGPD) while
+    // the gateway was fetching — never write a photo back onto it.
+    const { data: written, error: writeError } = await db
       .from('contacts')
       .update(patch)
       .eq('id', input.contactId)
       .eq('account_id', input.accountId)
+      .is('anonymized_at', null)
+      .select('id')
     if (writeError) {
       console.error('[avatar] write failed:', writeError.message)
       return 'unavailable'
+    }
+    if (!written || (written as unknown[]).length === 0) {
+      // Anonymised or deleted meanwhile: drop the copy the gateway just stored.
+      if (lookup.kind === 'photo') {
+        await removeContactAvatarObjects(db, input.accountId, [input.contactId])
+      }
+      return 'skipped'
     }
     return lookup.kind
   } catch (err) {
     console.error('[avatar] refresh threw:', err)
     return 'unavailable'
   }
+}
+
+/**
+ * Remove stored photos (service-role client — the bucket has no member
+ * write policy). Best effort: returns how many paths were sent, never
+ * throws. Used by LGPD anonymisation, contact deletion and the refresh
+ * race above.
+ */
+export async function removeContactAvatarObjects(
+  admin: Partial<Pick<SupabaseClient, 'storage'>>,
+  accountId: string,
+  contactIds: readonly string[],
+): Promise<number> {
+  const paths = [...new Set(contactIds.filter((id) => UUID_RE.test(id)))].map((id) =>
+    contactAvatarPath(accountId, id),
+  )
+  if (paths.length === 0 || !admin.storage) return 0
+  try {
+    const { error } = await admin.storage.from(CONTACT_AVATARS_BUCKET).remove(paths)
+    if (error) {
+      console.error('[avatar] remove failed:', error.message)
+      return 0
+    }
+    return paths.length
+  } catch (err) {
+    console.error('[avatar] remove threw:', err)
+    return 0
+  }
+}
+
+/** Largest batch the purge route accepts (the contacts page deletes ≤ a page). */
+export const AVATAR_PURGE_MAX_IDS = 500
+
+/**
+ * After contacts were deleted: remove the stored photos of the ids that
+ * no longer exist in the caller's account. `userDb` is the caller's
+ * RLS-scoped client (a contact still visible to them is kept), `admin`
+ * the service role that can write the bucket. Paths are always under
+ * the caller's own `account-<id>/` folder.
+ */
+export async function purgeDeletedContactAvatars(
+  userDb: Pick<SupabaseClient, 'from'>,
+  admin: Partial<Pick<SupabaseClient, 'storage'>>,
+  accountId: string,
+  contactIds: readonly string[],
+): Promise<number> {
+  const ids = [...new Set(contactIds.filter((id) => typeof id === 'string' && UUID_RE.test(id)))].slice(
+    0,
+    AVATAR_PURGE_MAX_IDS,
+  )
+  if (ids.length === 0) return 0
+  const { data, error } = await userDb.from('contacts').select('id').in('id', ids)
+  if (error) {
+    console.error('[avatar] purge lookup failed:', error.message)
+    return 0
+  }
+  const alive = new Set(((data ?? []) as { id: string }[]).map((r) => r.id.toLowerCase()))
+  return removeContactAvatarObjects(
+    admin,
+    accountId,
+    ids.filter((id) => !alive.has(id.toLowerCase())),
+  )
 }
