@@ -31,6 +31,8 @@ import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
 import { GatedButton } from "@/components/ui/gated-button";
+import { useLanguage } from "@/hooks/use-language";
+import { loadPipelineDeals } from "@/lib/pipelines/load-deals";
 
 // Pipeline creation is admin-class (settings-tier write under
 // the new RLS); deal creation is operational and only requires
@@ -50,6 +52,7 @@ const SPEC_DEFAULT_STAGES = [
 
 export default function PipelinesPage() {
   const supabase = createClient();
+  const { t } = useLanguage();
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
   const { accountId } = useAuth();
@@ -112,16 +115,13 @@ export default function PipelinesPage() {
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("deals")
-        .select(
-          "*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*), loss_reason:deal_loss_reasons(id, name)",
-        )
-        .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      const { deals, problem } = await loadPipelineDeals(supabase, pipelineId);
+      if (problem === "failed") toast.error(t("Failed to load deals"));
+      else if (problem === "degraded")
+        toast.warning(t("Deals loaded without their companies — reload the page to try again"));
+      return deals;
     },
-    [supabase],
+    [supabase, t],
   );
 
   const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {

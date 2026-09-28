@@ -45,6 +45,10 @@ export interface CompanyLookup {
   email: string
   /** Receita status text, e.g. "ATIVA", "BAIXADA". */
   status: string
+  /** Main CNAE code, digits only ('' when unknown). */
+  cnae: string
+  /** Main CNAE description ("atividade principal"), as the Receita writes it. */
+  activity: string
 }
 
 export const UF_LIST = [
@@ -178,7 +182,69 @@ export function mapBrasilApiCnpj(json: Json): CompanyLookup {
     phone: normalizePhone(str(json.ddd_telefone_1) || str(json.ddd_telefone_2)),
     email: str(json.email).toLowerCase(),
     status: str(json.descricao_situacao_cadastral).toUpperCase(),
+    cnae: str(json.cnae_fiscal).replace(/\D/g, ''),
+    activity: str(json.cnae_fiscal_descricao),
   }
+}
+
+function obj(v: unknown): Json {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : {}
+}
+
+/**
+ * https://publica.cnpj.ws/cnpj/{cnpj} — second source when BrasilAPI
+ * is down or does not have the company yet. Reshaped into BrasilAPI's
+ * field names so one mapper owns the casing / number rules.
+ */
+export function mapCnpjWs(json: Json, cnpj: string): CompanyLookup {
+  const est = obj(json.estabelecimento)
+  const activity = obj(est.atividade_principal)
+  return mapBrasilApiCnpj({
+    cnpj: str(est.cnpj) || cnpj,
+    razao_social: json.razao_social,
+    nome_fantasia: est.nome_fantasia,
+    descricao_tipo_de_logradouro: est.tipo_logradouro,
+    logradouro: est.logradouro,
+    numero: est.numero,
+    complemento: str(est.complemento).replace(/\s+/g, ' '),
+    bairro: est.bairro,
+    municipio: obj(est.cidade).nome,
+    uf: obj(est.estado).sigla,
+    cep: est.cep,
+    ddd_telefone_1: `${str(est.ddd1)}${str(est.telefone1)}`,
+    email: est.email,
+    descricao_situacao_cadastral: est.situacao_cadastral,
+    cnae_fiscal: activity.subclasse ?? activity.id,
+    cnae_fiscal_descricao: activity.descricao,
+  })
+}
+
+/**
+ * https://receitaws.com.br/v1/cnpj/{cnpj} — third source. Answers 200
+ * with `{ status: "ERROR" }` for an unknown CNPJ (the caller checks).
+ */
+export function mapReceitaWs(json: Json, cnpj: string): CompanyLookup {
+  const activities = Array.isArray(json.atividade_principal) ? json.atividade_principal : []
+  const first = obj(activities[0])
+  // "(61) 3493-9002 / (61) 3493-1234": the first number is enough.
+  const phone = str(json.telefone).split('/')[0] ?? ''
+  return mapBrasilApiCnpj({
+    cnpj: str(json.cnpj) || cnpj,
+    razao_social: json.nome,
+    nome_fantasia: json.fantasia,
+    logradouro: json.logradouro,
+    numero: json.numero,
+    complemento: json.complemento,
+    bairro: json.bairro,
+    municipio: json.municipio,
+    uf: json.uf,
+    cep: json.cep,
+    ddd_telefone_1: phone,
+    email: json.email,
+    descricao_situacao_cadastral: json.situacao,
+    cnae_fiscal: first.code,
+    cnae_fiscal_descricao: first.text,
+  })
 }
 
 /** https://brasilapi.com.br/api/cep/v2/{cep} */

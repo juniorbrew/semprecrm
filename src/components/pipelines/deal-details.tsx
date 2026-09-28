@@ -28,6 +28,14 @@ import { NOTES_LABEL } from "@/components/contacts/notes-label";
 import { useEntitlements } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
+import {
+  companyErrorMessage,
+  setDealCompany,
+  type CompanySummary,
+} from "@/lib/companies";
+import { DealCompanyField } from "@/components/companies/deal-company-field";
+import { toast } from "sonner";
 import {
   ArrowRight,
   CalendarClock,
@@ -54,6 +62,8 @@ interface DealDetailsProps {
   onEdit: () => void;
   onStatus: (status: DealStatus) => void;
   onAdvance: (stage: PipelineStage) => void;
+  /** The deal's company changed here (the board refetches). */
+  onCompanyChanged?: () => void | Promise<void>;
 }
 
 function initials(name?: string, fallback?: string) {
@@ -96,6 +106,7 @@ export function DealDetails({
   onEdit,
   onStatus,
   onAdvance,
+  onCompanyChanged,
 }: DealDetailsProps) {
   const { t, language } = useLanguage();
   // Tasks section — hidden when the plan has no Tasks module; the "+"
@@ -109,6 +120,27 @@ export function DealDetails({
   const [taskAddOpen, setTaskAddOpen] = useState(false);
   const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  // Company (migration 054) — changed / removed in place, agent+.
+  const [company, setCompany] = useState<CompanySummary | null>(
+    deal.company ?? null,
+  );
+  const [savingCompany, setSavingCompany] = useState(false);
+
+  async function changeCompany(next: CompanySummary | null) {
+    const previous = company;
+    setCompany(next);
+    setSavingCompany(true);
+    try {
+      await setDealCompany(createClient(), deal.id, next?.id ?? null);
+      toast.success(next ? t("Company updated") : t("Company removed"));
+      await onCompanyChanged?.();
+    } catch (err) {
+      setCompany(previous);
+      toast.error(t(companyErrorMessage(err)));
+    } finally {
+      setSavingCompany(false);
+    }
+  }
 
   const sorted = [...stages].sort((a, b) => a.position - b.position);
   const stageIndex = sorted.findIndex((s) => s.id === deal.stage_id);
@@ -452,6 +484,20 @@ export function DealDetails({
               )}
             </div>
           </div>
+        </section>
+
+        {/* Company (migration 054) */}
+        <section>
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("Company")}
+          </h3>
+          <DealCompanyField
+            company={company}
+            onChange={(next) => void changeCompany(next)}
+            readOnly={!canWriteTasks}
+            busy={savingCompany}
+            linkToCompany
+          />
         </section>
 
         {/* Conversation preview */}

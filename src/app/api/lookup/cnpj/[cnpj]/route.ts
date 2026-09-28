@@ -35,7 +35,7 @@ export async function GET(
   { params }: { params: Promise<{ cnpj: string }> },
 ) {
   const ip = getClientIp(request);
-  const limit = checkRateLimit(`lookup:cnpj:${ip}`, RATE_LIMITS.lookup);
+  const limit = checkRateLimit(`lookup:cnpj:${ip}`, RATE_LIMITS.lookupCnpj);
   if (!limit.success) return rateLimitResponse(limit);
 
   const { cnpj } = await params;

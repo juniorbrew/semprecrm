@@ -8,6 +8,8 @@ import { NOTES_LABEL } from "@/components/contacts/notes-label";
 import { CURRENCIES } from "@/lib/currency";
 import { AUDIT_ACTIONS } from "@/lib/audit";
 import { recordAudit } from "@/lib/audit-client";
+import { getPrimaryCompany, type CompanySummary } from "@/lib/companies";
+import { DealCompanyField } from "@/components/companies/deal-company-field";
 import type { Contact, Deal, PipelineStage, Profile } from "@/types";
 import {
   Sheet,
@@ -81,6 +83,14 @@ export function DealFormBody({
     deal?.expected_close_date ?? "",
   );
   const [notes, setNotes] = useState(deal?.notes ?? "");
+  // Customer company (migration 054). A new deal defaults to the
+  // contact's primary company until the user picks one by hand.
+  const [company, setCompany] = useState<CompanySummary | null>(
+    deal?.company ?? null,
+  );
+  const [companyTouched, setCompanyTouched] = useState(!!deal);
+  const [companyFromContact, setCompanyFromContact] = useState(false);
+  const [companyLoading, setCompanyLoading] = useState(false);
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -120,6 +130,29 @@ export function DealFormBody({
     };
   }, [supabase]);
 
+  useEffect(() => {
+    if (companyTouched || !contactId) return;
+    let cancelled = false;
+    // Loading flag for the async primary-company fetch below.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCompanyLoading(true);
+    getPrimaryCompany(supabase, contactId)
+      .then((primary) => {
+        if (cancelled) return;
+        setCompany(primary);
+        setCompanyFromContact(!!primary);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanyFromContact(false);
+      })
+      .finally(() => {
+        if (!cancelled) setCompanyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contactId, companyTouched, supabase]);
+
   async function handleSave() {
     if (!title.trim() || !contactId || !stageId) {
       toast.error(t("Title, contact, and stage are required"));
@@ -132,6 +165,7 @@ export function DealFormBody({
       value: parseFloat(value) || 0,
       currency,
       contact_id: contactId,
+      company_id: company?.id ?? null,
       pipeline_id: pipelineId,
       stage_id: stageId,
       assigned_to: assignedTo || null,
@@ -223,7 +257,14 @@ export function DealFormBody({
           <Label className="text-muted-foreground">{t("Contact")}</Label>
           <select
             value={contactId}
-            onChange={(e) => setContactId(e.target.value)}
+            onChange={(e) => {
+              setContactId(e.target.value);
+              // No contact → no primary company to suggest.
+              if (!companyTouched && !e.target.value) {
+                setCompany(null);
+                setCompanyFromContact(false);
+              }
+            }}
             className={SELECT_CLASS}
           >
             <option value="">{t("Select a contact")}</option>
@@ -233,6 +274,24 @@ export function DealFormBody({
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="grid gap-2">
+          <Label className="text-muted-foreground">{t("Company")}</Label>
+          <DealCompanyField
+            company={company}
+            busy={companyLoading}
+            hint={
+              companyFromContact && !companyTouched
+                ? t("Contact's primary company")
+                : null
+            }
+            onChange={(next) => {
+              setCompanyTouched(true);
+              setCompanyFromContact(false);
+              setCompany(next);
+            }}
+          />
         </div>
 
         <div className="grid grid-cols-[1fr_110px] gap-3">

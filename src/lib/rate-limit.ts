@@ -156,6 +156,12 @@ export const RATE_LIMITS = {
    *  human — and for an office behind one NAT address — while still
    *  keeping a scraper from using us as a free Receita proxy. */
   lookup: { limit: 60, windowMs: 60_000 },
+  /** Public CNPJ lookup (per-IP). Tighter than CEP: each miss can walk
+   *  three upstream sources whose free tiers allow ~3 calls a minute.
+   *  Signup / Settings fire one call per completed CNPJ. */
+  lookupCnpj: { limit: 20, windowMs: 60_000 },
+  /** Authenticated CNPJ lookup from the Empresas form (per user). */
+  companyLookup: { limit: 10, windowMs: 60_000 },
   /** Platform gate sign-in / password change (per IP + user). 10/min
    *  leaves room for a few typos while making online guessing of the
    *  master password impractical on top of the CRM login it already

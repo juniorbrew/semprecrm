@@ -60,6 +60,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { ContactPrivacySection } from './contact-privacy-section';
+import { ContactCompanies } from '@/components/companies/contact-companies';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -713,6 +714,12 @@ export function ContactDetailView({
                   >
                     {t('Deals')}
                   </TabsTrigger>
+                  <TabsTrigger
+                    value="companies"
+                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  >
+                    {t('Companies')}
+                  </TabsTrigger>
                   {calendarEnabled && (
                     <TabsTrigger
                       value="calendar"
@@ -1015,6 +1022,11 @@ export function ContactDetailView({
                       ))}
                     </div>
                   )}
+                </TabsContent>
+
+                {/* Companies Tab (migration 054): customer companies, one primary. */}
+                <TabsContent value="companies" className="flex-1 overflow-y-auto px-4 py-3">
+                  <ContactCompanies contactId={contact.id} readOnly={!canSend} />
                 </TabsContent>
 
                 {/* Calendar Tab (migration 040): the contact's next appointments + "+". */}

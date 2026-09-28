@@ -24,6 +24,14 @@ export interface LookupState<T> {
 
 const IDLE = { status: 'idle', key: '', data: null } as const;
 
+/**
+ * Give up on a lookup after this long. The server walks up to three
+ * CNPJ sources (6 s each) before answering; past ~20 s the user is
+ * better off typing, so the request is aborted and the input shows its
+ * "could not reach the service" hint.
+ */
+export const LOOKUP_TIMEOUT_MS = 20_000;
+
 function useLookup<T>(
   buildUrl: (key: string) => string,
   pick: (json: Record<string, unknown>) => T,
@@ -57,9 +65,17 @@ function useLookup<T>(
         timerRef.current = setTimeout(async () => {
           const controller = new AbortController();
           abortRef.current = controller;
+          let timedOut = false;
+          const timeout = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, LOOKUP_TIMEOUT_MS);
           try {
             const res = await fetch(buildUrl(key), { signal: controller.signal });
-            if (controller.signal.aborted) return resolve(null);
+            if (controller.signal.aborted) {
+              if (timedOut) setState({ status: 'error', key, data: null });
+              return resolve(null);
+            }
             if (res.status === 404 || res.status === 422) {
               setState({ status: 'not_found', key, data: null });
               return resolve(null);
@@ -73,9 +89,11 @@ function useLookup<T>(
             setState({ status: 'found', key, data });
             resolve(data);
           } catch (err) {
-            if ((err as { name?: string })?.name === 'AbortError') return resolve(null);
+            if ((err as { name?: string })?.name === 'AbortError' && !timedOut) return resolve(null);
             setState({ status: 'error', key, data: null });
             resolve(null);
+          } finally {
+            clearTimeout(timeout);
           }
         }, debounceMs);
       }),

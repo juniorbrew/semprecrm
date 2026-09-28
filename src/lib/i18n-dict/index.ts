@@ -9,6 +9,7 @@
 
 import { DICT_API } from './api';
 import { DICT_AUTH } from './auth';
+import { DICT_COMPANIES } from './companies';
 import { DICT_CONTACTS } from './contacts';
 import { DICT_DASHBOARD } from './dashboard';
 import { DICT_FLOWS } from './flows';
@@ -19,6 +20,7 @@ import { DICT_SETTINGS } from './settings';
 export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_API,
   ...DICT_AUTH,
+  ...DICT_COMPANIES,
   ...DICT_CONTACTS,
   ...DICT_DASHBOARD,
   ...DICT_FLOWS,

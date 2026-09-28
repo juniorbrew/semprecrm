@@ -12,6 +12,7 @@ export default function robots(): MetadataRoute.Robots {
           "/dashboard",
           "/inbox",
           "/contacts",
+          "/companies",
           "/pipelines",
           "/tasks",
           "/chat",

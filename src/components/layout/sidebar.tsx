@@ -28,6 +28,7 @@ import {
   User,
   UserCog,
   Users,
+  Building2,
   UsersRound,
   Workflow,
   X,
@@ -106,6 +107,8 @@ const navItems: NavItem[] = [
   { href: "/dashboard", label: "Painel", icon: LayoutDashboard, module: "dashboard" },
   { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare, module: "inbox" },
   { href: "/contacts", label: "Contatos", icon: Users, module: "contacts" },
+  // Customer companies (migration 054) — part of the always-on CRM core.
+  { href: "/companies", label: "Empresas", icon: Building2, module: "contacts" },
   { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines" },
   { href: "/tasks", label: "Tarefas", icon: CheckSquare, module: "tasks" },
   { href: "/chat", label: "Chat", icon: MessagesSquare, module: "internal_chat" },

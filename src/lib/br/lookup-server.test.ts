@@ -50,21 +50,90 @@ describe('lookupCnpj', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('reports not_found for a 404/400 upstream and invalid for a bad document without fetching', async () => {
-    const fetchMock = vi.fn(async () => res(404, { message: 'CNPJ não encontrado' }))
+  it('reports not_found only when every source misses, and invalid for a bad document without fetching', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('receitaws') ? res(200, { status: 'ERROR', message: 'CNPJ inválido' }) : res(404, { message: 'CNPJ não encontrado' }),
+    )
+    expect(await lookupCnpj('11222333000181', fetchMock)).toEqual({ ok: false, reason: 'not_found' })
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      'https://brasilapi.com.br/api/cnpj/v1/11222333000181',
+      'https://publica.cnpj.ws/cnpj/11222333000181',
+      'https://receitaws.com.br/v1/cnpj/11222333000181',
+    ])
+    // A unanimous miss is cached.
     expect(await lookupCnpj('11222333000181', fetchMock)).toEqual({ ok: false, reason: 'not_found' })
     expect(await lookupCnpj('11222333000182', fetchMock)).toEqual({ ok: false, reason: 'invalid' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('falls back to CNPJ.ws when BrasilAPI is down or does not have the company', async () => {
+    const cnpjWsBody = {
+      razao_social: 'PADARIA SOL LTDA',
+      estabelecimento: { nome_fantasia: 'PADARIA DO SOL', email: 'sol@padaria.com.br', cidade: { nome: 'Porto Alegre' }, estado: { sigla: 'RS' } },
+    }
+    for (const status of [503, 404, 200]) {
+      __resetLookupCacheForTests()
+      const fetchMock = vi.fn(async (url: string) => (url.includes('brasilapi') ? res(status, {}) : res(200, cnpjWsBody)))
+      const out = await lookupCnpj('11222333000181', fetchMock)
+      expect(out).toMatchObject({ ok: true, company: { legalName: 'Padaria Sol LTDA', address: { city: 'Porto Alegre' } } })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    }
+  })
+
+  it('falls back to ReceitaWS when the first two fail', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('brasilapi')) throw new Error('ECONNRESET')
+      if (url.includes('cnpj.ws')) return res(429, { detalhes: 'Excedido o limite' })
+      return res(200, { nome: 'PADARIA SOL LTDA', municipio: 'PORTO ALEGRE', uf: 'RS', status: 'OK' })
+    })
+    expect(await lookupCnpj('11222333000181', fetchMock)).toMatchObject({
+      ok: true,
+      company: { legalName: 'Padaria Sol LTDA', address: { city: 'Porto Alegre', state: 'RS' } },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('reports upstream_error when every source fails, and does not cache it', async () => {
+    const down = vi.fn()
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(res(503, {}))
+      .mockResolvedValueOnce(res(429, {}))
+      .mockResolvedValueOnce(res(200, cnpjBody))
+    expect(await lookupCnpj('11222333000181', down)).toEqual({ ok: false, reason: 'upstream_error' })
+    expect((await lookupCnpj('11222333000181', down)).ok).toBe(true)
+  })
+
+  it('does not cache a miss when another source was down', async () => {
+    const fetchMock = vi.fn(async (url: string) => (url.includes('brasilapi') ? res(404, {}) : res(502, {})))
+    expect(await lookupCnpj('11222333000181', fetchMock)).toEqual({ ok: false, reason: 'not_found' })
+    expect(await lookupCnpj('11222333000181', fetchMock)).toEqual({ ok: false, reason: 'not_found' })
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+  })
+})
+
+describe('lookupCnpj — quota protection', () => {
+  it('skips the e-mail enrichment call when asked to', async () => {
+    const fetchMock = vi.fn(async () => res(200, { ...cnpjBody, email: null }))
+    expect(await lookupCnpj('11222333000181', fetchMock, { enrichEmail: false })).toMatchObject({ ok: true, company: { email: '' } })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('reports upstream_error on network failure or 5xx and does not cache it', async () => {
-    const fetchMock = vi.fn()
-      .mockRejectedValueOnce(new Error('ECONNRESET'))
-      .mockResolvedValueOnce(res(503, {}))
-      .mockResolvedValueOnce(res(200, cnpjBody))
-    expect(await lookupCnpj('11222333000181', fetchMock)).toEqual({ ok: false, reason: 'upstream_error' })
-    expect(await lookupCnpj('11222333000181', fetchMock)).toEqual({ ok: false, reason: 'upstream_error' })
-    expect((await lookupCnpj('11222333000181', fetchMock)).ok).toBe(true)
+  it('leaves a source that answered 429 alone for a minute (fallback and enrichment)', async () => {
+    const limited = vi.fn(async (url: string) => {
+      if (url.includes('brasilapi')) return res(503, {})
+      if (url.includes('cnpj.ws')) return res(429, {})
+      return res(200, { nome: 'PADARIA SOL LTDA', status: 'OK' })
+    })
+    expect((await lookupCnpj('11222333000181', limited)).ok).toBe(true)
+    expect(limited.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('cnpj.ws'))).toHaveLength(1)
+
+    // Another CNPJ within the minute (no reset, so the cooldown holds):
+    // cnpj.ws is not called at all — neither as fallback nor for e-mail.
+    const next = vi.fn(async (url: string) =>
+      url.includes('brasilapi') ? res(200, { ...cnpjBody, cnpj: '11444777000161', email: null }) : res(200, {}),
+    )
+    expect((await lookupCnpj('11444777000161', next)).ok).toBe(true)
+    expect(next.mock.calls.map((c) => String(c[0]))).toEqual(['https://brasilapi.com.br/api/cnpj/v1/11444777000161'])
   })
 })
 
