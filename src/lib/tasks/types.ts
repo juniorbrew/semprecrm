@@ -72,6 +72,12 @@ export interface Task {
   conversation_id: string | null;
   deal_id: string | null;
   due_at: string | null;
+  /**
+   * Exact push time for a reminder ("Lembrar" in the inbox, migration
+   * 057). When set, the cron pushes at this time instead of the generic
+   * "due in 15 min" warning. Absent on pre-057 rows / schemas.
+   */
+  remind_at?: string | null;
   completed_at: string | null;
   position: number;
   created_at: string;
@@ -106,6 +112,8 @@ export interface TaskInput {
   deal_id?: string | null;
   /** ISO timestamp. */
   due_at?: string | null;
+  /** ISO timestamp — exact reminder push (migration 057). */
+  remind_at?: string | null;
 }
 
 /** Partial update — every field optional, `null` clears nullable ones. */

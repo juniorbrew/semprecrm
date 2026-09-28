@@ -7,6 +7,7 @@
 //   filter     applyTaskFilters, sortTasks, computeTaskCounts
 //   queries    listTaskStatuses, listTasks, listTasksByContact, …
 //   mutations  createTask, updateTask, moveTask, completeTask, …
+//   reminders  inbox "Lembrar": presets, validation, the reminder task
 //
 // Import from '@/lib/tasks' (this file) or from the sub-module.
 // ============================================================
@@ -17,3 +18,4 @@ export * from './due';
 export * from './filter';
 export * from './queries';
 export * from './mutations';
+export * from './reminders';

@@ -71,11 +71,15 @@ interface ConversationListProps {
  * migrated on restore.
  */
 type TriageTab = "queue" | "mine" | "all";
-/** Status filter applied before the queue tabs are counted. */
-type StatusFilter = ConversationStatus | "all";
+/**
+ * Status filter applied before the queue tabs are counted. "archived"
+ * (migration 056) is the only view that shows archived conversations;
+ * every other value — "all" included — leaves them out.
+ */
+type StatusFilter = ConversationStatus | "all" | "archived";
 
 const TRIAGE_TABS: TriageTab[] = ["queue", "mine", "all"];
-const STATUS_FILTERS: StatusFilter[] = ["open", "pending", "closed", "all"];
+const STATUS_FILTERS: StatusFilter[] = ["open", "pending", "closed", "archived", "all"];
 
 /**
  * Remembers the agent's queue (tab) + status choice across reloads so
@@ -98,7 +102,7 @@ const STRIP_COPY: Record<
     title: string;
     tabs: Record<TriageTab, string>;
     status: Record<StatusFilter, string>;
-    rowStatus: Record<Exclude<ConversationStatus, "open">, string>;
+    rowStatus: Record<Exclude<ConversationStatus, "open">, string> & { archived: string };
     unreadOnly: string;
     channel: string;
     /** Short channel chip shown on the row (migration 026). */
@@ -123,9 +127,10 @@ const STRIP_COPY: Record<
       open: "Abertas",
       pending: "Pendentes",
       closed: "Resolvidas",
+      archived: "Arquivadas",
       all: "Todas",
     },
-    rowStatus: { pending: "Pendente", closed: "Resolvida" },
+    rowStatus: { pending: "Pendente", closed: "Resolvida", archived: "Arquivada" },
     unreadOnly: "Só não lidas",
     channel: "WhatsApp",
     channelChip: { official: "Oficial", qr: "QR" },
@@ -146,9 +151,10 @@ const STRIP_COPY: Record<
       open: "Open",
       pending: "Pending",
       closed: "Resolved",
+      archived: "Archived",
       all: "All",
     },
-    rowStatus: { pending: "Pending", closed: "Resolved" },
+    rowStatus: { pending: "Pending", closed: "Resolved", archived: "Archived" },
     unreadOnly: "Unread only",
     channel: "WhatsApp",
     channelChip: { official: "Official", qr: "QR" },
@@ -181,6 +187,7 @@ const STATUS_DOT: Record<StatusFilter, string> = {
   open: "bg-primary",
   pending: "bg-amber-500",
   closed: "bg-muted-foreground",
+  archived: "bg-muted-foreground/50",
   all: "bg-foreground/40",
 };
 
@@ -476,8 +483,14 @@ export function ConversationList({
   }, [conversations, unreadOnly, radar, preferences, now]);
 
   const pool = useMemo(() => {
-    if (radar || statusFilter === "all") return basePool;
-    return basePool.filter((c) => c.status === statusFilter);
+    if (statusFilter === "archived" && !radar) {
+      return basePool.filter((c) => !!c.archived_at);
+    }
+    // Archived conversations stay out of every other view (a radar
+    // bucket never matches them anyway: they are resolved).
+    const live = basePool.filter((c) => !c.archived_at);
+    if (radar || statusFilter === "all") return live;
+    return live.filter((c) => c.status === statusFilter);
   }, [basePool, radar, statusFilter]);
 
   // The queue, longest wait first, with 1-based positions.
@@ -810,7 +823,7 @@ interface ConversationItemProps {
   tags: RowTag[];
   /** Primary company (nome fantasia, else razão social), if any. */
   companyName: string | null;
-  rowStatus: Record<Exclude<ConversationStatus, "open">, string>;
+  rowStatus: Record<Exclude<ConversationStatus, "open">, string> & { archived: string };
   channelLabel: string;
   channelChip: Record<WhatsAppChannel, string>;
   moreTags: (n: number) => string;
@@ -948,7 +961,7 @@ function ConversationItem({
                     : "bg-muted text-muted-foreground"
                 )}
               >
-                {rowStatus[status]}
+                {conversation.archived_at ? rowStatus.archived : rowStatus[status]}
               </span>
             )}
             {isUnread && (

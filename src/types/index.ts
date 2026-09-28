@@ -289,6 +289,11 @@ export interface Conversation {
    */
   last_customer_message_at?: string | null;
   last_agent_message_at?: string | null;
+  /**
+   * Set by "Arquivar" in the inbox (migration 056, with status closed);
+   * cleared by a DB trigger when the customer writes again or it reopens.
+   */
+  archived_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
