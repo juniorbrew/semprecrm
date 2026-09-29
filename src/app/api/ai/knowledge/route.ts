@@ -19,10 +19,12 @@ import { requireModule, requireRole, type AccountContext } from '@/lib/auth/acco
 import { aiErrorResponse } from '@/lib/ai/http';
 import {
   chunksForItem,
+  cleanText,
   KB_ERRORS,
   KB_ITEM_SUMMARY_COLUMNS,
   KB_LIMITS,
   parseKbItemInput,
+  sliceChars,
   type KbItemSummary,
   type KbKind,
 } from '@/lib/ai/knowledge';
@@ -30,6 +32,9 @@ import { extractFileText, KbExtractError, KB_EXTRACT_ERRORS } from '@/lib/ai/kno
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
+
+/** Multipart framing (boundaries, headers, the title field) on top of the file. */
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 
 export async function GET() {
   try {
@@ -69,6 +74,11 @@ export async function POST(request: Request) {
     let sourceFilename: string | null = null;
 
     if ((request.headers.get('content-type') ?? '').includes('multipart/form-data')) {
+      // Refuse oversized uploads before buffering the body.
+      const declared = Number(request.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > KB_LIMITS.fileMaxBytes + MULTIPART_OVERHEAD_BYTES) {
+        return NextResponse.json({ error: KB_EXTRACT_ERRORS.size }, { status: 413 });
+      }
       const form = await request.formData().catch(() => null);
       const file = form?.get('file');
       if (!(file instanceof File)) return NextResponse.json({ error: KB_ERRORS.body }, { status: 400 });
@@ -83,9 +93,14 @@ export async function POST(request: Request) {
         throw err;
       }
       kind = 'file';
-      sourceFilename = file.name.slice(0, 255);
-      const title = String(form?.get('title') ?? '').trim() || file.name.replace(/\.[^.]+$/, '');
-      body = { title: title.slice(0, KB_LIMITS.titleMaxChars), content };
+      const name = cleanText(file.name).replace(/\s+/g, ' ');
+      sourceFilename = sliceChars(name, 0, 255) || null;
+      const typed = form?.get('title');
+      const title =
+        (typeof typed === 'string' ? typed.replace(/\s+/g, ' ').trim() : '') ||
+        name.replace(/\.[^.]*$/, '').trim() ||
+        'Arquivo';
+      body = { title: sliceChars(title, 0, KB_LIMITS.titleMaxChars), content };
     } else {
       body = (await request.json().catch(() => null)) as unknown;
       const k = (body as { kind?: unknown } | null)?.kind;

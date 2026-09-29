@@ -1,3 +1,4 @@
+import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,8 +11,9 @@ import {
   KB_LIMITS,
   parseKbItemInput,
   selectKbHits,
+  sliceChars,
 } from './knowledge';
-import { extractFileText, KB_EXTRACT_ERRORS } from './knowledge-extract';
+import { extractFileText, KB_EXTRACT_ERRORS, pdfTextInWorker } from './knowledge-extract';
 
 const para = (n: number, word = 'palavra') => Array.from({ length: n }, (_, i) => `${word}${i}`).join(' ') + '.';
 
@@ -74,19 +76,50 @@ describe('parseKbItemInput', () => {
     expect(parseKbItemInput('file', { title: 't', content: 'x'.repeat(20_001) }).ok).toBe(true);
     expect(parseKbItemInput('text', null)).toEqual({ ok: false, error: KB_ERRORS.body });
   });
+
+  it('a FAQ with a question longer than a title still saves (title = question cut at 200)', () => {
+    const question = `${'Q'.repeat(199)}😀 e mais texto?`;
+    const r = parseKbItemInput('faq', { title: '', question, content: 'Sim' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.question).toBe(question);
+    expect(r.value.title.length).toBeLessThanOrEqual(KB_LIMITS.titleMaxChars);
+    expect(r.value.title).toBe('Q'.repeat(199)); // never half an emoji
+    const long = parseKbItemInput('faq', { title: 'x'.repeat(500), question: 'Q?', content: 'Sim' });
+    expect(long.ok && long.value.title.length).toBe(200);
+  });
+});
+
+describe('sliceChars', () => {
+  it('never splits a surrogate pair', () => {
+    expect(sliceChars('ab😀cd', 0, 3)).toBe('ab');
+    expect(sliceChars('ab😀cd', 3)).toBe('cd');
+    expect(sliceChars('ab😀cd', -3)).toBe('cd');
+    expect(sliceChars('ab😀cd', 0, 4)).toBe('ab😀');
+    expect(cleanText('a\uD800b\uDC00c😀')).toBe('abc😀');
+  });
 });
 
 describe('kbQueryFromMessages / selectKbHits', () => {
-  it('uses the last 3 customer messages with text, oldest first', () => {
-    const q = kbQueryFromMessages([
+  it('uses the last customer message; prepends earlier ones (max 3) only when it is very short', () => {
+    const msgs = [
+      { sender_type: 'customer', content_text: 'oi, bom dia' },
+      { sender_type: 'customer', content_text: 'quanto custa a entrega?' },
+      { sender_type: 'agent', content_text: 'resposta do atendente' },
+    ];
+    expect(kbQueryFromMessages(msgs)).toBe('quanto custa a entrega?');
+    const short = [
       { sender_type: 'customer', content_text: 'um' },
       { sender_type: 'customer', content_text: 'dois' },
       { sender_type: 'agent', content_text: 'resposta do atendente' },
       { sender_type: 'customer', content_text: null },
       { sender_type: 'customer', content_text: 'três' },
       { sender_type: 'customer', content_text: 'quatro' },
-    ]);
-    expect(q).toBe('dois\ntrês\nquatro');
+    ];
+    expect(kbQueryFromMessages(short)).toBe('dois\ntrês\nquatro');
+    expect(kbQueryFromMessages([...msgs, { sender_type: 'customer', content_text: 'e no centro?' }])).toBe(
+      'quanto custa a entrega?\ne no centro?',
+    );
     expect(kbQueryFromMessages([{ sender_type: 'agent', content_text: 'x' }])).toBe('');
   });
 
@@ -152,5 +185,70 @@ describe('extractFileText', () => {
     await expect(extractFileText('x.txt', enc('  \n '))).rejects.toThrow(KB_EXTRACT_ERRORS.empty);
     await expect(extractFileText('x.txt', new Uint8Array(KB_LIMITS.fileMaxBytes + 1))).rejects.toThrow(KB_EXTRACT_ERRORS.size);
     await expect(extractFileText('x.txt', enc('a'.repeat(200_001)))).rejects.toThrow(KB_EXTRACT_ERRORS.tooLong);
+  });
+
+  it('rejects "text" files that are really binary', async () => {
+    await expect(extractFileText('x.txt', enc('abc\u0000def'))).rejects.toThrow(KB_EXTRACT_ERRORS.notText);
+    const junk = Uint8Array.from({ length: 200 }, (_, i) => (i % 2 ? 0x01 : 0x41));
+    await expect(extractFileText('x.csv', junk)).rejects.toThrow(KB_EXTRACT_ERRORS.notText);
+  });
+});
+
+// ---- heavy PDFs (real worker) ---------------------------------------
+
+/** A PDF of `pages` pages sharing one flate-compressed content stream of `reps` text lines. */
+function makeHeavyPdf(pages: number, reps: number): Uint8Array {
+  const objs: (string | Buffer)[] = [];
+  const add = (o: string | Buffer) => objs.push(o);
+  add(''); // 1 catalog
+  add(''); // 2 pages
+  add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'); // 3
+  const comp = deflateSync(Buffer.from('BT /F1 12 Tf 10 700 Td (Ola mundo preco entrega frete) Tj ET\n'.repeat(reps)));
+  add(Buffer.concat([Buffer.from(`<< /Length ${comp.length} /Filter /FlateDecode >>\nstream\n`), comp, Buffer.from('\nendstream')])); // 4
+  const kids: number[] = [];
+  for (let p = 0; p < pages; p++) {
+    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>`);
+    kids.push(objs.length);
+  }
+  objs[0] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objs[1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${kids.length} >>`;
+  const parts: Buffer[] = [Buffer.from('%PDF-1.4\n')];
+  const offs: number[] = [];
+  let len = parts[0].length;
+  objs.forEach((o, i) => {
+    const b = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), Buffer.isBuffer(o) ? o : Buffer.from(o), Buffer.from('\nendobj\n')]);
+    offs.push(len);
+    len += b.length;
+    parts.push(b);
+  });
+  const xref = `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  parts.push(Buffer.from(`${xref}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${len}\n%%EOF\n`));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+describe('PDF worker limits', () => {
+  it('rejects too many pages before reading them', async () => {
+    await expect(extractFileText('big.pdf', makeHeavyPdf(301, 1))).rejects.toThrow(KB_EXTRACT_ERRORS.pdfTooManyPages);
+  });
+
+  it('stops page by page once the text passes the limit, without blocking the event loop', async () => {
+    let ticks = 0;
+    const iv = setInterval(() => ticks++, 10);
+    const started = Date.now();
+    try {
+      await expect(extractFileText('long.pdf', makeHeavyPdf(3, 3000))).rejects.toThrow(KB_EXTRACT_ERRORS.tooLong);
+    } finally {
+      clearInterval(iv);
+    }
+    const elapsed = Date.now() - started;
+    if (elapsed > 200) expect(ticks).toBeGreaterThan(elapsed / 10 / 4);
+  });
+
+  it('kills a worker that runs out of its heap cap', async () => {
+    await expect(pdfTextInWorker(makeHeavyPdf(1, 100_000), { heapMb: 16 })).rejects.toThrow(KB_EXTRACT_ERRORS.pdfTooHeavy);
+  });
+
+  it('kills a worker that passes the timeout', async () => {
+    await expect(pdfTextInWorker(makeHeavyPdf(1, 100_000), { timeoutMs: 50 })).rejects.toThrow(KB_EXTRACT_ERRORS.pdfTimeout);
   });
 });

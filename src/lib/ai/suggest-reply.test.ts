@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { chunksForItem, KB_LIMITS } from './knowledge';
+
 import { buildSuggestReplyPrompt, HISTORY_CLOSE, HISTORY_OPEN, KB_CLOSE, KB_OPEN, sanitizeUntrusted } from './suggest-reply';
 
 describe('buildSuggestReplyPrompt', () => {
@@ -108,6 +110,13 @@ describe('buildSuggestReplyPrompt', () => {
     expect(system).toContain(KB_OPEN);
     expect(system).toMatch(/não invente: diga que um atendente vai confirmar/);
     expect(system).not.toContain('R$ 10 no centro');
+  });
+
+  it('keeps a full-size FAQ chunk whole (max question + max answer chunk)', () => {
+    const chunk = chunksForItem('faq', 'r'.repeat(KB_LIMITS.chunkMax), 'q'.repeat(KB_LIMITS.questionMaxChars))[0];
+    const { prompt } = buildSuggestReplyPrompt({ ...base, knowledge: [{ title: 'FAQ', content: chunk }] });
+    expect(prompt).toContain(JSON.stringify(chunk).slice(1, -1));
+    expect(prompt).not.toContain('…"}');
   });
 
   it('has no knowledge block when there are no snippets', () => {

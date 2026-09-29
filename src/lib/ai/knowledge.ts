@@ -66,12 +66,28 @@ export interface KbSearchHit {
   rank: number;
 }
 
+/**
+ * `text.slice(start, end)` that never cuts a surrogate pair in half
+ * (an emoji split in two becomes invalid UTF-16 that Postgres rejects).
+ */
+export function sliceChars(text: string, start: number, end?: number): string {
+  let a = start < 0 ? Math.max(0, text.length + start) : Math.min(start, text.length);
+  let b = end === undefined ? text.length : end < 0 ? Math.max(0, text.length + end) : Math.min(end, text.length);
+  const high = (i: number) => /[\uD800-\uDBFF]/.test(text[i] ?? '');
+  const low = (i: number) => /[\uDC00-\uDFFF]/.test(text[i] ?? '');
+  if (a > 0 && low(a) && high(a - 1)) a++;
+  if (b > 0 && b < text.length && high(b - 1) && low(b)) b--;
+  return text.slice(a, Math.max(a, b));
+}
+
 /** Remove NULs/control chars Postgres or the prompt shouldn't see; normalise newlines. */
 export function cleanText(text: string): string {
   return text
     .replace(/^﻿/, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    // Lone surrogates: invalid UTF-16 that Postgres would reject.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -97,8 +113,9 @@ function pieces(text: string, max: number): string[] {
       while (s.length > max) {
         const cut = s.lastIndexOf(' ', max);
         const at = cut > max / 2 ? cut : max;
-        out.push(s.slice(0, at).trim());
-        s = s.slice(at).trim();
+        const head = sliceChars(s, 0, at);
+        out.push(head.trim());
+        s = s.slice(head.length).trim();
       }
       if (s) out.push(s);
     }
@@ -109,7 +126,7 @@ function pieces(text: string, max: number): string[] {
 /** Last ~`n` chars of `text`, starting at a word boundary. */
 function tail(text: string, n: number): string {
   if (text.length <= n) return text;
-  const t = text.slice(-n);
+  const t = sliceChars(text, -n);
   const sp = t.indexOf(' ');
   return (sp >= 0 ? t.slice(sp + 1) : t).trim();
 }
@@ -186,7 +203,8 @@ export function parseKbItemInput(
   if (kind === 'faq') {
     if (!question || question.length > KB_LIMITS.questionMaxChars) return { ok: false, error: KB_ERRORS.question };
   }
-  const finalTitle = title || (kind === 'faq' ? question!.slice(0, KB_LIMITS.titleMaxChars) : '');
+  // A FAQ is titled by its question, which may be longer than a title.
+  const finalTitle = kind === 'faq' ? sliceChars(title || question!, 0, KB_LIMITS.titleMaxChars).trim() : title;
   if (!finalTitle || finalTitle.length > KB_LIMITS.titleMaxChars) return { ok: false, error: KB_ERRORS.title };
 
   const maxContent = kind === 'file' ? KB_LIMITS.fileContentMaxChars : KB_LIMITS.contentMaxChars;
@@ -198,18 +216,23 @@ export function parseKbItemInput(
 }
 
 /**
- * Query for "Sugerir resposta": the last 1–3 customer messages with
- * text, oldest first, joined and capped.
+ * Query for "Sugerir resposta": the LAST customer message with text.
+ * When it is very short ("e aí?", "quanto?") the previous ones are
+ * prepended, up to 3 messages in all. Oldest first, capped.
  */
 export function kbQueryFromMessages(
   messages: { sender_type: string; content_text?: string | null }[],
-  count = 3,
+  { maxMessages = 3, minChars = 15 } = {},
 ): string {
   const texts = messages
     .filter((m) => m.sender_type === 'customer' && m.content_text?.trim())
-    .slice(-count)
     .map((m) => m.content_text!.trim());
-  return texts.join('\n').slice(-KB_LIMITS.searchQueryMaxChars).trim();
+  const picked: string[] = [];
+  for (let i = texts.length - 1; i >= 0 && picked.length < maxMessages; i--) {
+    picked.unshift(texts[i]);
+    if (picked.join(' ').length >= minChars) break;
+  }
+  return sliceChars(picked.join('\n'), -KB_LIMITS.searchQueryMaxChars).trim();
 }
 
 /** Top hits for the prompt: at most N chunks and a total char budget. */
@@ -223,7 +246,7 @@ export function selectKbHits<T extends { content: string }>(
   for (const h of hits.slice(0, maxChunks)) {
     const room = maxChars - used;
     if (room < 200) break;
-    const content = h.content.length > room ? `${h.content.slice(0, room)}…` : h.content;
+    const content = h.content.length > room ? `${sliceChars(h.content, 0, room)}…` : h.content;
     out.push({ ...h, content });
     used += content.length;
   }

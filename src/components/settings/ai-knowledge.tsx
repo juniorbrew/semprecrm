@@ -39,9 +39,17 @@ import {
 } from "@/lib/ai/knowledge";
 import { SettingsChip } from "./settings-chip";
 
-async function readError(res: Response): Promise<string> {
+/** An API failure whose message is an (English) key for t(); empty = use the caller's fallback. */
+class ApiError extends Error {}
+
+/** Same key as KB_EXTRACT_ERRORS.size (a server-only module). */
+const FILE_TOO_LARGE = "The file is too large (maximum 5 MB).";
+
+async function apiError(res: Response): Promise<ApiError> {
+  // A proxy (nginx / Next) may answer 413 without our JSON body.
+  if (res.status === 413) return new ApiError(FILE_TOO_LARGE);
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
-  return body?.error ?? `HTTP ${res.status}`;
+  return new ApiError(body?.error ?? "");
 }
 
 interface Draft {
@@ -86,7 +94,7 @@ export function AiKnowledge() {
     setLoadError(false);
     try {
       const res = await fetch("/api/ai/knowledge", { cache: "no-store" });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
       setItems(((await res.json()) as { items: KbItemSummary[] }).items);
     } catch (err) {
       console.error("[ai-knowledge] load failed:", err);
@@ -102,11 +110,11 @@ export function AiKnowledge() {
     setBusyId(item.id);
     try {
       const res = await fetch(`/api/ai/knowledge/${item.id}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
       const full = ((await res.json()) as { item: KbItem }).item;
       setDraft({ id: full.id, kind: full.kind, title: full.title, question: full.question ?? "", content: full.content });
     } catch (err) {
-      toast.error(t(err instanceof Error ? err.message : "Could not load the item"));
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Could not load the item"));
     } finally {
       setBusyId(null);
     }
@@ -128,28 +136,33 @@ export function AiKnowledge() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
       toast.success(t("Knowledge base updated"));
       setDraft(null);
       await load();
     } catch (err) {
-      toast.error(t(err instanceof Error ? err.message : "Failed to save the knowledge item"));
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Failed to save the knowledge item"));
     } finally {
       setSaving(false);
     }
   }
 
   async function upload(file: File) {
+    if (file.size > KB_LIMITS.fileMaxBytes) {
+      toast.error(t("The file is too large (maximum 5 MB)."));
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       const form = new FormData();
       form.set("file", file);
       const res = await fetch("/api/ai/knowledge", { method: "POST", body: form });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
       toast.success(t("File added to the knowledge base"));
       await load();
     } catch (err) {
-      toast.error(t(err instanceof Error ? err.message : "Failed to save the knowledge item"));
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Failed to save the knowledge item"));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -165,10 +178,10 @@ export function AiKnowledge() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled }),
       });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
     } catch (err) {
       setItems((prev) => prev?.map((i) => (i.id === item.id ? { ...i, enabled: !enabled } : i)) ?? prev);
-      toast.error(t(err instanceof Error ? err.message : "Failed to save the knowledge item"));
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Failed to save the knowledge item"));
     } finally {
       setBusyId(null);
     }
@@ -179,11 +192,11 @@ export function AiKnowledge() {
     setBusyId(item.id);
     try {
       const res = await fetch(`/api/ai/knowledge/${item.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
       setItems((prev) => prev?.filter((i) => i.id !== item.id) ?? prev);
       toast.success(t("Item deleted"));
     } catch (err) {
-      toast.error(t(err instanceof Error ? err.message : "Could not delete the item"));
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Could not delete the item"));
     } finally {
       setBusyId(null);
     }
@@ -198,10 +211,10 @@ export function AiKnowledge() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ query }),
       });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw await apiError(res);
       setHits(((await res.json()) as { hits: KbSearchHit[] }).hits);
     } catch (err) {
-      toast.error(t(err instanceof Error ? err.message : "The search failed"));
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("The search failed"));
     } finally {
       setSearching(false);
     }

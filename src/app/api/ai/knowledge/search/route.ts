@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { KB_ERRORS, KB_LIMITS, selectKbHits } from '@/lib/ai/knowledge';
+import { KB_ERRORS, KB_LIMITS, selectKbHits, sliceChars } from '@/lib/ai/knowledge';
 import { searchKnowledge } from '@/lib/ai/store';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as { query?: unknown } | null;
-    const query = typeof body?.query === 'string' ? body.query.trim().slice(0, KB_LIMITS.searchQueryMaxChars) : '';
+    const query = typeof body?.query === 'string' ? sliceChars(body.query.trim(), 0, KB_LIMITS.searchQueryMaxChars) : '';
     if (!query) return NextResponse.json({ error: KB_ERRORS.query }, { status: 400 });
 
     const hits = selectKbHits(await searchKnowledge(ctx.supabase, ctx.accountId, query, KB_LIMITS.promptMaxChunks));

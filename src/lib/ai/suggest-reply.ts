@@ -14,6 +14,7 @@
 // ============================================================
 
 import type { ContentType, SenderType } from '@/types';
+import { sliceChars } from './knowledge';
 
 export interface SuggestMessage {
   sender_type: SenderType;
@@ -39,7 +40,12 @@ export const HISTORY_OPEN = '<historico_da_conversa>';
 export const HISTORY_CLOSE = '</historico_da_conversa>';
 export const KB_OPEN = '<base_de_conhecimento>';
 export const KB_CLOSE = '</base_de_conhecimento>';
-const KB_SNIPPET_MAX_CHARS = 2000;
+/**
+ * Fits a whole FAQ chunk ("Pergunta: " + 1000-char question +
+ * "\nResposta: " + a ~1350-char answer chunk); the 6000-char total is
+ * capped in selectKbHits.
+ */
+export const KB_SNIPPET_MAX_CHARS = 2600;
 const MESSAGE_MAX_CHARS = 1500;
 
 /** Neutralise anything that could forge a delimiter or tag. */
@@ -48,7 +54,7 @@ export function sanitizeUntrusted(text: string, max = MESSAGE_MAX_CHARS): string
     .replace(/[<>]/g, (c) => (c === '<' ? '‹' : '›'))
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .trim();
-  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+  return clean.length > max ? `${sliceChars(clean, 0, max)}…` : clean;
 }
 
 const MEDIA_LABEL: Partial<Record<ContentType, string>> = {

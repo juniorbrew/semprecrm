@@ -175,6 +175,36 @@ describe('items', () => {
     });
   });
 
+  it('ignores a non-string title field and falls back when the filename has no stem', async () => {
+    const form = new FormData();
+    form.set('file', new File(['Horário: 7h às 19h'], '.txt', { type: 'text/plain' }));
+    form.set('title', new File(['x'], 'title.bin'));
+    expect((await CREATE(new Request(url, { method: 'POST', body: form }))).status).toBe(201);
+    expect(h.rpc.mock.calls[0][1]).toMatchObject({ p_title: 'Arquivo', p_source_filename: '.txt' });
+    expect(JSON.stringify(h.rpc.mock.calls[0][1])).not.toContain('[object File]');
+  });
+
+  it('413 by Content-Length before reading the body', async () => {
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'multipart/form-data; boundary=x', 'content-length': String(50 * 1024 * 1024) },
+      body: 'irrelevant',
+    });
+    const spy = vi.spyOn(req, 'formData');
+    const res = await CREATE(req);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe(KB_EXTRACT_ERRORS.size);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('a FAQ with a 600-char question saves with a 200-char title', async () => {
+    const question = `${'Qual é o prazo de entrega '.repeat(23)}?`;
+    expect((await CREATE(new Request(url, json({ kind: 'faq', title: '', question, content: 'Dois dias.' })))).status).toBe(201);
+    const args = h.rpc.mock.calls[0][1];
+    expect(args.p_question).toBe(question.replace(/\s+/g, ' ').trim());
+    expect(args.p_title.length).toBeLessThanOrEqual(200);
+  });
+
   it('rejects an unreadable upload with a clear message', async () => {
     const form = new FormData();
     form.set('file', new File(['x'], 'foto.png'));

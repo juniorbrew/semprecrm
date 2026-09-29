@@ -183,4 +183,15 @@ export const DICT_AI: Record<string, string> = {
     'Este PDF não tem texto selecionável (parece digitalizado). Envie um PDF com texto ou cole o conteúdo como um item de texto.',
   'Could not read this PDF. It may be damaged or password-protected.':
     'Não foi possível ler este PDF. Ele pode estar corrompido ou protegido por senha.',
+  'This file does not look like text. Send a plain-text .txt, .md or .csv file.':
+    'Este arquivo não parece texto. Envie um arquivo de texto simples .txt, .md ou .csv.',
+  'This PDF has too many pages (maximum 300). Split it into smaller files.':
+    'Este PDF tem páginas demais (máximo 300). Divida em arquivos menores.',
+  'This PDF is too heavy to read. Split it into smaller files or paste the text as a text item.':
+    'Este PDF é pesado demais para ler. Divida em arquivos menores ou cole o texto como um item de texto.',
+  'Reading this PDF took too long. Split it into smaller files or paste the text as a text item.':
+    'A leitura deste PDF demorou demais. Divida em arquivos menores ou cole o texto como um item de texto.',
+  'Could not load the item': 'Não foi possível carregar o item',
+  'Could not delete the item': 'Não foi possível excluir o item',
+  'The search failed': 'A busca falhou',
 };
