@@ -76,6 +76,8 @@ export interface RunModelCallInput {
   system: string;
   prompt: string;
   maxOutputTokens?: number;
+  /** The prompt carries knowledge-base snippets — flagged in `ai_usage`. */
+  kbUsed?: boolean;
   /** Client cancel (request aborted). */
   signal?: AbortSignal;
   /** Injectable for tests. */
@@ -119,6 +121,7 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     feature: input.feature,
     provider,
     model,
+    kbUsed: input.kbUsed ?? false,
   };
 
   const spent = await usageSummarySince(input.db, input.accountId, monthStartInTimeZone(now()));
