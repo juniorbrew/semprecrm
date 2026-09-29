@@ -5,16 +5,19 @@ import type { AccountContext } from '@/lib/auth/account';
 import { modelMatchesProvider } from './providers';
 import { AI_SETTINGS_ERRORS } from './settings';
 
-/** Unset `is_default` on every other agent of the account. */
-export async function clearOtherDefaults(ctx: AccountContext, keepId: string | null): Promise<void> {
-  let q = ctx.supabase
-    .from('ai_agents')
-    .update({ is_default: false })
-    .eq('account_id', ctx.accountId)
-    .eq('is_default', true);
-  if (keepId) q = q.neq('id', keepId);
-  const { error } = await q;
-  if (error) throw new Error(`ai agents default reset failed: ${error.message}`);
+/**
+ * Make `agentId` the account's only default in ONE statement (RPC over
+ * a deferred exclusion constraint — the account is never left without
+ * a default half-way). 'conflict' = a concurrent swap won.
+ */
+export async function setDefaultAgent(ctx: AccountContext, agentId: string): Promise<'ok' | 'conflict'> {
+  const { error } = await ctx.supabase.rpc('ai_agents_set_default', {
+    p_account_id: ctx.accountId,
+    p_agent_id: agentId,
+  });
+  if (error?.code === '23P01') return 'conflict';
+  if (error) throw new Error(`ai agents default swap failed: ${error.message}`);
+  return 'ok';
 }
 
 /**

@@ -689,7 +689,7 @@ export function AiSettings() {
           <CardContent className="space-y-3">
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { label: t("Suggestions"), value: num.format(usage.calls) },
+                { label: t("AI calls"), value: num.format(usage.calls) },
                 { label: t("Errors"), value: num.format(usage.errors) },
                 { label: t("Tokens (in / out)"), value: `${num.format(usage.inputTokens)} / ${num.format(usage.outputTokens)}` },
                 { label: t("Estimated cost"), value: money.format(usage.costCents / 100) },

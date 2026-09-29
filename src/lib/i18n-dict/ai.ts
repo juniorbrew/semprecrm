@@ -226,8 +226,11 @@ export const DICT_AI: Record<string, string> = {
   'The AI returned an invalid answer. Try again.': 'A IA devolveu uma resposta inválida. Tente de novo.',
   // Agents (Settings → IA → Agentes)
   'AI agents': 'Agentes de IA',
-  "Different instructions per team or number. The suggestion uses the agent linked to one of the contact's tags; otherwise the one linked to the conversation's WhatsApp number; otherwise the default agent; with no agent, the instructions above.":
-    'Instruções diferentes por equipe ou número. A sugestão usa o agente ligado a uma das etiquetas do contato; senão, o ligado ao número de WhatsApp da conversa; senão, o agente padrão; sem agentes, as instruções acima.',
+  "Different instructions per team or number. The account instructions above always apply; the agent's instructions are added after them. The suggestion uses the agent linked to one of the contact's tags; otherwise the one linked to the conversation's WhatsApp number; otherwise the default agent.":
+    'Instruções diferentes por equipe ou número. As instruções da conta, acima, valem sempre; as do agente são acrescentadas depois delas. A sugestão usa o agente ligado a uma das etiquetas do contato; senão, o ligado ao número de WhatsApp da conversa; senão, o agente padrão.',
+  'Turned on': 'Ativado',
+  'AI calls': 'Chamadas de IA',
+  'conversation of': 'conversa de',
   'New agent': 'Novo agente',
   'Edit agent': 'Editar agente',
   'Agent saved': 'Agente salvo',

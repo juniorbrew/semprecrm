@@ -60,7 +60,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       .select('fact, status')
       .eq('account_id', ctx.accountId)
       .eq('contact_id', conv.contact_id)
-      .order('updated_at', { ascending: false });
+      .order('updated_at', { ascending: false })
+      .limit(MEMORY_LIMITS.dedupeReadLimit);
     if (readErr) throw new Error(`contact memory read failed: ${readErr.message}`);
     const existing = (rows ?? []) as { fact: string; status: string }[];
     const live = existing.filter((r) => r.status !== 'rejected');

@@ -24,6 +24,7 @@ SELECT
   (SELECT account_id FROM profiles WHERE user_id = '64000000-0000-4000-8000-00000000000b') AS acc_b,
   '64000000-0000-4000-8000-0000000000c1'::uuid AS contact_a,
   '64000000-0000-4000-8000-0000000000c2'::uuid AS contact_b,
+  '64000000-0000-4000-8000-0000000000c3'::uuid AS contact_anon,
   '64000000-0000-4000-8000-0000000000f1'::uuid AS conv_a,
   '64000000-0000-4000-8000-0000000000f2'::uuid AS conv_b;
 GRANT SELECT ON ids TO authenticated;
@@ -37,6 +38,8 @@ INSERT INTO contacts(id, user_id, account_id, phone, name)
 SELECT contact_a, '64000000-0000-4000-8000-00000000000a'::uuid, acc_a, '5511900000001', 'Maria' FROM ids
 UNION ALL
 SELECT contact_b, '64000000-0000-4000-8000-00000000000b', acc_b, '5511900000002', 'Zoe' FROM ids;
+INSERT INTO contacts(id, user_id, account_id, phone, name, anonymized_at)
+SELECT contact_anon, '64000000-0000-4000-8000-00000000000a'::uuid, acc_a, 'anon-12345678', 'Contato anonimizado', now() FROM ids;
 INSERT INTO conversations(id, user_id, account_id, contact_id)
 SELECT conv_a, '64000000-0000-4000-8000-00000000000a'::uuid, acc_a, contact_a FROM ids
 UNION ALL
@@ -78,10 +81,27 @@ SELECT pg_temp.assert_true(
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-00000000000d', true);
 
+-- created_by is forged: the trigger stamps the caller instead.
 INSERT INTO ai_contact_memories(account_id, contact_id, fact, status, source, conversation_id, created_by)
-SELECT acc_a, contact_a, 'Prefere entrega à tarde', 'proposed', 'ai', conv_a, '64000000-0000-4000-8000-00000000000d' FROM ids;
-UPDATE ai_contact_memories SET status = 'active', approved_by = '64000000-0000-4000-8000-00000000000d'
+SELECT acc_a, contact_a, 'Prefere entrega à tarde', 'proposed', 'ai', conv_a, '64000000-0000-4000-8000-00000000000a' FROM ids;
+SELECT pg_temp.assert_true(
+  (SELECT created_by = '64000000-0000-4000-8000-00000000000d' AND approved_by IS NULL
+     FROM ai_contact_memories WHERE fact = 'Prefere entrega à tarde'),
+  'created_by stamped from the session; proposed has no approver');
+-- Approving: approved_by comes from the session; source/created_by are frozen.
+UPDATE ai_contact_memories
+   SET status = 'active', approved_by = '64000000-0000-4000-8000-00000000000a',
+       source = 'manual', created_by = '64000000-0000-4000-8000-00000000000a'
  WHERE fact = 'Prefere entrega à tarde';
+SELECT pg_temp.assert_true(
+  (SELECT approved_by = '64000000-0000-4000-8000-00000000000d' AND source = 'ai'
+          AND created_by = '64000000-0000-4000-8000-00000000000d'
+     FROM ai_contact_memories WHERE fact = 'Prefere entrega à tarde'),
+  'approval stamped by the trigger; source and created_by frozen');
+DO $$ BEGIN
+  INSERT INTO ai_contact_memories(account_id, contact_id, fact) SELECT acc_a, contact_anon, 'fact on anonymised' FROM ids;
+  RAISE EXCEPTION 'agent wrote a fact on an anonymised contact';
+EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 SELECT pg_temp.assert_true(
   (SELECT count(*) = 1 FROM ai_contact_memories), 'agent sees only own account memories');
 
@@ -106,6 +126,9 @@ UPDATE ai_contact_memories SET fact = 'hijack' WHERE fact LIKE 'SEGREDO B%';
 DELETE FROM ai_contact_memories WHERE fact LIKE 'SEGREDO B%';
 
 -- ---- agent A: agents (read yes, write no) ------------------------
+SELECT pg_temp.assert_true(
+  NOT ai_agents_set_default((SELECT acc_b FROM ids), (SELECT id FROM ai_agents LIMIT 1)),
+  'agent cannot set a default');
 SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM ai_agents), 'agent does not see account B agents');
 DO $$ BEGIN
   INSERT INTO ai_agents(account_id, name, instructions) SELECT acc_a, 'X', 'y' FROM ids;
@@ -140,16 +163,33 @@ INSERT INTO ai_agents(account_id, name, instructions, is_default, channels)
 SELECT acc_a, 'Vendas', 'Foque em vendas', true, ARRAY['official'] FROM ids;
 INSERT INTO ai_agents(account_id, name, instructions) SELECT acc_a, 'Suporte', 'Foque em suporte' FROM ids;
 SELECT pg_temp.assert_true((SELECT count(*) = 2 FROM ai_agents), 'owner sees only own agents');
+-- The constraint is deferred: force the check to see a second default fail.
 DO $$ BEGIN
+  SET CONSTRAINTS ai_agents_one_default IMMEDIATE;
   UPDATE ai_agents SET is_default = true WHERE name = 'Suporte';
   RAISE EXCEPTION 'second default agent accepted';
-EXCEPTION WHEN unique_violation THEN NULL; END $$;
--- Swapping the default: clear, then set.
-UPDATE ai_agents SET is_default = false WHERE is_default AND name <> 'Suporte';
-UPDATE ai_agents SET is_default = true WHERE name = 'Suporte';
+EXCEPTION WHEN exclusion_violation THEN NULL; END $$;
+SET CONSTRAINTS ai_agents_one_default DEFERRED;
+-- Swap with one statement (RPC), both directions; check immediately.
+SELECT pg_temp.assert_true(
+  ai_agents_set_default((SELECT acc_a FROM ids), (SELECT id FROM ai_agents WHERE name = 'Suporte')), 'set_default → Suporte');
+SET CONSTRAINTS ai_agents_one_default IMMEDIATE;
 SELECT pg_temp.assert_true(
   (SELECT count(*) = 1 FROM ai_agents WHERE is_default) AND (SELECT is_default FROM ai_agents WHERE name = 'Suporte'),
-  'default swapped');
+  'default swapped to Suporte');
+SET CONSTRAINTS ai_agents_one_default DEFERRED;
+SELECT ai_agents_set_default((SELECT acc_a FROM ids), (SELECT id FROM ai_agents WHERE name = 'Vendas'));
+SET CONSTRAINTS ai_agents_one_default IMMEDIATE;
+SELECT pg_temp.assert_true(
+  (SELECT count(*) = 1 FROM ai_agents WHERE is_default) AND (SELECT is_default FROM ai_agents WHERE name = 'Vendas'),
+  'default swapped back to Vendas');
+SET CONSTRAINTS ai_agents_one_default DEFERRED;
+-- Foreign agent id: nothing happens.
+SELECT pg_temp.assert_true(
+  NOT ai_agents_set_default((SELECT acc_b FROM ids), '64000000-0000-4000-8000-0000000000aa'),
+  'set_default on an invisible agent is refused');
+-- Leave Suporte as the default for the checks below.
+SELECT ai_agents_set_default((SELECT acc_a FROM ids), (SELECT id FROM ai_agents WHERE name = 'Suporte'));
 UPDATE ai_agents SET instructions = 'hijack' WHERE name = 'Agente B';
 DO $$ BEGIN
   INSERT INTO ai_agents(account_id, name, instructions) SELECT acc_b, 'X', 'y' FROM ids;

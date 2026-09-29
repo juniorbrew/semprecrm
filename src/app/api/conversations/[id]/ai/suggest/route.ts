@@ -18,9 +18,12 @@
 //
 // Phase 3 (064): the resolved AI agent (tag → number → default, see
 // src/lib/ai/agents.ts) supplies instructions, tone, model override and
-// knowledge on/off; body `{ agent_id }` picks another enabled agent for
-// this one suggestion. Up to 10 ACTIVE contact-memory facts go in as a
-// data block. GET returns the agent list + the resolved agent so the
+// knowledge on/off (its instructions are appended after the account's
+// general ones); body `{ agent_id }` picks another enabled agent for
+// this one suggestion (a stale id falls back to the rules). Up to 10
+// ACTIVE contact-memory facts go in as a data block. Agent / tag /
+// memory read failures are logged and the suggestion goes on without
+// them, like a failed knowledge search. GET returns the agent list + the resolved agent so the
 // composer can label (and switch) it before asking.
 // ============================================================
 
@@ -28,7 +31,7 @@ import { NextResponse } from 'next/server';
 
 import { requireModule, requireRole, type AccountContext } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
-import { AGENT_COLUMNS, AGENT_ERRORS, agentInstructions, resolveAgent, type AiAgent } from '@/lib/ai/agents';
+import { AGENT_COLUMNS, resolveAgent, suggestionInstructions, type AiAgent } from '@/lib/ai/agents';
 import {
   contactAnonymizedResponse,
   loadAiConversation,
@@ -46,6 +49,23 @@ export const dynamic = 'force-dynamic';
 
 const notFound = () => NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+/** Active facts of the contact, newest first — [] (logged) when the read fails. */
+async function loadMemory(ctx: AccountContext, contactId: string): Promise<string[]> {
+  const { data, error } = await ctx.supabase
+    .from('ai_contact_memories')
+    .select('fact')
+    .eq('account_id', ctx.accountId)
+    .eq('contact_id', contactId)
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(MEMORY_PROMPT_MAX_FACTS);
+  if (error) {
+    console.error('[ai/suggest] contact memory read failed:', error.message);
+    return [];
+  }
+  return ((data ?? []) as { fact: string }[]).map((r) => r.fact);
+}
+
 /** Enabled agents (oldest first) + the one the rules pick for this conversation. */
 async function loadAgents(ctx: AccountContext, conv: AiConversation) {
   const [agentsRes, tagsRes] = await Promise.all([
@@ -57,8 +77,11 @@ async function loadAgents(ctx: AccountContext, conv: AiConversation) {
       .order('created_at', { ascending: true }),
     ctx.supabase.from('contact_tags').select('tag_id').eq('contact_id', conv.contact_id),
   ]);
-  if (agentsRes.error) throw new Error(`ai agents read failed: ${agentsRes.error.message}`);
-  if (tagsRes.error) throw new Error(`contact tags read failed: ${tagsRes.error.message}`);
+  // Like a failed knowledge search: log and suggest without agents.
+  if (agentsRes.error || tagsRes.error) {
+    console.error('[ai/suggest] agents/tags read failed:', agentsRes.error?.message ?? tagsRes.error?.message);
+    return { agents: [] as AiAgent[], resolved: null };
+  }
   const agents = (agentsRes.data ?? []) as AiAgent[];
   const tagIds = ((tagsRes.data ?? []) as { tag_id: string }[]).map((r) => r.tag_id);
   const resolved = resolveAgent(agents, { channel: conv.channel ?? 'official', tagIds });
@@ -107,29 +130,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       );
     }
 
-    const { agents, resolved } = await loadAgents(ctx, conv);
-    const agent = pickedAgentId ? agents.find((a) => a.id === pickedAgentId) ?? null : resolved;
-    if (pickedAgentId && !agent) {
-      return NextResponse.json({ error: AGENT_ERRORS.notFound }, { status: 404 });
-    }
-
-    const { data: memRows, error: memErr } = await ctx.supabase
-      .from('ai_contact_memories')
-      .select('fact')
-      .eq('account_id', ctx.accountId)
-      .eq('contact_id', conv.contact_id)
-      .eq('status', 'active')
-      .order('updated_at', { ascending: false })
-      .limit(MEMORY_PROMPT_MAX_FACTS);
-    if (memErr) throw new Error(`contact memory read failed: ${memErr.message}`);
-    const memory = ((memRows ?? []) as { fact: string }[]).map((r) => r.fact);
+    const [{ agents, resolved }, memory] = await Promise.all([
+      loadAgents(ctx, conv),
+      loadMemory(ctx, conv.contact_id),
+    ]);
+    // A picked agent that was deleted/disabled meanwhile: the rules decide
+    // (the response names the agent actually used, so the composer resyncs).
+    const agent = (pickedAgentId ? agents.find((a) => a.id === pickedAgentId) : null) ?? resolved;
 
     const knowledge = !agent || agent.knowledge_enabled ? await loadPromptKnowledge(ctx, messages) : [];
 
     const { system, prompt } = buildSuggestReplyPrompt({
       accountName: ctx.account.name,
       contactName: contact?.name ?? null,
-      instructions: agent ? agentInstructions(agent) : instructions,
+      instructions: suggestionInstructions(instructions, agent),
       messages,
       knowledge,
       memory,

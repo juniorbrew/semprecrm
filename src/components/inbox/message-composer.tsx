@@ -536,6 +536,8 @@ export function MessageComposer({
     resolved: string | null;
   } | null>(null);
   const [pickedAgent, setPickedAgent] = useState<{ conversationId: string; id: string } | null>(null);
+  // Bumped when the server ignored a stale pick (agent deleted/disabled).
+  const [agentsVersion, setAgentsVersion] = useState(0);
   useEffect(() => {
     if (!aiAvailable || readOnly) return;
     let alive = true;
@@ -550,7 +552,7 @@ export function MessageComposer({
     return () => {
       alive = false;
     };
-  }, [aiAvailable, readOnly, conversationId]);
+  }, [aiAvailable, readOnly, conversationId, agentsVersion]);
   const agents = agentInfo?.conversationId === conversationId ? agentInfo.agents : [];
   const pickedAgentId = pickedAgent?.conversationId === conversationId ? pickedAgent.id : null;
   const activeAgentId = pickedAgentId ?? (agentInfo?.conversationId === conversationId ? agentInfo.resolved : null);
@@ -595,7 +597,7 @@ export function MessageComposer({
         signal: ctrl.signal,
       });
       const body = (await res.json().catch(() => null)) as
-        | { text?: string; error?: string; code?: string }
+        | { text?: string; error?: string; code?: string; agent?: { id: string } | null }
         | null;
       if (suggestAbortRef.current !== ctrl) return; // cancelled / thread switched
       if (!res.ok || !body?.text) {
@@ -612,6 +614,12 @@ export function MessageComposer({
               : copy.suggestFailed,
         );
         return;
+      }
+      // The picked agent no longer exists / is off: the server used the
+      // rules instead — drop the pick and reload the list.
+      if (pickedAgentId && body.agent?.id !== pickedAgentId) {
+        setPickedAgent(null);
+        setAgentsVersion((v) => v + 1);
       }
       if (textRef.current.trim()) setPendingSuggestion(body.text);
       else applySuggestion(body.text, "replace");

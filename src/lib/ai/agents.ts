@@ -144,3 +144,17 @@ export function agentInstructions(agent: Pick<AiAgent, 'instructions' | 'tone'>)
   const tone = agent.tone?.trim();
   return tone ? `${agent.instructions.trim()}\n\nTom de voz: ${tone}` : agent.instructions.trim();
 }
+
+/**
+ * The trusted instructions of a suggestion: the account's general
+ * instructions always apply; a resolved agent's are appended after them.
+ */
+export function suggestionInstructions(
+  general: string | null,
+  agent: Pick<AiAgent, 'name' | 'instructions' | 'tone'> | null,
+): string | null {
+  const base = general?.trim() || null;
+  if (!agent) return base;
+  const own = agentInstructions(agent);
+  return base ? `${base}\n\nInstruções do agente "${agent.name}":\n${own}` : own;
+}

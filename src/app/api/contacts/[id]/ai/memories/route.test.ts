@@ -177,6 +177,21 @@ describe('PATCH / DELETE /api/contacts/:id/ai/memories/:memoryId (approval flow)
     expect(mem(M_PROPOSED)?.status).toBe('proposed');
   });
 
+  it('a non-UUID contact id is a 404 (PATCH and DELETE)', async () => {
+    expect((await PATCH(req({ status: 'active' }, 'PATCH'), p({ id: 'x', memoryId: M_PROPOSED }))).status).toBe(404);
+    expect((await DELETE(req(undefined, 'DELETE'), p({ id: 'x', memoryId: M_ACTIVE }))).status).toBe(404);
+    expect(mem(M_ACTIVE)).toBeDefined();
+  });
+
+  it('editing a fact into a duplicate of another live fact is a 409', async () => {
+    const res = await PATCH(req({ fact: 'prefere ENTREGA a tarde' }, 'PATCH'), p({ id: CT_A, memoryId: M_PROPOSED }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(MEMORY_ERRORS.duplicate);
+    expect(mem(M_PROPOSED)).toMatchObject({ fact: 'Trabalha com eventos', status: 'proposed' });
+    // Editing a fact to itself (case change) is fine.
+    expect((await PATCH(req({ fact: 'Trabalha com EVENTOS' }, 'PATCH'), p({ id: CT_A, memoryId: M_PROPOSED }))).status).toBe(200);
+  });
+
   it('agent deletes a fact', async () => {
     expect((await DELETE(req(undefined, 'DELETE'), p({ id: CT_A, memoryId: M_ACTIVE }))).status).toBe(200);
     expect(mem(M_ACTIVE)).toBeUndefined();
@@ -194,13 +209,15 @@ describe('POST /api/conversations/:id/ai/memory (extract)', () => {
           'CPF 123.456.789-09', // sensitive
           'x'.repeat(400), // too long
           'Trabalha com buffet de eventos!', // duplicate in batch
+          'Tem desconto de 10% nos pedidos', // commercial term — never memory
+          'Telefone alternativo 11987654321', // phone, not a CPF — kept
         ],
       }),
     });
     const res = await EXTRACT(req({}), p({ id: CONV_A }));
     expect(res.status).toBe(200);
     const { created } = await res.json();
-    expect(created.map((m: Row) => m.fact)).toEqual(['Trabalha com buffet de eventos']);
+    expect(created.map((m: Row) => m.fact)).toEqual(['Trabalha com buffet de eventos', 'Telefone alternativo 11987654321']);
     expect(h.tables.ai_contact_memories.at(-1)).toMatchObject({
       account_id: 'acc-a',
       contact_id: CT_A,

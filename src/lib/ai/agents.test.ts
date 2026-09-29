@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_ERRORS, agentInstructions, parseAgentInput, resolveAgent } from './agents';
+import { AGENT_ERRORS, agentInstructions, parseAgentInput, resolveAgent, suggestionInstructions } from './agents';
 
 const TAG = '11111111-1111-4111-8111-111111111111';
 type Ch = 'official' | 'qr';
@@ -72,5 +72,15 @@ describe('agentInstructions', () => {
   it('appends the tone when set', () => {
     expect(agentInstructions({ instructions: 'Seja breve.', tone: null })).toBe('Seja breve.');
     expect(agentInstructions({ instructions: 'Seja breve.', tone: 'formal' })).toBe('Seja breve.\n\nTom de voz: formal');
+  });
+});
+
+describe('suggestionInstructions', () => {
+  const agent = { name: 'VIP', instructions: 'Trate bem.', tone: null };
+  it('general only, agent only, or general followed by the agent', () => {
+    expect(suggestionInstructions('Geral.', null)).toBe('Geral.');
+    expect(suggestionInstructions('  ', null)).toBeNull();
+    expect(suggestionInstructions(null, agent)).toBe('Trate bem.');
+    expect(suggestionInstructions('Geral.', agent)).toBe('Geral.\n\nInstruções do agente "VIP":\nTrate bem.');
   });
 });

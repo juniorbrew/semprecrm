@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
     role: 'agent' as string | null,
     aiModule: true,
     tables: {} as Record<string, Row[]>,
+    failTables: [] as string[],
   },
   runModelCall: vi.fn(),
   rpc: vi.fn(),
@@ -46,7 +47,10 @@ function makeSupabase() {
           return b;
         },
         maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
-        then: (resolve: (v: { data: Row[]; error: null }) => unknown) => resolve({ data: rows, error: null }),
+        then: (resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) =>
+          h.state.failTables.includes(table)
+            ? resolve({ data: null, error: { message: `relation "${table}" does not exist` } })
+            : resolve({ data: rows, error: null }),
       };
       return b;
     },
@@ -101,6 +105,7 @@ beforeEach(() => {
   __resetRateLimitForTests();
   h.state.role = 'agent';
   h.state.aiModule = true;
+  h.state.failTables = [];
   h.state.tables = {
     conversations: [
       { id: CONV_A, account_id: 'acc-a', channel: 'official', contact_id: 'ct-maria', contact: { name: 'Maria', anonymized_at: null } },
@@ -282,12 +287,14 @@ describe('POST /api/conversations/:id/ai/suggest', () => {
       ];
     });
 
-    it('default agent: its instructions and model override, plus only active memory of this contact', async () => {
+    it('default agent: general + its instructions, model override, only active memory of this contact', async () => {
       const res = await post(CONV_A);
       expect(await res.json()).toMatchObject({ agent: { id: 'ag-default', name: 'Padrão' } });
       const input = h.runModelCall.mock.calls[0][0];
       expect(input.system).toContain('INSTRUÇÕES PADRÃO');
-      expect(input.system).not.toContain('Entregamos no bairro.');
+      // The account's general instructions still apply, BEFORE the agent's.
+      expect(input.system).toContain('Entregamos no bairro.');
+      expect(input.system.indexOf('Entregamos no bairro.')).toBeLessThan(input.system.indexOf('INSTRUÇÕES PADRÃO'));
       expect(input.system).not.toContain('DESLIGADO');
       expect(input.model).toBe('gpt-4.1');
       expect(input.prompt).toContain('<memoria_do_contato>');
@@ -312,11 +319,33 @@ describe('POST /api/conversations/:id/ai/suggest', () => {
       expect(h.runModelCall.mock.calls[0][0].system).toContain('INSTRUÇÕES QR');
     });
 
-    it('agent_id switches the agent; unknown, disabled or foreign ids are 404', async () => {
+    it('agent_id switches the agent; unknown, disabled or foreign ids fall back to the rules', async () => {
       await post(CONV_A, { agent_id: 'ag-qr' });
       expect(h.runModelCall.mock.calls[0][0].system).toContain('INSTRUÇÕES QR');
-      for (const id of ['nope', 'ag-off', 'ag-b']) expect((await post(CONV_A, { agent_id: id })).status).toBe(404);
-      expect(h.runModelCall).toHaveBeenCalledOnce();
+      for (const [i, id] of ['nope', 'ag-off', 'ag-b'].entries()) {
+        const res = await post(CONV_A, { agent_id: id });
+        expect(res.status).toBe(200);
+        expect((await res.json()).agent).toEqual({ id: 'ag-default', name: 'Padrão' });
+        const system = h.runModelCall.mock.calls[i + 1][0].system;
+        expect(system).toContain('INSTRUÇÕES PADRÃO');
+        expect(system).not.toContain('DESLIGADO');
+        expect(system).not.toContain('SEGREDO DA CONTA B');
+      }
+    });
+
+    it('agents, tags or memory unreadable: logs and suggests with the general instructions', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      h.state.failTables = ['ai_agents', 'ai_contact_memories'];
+      const res = await post(CONV_A);
+      expect(res.status).toBe(200);
+      expect((await res.json()).agent).toBeNull();
+      const input = h.runModelCall.mock.calls[0][0];
+      expect(input.system).toContain('Entregamos no bairro.');
+      expect(input.prompt).not.toContain('<memoria_do_contato>');
+      h.state.failTables = ['contact_tags'];
+      expect((await post(CONV_A)).status).toBe(200);
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
     });
 
     it('no agents at all: phase-1 instructions', async () => {

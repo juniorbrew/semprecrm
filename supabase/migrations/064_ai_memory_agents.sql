@@ -9,11 +9,14 @@
 --      manual facts are `active` at once; `rejected` ones are kept so
 --      the model does not propose them again. Members read (viewers
 --      too); agent+ write. The contact (and the conversation, when
---      set) must belong to the row's account — checked in the policy.
+--      set) must belong to the row's account and the contact must not be
+--      anonymised — checked in the policy. A trigger stamps created_by /
+--      approved_by from auth.uid() and freezes created_by / source.
 --      LGPD: deleted on anonymisation, included in the export (app).
 --   2. `ai_agents` — named assistant profiles: instructions, tone,
 --      optional model override, knowledge on/off, enabled, one default
---      per account (partial unique index). Assignment links are plain
+--      per account (deferred exclusion constraint + the
+--      `ai_agents_set_default` RPC for an atomic swap). Assignment links are plain
 --      arrays: `channels` (the conversation's WhatsApp transport,
 --      'official' | 'qr' — one number each per account) and `tag_ids`
 --      (contact tags). A deleted tag leaves a dangling id that simply
@@ -62,6 +65,42 @@ DROP TRIGGER IF EXISTS set_updated_at ON ai_contact_memories;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON ai_contact_memories
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Who approved / created is stamped by the database for app users
+-- (auth.uid() set): approved_by follows the status, and created_by /
+-- source never change after the insert. The service role (auth.uid()
+-- NULL) keeps whatever it writes.
+CREATE OR REPLACE FUNCTION public.ai_contact_memories_stamp()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    NEW.created_by := auth.uid();
+  ELSE
+    NEW.created_by := OLD.created_by;
+    NEW.source := OLD.source;
+  END IF;
+  IF NEW.status = 'active' THEN
+    IF TG_OP = 'INSERT' OR OLD.status <> 'active' OR NEW.fact IS DISTINCT FROM OLD.fact THEN
+      NEW.approved_by := auth.uid();
+    ELSE
+      NEW.approved_by := OLD.approved_by;
+    END IF;
+  ELSE
+    NEW.approved_by := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS ai_contact_memories_stamp ON ai_contact_memories;
+CREATE TRIGGER ai_contact_memories_stamp BEFORE INSERT OR UPDATE ON ai_contact_memories
+  FOR EACH ROW EXECUTE FUNCTION public.ai_contact_memories_stamp();
+
 ALTER TABLE ai_contact_memories ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS ai_contact_memories_select ON ai_contact_memories;
@@ -69,12 +108,13 @@ CREATE POLICY ai_contact_memories_select ON ai_contact_memories FOR SELECT
   USING (is_account_member(account_id));
 
 -- Writes: agent+ of the row's account, and the contact / conversation
--- must be of that same account (no pinning a fact on a foreign contact).
+-- must be of that same account (no pinning a fact on a foreign contact)
+-- and the contact must not be anonymised (LGPD).
 DROP POLICY IF EXISTS ai_contact_memories_insert ON ai_contact_memories;
 CREATE POLICY ai_contact_memories_insert ON ai_contact_memories FOR INSERT
   WITH CHECK (
     is_account_member(account_id, 'agent')
-    AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = ai_contact_memories.contact_id AND c.account_id = ai_contact_memories.account_id)
+    AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = ai_contact_memories.contact_id AND c.account_id = ai_contact_memories.account_id AND c.anonymized_at IS NULL)
     AND (conversation_id IS NULL OR EXISTS (
       SELECT 1 FROM conversations v
       WHERE v.id = ai_contact_memories.conversation_id AND v.account_id = ai_contact_memories.account_id AND v.contact_id = ai_contact_memories.contact_id
@@ -86,7 +126,7 @@ CREATE POLICY ai_contact_memories_update ON ai_contact_memories FOR UPDATE
   USING (is_account_member(account_id, 'agent'))
   WITH CHECK (
     is_account_member(account_id, 'agent')
-    AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = ai_contact_memories.contact_id AND c.account_id = ai_contact_memories.account_id)
+    AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = ai_contact_memories.contact_id AND c.account_id = ai_contact_memories.account_id AND c.anonymized_at IS NULL)
     AND (conversation_id IS NULL OR EXISTS (
       SELECT 1 FROM conversations v
       WHERE v.id = ai_contact_memories.conversation_id AND v.account_id = ai_contact_memories.account_id AND v.contact_id = ai_contact_memories.contact_id
@@ -146,9 +186,15 @@ ALTER TABLE ai_agents DROP CONSTRAINT IF EXISTS ai_agents_tag_ids_check;
 ALTER TABLE ai_agents ADD CONSTRAINT ai_agents_tag_ids_check
   CHECK (cardinality(tag_ids) <= 50);
 
--- At most one default agent per account.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_agents_default
-  ON ai_agents(account_id) WHERE is_default;
+-- At most one default agent per account. A DEFERRED exclusion
+-- constraint (not a unique index) so the swap is one UPDATE —
+-- ai_agents_set_default() — checked at commit, never leaving the
+-- account without a default half-way.
+DROP INDEX IF EXISTS uq_ai_agents_default;
+ALTER TABLE ai_agents DROP CONSTRAINT IF EXISTS ai_agents_one_default;
+ALTER TABLE ai_agents ADD CONSTRAINT ai_agents_one_default
+  EXCLUDE USING btree (account_id WITH =) WHERE (is_default)
+  DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX IF NOT EXISTS idx_ai_agents_account ON ai_agents(account_id);
 
 DROP TRIGGER IF EXISTS set_updated_at ON ai_agents;
@@ -177,6 +223,29 @@ CREATE POLICY ai_agents_delete ON ai_agents FOR DELETE
 REVOKE ALL ON TABLE ai_agents FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ai_agents TO authenticated;
 GRANT ALL ON TABLE ai_agents TO service_role;
+
+-- ai_agents_set_default(account, agent) — makes `agent` the only
+-- default of the account in ONE statement. SECURITY INVOKER: RLS
+-- (admin+) decides; returns false when the agent is not visible.
+CREATE OR REPLACE FUNCTION public.ai_agents_set_default(p_account_id UUID, p_agent_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM ai_agents WHERE id = p_agent_id AND account_id = p_account_id) THEN
+    RETURN FALSE;
+  END IF;
+  UPDATE ai_agents
+     SET is_default = (id = p_agent_id)
+   WHERE account_id = p_account_id
+     AND (is_default OR id = p_agent_id);
+  RETURN TRUE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.ai_agents_set_default(UUID, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ai_agents_set_default(UUID, UUID) TO authenticated, service_role;
 
 -- ============================================================
 -- 3. AI_USAGE features

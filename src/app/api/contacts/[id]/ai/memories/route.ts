@@ -64,7 +64,11 @@ export async function POST(request: Request, { params }: Params) {
       .from('ai_contact_memories')
       .select('id, fact, status')
       .eq('account_id', ctx.accountId)
-      .eq('contact_id', id);
+      .eq('contact_id', id)
+      .order('updated_at', { ascending: false })
+      // ponytail: dedupe/cap over the 500 most recent facts; a contact with
+      // more rejected facts than that could slip an old duplicate through.
+      .limit(MEMORY_LIMITS.dedupeReadLimit);
     if (readErr) throw new Error(`contact memory read failed: ${readErr.message}`);
     const current = (rows ?? []) as { id: string; fact: string; status: string }[];
     const live = current.filter((r) => r.status !== 'rejected');

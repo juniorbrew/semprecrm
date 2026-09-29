@@ -7,8 +7,8 @@
 //        is_default?, enabled?, channels?, tag_ids? }
 //
 // Caller's RLS client, account from the session. "Default" is unique
-// per account (partial unique index): the previous default is cleared
-// first; a concurrent race surfaces as 409.
+// per account: it is set by the `ai_agents_set_default` RPC (one
+// statement, deferred exclusion constraint); a concurrent race → 409.
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -18,7 +18,7 @@ import { audit } from '@/lib/audit-server';
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { AGENT_COLUMNS, AGENT_ERRORS, AGENT_LIMITS, parseAgentInput, type AiAgent } from '@/lib/ai/agents';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { checkAgentModel, clearOtherDefaults } from '@/lib/ai/agents-store';
+import { checkAgentModel, setDefaultAgent } from '@/lib/ai/agents-store';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -62,15 +62,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: AGENT_ERRORS.tooMany }, { status: 409 });
     }
 
-    if (w.is_default) await clearOtherDefaults(ctx, null);
+    // Created as non-default; becoming the default is the atomic swap below.
+    const { is_default: makeDefault, ...fields } = w;
     const { data, error } = await ctx.supabase
       .from('ai_agents')
-      .insert({ ...w, account_id: ctx.accountId, created_by: ctx.userId })
+      .insert({ ...fields, is_default: false, account_id: ctx.accountId, created_by: ctx.userId })
       .select(AGENT_COLUMNS)
       .single();
-    if (error?.code === '23505') return NextResponse.json({ error: AGENT_ERRORS.defaultConflict }, { status: 409 });
     if (error || !data) throw new Error(`ai agent insert failed: ${error?.message ?? 'no row'}`);
     const agent = data as AiAgent;
+    if (makeDefault) {
+      if ((await setDefaultAgent(ctx, agent.id)) === 'conflict') {
+        return NextResponse.json({ error: AGENT_ERRORS.defaultConflict }, { status: 409 });
+      }
+      agent.is_default = true;
+    }
 
     await audit({
       accountId: ctx.accountId,

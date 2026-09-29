@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server';
 
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
-import { AGENT_COLUMNS, AGENT_ERRORS, AGENT_LIMITS, agentInstructions, type AiAgent } from '@/lib/ai/agents';
+import { AGENT_COLUMNS, AGENT_ERRORS, AGENT_LIMITS, suggestionInstructions, type AiAgent } from '@/lib/ai/agents';
 import { loadPromptKnowledge } from '@/lib/ai/conversation-context';
 import { AiError } from '@/lib/ai/errors';
 import { aiErrorResponse } from '@/lib/ai/http';
@@ -46,6 +46,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (error) throw new Error(`ai agent read failed: ${error.message}`);
     if (!data) return NextResponse.json({ error: AGENT_ERRORS.notFound }, { status: 404 });
     const agent = data as AiAgent;
+    const { data: settings } = await ctx.supabase
+      .from('ai_settings')
+      .select('instructions')
+      .eq('account_id', ctx.accountId)
+      .maybeSingle();
 
     const messages: SuggestMessage[] = [
       { sender_type: 'customer', content_type: 'text', content_text: text, created_at: new Date().toISOString() },
@@ -55,7 +60,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const { system, prompt } = buildSuggestReplyPrompt({
       accountName: ctx.account.name,
       contactName: null,
-      instructions: agentInstructions(agent),
+      instructions: suggestionInstructions((settings as { instructions?: string | null } | null)?.instructions ?? null, agent),
       messages,
       knowledge,
     });

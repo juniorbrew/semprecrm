@@ -16,7 +16,7 @@ import { NextResponse } from 'next/server';
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { contactAnonymizedResponse, loadAiContact } from '@/lib/ai/conversation-context';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { MEMORY_COLUMNS, MEMORY_ERRORS, parseManualFact, type ContactMemory } from '@/lib/ai/memory';
+import { factKey, MEMORY_COLUMNS, MEMORY_ERRORS, MEMORY_LIMITS, parseManualFact, type ContactMemory } from '@/lib/ai/memory';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -37,7 +37,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const { ctx, id, memoryId } = await context(params);
     const limit = checkRateLimit(`ai:memory:${ctx.userId}`, RATE_LIMITS.adminAction);
     if (!limit.success) return rateLimitResponse(limit);
-    if (!UUID_RE.test(memoryId)) return notFound();
+    if (!UUID_RE.test(id) || !UUID_RE.test(memoryId)) return notFound();
 
     const contact = await loadAiContact(ctx, id);
     if (!contact) return notFound();
@@ -51,6 +51,19 @@ export async function PATCH(request: Request, { params }: Params) {
       const parsed = parseManualFact(body.fact);
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
       patch.fact = parsed.fact;
+      const { data: others, error: othersErr } = await ctx.supabase
+        .from('ai_contact_memories')
+        .select('id, fact')
+        .eq('account_id', ctx.accountId)
+        .eq('contact_id', id)
+        .in('status', ['proposed', 'active'])
+        .neq('id', memoryId)
+        .order('updated_at', { ascending: false })
+        .limit(MEMORY_LIMITS.dedupeReadLimit);
+      if (othersErr) throw new Error(`contact memory read failed: ${othersErr.message}`);
+      if (((others ?? []) as { fact: string }[]).some((o) => factKey(o.fact) === factKey(parsed.fact))) {
+        return NextResponse.json({ error: MEMORY_ERRORS.duplicate }, { status: 409 });
+      }
       // Editing is reviewing: an edited proposed fact becomes active.
       patch.status = 'active';
     }
@@ -84,7 +97,7 @@ export async function DELETE(_request: Request, { params }: Params) {
     const { ctx, id, memoryId } = await context(params);
     const limit = checkRateLimit(`ai:memory:${ctx.userId}`, RATE_LIMITS.adminAction);
     if (!limit.success) return rateLimitResponse(limit);
-    if (!UUID_RE.test(memoryId)) return notFound();
+    if (!UUID_RE.test(id) || !UUID_RE.test(memoryId)) return notFound();
 
     const { data, error } = await ctx.supabase
       .from('ai_contact_memories')

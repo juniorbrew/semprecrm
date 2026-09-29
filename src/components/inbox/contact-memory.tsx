@@ -22,6 +22,12 @@ interface ContactMemorySectionProps {
   renderAddButton: (label: string, onClick: () => void) => ReactNode;
 }
 
+/** Start of the conversation a proposed fact came from. */
+function sourceDate(m: ContactMemory): string | null {
+  const c = Array.isArray(m.conversation) ? m.conversation[0] : m.conversation;
+  return c?.created_at ?? null;
+}
+
 async function errorKey(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
   return body?.error ?? "";
@@ -39,7 +45,7 @@ export function ContactMemorySection({
   renderHeader,
   renderAddButton,
 }: ContactMemorySectionProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const canWrite = useCan("send-messages") && !anonymized;
   const aiStatus = useAiStatus();
   const [items, setItems] = useState<{ contactId: string; list: ContactMemory[] } | null>(null);
@@ -219,6 +225,11 @@ export function ContactMemorySection({
                   <span className="inline-flex items-center gap-1 text-[10px] text-primary">
                     <Sparkles className="h-2.5 w-2.5" aria-hidden />
                     {t("Suggested by AI — review")}
+                    {sourceDate(m) ? (
+                      <span className="text-muted-foreground" data-no-translate>
+                        · {t("conversation of")} {new Date(sourceDate(m)!).toLocaleDateString(language)}
+                      </span>
+                    ) : null}
                   </span>
                   {canWrite && (
                     <span className="flex items-center">

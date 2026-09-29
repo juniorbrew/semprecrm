@@ -14,7 +14,7 @@ import { AUDIT_ACTIONS } from '@/lib/audit';
 import { audit } from '@/lib/audit-server';
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { AGENT_COLUMNS, AGENT_ERRORS, parseAgentInput, type AiAgent } from '@/lib/ai/agents';
-import { checkAgentModel, clearOtherDefaults } from '@/lib/ai/agents-store';
+import { checkAgentModel, setDefaultAgent } from '@/lib/ai/agents-store';
 import { aiErrorResponse } from '@/lib/ai/http';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
@@ -53,16 +53,23 @@ export async function PATCH(request: Request, { params }: Params) {
     if (readErr) throw new Error(`ai agent read failed: ${readErr.message}`);
     if (!current) return notFound();
 
-    if (w.is_default) await clearOtherDefaults(ctx, id);
+    // is_default: true goes through the atomic swap; false is a plain update.
+    const { is_default: makeDefault, ...rest } = w;
+    const fields = makeDefault === false ? { ...rest, is_default: false } : rest;
+    if (Object.keys(fields).length > 0) {
+      const { error } = await ctx.supabase.from('ai_agents').update(fields).eq('id', id).eq('account_id', ctx.accountId);
+      if (error) throw new Error(`ai agent update failed: ${error.message}`);
+    }
+    if (makeDefault === true && (await setDefaultAgent(ctx, id)) === 'conflict') {
+      return NextResponse.json({ error: AGENT_ERRORS.defaultConflict }, { status: 409 });
+    }
     const { data, error } = await ctx.supabase
       .from('ai_agents')
-      .update(w)
+      .select(AGENT_COLUMNS)
       .eq('id', id)
       .eq('account_id', ctx.accountId)
-      .select(AGENT_COLUMNS)
       .maybeSingle();
-    if (error?.code === '23505') return NextResponse.json({ error: AGENT_ERRORS.defaultConflict }, { status: 409 });
-    if (error) throw new Error(`ai agent update failed: ${error.message}`);
+    if (error) throw new Error(`ai agent read failed: ${error.message}`);
     if (!data) return notFound();
     const agent = data as AiAgent;
 

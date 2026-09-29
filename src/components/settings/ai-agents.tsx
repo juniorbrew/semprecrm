@@ -199,7 +199,7 @@ export function AiAgents({ provider }: { provider: AiProvider | null }) {
         </CardTitle>
         <CardDescription className="text-muted-foreground">
           {t(
-            "Different instructions per team or number. The suggestion uses the agent linked to one of the contact's tags; otherwise the one linked to the conversation's WhatsApp number; otherwise the default agent; with no agent, the instructions above.",
+            "Different instructions per team or number. The account instructions above always apply; the agent's instructions are added after them. The suggestion uses the agent linked to one of the contact's tags; otherwise the one linked to the conversation's WhatsApp number; otherwise the default agent.",
           )}
         </CardDescription>
       </CardHeader>
@@ -257,7 +257,7 @@ export function AiAgents({ provider }: { provider: AiProvider | null }) {
                     checked={a.enabled}
                     disabled={busyId === a.id}
                     onCheckedChange={(v) => void toggle(a, v)}
-                    aria-label={`${t("Enabled")}: ${a.name}`}
+                    aria-label={`${t("Turned on")}: ${a.name}`}
                   />
                   <Button
                     size="sm"
@@ -457,7 +457,7 @@ export function AiAgents({ provider }: { provider: AiProvider | null }) {
                   />
                 </label>
                 <label className="flex items-center justify-between gap-3 text-sm text-foreground">
-                  {t("Enabled")}
+                  {t("Turned on")}
                   <Switch checked={draft.enabled} onCheckedChange={(v) => setDraft({ ...draft, enabled: v })} />
                 </label>
               </div>

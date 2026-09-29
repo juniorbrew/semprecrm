@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   runModelCall: vi.fn(),
   audits: [] as Row[],
+  rpcError: null as { code: string; message: string } | null,
 }));
 
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn() }));
@@ -30,7 +31,14 @@ vi.mock('@/lib/auth/account', async (importOriginal) => {
       if (!h.role) throw new actual.UnauthorizedError();
       if (!hasMinRole(h.role as 'admin', min)) throw new actual.ForbiddenError('Insufficient role');
       return {
-        supabase: makeFakeDb(h.tables, async () => ({ data: [], error: null })),
+        supabase: makeFakeDb(h.tables, async (fn: string, args: unknown) => {
+          if (fn !== 'ai_agents_set_default') return { data: [], error: null };
+          if (h.rpcError) return { data: null, error: h.rpcError };
+          const { p_account_id, p_agent_id } = args as { p_account_id: string; p_agent_id: string };
+          // One statement: every agent of the account, is_default = (id = target).
+          for (const a of h.tables.ai_agents) if (a.account_id === p_account_id) a.is_default = a.id === p_agent_id;
+          return { data: true, error: null };
+        }),
         userId: 'u-a',
         accountId: 'acc-a',
         role: h.role,
@@ -69,8 +77,9 @@ beforeEach(() => {
   h.aiModule = true;
   h.audits = [];
   h.runModelCall.mockReset();
+  h.rpcError = null;
   h.tables = {
-    ai_settings: [{ account_id: 'acc-a', provider: 'openai' }],
+    ai_settings: [{ account_id: 'acc-a', provider: 'openai', instructions: 'INSTRUÇÕES GERAIS' }],
     ai_agents: [
       { id: AG_A, account_id: 'acc-a', name: 'Vendas', instructions: 'Venda', tone: null, model: null, knowledge_enabled: false, is_default: true, enabled: true, channels: [], tag_ids: [], created_at: '1' },
       { id: AG_A2, account_id: 'acc-a', name: 'Suporte', instructions: 'Ajude', tone: 'calmo', model: 'gpt-4.1', knowledge_enabled: true, is_default: false, enabled: true, channels: ['qr'], tag_ids: [], created_at: '2' },
@@ -137,6 +146,18 @@ describe('CRUD', () => {
     expect(agent(AG_B)?.name).toBe('B');
   });
 
+  it('a concurrent default swap (exclusion violation) is a 409', async () => {
+    h.rpcError = { code: '23P01', message: 'conflicting key value violates exclusion constraint' };
+    const res = await PATCH(req({ is_default: true }, 'PATCH'), p(AG_A2));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(AGENT_ERRORS.defaultConflict);
+  });
+
+  it('is_default: false is a plain update', async () => {
+    await PATCH(req({ is_default: false }, 'PATCH'), p(AG_A));
+    expect(h.tables.ai_agents.filter((a) => a.is_default).map((a) => a.id)).toEqual([AG_B]);
+  });
+
   it('DELETE removes own agents only', async () => {
     expect((await DELETE(req(undefined, 'DELETE'), p(AG_B))).status).toBe(404);
     expect((await DELETE(req(undefined, 'DELETE'), p(AG_A))).status).toBe(200);
@@ -151,7 +172,9 @@ describe('POST /api/ai/agents/:id/test', () => {
     expect(await res.json()).toEqual({ text: 'Olá! Posso ajudar?' });
     const input = h.runModelCall.mock.calls[0][0];
     expect(input).toMatchObject({ accountId: 'acc-a', feature: 'agent_test', conversationId: null, model: 'gpt-4.1' });
-    expect(input.system).toContain('Ajude');
+    expect(input.system).toContain('INSTRUÇÕES GERAIS');
+    expect(input.system).toContain('Instruções do agente "Suporte":\nAjude');
+    expect(input.system.indexOf('INSTRUÇÕES GERAIS')).toBeLessThan(input.system.indexOf('Ajude'));
     expect(input.system).toContain('Tom de voz: calmo');
     expect(input.prompt).toContain('{"de":"cliente","texto":"Vocês abrem domingo?"}');
   });
