@@ -6,8 +6,11 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   generateMessageIDV2,
+  makeCacheableSignalKeyStore,
   useMultiFileAuthState,
   type AnyMessageContent,
+  type CacheStore,
+  type proto,
   type ConnectionState,
   type WAMessage,
   type WAMessageUpdate,
@@ -95,6 +98,16 @@ interface Session {
    * cliente: sem este cache o eco era descartado como `no-phone`.
    */
   lidToPn: Map<string, string>;
+  /** Tentativas de reenvio por mensagem (Baileys `msgRetryCounterCache`). */
+  msgRetryCounterCache: MemoryCache;
+  /** Pedidos de reenvio ao celular em andamento (`placeholderResendCache`). */
+  placeholderResendCache: MemoryCache;
+  /**
+   * Conteúdo das mensagens que enviamos, para o `getMessage` do Baileys:
+   * quando um aparelho do cliente (ou o nosso celular) não consegue
+   * decifrar, pede o reenvio e o Baileys precisa do conteúdo original.
+   */
+  sentMessages: Map<string, proto.IMessage>;
 }
 
 interface InboundKey {
@@ -104,6 +117,42 @@ interface InboundKey {
 
 /** quantas chaves de mensagens recebidas lembramos por sessão (confirmação de leitura) */
 const INBOUND_KEYS_MAX = 5000;
+const SENT_CACHE_MAX = 2000;
+
+/**
+ * Cache em memória com validade, no formato que o Baileys pede
+ * (`msgRetryCounterCache`, `placeholderResendCache`). Mesmo papel do
+ * NodeCache que o WAHA usa: sem ele o Baileys não conta as tentativas
+ * de reenvio e desiste de decifrar mensagens que chegam fora de ordem.
+ */
+export class MemoryCache implements CacheStore {
+  private store = new Map<string, { value: unknown; exp: number }>();
+  constructor(private ttlMs: number, private max = 5000) {}
+  get<T>(key: string): T | undefined {
+    const hit = this.store.get(key);
+    if (!hit) return undefined;
+    if (hit.exp < Date.now()) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return hit.value as T;
+  }
+  set<T>(key: string, value: T): void {
+    this.store.delete(key);
+    this.store.set(key, { value, exp: Date.now() + this.ttlMs });
+    while (this.store.size > this.max) {
+      const oldest = this.store.keys().next().value;
+      if (oldest === undefined) break;
+      this.store.delete(oldest);
+    }
+  }
+  del(key: string): void {
+    this.store.delete(key);
+  }
+  flushAll(): void {
+    this.store.clear();
+  }
+}
 const LID_CACHE_MAX = 5000;
 
 /** `123:4@lid` → `123@lid` (chave do cache LID → telefone). */
@@ -220,6 +269,9 @@ function newSession(accountId: string): Session {
     ownSendIds: new Map(),
     pendingEchoAcks: new Map(),
     lidToPn: new Map(),
+    msgRetryCounterCache: new MemoryCache(60 * 60 * 1000),
+    placeholderResendCache: new MemoryCache(60 * 60 * 1000),
+    sentMessages: new Map(),
   };
 }
 
@@ -373,6 +425,7 @@ export class SessionManager {
     }
     const id = result?.key?.id;
     if (id && id !== messageId) this.rememberOwnSend(s, id);
+    if (id && result?.message) this.rememberSent(s, id, result.message);
     if (!id) throw new GatewayError("WhatsApp não devolveu id da mensagem", "send_failed", 502);
     return { message_id: id };
   }
@@ -526,14 +579,24 @@ export class SessionManager {
       this.setStatus(s, "connecting", { lastError: undefined });
       this.emitStatus(s);
 
+      const baileysLog = this.log.child({ accountId, lib: "baileys" });
+      // Mesma configuração de socket do WAHA (engine NOWEB): chaves em cache,
+      // contador de reenvio, getMessage e keep-alive. Sem getMessage e o
+      // contador, mensagens que chegam sem sessão cifrada (ex.: as enviadas
+      // pelo nosso próprio celular) não são pedidas de novo e se perdem.
       const sock = makeWASocket({
-        auth: state,
+        auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, baileysLog) },
         ...(version ? { version } : {}),
-        logger: this.log.child({ accountId, lib: "baileys" }),
+        logger: baileysLog,
         browser: Browsers.ubuntu("SempreCRM"),
         markOnlineOnConnect: this.opts.markOnline ?? true,
         syncFullHistory: false,
         generateHighQualityLinkPreview: false,
+        defaultQueryTimeoutMs: 120_000,
+        keepAliveIntervalMs: 30_000,
+        msgRetryCounterCache: s.msgRetryCounterCache,
+        placeholderResendCache: s.placeholderResendCache,
+        getMessage: async (key) => (key.id ? s.sentMessages.get(key.id) : undefined),
       });
       s.sock = sock;
 
@@ -842,6 +905,16 @@ export class SessionManager {
       }
       this.log.warn({ accountId, jid, err: (err as Error).message }, "falha ao buscar foto de perfil");
       throw new GatewayError(`falha ao buscar foto: ${(err as Error).message}`, "send_failed", 502);
+    }
+  }
+
+  private rememberSent(s: Session, id: string, message: proto.IMessage): void {
+    s.sentMessages.delete(id);
+    s.sentMessages.set(id, message);
+    while (s.sentMessages.size > SENT_CACHE_MAX) {
+      const oldest = s.sentMessages.keys().next().value;
+      if (oldest === undefined) break;
+      s.sentMessages.delete(oldest);
     }
   }
 

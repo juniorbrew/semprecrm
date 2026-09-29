@@ -54,6 +54,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
   },
   downloadMediaMessage: vi.fn(),
   generateMessageIDV2: vi.fn(() => `3EBGEN${++mocks.idSeq.n}`),
+  makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
 }));
 
 import { SessionManager, GatewayError, ackFromStatus, buildContent, toJid } from "./session-manager.js";
@@ -114,6 +115,11 @@ describe("SessionManager — presença (recibos de entrega)", () => {
     const { manager } = makeManager(dataDir);
     await manager.connect(ACCOUNT);
     expect(mocks.makeWASocket.mock.calls[0][0]).toMatchObject({ markOnlineOnConnect: true });
+    const opts = mocks.makeWASocket.mock.calls[0][0] as Record<string, unknown>;
+    expect(opts).toMatchObject({ keepAliveIntervalMs: 30_000 });
+    expect(typeof opts.getMessage).toBe("function");
+    expect(opts.msgRetryCounterCache).toBeDefined();
+    expect(opts.placeholderResendCache).toBeDefined();
   });
 
   it("respeita markOnline=false (prioriza as notificações do celular)", async () => {
@@ -927,5 +933,21 @@ describe("SessionManager — foto de perfil (fetchAvatar)", () => {
     await expect(manager.fetchAvatar(ACCOUNT, { to: "5511988887777", contact_id: CONTACT })).rejects.toMatchObject({
       code: "not_connected",
     });
+  });
+});
+
+describe("MemoryCache", () => {
+  it("guarda, expira e respeita o tamanho máximo", async () => {
+    const { MemoryCache } = await import("./session-manager.js");
+    const c = new MemoryCache(50, 2);
+    c.set("a", 1);
+    c.set("b", 2);
+    c.set("c", 3);
+    expect(c.get("a")).toBeUndefined();
+    expect(c.get<number>("c")).toBe(3);
+    c.del("c");
+    expect(c.get("c")).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(c.get("b")).toBeUndefined();
   });
 });
