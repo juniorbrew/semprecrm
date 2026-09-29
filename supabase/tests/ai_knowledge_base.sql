@@ -15,7 +15,8 @@ BEGIN IF ok IS DISTINCT FROM true THEN RAISE EXCEPTION 'FAIL: %', label; END IF;
 INSERT INTO auth.users(id, email, raw_user_meta_data) VALUES
  ('63000000-0000-4000-8000-00000000000a', 'owner-a@kb.test', '{"full_name":"Owner A"}'),
  ('63000000-0000-4000-8000-00000000000b', 'owner-b@kb.test', '{"full_name":"Owner B"}'),
- ('63000000-0000-4000-8000-00000000000d', 'agent-a@kb.test', '{"full_name":"Agent A"}');
+ ('63000000-0000-4000-8000-00000000000d', 'agent-a@kb.test', '{"full_name":"Agent A"}'),
+ ('63000000-0000-4000-8000-00000000000e', 'viewer-a@kb.test', '{"full_name":"Viewer A"}');
 
 CREATE TEMP TABLE ids AS
 SELECT
@@ -25,6 +26,8 @@ GRANT SELECT ON ids TO authenticated;
 
 UPDATE profiles SET account_id = (SELECT acc_a FROM ids), account_role = 'agent'
  WHERE user_id = '63000000-0000-4000-8000-00000000000d';
+UPDATE profiles SET account_id = (SELECT acc_a FROM ids), account_role = 'viewer'
+ WHERE user_id = '63000000-0000-4000-8000-00000000000e';
 
 -- ---- helpers --------------------------------------------------
 SELECT pg_temp.assert_true(ai_kb_norm('Preço AÇÚCAR') = 'preco acucar', 'ai_kb_norm lowers + unaccents');
@@ -115,6 +118,14 @@ SELECT pg_temp.assert_true(
   (SELECT a.name FROM ai_knowledge_search((SELECT acc_a FROM ids), 'quanto custa a entrega?', 5) s
      JOIN a_items a ON a.id = s.item_id ORDER BY s.rank DESC LIMIT 1) = 'faq',
   'delivery-price FAQ ranks first');
+-- Small talk finds nothing (greetings stripped + rank floor).
+SELECT pg_temp.assert_true(
+  (SELECT count(*) = 0 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'oi, bom dia', 5))
+  AND (SELECT count(*) = 0 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'Obrigado! Tudo bem?', 5)),
+  'greetings yield no snippets');
+SELECT pg_temp.assert_true(
+  (SELECT bool_and(rank >= 0.2) FROM ai_knowledge_search((SELECT acc_a FROM ids), 'quanto custa a entrega?', 20)),
+  'every hit is above the rank floor');
 -- Never another account's rows, even when asking for them.
 SELECT pg_temp.assert_true(
   NOT EXISTS (SELECT 1 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'segredo preço entrega', 20) WHERE content LIKE '%SEGREDO B%'),
@@ -158,7 +169,8 @@ SELECT pg_temp.assert_true(
 -- ---- agent (account A): reads + searches, never writes ---------
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-00000000000d', true);
-SELECT pg_temp.assert_true((SELECT count(*) = 3 FROM ai_knowledge_items), 'agent reads account items');
+SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM ai_knowledge_items), 'agent cannot read items (admin-only)');
+SELECT pg_temp.assert_true((SELECT count(*) = 3 FROM ai_knowledge_chunks), 'agent reads own account chunks');
 SELECT pg_temp.assert_true(
   EXISTS (SELECT 1 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'quanto custa a entrega', 5)),
   'agent can search (used by Sugerir resposta)');
@@ -178,6 +190,15 @@ SELECT pg_temp.assert_true(
     WHERE i.account_id = (SELECT acc_a FROM ids))
   AND (SELECT count(*) = 2 FROM ai_knowledge_items WHERE account_id = (SELECT acc_a FROM ids) AND enabled),
   'agent update/delete touched nothing');
+
+-- ---- viewer (account A): nothing at all --------------------------
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-00000000000e', true);
+SELECT pg_temp.assert_true(
+  (SELECT count(*) = 0 FROM ai_knowledge_items) AND (SELECT count(*) = 0 FROM ai_knowledge_chunks)
+  AND (SELECT count(*) = 0 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'quanto custa a entrega', 5)),
+  'viewer reads and searches nothing');
+RESET ROLE;
 
 -- ---- owner B sees nothing of A ---------------------------------
 SET LOCAL ROLE authenticated;

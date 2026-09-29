@@ -17,13 +17,15 @@
 --   2. `ai_knowledge_items` — one row per FAQ / text / file.
 --   3. `ai_knowledge_chunks` — searchable pieces of an item, with a
 --      generated `tsv` column (GIN) and a trigram GIN index.
---   4. RLS: members of the account read; admin+ write; anon nothing.
+--   4. RLS: items are read and written by admin+ only (Settings);
+--      chunks are readable by agent+ (what a suggestion may show);
+--      viewers and anon get nothing.
 --   5. `ai_knowledge_save_item(...)` — creates/updates an item and
 --      replaces its chunks in ONE transaction (SECURITY INVOKER: RLS
 --      decides, so only admin+ of that account can write).
---   6. `ai_knowledge_search(account, query, limit)` — SECURITY INVOKER,
---      also checks membership explicitly; returns top chunks of
---      ENABLED items of that account only.
+--   6. `ai_knowledge_search(account, query, limit)` — SECURITY DEFINER
+--      with an explicit agent+ membership check; returns top chunks of
+--      ENABLED items of that account only, above a relevance floor.
 --   7. `ai_usage.kb_used` — whether a suggestion used the knowledge
 --      base (a flag only; no text is stored).
 --
@@ -185,7 +187,7 @@ ALTER TABLE ai_knowledge_chunks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS ai_knowledge_items_select ON ai_knowledge_items;
 CREATE POLICY ai_knowledge_items_select ON ai_knowledge_items FOR SELECT
-  USING (is_account_member(account_id));
+  USING (is_account_member(account_id, 'admin'));
 DROP POLICY IF EXISTS ai_knowledge_items_insert ON ai_knowledge_items;
 CREATE POLICY ai_knowledge_items_insert ON ai_knowledge_items FOR INSERT
   WITH CHECK (is_account_member(account_id, 'admin'));
@@ -199,7 +201,7 @@ CREATE POLICY ai_knowledge_items_delete ON ai_knowledge_items FOR DELETE
 
 DROP POLICY IF EXISTS ai_knowledge_chunks_select ON ai_knowledge_chunks;
 CREATE POLICY ai_knowledge_chunks_select ON ai_knowledge_chunks FOR SELECT
-  USING (is_account_member(account_id));
+  USING (is_account_member(account_id, 'agent'));
 DROP POLICY IF EXISTS ai_knowledge_chunks_insert ON ai_knowledge_chunks;
 CREATE POLICY ai_knowledge_chunks_insert ON ai_knowledge_chunks FOR INSERT
   WITH CHECK (is_account_member(account_id, 'admin'));
@@ -278,9 +280,16 @@ GRANT EXECUTE ON FUNCTION public.ai_knowledge_save_item(UUID, UUID, TEXT, TEXT, 
 -- OR-combines the query's Portuguese stems (a customer message is a
 -- sentence, not a keyword list), ranks with ts_rank_cd, and for short
 -- queries (<= 60 chars) also accepts trigram word-similarity matches so
--- a typo ("preso", "entrga") still finds something. Invoker + an
--- explicit membership check: another account's rows are never
--- returned, and the service role (no auth.uid()) gets nothing.
+-- a typo ("preso", "entrga") still finds something.
+--
+-- Greetings and courtesies ("oi, bom dia", "obrigado") are stripped
+-- first, and only hits with rank >= 0.2 come back, so small talk does
+-- not drag random snippets into a suggestion.
+--
+-- SECURITY DEFINER (agents cannot read `ai_knowledge_items`, but a
+-- suggestion needs the item title / enabled flag) with an explicit
+-- agent+ membership check and account filter: another account's rows
+-- are never returned, and the service role (no auth.uid()) gets nothing.
 CREATE OR REPLACE FUNCTION public.ai_knowledge_search(
   p_account_id UUID,
   p_query      TEXT,
@@ -295,7 +304,7 @@ CREATE OR REPLACE FUNCTION public.ai_knowledge_search(
 )
 LANGUAGE plpgsql
 VOLATILE
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = public, extensions, pg_catalog
 AS $$
 DECLARE
@@ -304,16 +313,23 @@ DECLARE
   v_ts    tsquery;
   v_short BOOLEAN;
 BEGIN
-  IF NOT is_account_member(p_account_id) OR btrim(v_query) = '' THEN
+  IF NOT is_account_member(p_account_id, 'agent') OR btrim(v_query) = '' THEN
     RETURN;
   END IF;
 
-  v_norm := btrim(regexp_replace(public.ai_kb_norm(v_query), '\s+', ' ', 'g'));
+  v_norm := regexp_replace(
+    public.ai_kb_norm(v_query),
+    '\m(oi+|ola|ole|opa|eai|bom|boa|bons|boas|dia|tarde|noite|tudo|bem|td|blz|beleza|obrigad[oa]s?|obg|valeu|vlw|ok|okay|pfv|pf|grat[oa])\M',
+    ' ', 'g');
+  v_norm := btrim(regexp_replace(v_norm, '[^[:alnum:]]+', ' ', 'g'));
+  IF v_norm = '' THEN
+    RETURN;
+  END IF;
   v_short := char_length(v_norm) BETWEEN 3 AND 60;
 
   SELECT (string_agg('''' || replace(replace(lex, '\', '\\'), '''', '''''') || '''', ' | '))::tsquery
     INTO v_ts
-    FROM unnest(tsvector_to_array(public.ai_kb_tsv(v_query))) AS lex;
+    FROM unnest(tsvector_to_array(public.ai_kb_tsv(v_norm))) AS lex;
 
   IF v_ts IS NULL AND NOT v_short THEN
     RETURN;
@@ -323,23 +339,28 @@ BEGIN
   PERFORM set_config('pg_trgm.word_similarity_threshold', '0.5', true);
 
   RETURN QUERY
-  SELECT c.id, c.item_id, i.title, i.kind, c.content,
-         (COALESCE(ts_rank_cd(c.tsv, v_ts, 32), 0)
-          + CASE WHEN v_short THEN word_similarity(v_norm, public.ai_kb_norm(c.content)) * 0.5 ELSE 0 END
-         )::REAL AS rank
-    FROM ai_knowledge_chunks c
-    JOIN ai_knowledge_items i ON i.id = c.item_id AND i.account_id = c.account_id
-   WHERE c.account_id = p_account_id
-     AND i.enabled
-     AND (
-       (v_ts IS NOT NULL AND c.tsv @@ v_ts)
-       OR (v_short AND v_norm <% public.ai_kb_norm(c.content))
-     )
-   ORDER BY rank DESC, c.item_id, c.chunk_index
+  SELECT r.chunk_id, r.item_id, r.title, r.kind, r.content, r.rank
+    FROM (
+      SELECT c.id AS chunk_id, c.item_id, i.title, i.kind, c.content, c.chunk_index,
+             (COALESCE(ts_rank_cd(c.tsv, v_ts, 32), 0)
+              + CASE WHEN v_short THEN word_similarity(v_norm, public.ai_kb_norm(c.content)) * 0.5 ELSE 0 END
+             )::REAL AS rank
+        FROM ai_knowledge_chunks c
+        JOIN ai_knowledge_items i ON i.id = c.item_id AND i.account_id = c.account_id
+       WHERE c.account_id = p_account_id
+         AND i.enabled
+         AND (
+           (v_ts IS NOT NULL AND c.tsv @@ v_ts)
+           OR (v_short AND v_norm <% public.ai_kb_norm(c.content))
+         )
+    ) r
+   WHERE r.rank >= 0.2
+   ORDER BY r.rank DESC, r.item_id, r.chunk_index
    LIMIT least(greatest(coalesce(p_limit, 5), 1), 20);
 END;
 $$;
 
+ALTER FUNCTION public.ai_knowledge_search(UUID, TEXT, INTEGER) OWNER TO postgres;
 REVOKE ALL ON FUNCTION public.ai_knowledge_search(UUID, TEXT, INTEGER) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.ai_knowledge_search(UUID, TEXT, INTEGER) TO authenticated, service_role;
 
