@@ -162,3 +162,26 @@ export async function reopenBlockedBy(
   if (conversation.status !== 'closed' || nextStatus === 'closed') return null
   return findOtherActiveConversation(supabase, conversation.contact_id, conversation.id)
 }
+
+/**
+ * When this conversation was last resolved: the newest `status_changed`
+ * → closed event (migration 024). Null when there is none (older data,
+ * or closed by a path that logs no event) — callers fall back to
+ * `last_message_at`.
+ */
+export async function findClosedAt(
+  supabase: Client,
+  conversationId: string,
+): Promise<string | null> {
+  if (!conversationId) return null
+  const { data, error } = await supabase
+    .from('conversation_events')
+    .select('created_at')
+    .eq('conversation_id', conversationId)
+    .eq('event_type', 'status_changed')
+    .eq('payload->>status', 'closed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error || !data) return null
+  return ((data as { created_at: string }[])[0]?.created_at as string | undefined) ?? null
+}

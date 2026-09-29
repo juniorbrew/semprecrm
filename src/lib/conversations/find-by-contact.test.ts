@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   conversationContinuity,
+  findClosedAt,
   findOtherActiveConversation,
   inboxConversationHref,
   reopenBlockedBy,
@@ -168,5 +169,20 @@ describe('findOtherActiveConversation / reopenBlockedBy', () => {
     expect(await reopenBlockedBy(busy.client, old, 'closed')).toBeNull()
     expect(await reopenBlockedBy(busy.client, { ...old, status: 'open' }, 'pending')).toBeNull()
     expect(busy.calls).toHaveLength(0)
+  })
+})
+
+describe('findClosedAt (continuity line date)', () => {
+  it('reads the newest status_changed → closed event of the conversation', async () => {
+    const { client, calls } = clientReturning([{ created_at: '2026-09-20T15:00:00Z' }])
+    expect(await findClosedAt(client, 'conv-1')).toBe('2026-09-20T15:00:00Z')
+    expect(calls).toContainEqual(['eq', ['conversation_id', 'conv-1']])
+    expect(calls).toContainEqual(['eq', ['event_type', 'status_changed']])
+    expect(calls).toContainEqual(['eq', ['payload->>status', 'closed']])
+  })
+
+  it('null when no close event exists (caller falls back to last_message_at)', async () => {
+    const { client } = clientReturning([])
+    expect(await findClosedAt(client, 'conv-1')).toBeNull()
   })
 })

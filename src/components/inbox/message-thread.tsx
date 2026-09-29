@@ -64,6 +64,7 @@ import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { updateConversationAssignee } from "@/lib/conversations/assign";
 import {
   conversationContinuity,
+  findClosedAt,
   findConversationById,
   findOtherActiveConversation,
   listConversationsByContact,
@@ -483,6 +484,26 @@ export function MessageThread({
         : { previousClosed: null, activeOther: null },
     [conversation, contactConversations],
   );
+  // "encerrada em": the close event's time when there is one, else the
+  // last message.
+  const previousClosedId = continuity.previousClosed?.id ?? null;
+  const [closedAt, setClosedAt] = useState<{ id: string; at: string | null } | null>(null);
+  useEffect(() => {
+    if (!previousClosedId) return;
+    let cancelled = false;
+    void findClosedAt(createClient(), previousClosedId).then((at) => {
+      if (!cancelled) setClosedAt({ id: previousClosedId, at });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [previousClosedId]);
+  const previousClosedDate = continuity.previousClosed
+    ? (closedAt?.id === previousClosedId ? closedAt.at : null) ??
+      continuity.previousClosed.last_message_at ??
+      continuity.previousClosed.updated_at ??
+      continuity.previousClosed.created_at
+    : null;
   const openConversation = useCallback(
     (target: Conversation) => {
       onOpenConversation?.({ ...target, contact: target.contact ?? contact ?? undefined });
@@ -1911,14 +1932,7 @@ export function MessageThread({
             data-testid="previous-conversation"
             className="mb-3 text-center text-[11px] text-muted-foreground"
           >
-            {statusCopy.previousClosed(
-              formatDayMonth(
-                continuity.previousClosed.last_message_at ??
-                  continuity.previousClosed.updated_at ??
-                  continuity.previousClosed.created_at,
-                language,
-              ),
-            )}
+            {statusCopy.previousClosed(formatDayMonth(previousClosedDate ?? "", language))}
             {onOpenConversation && (
               <>
                 {" — "}
