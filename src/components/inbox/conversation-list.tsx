@@ -30,6 +30,16 @@ import {
   type QueueEntry,
 } from "@/lib/radar/queue";
 import {
+  INBOX_TABS,
+  LIVE_FILTERS,
+  migrateTriage,
+  tabConversations,
+  tabCounts,
+  tabForConversation,
+  type InboxTab,
+  type LiveFilter,
+} from "@/lib/inbox/triage";
+import {
   Search,
   ChevronDown,
   Check,
@@ -65,26 +75,10 @@ interface ConversationListProps {
 }
 
 /**
- * Queue view: what the agent is triaging. "queue" (Fila) is the Radar's
- * `unassigned` bucket ordered by longest wait (lib/radar/queue) — it
- * replaced the old "Não atribuídas" tab, whose persisted value is
- * migrated on restore.
- */
-type TriageTab = "queue" | "mine" | "all";
-/**
- * Status filter applied before the queue tabs are counted. "archived"
- * (migration 056) is the only view that shows archived conversations;
- * every other value — "all" included — leaves them out.
- */
-type StatusFilter = ConversationStatus | "all" | "archived";
-
-const TRIAGE_TABS: TriageTab[] = ["queue", "mine", "all"];
-const STATUS_FILTERS: StatusFilter[] = ["open", "pending", "closed", "archived", "all"];
-
-/**
- * Remembers the agent's queue (tab) + status choice across reloads so
- * someone working "Minhas · Abertas" all day lands back there. Device-
- * scoped, like the contact-panel toggle on the page.
+ * Remembers the agent's tab + live filter across reloads so someone
+ * working "Minhas · Abertas" all day lands back there. Device-scoped,
+ * like the contact-panel toggle on the page. Older `{ tab, status }`
+ * blobs are migrated by `migrateTriage` (lib/inbox/triage).
  */
 const TRIAGE_STORAGE_KEY = "wacrm:inbox:triage";
 
@@ -100,8 +94,9 @@ const STRIP_COPY: Record<
   Language,
   {
     title: string;
-    tabs: Record<TriageTab, string>;
-    status: Record<StatusFilter, string>;
+    tabs: Record<InboxTab, string>;
+    /** Narrows Minhas / Todas; never shows resolved or archived. */
+    live: Record<LiveFilter, string>;
     rowStatus: Record<Exclude<ConversationStatus, "open">, string> & { archived: string };
     unreadOnly: string;
     channel: string;
@@ -113,8 +108,8 @@ const STRIP_COPY: Record<
     radarChips: Record<RadarKey, string>;
     radarClear: string;
     waitingTitle: string;
-    /** Fila tab: the status chip does not apply (the queue is open-only). */
-    queueStatusHint: string;
+    /** Why the live filter is disabled on Fila / Encerradas / Arquivadas / Radar. */
+    liveFilterHint: string;
     queuePositionTitle: string;
     queueEmpty: string;
     queueEmptyHint: string;
@@ -122,14 +117,14 @@ const STRIP_COPY: Record<
 > = {
   "pt-BR": {
     title: "Conversas",
-    tabs: { queue: "Fila", mine: "Minhas", all: "Todas" },
-    status: {
-      open: "Abertas",
-      pending: "Pendentes",
-      closed: "Resolvidas",
-      archived: "Arquivadas",
+    tabs: {
+      queue: "Fila",
+      mine: "Minhas",
       all: "Todas",
+      closed: "Encerradas",
+      archived: "Arquivadas",
     },
+    live: { live: "Abertas e pendentes", open: "Abertas", pending: "Pendentes" },
     rowStatus: { pending: "Pendente", closed: "Resolvida", archived: "Arquivada" },
     unreadOnly: "Só não lidas",
     channel: "WhatsApp",
@@ -139,21 +134,21 @@ const STRIP_COPY: Record<
     radarChips: { waiting: "Aguardando", unassigned: "Sem responsável", cooling: "Esfriando" },
     radarClear: "Limpar filtro do radar",
     waitingTitle: "Cliente aguardando resposta além do SLA",
-    queueStatusHint: "A fila mostra só conversas abertas sem responsável",
+    liveFilterHint: "O filtro vale só para Minhas e Todas",
     queuePositionTitle: "Posição na fila (maior espera primeiro)",
     queueEmpty: "Ninguém na fila",
     queueEmptyHint: "Conversas abertas sem responsável aparecem aqui, a mais antiga primeiro.",
   },
   "en-US": {
     title: "Conversations",
-    tabs: { queue: "Queue", mine: "Mine", all: "All" },
-    status: {
-      open: "Open",
-      pending: "Pending",
-      closed: "Resolved",
-      archived: "Archived",
+    tabs: {
+      queue: "Queue",
+      mine: "Mine",
       all: "All",
+      closed: "Closed",
+      archived: "Archived",
     },
+    live: { live: "Open and pending", open: "Open", pending: "Pending" },
     rowStatus: { pending: "Pending", closed: "Resolved", archived: "Archived" },
     unreadOnly: "Unread only",
     channel: "WhatsApp",
@@ -163,7 +158,7 @@ const STRIP_COPY: Record<
     radarChips: { waiting: "Waiting", unassigned: "Unassigned", cooling: "Cooling" },
     radarClear: "Clear radar filter",
     waitingTitle: "Customer waiting past the SLA",
-    queueStatusHint: "The queue only shows open conversations with no owner",
+    liveFilterHint: "This filter only applies to Mine and All",
     queuePositionTitle: "Position in the queue (longest wait first)",
     queueEmpty: "Nobody in the queue",
     queueEmptyHint: "Open conversations with no owner show up here, oldest first.",
@@ -183,12 +178,10 @@ const RADAR_ACTIVE: Record<RadarKey, string> = {
   cooling: "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400",
 };
 
-const STATUS_DOT: Record<StatusFilter, string> = {
+const LIVE_DOT: Record<LiveFilter, string> = {
+  live: "bg-foreground/40",
   open: "bg-primary",
   pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
-  archived: "bg-muted-foreground/50",
-  all: "bg-foreground/40",
 };
 
 interface RowTag {
@@ -228,13 +221,6 @@ function formatAge(
   });
 }
 
-function isTriageTab(v: unknown): v is TriageTab {
-  return TRIAGE_TABS.includes(v as TriageTab);
-}
-function isStatusFilter(v: unknown): v is StatusFilter {
-  return STATUS_FILTERS.includes(v as StatusFilter);
-}
-
 export function ConversationList({
   activeConversationId,
   onSelect,
@@ -265,8 +251,8 @@ export function ConversationList({
   );
 
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<TriageTab>("all");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
+  const [tab, setTab] = useState<InboxTab>("all");
+  const [liveFilter, setLiveFilter] = useState<LiveFilter>("live");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tagsByContact, setTagsByContact] = useState<Map<string, RowTag[]>>(
@@ -289,23 +275,35 @@ export function ConversationList({
   // disagree with the client (reading localStorage in the initializer
   // would be a hydration mismatch). Once only, hence the ref.
   const triageRestoredRef = useRef(false);
-  const restorePersistedTriage = useCallback(() => {
+  // A ?c= deep link to a resolved / archived conversation lands on the
+  // tab that lists it (first load only — later list refetches must not
+  // yank the agent off the tab they picked).
+  const deepLinkId = searchParams.get("c");
+  const deepLinkIdRef = useRef(deepLinkId);
+  useEffect(() => {
+    deepLinkIdRef.current = deepLinkId;
+  });
+  const restorePersistedTriage = useCallback((loaded: Conversation[]) => {
     if (triageRestoredRef.current) return;
     triageRestoredRef.current = true;
     try {
       const raw = localStorage.getItem(TRIAGE_STORAGE_KEY);
-      if (!raw) return;
-      const stored = JSON.parse(raw) as { tab?: unknown; status?: unknown };
-      // "unassigned" was the tab before the Fila replaced it.
-      if (stored.tab === "unassigned") setTab("queue");
-      else if (isTriageTab(stored.tab)) setTab(stored.tab);
-      if (isStatusFilter(stored.status)) setStatusFilter(stored.status);
+      if (raw) {
+        const stored = migrateTriage(JSON.parse(raw));
+        setTab(stored.tab);
+        setLiveFilter(stored.live);
+      }
     } catch {
       // localStorage can throw in private-browsing / sandboxed contexts.
     }
+    const linked = deepLinkIdRef.current
+      ? loaded.find((c) => c.id === deepLinkIdRef.current)
+      : undefined;
+    const linkedTab = linked ? tabForConversation(linked) : null;
+    if (linkedTab) setTab(linkedTab);
   }, []);
 
-  const persistTriage = useCallback((next: { tab: TriageTab; status: StatusFilter }) => {
+  const persistTriage = useCallback((next: { tab: InboxTab; live: LiveFilter }) => {
     try {
       localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify(next));
     } catch {
@@ -314,17 +312,17 @@ export function ConversationList({
   }, []);
 
   const handleTabChange = useCallback(
-    (next: TriageTab) => {
+    (next: InboxTab) => {
       setTab(next);
-      persistTriage({ tab: next, status: statusFilter });
+      persistTriage({ tab: next, live: liveFilter });
     },
-    [persistTriage, statusFilter]
+    [persistTriage, liveFilter]
   );
 
-  const handleStatusChange = useCallback(
-    (next: StatusFilter) => {
-      setStatusFilter(next);
-      persistTriage({ tab, status: next });
+  const handleLiveChange = useCallback(
+    (next: LiveFilter) => {
+      setLiveFilter(next);
+      persistTriage({ tab, live: next });
     },
     [persistTriage, tab]
   );
@@ -379,7 +377,7 @@ export function ConversationList({
         return;
       }
 
-      restorePersistedTriage();
+      restorePersistedTriage(data ?? []);
       onConversationsLoadedRef.current(data ?? []);
       setLoading(false);
     })();
@@ -461,16 +459,14 @@ export function ConversationList({
     };
   }, [contactIdsKey, resyncToken, companiesVersion]);
 
-  // Status (+ unread) narrow the pool; the queue tabs are counted from
-  // that pool so the badges answer "how many open ones are mine /
-  // unassigned / total" — exactly what a team lead scans for.
-  // Radar + unread narrow everything; the status chip then narrows the
-  // Minhas / Todas pool. The Fila ignores the status chip — its
-  // definition (Radar `unassigned`) already fixes status = open.
+  // Radar + unread narrow everything; each tab then takes its slice
+  // (lib/inbox/triage) and the badges are counted from the same slices.
+  // The live filter narrows Minhas / Todas only; the Fila's definition
+  // (Radar `unassigned`) already fixes status = open.
   const basePool = useMemo(() => {
     let result = conversations;
     if (radar) {
-      // A radar bucket replaces the status chip: the bucket definition
+      // A radar bucket replaces the live filter: the bucket definition
       // already fixes the status (never closed; "unassigned" is open
       // only), and this keeps the list in step with the chip / dashboard
       // counts when someone deep-links from the card.
@@ -482,16 +478,8 @@ export function ConversationList({
     return result;
   }, [conversations, unreadOnly, radar, preferences, now]);
 
-  const pool = useMemo(() => {
-    if (statusFilter === "archived" && !radar) {
-      return basePool.filter((c) => !!c.archived_at);
-    }
-    // Archived conversations stay out of every other view (a radar
-    // bucket never matches them anyway: they are resolved).
-    const live = basePool.filter((c) => !c.archived_at);
-    if (radar || statusFilter === "all") return live;
-    return live.filter((c) => c.status === statusFilter);
-  }, [basePool, radar, statusFilter]);
+  const effectiveLive: LiveFilter = radar ? "live" : liveFilter;
+  const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
   // The queue, longest wait first, with 1-based positions.
   const queue = useMemo(
@@ -509,24 +497,17 @@ export function ConversationList({
     [conversations, preferences, now],
   );
 
-  const counts = useMemo<Record<TriageTab, number>>(() => {
-    let mine = 0;
-    for (const c of pool) {
-      if (userId && c.assigned_agent_id === userId) mine += 1;
-    }
-    return { queue: queue.length, mine, all: pool.length };
-  }, [pool, queue, userId]);
+  const counts = useMemo(
+    () =>
+      tabCounts(basePool, { live: effectiveLive, userId, queueLength: queue.length }),
+    [basePool, effectiveLive, userId, queue]
+  );
 
   const filtered = useMemo(() => {
-    let result: Conversation[] = pool;
-
-    if (tab === "mine") {
-      result = result.filter(
-        (c) => !!userId && c.assigned_agent_id === userId
-      );
-    } else if (tab === "queue") {
-      result = queue.map((e) => e.conversation);
-    }
+    let result: Conversation[] =
+      tab === "queue"
+        ? queue.map((e) => e.conversation)
+        : tabConversations(basePool, tab, { live: effectiveLive, userId });
 
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -539,7 +520,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [pool, queue, tab, userId, search]);
+  }, [basePool, queue, tab, effectiveLive, userId, search]);
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -560,7 +541,7 @@ export function ConversationList({
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border bg-card lg:w-80">
-      {/* Triage strip: title + status chip, search, queue tabs */}
+      {/* Triage strip: title + live filter, search, tabs */}
       <div className="border-b border-border">
         <div
           className="flex items-center justify-between gap-2 px-3 pt-3"
@@ -568,33 +549,33 @@ export function ConversationList({
         >
           <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
           <div className="flex items-center gap-1">
-            {/* Status chip — which lifecycle bucket the queue shows */}
+            {/* Live filter — narrows Minhas / Todas to open or pending */}
             <DropdownMenu>
               <DropdownMenuTrigger
-                aria-label={copy.status[statusFilter]}
-                disabled={tab === "queue"}
-                title={tab === "queue" ? copy.queueStatusHint : undefined}
+                aria-label={copy.live[effectiveLive]}
+                disabled={liveFilterDisabled}
+                title={liveFilterDisabled ? copy.liveFilterHint : undefined}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-muted/60 pl-2 pr-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span
-                  className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[statusFilter])}
+                  className={cn("h-1.5 w-1.5 rounded-full", LIVE_DOT[effectiveLive])}
                 />
-                {copy.status[statusFilter]}
+                {copy.live[effectiveLive]}
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-36 border-border bg-popover">
-                {STATUS_FILTERS.map((value) => (
+              <DropdownMenuContent align="end" className="min-w-44 border-border bg-popover">
+                {LIVE_FILTERS.map((value) => (
                   <DropdownMenuItem
                     key={value}
-                    onClick={() => handleStatusChange(value)}
+                    onClick={() => handleLiveChange(value)}
                     className={cn(
                       "gap-2 text-sm",
-                      statusFilter === value ? "text-primary" : "text-popover-foreground"
+                      liveFilter === value ? "text-primary" : "text-popover-foreground"
                     )}
                   >
-                    <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[value])} />
-                    <span className="flex-1">{copy.status[value]}</span>
-                    {statusFilter === value && <Check className="h-3 w-3" />}
+                    <span className={cn("h-1.5 w-1.5 rounded-full", LIVE_DOT[value])} />
+                    <span className="flex-1">{copy.live[value]}</span>
+                    {liveFilter === value && <Check className="h-3 w-3" />}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -684,7 +665,7 @@ export function ConversationList({
           className="mt-1 flex items-stretch overflow-x-auto px-3 [scrollbar-width:none]"
           data-no-translate
         >
-          {TRIAGE_TABS.map((value) => {
+          {INBOX_TABS.map((value) => {
             const active = tab === value;
             return (
               <button
@@ -694,7 +675,7 @@ export function ConversationList({
                 aria-selected={active}
                 onClick={() => handleTabChange(value)}
                 className={cn(
-                  "-mb-px flex flex-1 items-center justify-center gap-1.5 border-b-2 px-1 py-2 text-xs font-medium whitespace-nowrap transition-colors",
+                  "-mb-px flex shrink-0 grow items-center justify-center gap-1 border-b-2 px-1.5 py-2 text-xs font-medium whitespace-nowrap transition-colors",
                   active
                     ? "border-primary text-foreground"
                     : "border-transparent text-muted-foreground hover:text-foreground"
@@ -738,7 +719,7 @@ export function ConversationList({
             <div className="px-4 py-12 text-center">
               <p className="text-sm text-muted-foreground">No conversations found</p>
               <p className="mt-1 text-xs text-muted-foreground/80">
-                Try another queue tab or status filter.
+                Try another tab or filter.
               </p>
             </div>
           )
