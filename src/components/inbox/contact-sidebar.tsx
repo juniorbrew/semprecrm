@@ -40,6 +40,7 @@ import {
   ShieldCheck,
   CalendarPlus,
   UserRound,
+  Brain,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -66,6 +67,7 @@ import { ContactPrivacySection } from "@/components/contacts/contact-privacy-sec
 import { ContactCompanies } from "@/components/companies/contact-companies";
 import { TeamNoteComposer } from "./team-note-composer";
 import { ContactAvatar } from "./contact-avatar";
+import { ContactMemorySection } from "./contact-memory";
 import { toast } from "sonner";
 
 // Same preset palette as Settings › Tags; picked round-robin for inline creation.
@@ -357,6 +359,7 @@ export function ContactSidebar({
   const pipelinesEnabled = !entitlementsReady || modules.pipelines;
   const tasksEnabled = !entitlementsReady || modules.tasks;
   const calendarEnabled = !entitlementsReady || modules.calendar;
+  const aiEnabled = entitlementsReady && modules.ai;
   const [copied, setCopied] = useState(false);
   // Opt-out state mirrors `contact.opted_out_at` but is kept locally so
   // "Reativar" reflects at once, before the parent refetches the contact.
@@ -1295,6 +1298,22 @@ export function ContactSidebar({
               )}
             </div>
           </div>
+
+          {/* Contact memory (AI, migration 064) — facts used in suggestions. */}
+          {aiEnabled && (
+            <>
+              <div className="my-4 border-t border-border" />
+              <ContactMemorySection
+                contactId={contact.id}
+                conversationId={conversationId}
+                anonymized={!!contact.anonymized_at}
+                renderHeader={(action, count) => (
+                  <SectionHeader icon={Brain} label={t("Contact memory")} count={count} action={action} />
+                )}
+                renderAddButton={(label, onClick) => <SectionAddButton label={label} onClick={onClick} />}
+              />
+            </>
+          )}
 
           <div className="my-4 border-t border-border" />
 

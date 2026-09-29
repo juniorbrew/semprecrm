@@ -30,13 +30,19 @@ import {
   Code,
   Zap,
   Sparkles,
+  Bot,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -222,6 +228,10 @@ const COMPOSER_COPY: Record<
     suggestDiscard: string;
     suggestFailed: string;
     suggestRateLimited: string;
+    /** AI agent picker (migration 064). */
+    agentTitle: string;
+    agentAuto: string;
+    agentGeneral: string;
   }
 > = {
   "pt-BR": {
@@ -282,6 +292,9 @@ const COMPOSER_COPY: Record<
     suggestDiscard: "Descartar",
     suggestFailed: "Não foi possível gerar a sugestão.",
     suggestRateLimited: "Muitas sugestões em pouco tempo. Aguarde um minuto.",
+    agentTitle: "Agente de IA desta sugestão",
+    agentAuto: "Automático",
+    agentGeneral: "Instruções gerais",
   },
   "en-US": {
     reply: "Reply",
@@ -341,6 +354,9 @@ const COMPOSER_COPY: Record<
     suggestDiscard: "Discard",
     suggestFailed: "Could not generate the suggestion.",
     suggestRateLimited: "Too many suggestions in a short time. Wait a minute.",
+    agentTitle: "AI agent for this suggestion",
+    agentAuto: "Automatic",
+    agentGeneral: "General instructions",
   },
 };
 
@@ -510,6 +526,35 @@ export function MessageComposer({
     setSuggesting(false);
     setPendingSuggestion(null);
   }, [conversationId]);
+
+  // AI agents (migration 064): which one the rules pick for this thread,
+  // and an optional per-suggestion override. Empty list = no picker.
+  const aiAvailable = aiStatus?.available === true;
+  const [agentInfo, setAgentInfo] = useState<{
+    conversationId: string;
+    agents: { id: string; name: string }[];
+    resolved: string | null;
+  } | null>(null);
+  const [pickedAgent, setPickedAgent] = useState<{ conversationId: string; id: string } | null>(null);
+  useEffect(() => {
+    if (!aiAvailable || readOnly) return;
+    let alive = true;
+    void fetch(`/api/conversations/${conversationId}/ai/suggest`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { agents?: { id: string; name: string }[]; resolved?: string | null } | null) => {
+        if (alive && body?.agents) {
+          setAgentInfo({ conversationId, agents: body.agents, resolved: body.resolved ?? null });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [aiAvailable, readOnly, conversationId]);
+  const agents = agentInfo?.conversationId === conversationId ? agentInfo.agents : [];
+  const pickedAgentId = pickedAgent?.conversationId === conversationId ? pickedAgent.id : null;
+  const activeAgentId = pickedAgentId ?? (agentInfo?.conversationId === conversationId ? agentInfo.resolved : null);
+  const activeAgentName = agents.find((a) => a.id === activeAgentId)?.name ?? copy.agentGeneral;
   useEffect(() => () => suggestAbortRef.current?.abort(), []);
 
   const applySuggestion = useCallback(
@@ -545,6 +590,8 @@ export function MessageComposer({
     try {
       const res = await fetch(`/api/conversations/${conversationId}/ai/suggest`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(pickedAgentId ? { agent_id: pickedAgentId } : {}),
         signal: ctrl.signal,
       });
       const body = (await res.json().catch(() => null)) as
@@ -578,7 +625,7 @@ export function MessageComposer({
         setSuggesting(false);
       }
     }
-  }, [suggestBlock, conversationId, t, copy, applySuggestion]);
+  }, [suggestBlock, conversationId, pickedAgentId, t, copy, applySuggestion]);
 
   // GC a staged-but-unsent attachment on unmount so it doesn't orphan
   // in the bucket (the recorder hook releases the mic on its own).
@@ -1277,6 +1324,41 @@ export function MessageComposer({
                 onSuggest={() => void requestSuggestion()}
                 onCancel={cancelSuggestion}
               />
+            )}
+
+            {/* AI agent for the suggestion — shown only when the account has agents. */}
+            {!isNote && !suggestBlock && agents.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  data-testid="suggest-agent"
+                  aria-label={`${copy.agentTitle}: ${activeAgentName}`}
+                  title={copy.agentTitle}
+                  className="inline-flex h-8 max-w-[9rem] items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                >
+                  <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="truncate" data-no-translate>{activeAgentName}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" data-no-translate className="border-border bg-popover">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{copy.agentTitle}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={pickedAgentId ?? ""}
+                      onValueChange={(v: string) => setPickedAgent(v ? { conversationId, id: v } : null)}
+                    >
+                      <DropdownMenuRadioItem value="">
+                        {copy.agentAuto}
+                        {agentInfo?.resolved ? ` (${agents.find((a) => a.id === agentInfo.resolved)?.name ?? ""})` : ""}
+                      </DropdownMenuRadioItem>
+                      {agents.map((a) => (
+                        <DropdownMenuRadioItem key={a.id} value={a.id}>
+                          {a.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
 
             {/* Attach menu — photo / video / document / voice. */}

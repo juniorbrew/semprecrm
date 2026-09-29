@@ -194,4 +194,81 @@ export const DICT_AI: Record<string, string> = {
   'Could not load the item': 'Não foi possível carregar o item',
   'Could not delete the item': 'Não foi possível excluir o item',
   'The search failed': 'A busca falhou',
+
+  // ---- contact memory + AI agents (migration 064) ------------------------
+  'Contact memory': 'Memória do contato',
+  'Add fact': 'Adicionar fato',
+  Approve: 'Aprovar',
+  Reject: 'Rejeitar',
+  'Extract facts': 'Extrair fatos',
+  'Extracting…': 'Extraindo…',
+  'Fact about the contact': 'Fato sobre o contato',
+  'E.g.: Prefers delivery in the afternoon': 'Ex.: Prefere entrega à tarde',
+  'New facts to review': 'Novos fatos para revisar',
+  'No new facts found in this conversation': 'Nenhum fato novo encontrado nesta conversa',
+  'No facts saved yet. Approved facts are used in AI suggestions.':
+    'Nenhum fato salvo ainda. Fatos aprovados são usados nas sugestões da IA.',
+  'Reads this conversation and proposes facts for you to review. Uses the AI budget.':
+    'Lê esta conversa e propõe fatos para você revisar. Usa o orçamento de IA.',
+  'Suggested by AI — review': 'Sugerido pela IA — revise',
+  'Could not extract facts': 'Não foi possível extrair fatos',
+  'Could not save the fact': 'Não foi possível salvar o fato',
+  'Could not delete the fact': 'Não foi possível excluir o fato',
+  // API errors (src/lib/ai/memory.ts)
+  'The fact is required (up to 300 characters).': 'O fato é obrigatório (até 300 caracteres).',
+  'This looks like sensitive personal data (documents, card numbers, passwords, health). Do not store it in the contact memory.':
+    'Isso parece dado pessoal sensível (documentos, números de cartão, senhas, saúde). Não guarde na memória do contato.',
+  "'status' must be 'active' or 'rejected'": "'status' deve ser 'active' ou 'rejected'",
+  'Memory not found': 'Fato não encontrado',
+  'This contact already has too many facts (up to 100). Remove the ones that no longer apply.':
+    'Este contato já tem fatos demais (até 100). Remova os que não valem mais.',
+  'This fact is already in the contact memory.': 'Este fato já está na memória do contato.',
+  'The AI returned an invalid answer. Try again.': 'A IA devolveu uma resposta inválida. Tente de novo.',
+  // Agents (Settings → IA → Agentes)
+  'AI agents': 'Agentes de IA',
+  "Different instructions per team or number. The suggestion uses the agent linked to one of the contact's tags; otherwise the one linked to the conversation's WhatsApp number; otherwise the default agent; with no agent, the instructions above.":
+    'Instruções diferentes por equipe ou número. A sugestão usa o agente ligado a uma das etiquetas do contato; senão, o ligado ao número de WhatsApp da conversa; senão, o agente padrão; sem agentes, as instruções acima.',
+  'New agent': 'Novo agente',
+  'Edit agent': 'Editar agente',
+  'Agent saved': 'Agente salvo',
+  'Could not load the AI agents': 'Não foi possível carregar os agentes de IA',
+  'No agents yet — suggestions use the instructions above.': 'Nenhum agente ainda — as sugestões usam as instruções acima.',
+  Default: 'Padrão',
+  'Without knowledge base': 'Sem base de conhecimento',
+  'Official WhatsApp number': 'Número do WhatsApp oficial',
+  'WhatsApp QR number': 'Número do WhatsApp QR',
+  'Delete this AI agent?': 'Excluir este agente de IA?',
+  'Could not save the agent': 'Não foi possível salvar o agente',
+  'Could not delete the agent': 'Não foi possível excluir o agente',
+  'Test an agent': 'Testar um agente',
+  'Sends this message to the AI provider as if a customer wrote it and shows the suggestion. It is a real call and counts toward the monthly budget.':
+    'Envia esta mensagem ao provedor de IA como se um cliente a tivesse escrito e mostra a sugestão. É uma chamada real e conta no orçamento mensal.',
+  Test: 'Testar',
+  'Suggestion (test)': 'Sugestão (teste)',
+  'Too many requests. Wait a minute and try again.': 'Muitas solicitações. Aguarde um minuto e tente de novo.',
+  "Uses the account's provider, API key and budget.": 'Usa o provedor, a chave de API e o orçamento da conta.',
+  'E.g.: Sales': 'Ex.: Vendas',
+  'Tone (optional)': 'Tom de voz (opcional)',
+  'E.g.: friendly and short': 'Ex.: simpático e curto',
+  'Model (optional)': 'Modelo (opcional)',
+  'Account model': 'Modelo da conta',
+  'Use this agent for': 'Usar este agente para',
+  'Contacts with these tags (takes priority over the number):':
+    'Contatos com estas etiquetas (tem prioridade sobre o número):',
+  'Default agent (when no tag or number matches)': 'Agente padrão (quando nenhuma etiqueta ou número combina)',
+  'Use the knowledge base': 'Usar a base de conhecimento',
+  // API errors (src/lib/ai/agents.ts)
+  'The name is required (up to 80 characters).': 'O nome é obrigatório (até 80 caracteres).',
+  'The instructions are required (up to 4000 characters).': 'As instruções são obrigatórias (até 4000 caracteres).',
+  'The tone must be at most 200 characters.': 'O tom de voz deve ter no máximo 200 caracteres.',
+  "'knowledge_enabled', 'is_default' and 'enabled' must be true or false":
+    "'knowledge_enabled', 'is_default' e 'enabled' devem ser true ou false",
+  "'channels' must be a list of 'official' and/or 'qr'": "'channels' deve ser uma lista com 'official' e/ou 'qr'",
+  "'tag_ids' must be a list of up to 50 tag ids": "'tag_ids' deve ser uma lista de até 50 etiquetas",
+  'AI agent not found': 'Agente de IA não encontrado',
+  'This account already has the maximum of 20 AI agents.': 'Esta conta já tem o máximo de 20 agentes de IA.',
+  'Another agent became the default at the same time. Reload and try again.':
+    'Outro agente virou o padrão ao mesmo tempo. Recarregue e tente de novo.',
+  'Type a customer message to test (up to 1000 characters).':
+    'Digite uma mensagem de cliente para testar (até 1000 caracteres).',
 };

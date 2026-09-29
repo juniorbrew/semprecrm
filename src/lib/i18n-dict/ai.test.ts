@@ -7,6 +7,8 @@ import { AI_ERROR_MESSAGES } from '@/lib/ai/errors';
 import { AI_SETTINGS_ERRORS } from '@/lib/ai/settings';
 import { KB_ERRORS } from '@/lib/ai/knowledge';
 import { KB_EXTRACT_ERRORS } from '@/lib/ai/knowledge-extract';
+import { AGENT_ERRORS } from '@/lib/ai/agents';
+import { MEMORY_ERRORS } from '@/lib/ai/memory';
 import { MODULE_LABELS } from '@/lib/plans';
 import { DICT_AI } from './ai';
 
@@ -25,6 +27,9 @@ const KEYS = [
   ...Object.values(KB_ERRORS).filter((m) => m !== KB_ERRORS.body),
   ...Object.values(KB_EXTRACT_ERRORS),
   'Failed to save the knowledge item',
+  ...Object.values(AGENT_ERRORS).filter((m) => m !== AGENT_ERRORS.body),
+  ...Object.values(MEMORY_ERRORS).filter((m) => m !== MEMORY_ERRORS.body),
+  'Contact memory',
 ];
 
 describe('pt-BR dictionary — AI', () => {
@@ -41,8 +46,13 @@ describe('pt-BR dictionary — AI', () => {
 const T_CALL = new RegExp(String.raw`\bt\(\s*(["'])(.*?)\1\s*,?\s*\)`, 'gs');
 const PANEL_KEYS = (() => {
   const keys = new Set<string>();
-  for (const file of ['ai-settings.tsx', 'ai-knowledge.tsx']) {
-    const src = readFileSync(join(process.cwd(), 'src/components/settings', file), 'utf8');
+  for (const file of [
+    'settings/ai-settings.tsx',
+    'settings/ai-knowledge.tsx',
+    'settings/ai-agents.tsx',
+    'inbox/contact-memory.tsx',
+  ]) {
+    const src = readFileSync(join(process.cwd(), 'src/components', file), 'utf8');
     for (const m of src.matchAll(T_CALL)) keys.add(m[2]);
   }
   return [...keys];
