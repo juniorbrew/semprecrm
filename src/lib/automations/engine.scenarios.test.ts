@@ -134,8 +134,13 @@ vi.mock('./admin-client', () => {
       return Promise.resolve({ data: null, error: null })
     }
     if (fn === 'automation_update_conversations') {
+      // Migration 062: the run's conversation when given, else only the
+      // contact's live (non-closed) conversations.
       const rows = table('conversations').filter(
-        (r) => r.account_id === args.p_account_id && r.contact_id === args.p_contact_id,
+        (r) =>
+          r.account_id === args.p_account_id &&
+          r.contact_id === args.p_contact_id &&
+          (args.p_conversation_id ? r.id === args.p_conversation_id : r.status !== 'closed'),
       )
       for (const r of rows) {
         if (args.p_assigned_agent_id) r.assigned_agent_id = args.p_assigned_agent_id
@@ -565,5 +570,60 @@ describe('dry run', () => {
     await message()
     const res = await simulateAutomation({ automation: a, contactId: CONTACT })
     expect(res.gate).toEqual({ wouldRun: false, reason: SKIP_REASONS.onceContact })
+  })
+})
+
+describe('contacts with resolved conversations (migrations 060 / 062)', () => {
+  // The mock's order() sorts ascending, so the resolved rows come first —
+  // as they would when they were touched more recently than the live one.
+  function seedHistory() {
+    h.db.conversations = [
+      { id: 'old-1', account_id: ACCOUNT, contact_id: CONTACT, status: 'closed', service_count: 1, updated_at: '1' },
+      { id: 'old-2', account_id: ACCOUNT, contact_id: CONTACT, status: 'closed', service_count: 1, updated_at: '2' },
+      { id: 'live', account_id: ACCOUNT, contact_id: CONTACT, status: 'open', service_count: 1, updated_at: '3' },
+    ]
+  }
+  const tagAdded = () =>
+    runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'tag_added',
+      contactId: CONTACT,
+      context: { tag_id: TAG },
+    })
+
+  it('assign on a contact-only trigger touches only the live conversation', async () => {
+    seedHistory()
+    const a = automation({ trigger_type: 'tag_added', trigger_config: { tag_id: TAG } })
+    step(a.id, 'assign_conversation', { agent_id: 'agent-9' }, 0)
+    await tagAdded()
+    const byId = Object.fromEntries(h.db.conversations.map((c) => [c.id, c]))
+    expect(byId.live.assigned_agent_id).toBe('agent-9')
+    expect(byId['old-1'].assigned_agent_id).toBeUndefined()
+    expect(byId['old-2'].assigned_agent_id).toBeUndefined()
+    const call = h.rpcCalls.find((c) => c.fn === 'automation_update_conversations')
+    expect(call?.args.p_conversation_id).toBeNull()
+  })
+
+  it('close with a conversation in context closes only that one', async () => {
+    seedHistory()
+    const a = automation()
+    step(a.id, 'close_conversation', {}, 0)
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: CONTACT,
+      context: { message_text: 'oi', conversation_id: 'live' },
+    })
+    expect(h.db.conversations.map((c) => c.status)).toEqual(['closed', 'closed', 'closed'])
+    const call = h.rpcCalls.find((c) => c.fn === 'automation_update_conversations')
+    expect(call?.args.p_conversation_id).toBe('live')
+  })
+
+  it('a send on a contact-only trigger goes to the live conversation, not the latest resolved one', async () => {
+    seedHistory()
+    const a = automation({ trigger_type: 'tag_added', trigger_config: { tag_id: TAG } })
+    step(a.id, 'send_message', { text: 'oi' }, 0)
+    await tagAdded()
+    expect(vi.mocked(engineSendText).mock.calls[0]?.[0]).toMatchObject({ conversationId: 'live' })
   })
 })

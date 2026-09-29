@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
+  handoffConversation,
   matchReplyId,
   matchesKeywordTrigger,
   isAutoAdvancing,
@@ -295,5 +296,54 @@ describe("evaluateConditionPredicate", () => {
         configValue: "anything",
       }),
     ).toBe(false);
+  });
+});
+
+describe("handoffConversation (migration 060)", () => {
+  function dbWith(errors: ({ code?: string; message: string } | null)[]) {
+    const updates: Record<string, unknown>[] = [];
+    const db = {
+      from: () => ({
+        update: (p: Record<string, unknown>) => ({
+          eq: async () => {
+            updates.push(p);
+            return { error: errors.shift() ?? null };
+          },
+        }),
+      }),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { db: db as any, updates };
+  }
+
+  it("moves the conversation to pending", async () => {
+    const { db, updates } = dbWith([null]);
+    await handoffConversation(db, "conv-1", { status: "pending", assigned_agent_id: "a-1" });
+    expect(updates).toEqual([{ status: "pending", assigned_agent_id: "a-1" }]);
+  });
+
+  it("23505 (a newer live conversation exists): keeps it resolved, still assigns, logs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { db, updates } = dbWith([{ code: "23505", message: "duplicate key" }, null]);
+    await handoffConversation(db, "conv-1", {
+      status: "pending",
+      assigned_agent_id: "a-1",
+      updated_at: "t",
+    });
+    expect(updates[1]).toEqual({ assigned_agent_id: "a-1", updated_at: "t" });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("23505 with nothing else to apply stops there; other errors are logged, not thrown", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const a = dbWith([{ code: "23505", message: "dup" }]);
+    await handoffConversation(a.db, "conv-1", { status: "pending", updated_at: "t" });
+    expect(a.updates).toHaveLength(1);
+    const b = dbWith([{ code: "XX000", message: "boom" }]);
+    await expect(handoffConversation(b.db, "conv-1", { status: "pending" })).resolves.toBeUndefined();
+    expect(err).toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 });
