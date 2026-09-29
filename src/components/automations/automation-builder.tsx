@@ -177,7 +177,7 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   {
     value: "conversation_reopened",
     label: "Conversation Reopened",
-    hint: "An agent reopened a resolved conversation (a new attendance). A customer writing after it was resolved starts a new conversation instead.",
+    hint: "A resolved conversation came back: an agent reopened it, or the customer answered our message within 24 hours (a new attendance). Otherwise a customer writing after it was resolved starts a new conversation.",
   },
   {
     value: "conversation_resolved",
@@ -200,8 +200,8 @@ const ALL_TRIGGER_OPTIONS = [...TRIGGER_OPTIONS, ...LEGACY_TRIGGER_OPTIONS]
 /** Builder copy for the new pieces, inline instead of the shared dictionary. */
 const PT_COPY: Record<string, string> = {
   "Conversation Reopened": "Conversa reaberta",
-  "An agent reopened a resolved conversation (a new attendance). A customer writing after it was resolved starts a new conversation instead.":
-    "Um atendente reabriu uma conversa resolvida (novo atendimento). Se o cliente escrever depois de resolvida, abre uma nova conversa.",
+  "A resolved conversation came back: an agent reopened it, or the customer answered our message within 24 hours (a new attendance). Otherwise a customer writing after it was resolved starts a new conversation.":
+    "Uma conversa resolvida voltou: um atendente reabriu, ou o cliente respondeu nossa mensagem em até 24 h (novo atendimento). Fora isso, se o cliente escrever depois de resolvida, abre uma nova conversa.",
   "First message of each conversation — also when the contact writes again after a resolved conversation (works for manually-added contacts too)":
     "Primeira mensagem de cada conversa — inclusive quando o contato volta a escrever depois de uma conversa resolvida (também vale para contatos adicionados manualmente)",
   "Conversation Resolved": "Conversa resolvida",

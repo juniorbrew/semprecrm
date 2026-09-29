@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
     events: [] as Record<string, unknown>[],
     contactInsertError: null as { code?: string; message: string } | null,
     updates: [] as { table: string; payload: Record<string, unknown> }[],
+    profiles: [] as Record<string, unknown>[],
+    flowRuns: [] as Record<string, unknown>[],
     /** A concurrent delivery's conversation that lands just before our insert. */
     conversationRace: null as Record<string, unknown> | null,
   },
@@ -113,7 +115,11 @@ function makeDb() {
               ? h.state.messages
               : table === 'broadcast_recipients'
                 ? h.state.recipients
-                : []
+                : table === 'profiles'
+                  ? h.state.profiles
+                  : table === 'flow_runs'
+                    ? h.state.flowRuns
+                    : []
       // Embedded-resource filters ("broadcasts.account_id") are a
       // join in PostgREST; the mock has no joins, so ignore them.
       const out = src.filter(
@@ -169,8 +175,9 @@ function makeDb() {
       }
       if (ops.type === 'update') {
         h.state.updates.push({ table, payload: ops.payload ?? {} })
-        for (const r of rows()) Object.assign(r, ops.payload)
-        return { data: null, error: null }
+        const hit = rows()
+        for (const r of hit) Object.assign(r, ops.payload)
+        return { data: hit, error: null }
       }
       const matched = rows()
       if (ops.count) return { data: null, count: matched.length, error: null }
@@ -200,6 +207,9 @@ function makeDb() {
       },
       maybeSingle: () => {
         const r = resolve()
+        if (ops.type === 'update') {
+          return Promise.resolve({ data: (r.data as Record<string, unknown>[])[0] ?? null, error: null })
+        }
         if (table === 'accounts' || ops.type !== 'select') return Promise.resolve(r)
         const first = (r.data as Record<string, unknown>[] | null)?.[0] ?? null
         return Promise.resolve({ data: first, error: null })
@@ -235,6 +245,8 @@ beforeEach(() => {
   h.state.contactInsertError = null
   h.state.updates = []
   h.state.conversationRace = null
+  h.state.profiles = []
+  h.state.flowRuns = []
   h.flows.consumed = false
   h.automationCalls = []
   h.cancelledWaits = []
@@ -897,5 +909,153 @@ describe('helpers', () => {
     expect(toIsoTimestamp(1_700_000_000_000)).toBe('2023-11-14T22:13:20.000Z')
     expect(toIsoTimestamp('2023-11-14T22:13:20.000Z')).toBe('2023-11-14T22:13:20.000Z')
     expect(typeof toIsoTimestamp(undefined)).toBe('string')
+  })
+})
+
+describe('ingestInboundMessage — after a resolved conversation (review round)', () => {
+  const NOW = new Date('2026-09-28T12:00:00Z')
+  const hoursAgo = (n: number) => new Date(NOW.getTime() - n * 3_600_000).toISOString()
+
+  function seedClosed(lastMessage: Record<string, unknown> | null, extra: Record<string, unknown> = {}) {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] })
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
+    h.state.conversations.push({
+      id: 'conv-1',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      channel: 'qr',
+      status: 'closed',
+      unread_count: 0,
+      created_at: '2026-09-01T00:00:00Z',
+      ...extra,
+    })
+    h.state.messages.push({
+      id: 'm-c',
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+      created_at: hoursAgo(48),
+    })
+    if (lastMessage) h.state.messages.push({ id: 'm-last', conversation_id: 'conv-1', ...lastMessage })
+  }
+
+  it('a reply to our outbound message (< 24 h) reopens that conversation, keeps the owner, no first-message triggers', async () => {
+    seedClosed(
+      { sender_type: 'agent', origin: 'automation', created_at: hoursAgo(2) },
+      { assigned_agent_id: 'agent-1' },
+    )
+    h.state.accountPreferences = { auto_assign_enabled: true }
+    h.roundRobinPick = 'agent-7'
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-1', reopened: true })
+    expect(res.newConversation).toBeUndefined()
+    expect(res.autoAssignedTo).toBeUndefined()
+    expect(h.state.conversations).toHaveLength(1)
+    expect(h.state.conversations[0]).toMatchObject({ status: 'open', assigned_agent_id: 'agent-1' })
+    expect(h.automationCalls.map((c) => c.triggerType)).not.toContain('first_inbound_message')
+    expect(vi.mocked(dispatchInboundToFlows).mock.lastCall?.[0]).toMatchObject({ isFirstInboundMessage: false })
+    expect(h.state.events).toEqual([
+      expect.objectContaining({
+        event_type: 'status_changed',
+        payload: { status: 'open', previous_status: 'closed', source: 'customer_reply' },
+      }),
+    ])
+    expect(h.drains).toEqual([{ accountId: 'acct-1' }])
+  })
+
+  it('also for an outbound sent from the inbox (no origin)', async () => {
+    seedClosed({ sender_type: 'agent', origin: null, created_at: hoursAgo(23) })
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(res).toMatchObject({ conversationId: 'conv-1', reopened: true })
+  })
+
+  it.each([
+    ['our last message is older than 24 h', { sender_type: 'agent', created_at: hoursAgo(25) }],
+    ['the last message was a phone echo', { sender_type: 'agent', origin: 'phone', created_at: hoursAgo(1) }],
+    ['the customer wrote last', null],
+  ])('a new conversation when %s', async (_label, last) => {
+    seedClosed(last as Record<string, unknown> | null)
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(res.newConversation).toBe(true)
+    expect(res.reopened).toBeUndefined()
+    expect(h.state.conversations[0].status).toBe('closed')
+    expect(h.automationCalls.map((c) => c.triggerType)).toContain('first_inbound_message')
+  })
+
+  it('moves the contact\'s active flow runs from the resolved conversation to the new one before the runner', async () => {
+    seedClosed(null)
+    h.state.flowRuns.push(
+      { id: 'run-1', account_id: 'acct-1', contact_id: 'c-1', conversation_id: 'conv-1', status: 'active' },
+      { id: 'run-2', account_id: 'acct-1', contact_id: 'c-1', conversation_id: 'conv-1', status: 'completed' },
+    )
+    let seenAtDispatch: unknown = null
+    vi.mocked(dispatchInboundToFlows).mockImplementationOnce(async () => {
+      seenAtDispatch = h.state.flowRuns[0].conversation_id
+      return { consumed: false, outcome: 'no_match' } as never
+    })
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(seenAtDispatch).toBe(res.conversationId)
+    expect(h.state.flowRuns[1].conversation_id).toBe('conv-1')
+  })
+
+  it('resolves a quoted message that lives in the resolved conversation', async () => {
+    seedClosed(null)
+    h.state.messages.push({ id: 'm-quoted', conversation_id: 'conv-1', message_id: 'wamid-old', sender_type: 'agent' })
+    await ingestInboundMessage({ ...BASE, quotedMessageId: 'wamid-old' }, makeDb())
+    expect(h.state.messages.at(-1)).toMatchObject({ message_id: 'wamid-1', reply_to_message_id: 'm-quoted' })
+  })
+
+  it('without auto-assign, the new conversation goes to the previous agent when still an agent+ member', async () => {
+    seedClosed(null, { assigned_agent_id: 'agent-1' })
+    h.state.profiles.push({ account_id: 'acct-1', user_id: 'agent-1', account_role: 'agent' })
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(res.inheritedAssignee).toBe('agent-1')
+    expect(h.state.conversations[1].assigned_agent_id).toBe('agent-1')
+    expect(h.state.events).toEqual([
+      expect.objectContaining({
+        event_type: 'assigned',
+        payload: { assignee_user_id: 'agent-1', source: 'previous_conversation' },
+      }),
+    ])
+  })
+
+  it('does not inherit a removed member, a viewer, or when auto-assign already assigned', async () => {
+    seedClosed(null, { assigned_agent_id: 'agent-1' })
+    const gone = await ingestInboundMessage(BASE, makeDb())
+    expect(gone.inheritedAssignee).toBeUndefined()
+
+    h.state.conversations.splice(1)
+    h.state.conversations[0].status = 'closed'
+    h.state.profiles.push({ account_id: 'acct-1', user_id: 'agent-1', account_role: 'viewer' })
+    const viewer = await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, makeDb())
+    expect(viewer.inheritedAssignee).toBeUndefined()
+
+    h.state.conversations.splice(1)
+    h.state.profiles[0].account_role = 'agent'
+    h.state.accountPreferences = { auto_assign_enabled: true }
+    h.roundRobinPick = 'agent-7'
+    const auto = await ingestInboundMessage({ ...BASE, messageId: 'wamid-3' }, makeDb())
+    expect(auto.autoAssignedTo).toBe('agent-7')
+    expect(auto.inheritedAssignee).toBeUndefined()
+  })
+
+  it('out-of-hours: no second notice when the contact got one in the resolved conversation < 12 h ago', async () => {
+    // Saturday 2026-09-12 14:00Z = 11:00 in São Paulo → closed.
+    const SATURDAY = new Date('2026-09-12T14:00:00Z')
+    seedClosed(null, { out_of_hours_replied_at: new Date(SATURDAY.getTime() - 3 * 3_600_000).toISOString() })
+    vi.setSystemTime(SATURDAY)
+    h.state.accountPreferences = { out_of_hours_enabled: true, out_of_hours_message: 'Voltamos segunda!' }
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(res.newConversation).toBe(true)
+    expect(res.outOfHoursReply).toBeUndefined()
+    expect(h.sendCalls).toHaveLength(0)
+  })
+
+  it('out-of-hours: replies again when the previous notice is older than 12 h', async () => {
+    const SATURDAY = new Date('2026-09-12T14:00:00Z')
+    seedClosed(null, { out_of_hours_replied_at: new Date(SATURDAY.getTime() - 13 * 3_600_000).toISOString() })
+    vi.setSystemTime(SATURDAY)
+    h.state.accountPreferences = { out_of_hours_enabled: true, out_of_hours_message: 'Voltamos segunda!' }
+    const res = await ingestInboundMessage(BASE, makeDb())
+    expect(res.outOfHoursReply).toBe('sent')
   })
 })

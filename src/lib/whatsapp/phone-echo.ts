@@ -46,7 +46,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import {
-  lookupInternalIdByProviderId,
+  findStoredMessage,
   toContentType,
   toIsoTimestamp,
   type InboundMessageInput,
@@ -191,7 +191,8 @@ export async function ingestPhoneEcho(
 
   let replyTo: string | null = null
   if (input.quotedMessageId) {
-    replyTo = await lookupInternalIdByProviderId(db, input.quotedMessageId, conversation.id)
+    // The quoted message may live in an earlier (resolved) conversation.
+    replyTo = (await findStoredMessage(db, input.quotedMessageId, conversationIds))?.id ?? null
   }
 
   const contentText = input.text || null
