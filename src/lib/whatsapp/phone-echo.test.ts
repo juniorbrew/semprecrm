@@ -347,6 +347,41 @@ describe('ingestPhoneEcho', () => {
     })
     expect(h.state.conversations[0]).toMatchObject({ last_message_text: '[image]' })
   })
+
+  it('goes to the open conversation when the contact also has an older resolved one', async () => {
+    // Newest activity first, as the lookup orders them: the resolved one
+    // happens to hold the latest message.
+    seedConversation({ last_message_at: iso(T0 - 10) })
+    h.state.conversations.push({
+      id: 'conv-2',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      unread_count: 0,
+      status: 'open',
+      channel: 'qr',
+      last_message_at: iso(T0 - 60),
+    })
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-2' })
+    expect(h.state.messages[0]).toMatchObject({ conversation_id: 'conv-2' })
+  })
+
+  it('only resolved conversations → the latest one, left resolved, nothing created', async () => {
+    seedConversation({ id: 'conv-new' })
+    h.state.conversations.push({
+      id: 'conv-old',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      status: 'closed',
+      channel: 'qr',
+      last_message_at: iso(T0 - 9000),
+    })
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-new' })
+    expect(h.state.messages[0]).toMatchObject({ conversation_id: 'conv-new' })
+    expect(h.state.conversations).toHaveLength(2)
+    expect(h.state.conversations.every((c) => c.status === 'closed')).toBe(true)
+  })
 })
 
 describe('claimEchoedRow', () => {

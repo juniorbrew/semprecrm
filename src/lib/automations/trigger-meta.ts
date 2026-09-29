@@ -64,7 +64,7 @@ const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
   time_based: 'Baseado em horário',
   lead_captured: 'Lead capturado',
   conversation_inactive: 'Conversa sem resposta',
-  conversation_reopened: 'Conversa reaberta (novo atendimento)',
+  conversation_reopened: 'Conversa reaberta',
   conversation_resolved: 'Conversa resolvida',
 };
 

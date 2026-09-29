@@ -22,7 +22,10 @@
 // counted echo pauses the contact's active flow runs (a human took
 // over, like an inbox send).
 //
-// Unlike `ingestInboundMessage` it NEVER: bumps unread_count, touches
+// Target: the contact's open / pending conversation, else the latest
+// resolved one (left resolved).
+//
+// Unlike `ingestInboundMessage` it NEVER: creates a conversation, bumps unread_count, touches
 // last_customer_message_at, reopens a resolved conversation, switches
 // the channel, renames or creates contacts, runs flows / automations /
 // opt-out / out-of-hours / auto-assign, flags a broadcast reply or
@@ -107,7 +110,7 @@ async function findContactConversations(
 
   const { data: conversations, error: convErr } = await db
     .from('conversations')
-    .select('id, last_customer_message_at, last_message_at')
+    .select('id, status, last_customer_message_at, last_message_at')
     .eq('account_id', accountId)
     .eq('contact_id', contact.id)
     .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -167,7 +170,11 @@ export async function ingestPhoneEcho(
   if (lookup.kind === 'error') return { ok: false, reason: 'lookup_failed' }
   if (lookup.kind === 'skip') return { ok: true, skipped: lookup.reason }
 
-  const conversation = lookup.conversations[0]
+  // The live (open / pending) conversation when there is one, else the
+  // latest resolved one — an echo never creates or reopens a
+  // conversation (migration 060: a resolved conversation is final).
+  const conversation =
+    lookup.conversations.find((c) => c.status !== 'closed') ?? lookup.conversations[0]
   const conversationIds = lookup.conversations.map((c) => c.id as string)
   const base = { contactId: lookup.contactId, conversationId: conversation.id as string }
 

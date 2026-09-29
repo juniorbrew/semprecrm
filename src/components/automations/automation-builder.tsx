@@ -154,7 +154,7 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   {
     value: "first_inbound_message",
     label: "First Message from Contact",
-    hint: "First time this contact ever messages you (works for manually-added contacts too)",
+    hint: "First message of each conversation — also when the contact writes again after a resolved conversation (works for manually-added contacts too)",
   },
   { value: "keyword_match", label: "Keyword Match", hint: "Message contains specific keyword(s)" },
   { value: "new_contact_created", label: "New Contact Created", hint: "When a contact is auto-created from an incoming message" },
@@ -177,7 +177,7 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   {
     value: "conversation_reopened",
     label: "Conversation Reopened",
-    hint: "A resolved conversation came back — the customer wrote again or an agent reopened it (a new attendance)",
+    hint: "An agent reopened a resolved conversation (a new attendance). A customer writing after it was resolved starts a new conversation instead.",
   },
   {
     value: "conversation_resolved",
@@ -199,9 +199,11 @@ const ALL_TRIGGER_OPTIONS = [...TRIGGER_OPTIONS, ...LEGACY_TRIGGER_OPTIONS]
 
 /** Builder copy for the new pieces, inline instead of the shared dictionary. */
 const PT_COPY: Record<string, string> = {
-  "Conversation Reopened": "Conversa reaberta (novo atendimento)",
-  "A resolved conversation came back — the customer wrote again or an agent reopened it (a new attendance)":
-    "Uma conversa resolvida voltou — o cliente escreveu de novo ou um atendente reabriu (novo atendimento)",
+  "Conversation Reopened": "Conversa reaberta",
+  "An agent reopened a resolved conversation (a new attendance). A customer writing after it was resolved starts a new conversation instead.":
+    "Um atendente reabriu uma conversa resolvida (novo atendimento). Se o cliente escrever depois de resolvida, abre uma nova conversa.",
+  "First message of each conversation — also when the contact writes again after a resolved conversation (works for manually-added contacts too)":
+    "Primeira mensagem de cada conversa — inclusive quando o contato volta a escrever depois de uma conversa resolvida (também vale para contatos adicionados manualmente)",
   "Conversation Resolved": "Conversa resolvida",
   "When a conversation is marked as resolved": "Quando uma conversa é marcada como resolvida",
   "Time-Based": "Baseado em horário",

@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
     events: [] as Record<string, unknown>[],
     contactInsertError: null as { code?: string; message: string } | null,
     updates: [] as { table: string; payload: Record<string, unknown> }[],
+    /** A concurrent delivery's conversation that lands just before our insert. */
+    conversationRace: null as Record<string, unknown> | null,
   },
   flows: { consumed: false },
   automationCalls: [] as Record<string, unknown>[],
@@ -94,6 +96,8 @@ const nextId = (prefix: string) => `${prefix}-${++idSeq}`
 function makeDb() {
   function builder(table: string) {
     const filters: [string, unknown][] = []
+    const preds: ((r: Record<string, unknown>) => boolean)[] = []
+    let orderBy: { col: string; ascending: boolean } | null = null
     const ops = {
       type: 'select' as 'select' | 'insert' | 'update',
       payload: undefined as Record<string, unknown> | undefined,
@@ -112,9 +116,20 @@ function makeDb() {
                 : []
       // Embedded-resource filters ("broadcasts.account_id") are a
       // join in PostgREST; the mock has no joins, so ignore them.
-      return src.filter((r) =>
-        filters.every(([k, v]) => k.includes('.') || r[k] === v),
+      const out = src.filter(
+        (r) =>
+          filters.every(([k, v]) => k.includes('.') || r[k] === v) &&
+          preds.every((f) => f(r)),
       )
+      if (orderBy) {
+        const { col, ascending } = orderBy
+        out.sort((a, b) => {
+          const x = String(a[col] ?? '')
+          const y = String(b[col] ?? '')
+          return (x < y ? -1 : x > y ? 1 : 0) * (ascending ? 1 : -1)
+        })
+      }
+      return out
     }
     function resolve() {
       if (table === 'accounts') {
@@ -129,7 +144,23 @@ function makeDb() {
         if (table === 'contacts' && h.state.contactInsertError) {
           return { data: null, error: h.state.contactInsertError }
         }
-        const row = { id: nextId(table), unread_count: 0, ...ops.payload }
+        if (table === 'conversations') {
+          // Partial unique index (migration 060): one non-closed per contact.
+          if (h.state.conversationRace) {
+            h.state.conversations.push(h.state.conversationRace)
+            h.state.conversationRace = null
+          }
+          const clash = h.state.conversations.some(
+            (c) => c.contact_id === ops.payload?.contact_id && c.status !== 'closed',
+          )
+          if (clash) return { data: null, error: { code: '23505', message: 'duplicate key' } }
+        }
+        const row = {
+          id: nextId(table),
+          unread_count: 0,
+          created_at: `2026-09-28T00:00:${String(idSeq).padStart(2, '0')}Z`,
+          ...ops.payload,
+        }
         if (table === 'contacts') h.state.contacts.push(row)
         if (table === 'conversations') h.state.conversations.push(row)
         if (table === 'messages') h.state.messages.push(row)
@@ -153,8 +184,11 @@ function makeDb() {
       insert: (p: Record<string, unknown>) => ((ops.type = 'insert'), (ops.payload = p), b),
       update: (p: Record<string, unknown>) => ((ops.type = 'update'), (ops.payload = p), b),
       eq: (k: string, v: unknown) => (filters.push([k, v]), b),
-      in: () => b,
-      order: () => b,
+      neq: (k: string, v: unknown) => (preds.push((r) => r[k] !== v), b),
+      in: (k: string, vs: unknown[]) => (preds.push((r) => vs.includes(r[k])), b),
+      order: (col: string, o?: { ascending?: boolean }) => (
+        (orderBy = { col, ascending: o?.ascending ?? true }), b
+      ),
       limit: () => b,
       single: () => {
         const r = resolve()
@@ -200,6 +234,7 @@ beforeEach(() => {
   h.state.events = []
   h.state.contactInsertError = null
   h.state.updates = []
+  h.state.conversationRace = null
   h.flows.consumed = false
   h.automationCalls = []
   h.cancelledWaits = []
@@ -606,7 +641,7 @@ describe('ingestInboundMessage — auto-assign (round-robin)', () => {
   })
 })
 
-describe('ingestInboundMessage — reopen resolved conversation', () => {
+describe('ingestInboundMessage — resolved conversation is final', () => {
   function seedConversation(extra: Record<string, unknown>) {
     h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
     h.state.conversations.push({
@@ -615,62 +650,128 @@ describe('ingestInboundMessage — reopen resolved conversation', () => {
       contact_id: 'c-1',
       channel: 'qr',
       unread_count: 0,
+      created_at: '2026-09-01T00:00:00Z',
       ...extra,
     })
     h.state.messages.push({ id: 'm-0', conversation_id: 'conv-1', sender_type: 'customer' })
   }
 
-  it('reopens a resolved conversation, keeps the owner and logs the pill', async () => {
+  it('a message after closing starts a NEW open conversation; the old one stays closed', async () => {
     const db = makeDb()
-    seedConversation({ status: 'closed', assigned_agent_id: 'agent-1' })
+    seedConversation({ status: 'closed', assigned_agent_id: 'agent-1', archived_at: '2026-09-02T00:00:00Z' })
 
     const res = await ingestInboundMessage(BASE, db)
 
-    expect(res.ok).toBe(true)
-    expect(res.reopened).toBe(true)
-    expect(h.state.conversations[0]).toMatchObject({
+    expect(res).toMatchObject({ ok: true, newConversation: true, previousConversationId: 'conv-1' })
+    expect(res.conversationId).not.toBe('conv-1')
+    expect(h.state.conversations).toHaveLength(2)
+    expect(h.state.conversations[0]).toMatchObject({ id: 'conv-1', status: 'closed', unread_count: 0 })
+    const fresh = h.state.conversations[1]
+    expect(fresh).toMatchObject({
+      account_id: 'acct-1',
+      user_id: 'owner-1',
+      contact_id: 'c-1',
+      channel: 'qr',
       status: 'open',
-      assigned_agent_id: 'agent-1',
       unread_count: 1,
     })
-    expect(h.state.events).toEqual([
-      expect.objectContaining({
-        account_id: 'acct-1',
-        conversation_id: 'conv-1',
-        actor_user_id: null,
-        event_type: 'status_changed',
-        payload: { status: 'open', previous_status: 'closed', source: 'customer_message' },
-      }),
-    ])
-    // Not a new first message: the welcome triggers stay quiet.
-    const triggers = h.automationCalls.map((c) => c.triggerType)
-    expect(triggers).not.toContain('first_inbound_message')
+    // Fresh owner: the previous assignee is not carried over.
+    expect(fresh.assigned_agent_id).toBeUndefined()
+    expect(h.state.messages.at(-1)).toMatchObject({ conversation_id: fresh.id, message_id: 'wamid-1' })
+    // No reopen pill / status write on any row.
+    expect(h.state.events).toHaveLength(0)
+    const convUpdates = h.state.updates.filter((u) => u.table === 'conversations')
+    expect(convUpdates.every((u) => !('status' in u.payload))).toBe(true)
   })
 
-  it('cancels reply-cancellable follow-ups and drains the reopen event', async () => {
+  it('fires the new-conversation triggers, not a reopen', async () => {
     const db = makeDb()
     seedConversation({ status: 'closed' })
     await ingestInboundMessage(BASE, db)
-    expect(h.cancelledWaits).toEqual(['conv-1'])
-    expect(h.drains).toEqual([{ accountId: 'acct-1' }])
+    const triggers = h.automationCalls.map((c) => c.triggerType)
+    expect(triggers).toEqual(['first_inbound_message', 'new_message_received', 'keyword_match'])
+    const fresh = h.state.conversations[1]
+    expect(h.automationCalls[0]).toMatchObject({ context: { conversation_id: fresh.id } })
+    expect(vi.mocked(dispatchInboundToFlows).mock.lastCall?.[0]).toMatchObject({
+      conversationId: fresh.id,
+      isFirstInboundMessage: true,
+    })
+    // Nothing reopened → no reopen event to drain.
+    expect(h.drains).toEqual([])
   })
 
-  it('leaves open and pending conversations alone', async () => {
+  it('runs the normal auto-assign on the new conversation', async () => {
+    const db = makeDb()
+    h.state.accountPreferences = { auto_assign_enabled: true }
+    h.roundRobinPick = 'agent-7'
+    seedConversation({ status: 'closed', assigned_agent_id: 'agent-1' })
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.autoAssignedTo).toBe('agent-7')
+    expect(h.state.conversations[1].assigned_agent_id).toBe('agent-7')
+    expect(h.state.conversations[0].assigned_agent_id).toBe('agent-1')
+  })
+
+  it('cancels reply-cancellable follow-ups on the new and the replaced conversation', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'closed' })
+    await ingestInboundMessage(BASE, db)
+    expect(h.cancelledWaits).toEqual([h.state.conversations[1].id, 'conv-1'])
+  })
+
+  it('open and pending conversations continue: same row, no new conversation', async () => {
     const db = makeDb()
     seedConversation({ status: 'open' })
     const res = await ingestInboundMessage(BASE, db)
-    expect(res.reopened).toBeUndefined()
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-1' })
+    expect(res.newConversation).toBeUndefined()
+    expect(h.state.conversations).toHaveLength(1)
     expect(h.state.events).toHaveLength(0)
     const upd = h.state.updates.find((u) => u.table === 'conversations')
     expect(upd?.payload).not.toHaveProperty('status')
+    expect(h.automationCalls.map((c) => c.triggerType)).not.toContain('first_inbound_message')
 
     h.state.conversations[0].status = 'pending'
-    await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, db)
+    const res2 = await ingestInboundMessage({ ...BASE, messageId: 'wamid-2' }, db)
+    expect(res2.conversationId).toBe('conv-1')
+    expect(h.state.conversations).toHaveLength(1)
     expect(h.state.conversations[0].status).toBe('pending')
-    expect(h.state.events).toHaveLength(0)
   })
 
-  it('does not reopen on a redelivered message', async () => {
+  it('continues the open conversation even when older resolved ones exist', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'closed' })
+    h.state.conversations.push({
+      id: 'conv-2',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      status: 'open',
+      unread_count: 0,
+      created_at: '2026-09-10T00:00:00Z',
+    })
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.conversationId).toBe('conv-2')
+    expect(h.state.conversations).toHaveLength(2)
+  })
+
+  it('race: a concurrent delivery created the new conversation first → reuse it', async () => {
+    const db = makeDb()
+    seedConversation({ status: 'closed' })
+    h.state.conversationRace = {
+      id: 'conv-winner',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      status: 'open',
+      unread_count: 1,
+      created_at: '2026-09-28T00:00:00Z',
+    }
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-winner' })
+    expect(res.newConversation).toBeUndefined()
+    expect(h.state.conversations.filter((c) => c.status !== 'closed')).toHaveLength(1)
+    expect(h.state.messages.at(-1)).toMatchObject({ conversation_id: 'conv-winner' })
+  })
+
+  it('a redelivery of a message stored in the resolved conversation is a duplicate, nothing created', async () => {
     const db = makeDb()
     seedConversation({ status: 'closed' })
     h.state.messages.push({
@@ -680,7 +781,8 @@ describe('ingestInboundMessage — reopen resolved conversation', () => {
       message_id: 'wamid-1',
     })
     const res = await ingestInboundMessage(BASE, db)
-    expect(res.reason).toBe('duplicate')
+    expect(res).toMatchObject({ reason: 'duplicate', conversationId: 'conv-1' })
+    expect(h.state.conversations).toHaveLength(1)
     expect(h.state.conversations[0].status).toBe('closed')
     expect(h.state.events).toHaveLength(0)
   })
