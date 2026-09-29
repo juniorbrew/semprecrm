@@ -62,6 +62,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { updateConversationAssignee } from "@/lib/conversations/assign";
+import {
+  conversationContinuity,
+  findConversationById,
+  findOtherActiveConversation,
+  listConversationsByContact,
+  reopenBlockedBy,
+} from "@/lib/conversations/find-by-contact";
 import { ConversationReminder } from "./conversation-reminder";
 import { MessageBubble } from "./message-bubble";
 import { senderLabelFor } from "./sender-label";
@@ -151,6 +158,12 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  /**
+   * Switch the inbox to another conversation (the page's list selection).
+   * Used by the "Conversa anterior" line and by the guards that point a
+   * resolved thread to the contact's live conversation (migration 060).
+   */
+  onOpenConversation?: (conversation: Conversation) => void;
 }
 
 function formatDateSeparator(dateStr: string, language: Language): string {
@@ -160,6 +173,13 @@ function formatDateSeparator(dateStr: string, language: Language): string {
   if (isToday(date)) return "Today";
   if (isYesterday(date)) return "Yesterday";
   return new Intl.DateTimeFormat(language, { dateStyle: "long" }).format(date);
+}
+
+/** "DD/MM" (pt-BR) for the previous-conversation line. */
+function formatDayMonth(dateStr: string, language: Language): string {
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit" }).format(date);
 }
 
 const STATUS_ORDER: ConversationStatus[] = ["open", "pending", "closed"];
@@ -210,6 +230,13 @@ const THREAD_STATUS_COPY: Record<
     claimMine: string;
     /** Static "✓ Sua" shown instead of Assumir when it is already mine. */
     mine: string;
+    /** Resolved conversation is final (migration 060). */
+    previousClosed: (date: string) => string;
+    previousOpen: string;
+    activeOtherNotice: string;
+    openCurrent: string;
+    reopenBlocked: string;
+    sendBlocked: string;
     transfer: string;
     claimedToast: string;
     claimTaken: (who: string) => string;
@@ -256,6 +283,15 @@ const THREAD_STATUS_COPY: Record<
     claimTitle: "Assumir: atribuir esta conversa a você",
     claimMine: "Esta conversa já é sua",
     mine: "Sua",
+    previousClosed: (date) => `Conversa anterior encerrada em ${date}`,
+    previousOpen: "ver",
+    activeOtherNotice:
+      "Esta conversa foi encerrada. O cliente já tem uma conversa em andamento — continue por ela.",
+    openCurrent: "Abrir conversa atual",
+    reopenBlocked:
+      "Não dá para reabrir: o cliente já tem uma conversa em andamento. Continue por ela.",
+    sendBlocked:
+      "Esta conversa foi encerrada e o cliente já tem uma conversa em andamento. Responda por ela.",
     transfer: "Transferir",
     claimedToast: "Conversa atribuída a você",
     claimTaken: (who) => `${who} assumiu esta conversa antes de você`,
@@ -303,6 +339,15 @@ const THREAD_STATUS_COPY: Record<
     claimTitle: "Take: assign this conversation to you",
     claimMine: "This conversation is already yours",
     mine: "Yours",
+    previousClosed: (date) => `Previous conversation closed on ${date}`,
+    previousOpen: "view",
+    activeOtherNotice:
+      "This conversation was resolved. The customer already has a conversation in progress — continue there.",
+    openCurrent: "Open current conversation",
+    reopenBlocked:
+      "Can't reopen: the customer already has a conversation in progress. Continue there.",
+    sendBlocked:
+      "This conversation was resolved and the customer already has a conversation in progress. Reply there.",
     transfer: "Transfer",
     claimedToast: "Conversation assigned to you",
     claimTaken: (who) => `${who} took this conversation before you`,
@@ -354,6 +399,7 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  onOpenConversation,
 }: MessageThreadProps) {
   const { user, profile, accountId, accountRole } = useAuth();
   const { language, t } = useLanguage();
@@ -408,6 +454,72 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+
+  // A resolved conversation is final (migration 060): the contact's other
+  // conversations drive the "Conversa anterior" line and the guards that
+  // send a resolved thread's agent to the live one.
+  const [contactConversations, setContactConversations] = useState<Conversation[]>([]);
+  const [continuityVersion, setContinuityVersion] = useState(0);
+  const threadId = conversation?.id;
+  const threadContactId = conversation?.contact_id;
+  const threadStatus = conversation?.status;
+  useEffect(() => {
+    if (!threadContactId) return;
+    let cancelled = false;
+    void listConversationsByContact(createClient(), threadContactId).then((rows) => {
+      if (!cancelled) setContactConversations(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, threadContactId, threadStatus, resyncToken, continuityVersion]);
+  const continuity = useMemo(
+    () =>
+      conversation
+        ? conversationContinuity(
+            conversation,
+            contactConversations.filter((c) => c.contact_id === conversation.contact_id),
+          )
+        : { previousClosed: null, activeOther: null },
+    [conversation, contactConversations],
+  );
+  const openConversation = useCallback(
+    (target: Conversation) => {
+      onOpenConversation?.({ ...target, contact: target.contact ?? contact ?? undefined });
+    },
+    [onOpenConversation, contact],
+  );
+  /** Toast for a blocked reopen / send, with a jump to the live conversation. */
+  const notifyActiveOther = useCallback(
+    (message: string, targetId: string | null) => {
+      setContinuityVersion((v) => v + 1);
+      toast.error(
+        message,
+        targetId && onOpenConversation
+          ? {
+              action: {
+                label: statusCopy.openCurrent,
+                onClick: () => {
+                  void findConversationById(createClient(), targetId).then((c) => {
+                    if (c) openConversation(c);
+                  });
+                },
+              },
+            }
+          : undefined,
+      );
+    },
+    [onOpenConversation, openConversation, statusCopy.openCurrent],
+  );
+  /** True (and toasts) when the send route refused: a newer conversation exists. */
+  const blockedByNewerConversation = useCallback(
+    (payload: { code?: string; current_conversation_id?: string } | null): boolean => {
+      if (payload?.code !== "newer_conversation") return false;
+      notifyActiveOther(statusCopy.sendBlocked, payload.current_conversation_id ?? null);
+      return true;
+    },
+    [notifyActiveOther, statusCopy.sendBlocked],
+  );
 
   // Profiles are bounded by RLS to rows the current user is allowed to
   // see — today that's just the current user, but the dropdown keeps the
@@ -743,6 +855,10 @@ export function MessageThread({
   const handleSend = useCallback(
     async (text: string, replyToId?: string) => {
       if (!conversation) return;
+      if (continuity.activeOther) {
+        notifyActiveOther(statusCopy.sendBlocked, continuity.activeOther.id);
+        return;
+      }
 
       const tempId = `temp-${Date.now()}`;
 
@@ -779,7 +895,7 @@ export function MessageThread({
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error("Failed to send message:", reason);
-          toast.error(`Failed to send: ${reason}`);
+          if (!blockedByNewerConversation(payload)) toast.error(`Failed to send: ${reason}`);
           // Mark the optimistic bubble as failed so the user sees what happened
           onUpdateMessage(tempId, { status: "failed" });
           return;
@@ -796,12 +912,16 @@ export function MessageThread({
         onUpdateMessage(tempId, { status: "failed" });
       }
     },
-    [conversation, onNewMessage, onUpdateMessage, user?.id]
+    [conversation, onNewMessage, onUpdateMessage, user?.id, continuity.activeOther, notifyActiveOther, blockedByNewerConversation, statusCopy.sendBlocked]
   );
 
   const handleSendMedia = useCallback(
     async (payload: SendMediaPayload) => {
       if (!conversation) return;
+      if (continuity.activeOther) {
+        notifyActiveOther(statusCopy.sendBlocked, continuity.activeOther.id);
+        return;
+      }
 
       // Documents show their filename in our own bubble (and to the
       // recipient as the Meta caption when no caption was typed); other
@@ -847,7 +967,7 @@ export function MessageThread({
         if (!res.ok) {
           const reason = data?.error || `HTTP ${res.status}`;
           console.error("Failed to send media:", reason);
-          toast.error(`Failed to send: ${reason}`);
+          if (!blockedByNewerConversation(data)) toast.error(`Failed to send: ${reason}`);
           onUpdateMessage(tempId, { status: "failed" });
           // The upload never reached the recipient — GC the orphaned
           // object rather than leaving it in the public bucket forever.
@@ -864,7 +984,7 @@ export function MessageThread({
         void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(() => {});
       }
     },
-    [conversation, onNewMessage, onUpdateMessage, user?.id],
+    [conversation, onNewMessage, onUpdateMessage, user?.id, continuity.activeOther, notifyActiveOther, blockedByNewerConversation, statusCopy.sendBlocked],
   );
 
   /** True when the status is now `status` (unchanged counts as success). */
@@ -875,11 +995,29 @@ export function MessageThread({
       if (conversation.status === status) return true;
 
       const supabase = createClient();
+      // Reabrir: a resolved conversation cannot come back while the
+      // contact has a newer live one (migration 060 enforces it too).
+      const reopening = conversation.status === "closed" && status !== "closed";
+      const blocker = await reopenBlockedBy(supabase, conversation, status);
+      if (blocker) {
+        notifyActiveOther(statusCopy.reopenBlocked, blocker.id);
+        return false;
+      }
       const { error } = await supabase
         .from("conversations")
         .update({ status })
         .eq("id", conversation.id);
 
+      if (error && reopening && error.code === "23505") {
+        // Lost the race: a new conversation was opened in the meantime.
+        const current = await findOtherActiveConversation(
+          supabase,
+          conversation.contact_id,
+          conversation.id,
+        );
+        notifyActiveOther(statusCopy.reopenBlocked, current?.id ?? null);
+        return false;
+      }
       if (error) {
         console.error("Failed to update status:", error);
         toast.error(t("Failed to update status"));
@@ -898,7 +1036,7 @@ export function MessageThread({
       });
       return true;
     },
-    [conversation, onStatusChange, onConversationPatch, logEvent, t]
+    [conversation, onStatusChange, onConversationPatch, logEvent, t, notifyActiveOther, statusCopy.reopenBlocked]
   );
 
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
@@ -977,6 +1115,10 @@ export function MessageThread({
       },
     ) => {
       if (!conversation) return;
+      if (continuity.activeOther) {
+        notifyActiveOther(statusCopy.sendBlocked, continuity.activeOther.id);
+        return;
+      }
 
       const renderedBody = renderTemplateBody(template.body_text, values.body);
       const tempId = `temp-${Date.now()}`;
@@ -1023,7 +1165,7 @@ export function MessageThread({
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error("Failed to send template:", reason);
-          toast.error(`Failed to send template: ${reason}`);
+          if (!blockedByNewerConversation(payload)) toast.error(`Failed to send template: ${reason}`);
           onUpdateMessage(tempId, { status: "failed" });
           return;
         }
@@ -1036,7 +1178,7 @@ export function MessageThread({
         onUpdateMessage(tempId, { status: "failed" });
       }
     },
-    [conversation, onNewMessage, onUpdateMessage, user?.id],
+    [conversation, onNewMessage, onUpdateMessage, user?.id, continuity.activeOther, notifyActiveOther, blockedByNewerConversation, statusCopy.sendBlocked],
   );
 
   // Build a quick id → Message map so reply quotes can be rendered without
@@ -1763,6 +1905,34 @@ export function MessageThread({
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+        {continuity.previousClosed && (
+          <p
+            data-no-translate
+            data-testid="previous-conversation"
+            className="mb-3 text-center text-[11px] text-muted-foreground"
+          >
+            {statusCopy.previousClosed(
+              formatDayMonth(
+                continuity.previousClosed.last_message_at ??
+                  continuity.previousClosed.updated_at ??
+                  continuity.previousClosed.created_at,
+                language,
+              ),
+            )}
+            {onOpenConversation && (
+              <>
+                {" — "}
+                <button
+                  type="button"
+                  onClick={() => continuity.previousClosed && openConversation(continuity.previousClosed)}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {statusCopy.previousOpen}
+                </button>
+              </>
+            )}
+          </p>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -1865,6 +2035,25 @@ export function MessageThread({
           </div>
         )}
       </div>
+
+      {continuity.activeOther && (
+        <div
+          data-no-translate
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground"
+        >
+          <span>{statusCopy.activeOtherNotice}</span>
+          {onOpenConversation && (
+            <button
+              type="button"
+              onClick={() => continuity.activeOther && openConversation(continuity.activeOther)}
+              className="font-medium text-primary hover:underline"
+            >
+              {statusCopy.openCurrent}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Composer */}
       <MessageComposer

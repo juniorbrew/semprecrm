@@ -11,6 +11,7 @@ import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from '@/lib/whatsapp/phone-echo'
+import { findOtherActiveConversation } from '@/lib/conversations/find-by-contact'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -172,6 +173,28 @@ export async function POST(request: Request) {
         { error: 'Conversation not found' },
         { status: 404 }
       )
+    }
+
+    // A resolved conversation is final (migration 060): once the customer
+    // has a newer live conversation, replies go there, not into the old
+    // thread.
+    if (conversation.status === 'closed' && conversation.contact_id) {
+      const current = await findOtherActiveConversation(
+        supabase,
+        conversation.contact_id as string,
+        conversation_id,
+      )
+      if (current) {
+        return NextResponse.json(
+          {
+            error:
+              'Esta conversa foi encerrada e o cliente já tem uma conversa em andamento. Responda por ela.',
+            code: 'newer_conversation',
+            current_conversation_id: current.id,
+          },
+          { status: 409 },
+        )
+      }
     }
 
     const contact = conversation.contact
