@@ -73,3 +73,12 @@ describe("MediaStore.storeInbound", () => {
     expect(res.url).toBe(`/supabase/storage/v1/object/public/chat-media/${res.path}`);
   });
 });
+
+describe("storageMimeType", () => {
+  it("remove os parâmetros do tipo (áudio de voz do WhatsApp)", async () => {
+    const { storageMimeType } = await import("./media.js");
+    expect(storageMimeType("audio/ogg; codecs=opus")).toBe("audio/ogg");
+    expect(storageMimeType("image/jpeg")).toBe("image/jpeg");
+    expect(storageMimeType("")).toBe("application/octet-stream");
+  });
+});

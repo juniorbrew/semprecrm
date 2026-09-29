@@ -47,6 +47,16 @@ export interface MediaStoreOptions {
   download?: (msg: WAMessage, sock: WASocket) => Promise<Buffer>;
 }
 
+/**
+ * Tipo para o Storage sem parâmetros: o WhatsApp manda áudio de voz como
+ * `audio/ogg; codecs=opus`, e o bucket `chat-media` só aceita `audio/ogg`
+ * (allowed_mime_types compara o tipo inteiro). Sem isso TODO áudio
+ * recebido virava "[audio não disponível]".
+ */
+export function storageMimeType(mimetype: string): string {
+  return mimetype.split(";")[0].trim().toLowerCase() || "application/octet-stream";
+}
+
 export class MediaStore {
   private readonly client: SupabaseClient;
   private readonly download: (msg: WAMessage, sock: WASocket) => Promise<Buffer>;
@@ -87,7 +97,7 @@ export class MediaStore {
     const buffer = await this.download(msg, sock);
     const path = buildQrMediaPath(accountId, media.filename ?? "file");
     const { error } = await this.client.storage.from(CHAT_MEDIA_BUCKET).upload(path, buffer, {
-      contentType: media.mimetype,
+      contentType: storageMimeType(media.mimetype),
       upsert: false,
     });
     if (error) {
