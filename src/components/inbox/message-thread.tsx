@@ -208,6 +208,8 @@ const THREAD_STATUS_COPY: Record<
     claim: string;
     claimTitle: string;
     claimMine: string;
+    /** Static "✓ Sua" shown instead of Assumir when it is already mine. */
+    mine: string;
     transfer: string;
     claimedToast: string;
     claimTaken: (who: string) => string;
@@ -253,6 +255,7 @@ const THREAD_STATUS_COPY: Record<
     claim: "Assumir",
     claimTitle: "Assumir: atribuir esta conversa a você",
     claimMine: "Esta conversa já é sua",
+    mine: "Sua",
     transfer: "Transferir",
     claimedToast: "Conversa atribuída a você",
     claimTaken: (who) => `${who} assumiu esta conversa antes de você`,
@@ -299,6 +302,7 @@ const THREAD_STATUS_COPY: Record<
     claim: "Take",
     claimTitle: "Take: assign this conversation to you",
     claimMine: "This conversation is already yours",
+    mine: "Yours",
     transfer: "Transfer",
     claimedToast: "Conversation assigned to you",
     claimTaken: (who) => `${who} took this conversation before you`,
@@ -1423,16 +1427,28 @@ export function MessageThread({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {/* Assumir — outline, one click to own the thread. Hidden when it
-              is already mine or resolved; disabled for viewers. */}
+          {/* Assumir — outline, one click to own the thread. Once it is
+              mine, a static "✓ Sua" takes its place; hidden when resolved;
+              disabled for viewers. */}
+          {actions.claimIsMine && (
+            <span
+              data-no-translate
+              data-testid="claim-mine"
+              title={statusCopy.claimMine}
+              className="inline-flex h-8 items-center gap-1 px-2 text-xs font-medium text-primary"
+            >
+              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{statusCopy.mine}</span>
+            </span>
+          )}
           {actions.claim.visible && (
             <button
               type="button"
               data-no-translate
               onClick={() => void handleClaim()}
               disabled={!actions.claim.enabled}
-              aria-label={!actions.canWrite ? statusCopy.readOnly : actions.claimIsMine ? statusCopy.claimMine : statusCopy.claimTitle}
-              title={!actions.canWrite ? statusCopy.readOnly : actions.claimIsMine ? statusCopy.claimMine : statusCopy.claimTitle}
+              aria-label={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
+              title={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <UserCheck className="h-3.5 w-3.5" />
