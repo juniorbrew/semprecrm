@@ -351,8 +351,6 @@ export const EN_TO_PT: Record<string, string> = {
   'New Message Received': 'Nova mensagem recebida',
   'Any incoming message': 'Qualquer mensagem recebida',
   'First Message from Contact': 'Primeira mensagem do contato',
-  'First time this contact ever messages you (works for manually-added contacts too)':
-    'Primeira vez que este contato envia uma mensagem (também funciona para contatos adicionados manualmente)',
   'Keyword Match': 'Correspondência de palavra-chave',
   'Message contains specific keyword(s)':
     'A mensagem contém palavras-chave específicas',

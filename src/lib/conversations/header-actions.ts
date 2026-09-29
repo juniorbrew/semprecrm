@@ -1,7 +1,8 @@
 // ============================================================
 // Inbox thread header — which queue actions to show / enable.
 //
-//   Assumir     assign to me (the "Assign" dropdown's shortcut)
+//   Assumir     assign to me (the "Assign" dropdown's shortcut); "✓ Sua"
+//               when it already is
 //   Transferir  hand over to another member (the assignee dropdown)
 //   Lembrar     reminder task at a chosen time (Tasks module)
 //   Resolver    close — the existing split button ("Fechar")
@@ -29,7 +30,10 @@ export interface HeaderActions {
   /** Agent+ — false for viewers and while the role is unknown. */
   canWrite: boolean
   claim: HeaderActionState
-  /** The thread is already assigned to the current user. */
+  /**
+   * Open thread already assigned to the current user: the header shows a
+   * static "✓ Sua" instead of the Assumir button.
+   */
   claimIsMine: boolean
   transfer: HeaderActionState
   remind: HeaderActionState
@@ -54,10 +58,10 @@ export function conversationHeaderActions(params: {
 
   return {
     canWrite,
-    // Always shown on an open thread so the queue action is findable;
-    // disabled when it is already mine (nothing to take over).
-    claim: { visible: !closed && !!userId, enabled: !closed && !!userId && !mine && canWrite },
-    claimIsMine: mine,
+    // Shown on an open thread that is not mine yet; once it is mine the
+    // header shows "✓ Sua" (claimIsMine) instead of a dead button.
+    claim: state(!closed && !!userId && !mine),
+    claimIsMine: !closed && mine,
     transfer: state(true),
     remind: state(tasksEnabled && !!userId),
     close: state(true),

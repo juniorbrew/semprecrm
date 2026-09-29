@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
     convUpdates: [] as Record<string, unknown>[],
     // Papel de quem chama (requireRole lê do profile). Enviar exige 'agent'.
     role: 'agent' as string,
+    /** The contact's live conversation other than this one (migration 060). */
+    activeOther: null as Record<string, unknown> | null,
   },
   meta: {
     sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.META' })),
@@ -57,9 +59,16 @@ vi.mock('@/lib/flows/admin-client', () => ({
 }))
 
 function builder(table: string) {
-  const ops = { type: 'select' as string, payload: undefined as Record<string, unknown> | undefined }
+  const ops = {
+    type: 'select' as string,
+    payload: undefined as Record<string, unknown> | undefined,
+    neq: false,
+  }
   const b: Record<string, unknown> = {
     select: () => b,
+    neq: () => ((ops.neq = true), b),
+    order: () => b,
+    limit: () => b,
     insert: (p: Record<string, unknown>) => ((ops.type = 'insert'), (ops.payload = p), b),
     update: (p: Record<string, unknown>) => ((ops.type = 'update'), (ops.payload = p), b),
     eq: () => b,
@@ -80,6 +89,7 @@ function builder(table: string) {
         h.state.convUpdates.push(ops.payload ?? {})
         return { data: null, error: null }
       }
+      if (ops.neq) return { data: h.state.activeOther ? [h.state.activeOther] : [], error: null }
       return { data: h.state.conversation, error: null }
     }
     if (table === 'whatsapp_config') {
@@ -133,6 +143,7 @@ beforeEach(() => {
   h.state.templates = []
   h.state.convUpdates = []
   h.state.role = 'agent'
+  h.state.activeOther = null
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = 'shh'
   vi.stubGlobal('fetch', fetchMock)
@@ -398,5 +409,27 @@ describe('POST /api/whatsapp/send — template persistence', () => {
     )
     expect(h.state.inserted[0]).toMatchObject({ content_text: null })
     expect(h.state.convUpdates.at(-1)).toMatchObject({ last_message_text: '[template]' })
+  })
+})
+
+describe('POST /api/whatsapp/send — resolved conversation (migration 060)', () => {
+  it('409 with the current conversation when the contact has a newer live one; nothing sent', async () => {
+    h.state.conversation = { ...h.state.conversation, status: 'closed', contact_id: 'c-1' }
+    h.state.activeOther = { id: 'conv-2', status: 'open' }
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body).toMatchObject({ code: 'newer_conversation', current_conversation_id: 'conv-2' })
+    expect(body.error).toMatch(/conversa em andamento/)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
+  })
+
+  it('a resolved conversation with no newer one still sends as before', async () => {
+    h.state.conversation = { ...h.state.conversation, status: 'closed', contact_id: 'c-1' }
+    fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'B-9' }))
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(200)
+    expect(h.state.inserted).toHaveLength(1)
   })
 })

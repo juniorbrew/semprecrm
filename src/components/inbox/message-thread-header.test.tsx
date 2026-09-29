@@ -112,3 +112,33 @@ describe("MessageThread header — agent", () => {
     }
   })
 })
+
+describe("MessageThread header — Assumir when already mine", () => {
+  it('shows a static "✓ Sua" instead of the Assumir button', () => {
+    role.current = "agent"
+    try {
+      const html = render({ ...conversation, assigned_agent_id: "viewer-1" })
+      expect(html).toContain('data-testid="claim-mine"')
+      expect(html).toContain(">Sua<")
+      expect(html).not.toContain(">Assumir<")
+      // A plain <span>, not a (disabled) button.
+      const at = html.indexOf('data-testid="claim-mine"')
+      expect(html.slice(html.lastIndexOf("<", at), at)).toMatch(/^<span /)
+      const openButtons = html.slice(0, at).split("<button").length - html.slice(0, at).split("</button>").length
+      expect(openButtons).toBe(0)
+    } finally {
+      role.current = "viewer"
+    }
+  })
+
+  it("keeps Assumir clickable on a teammate's conversation", () => {
+    role.current = "agent"
+    try {
+      const html = render({ ...conversation, assigned_agent_id: "someone-else" })
+      expect(html).not.toContain('data-testid="claim-mine"')
+      expect(buttonWith(html, 'title="Assumir: atribuir esta conversa a você"')).not.toContain('disabled=""')
+    } finally {
+      role.current = "viewer"
+    }
+  })
+})

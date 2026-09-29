@@ -11,6 +11,8 @@ import type {
   ConversationStatus,
 } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
+import { applyContactUpdate, useContactUpdates } from "@/hooks/use-contact-updates";
+import { useAuth } from "@/hooks/use-auth";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
@@ -354,6 +356,23 @@ export default function InboxPage() {
     },
     [activeConversation, hydrateConversation]
   );
+
+  // Contact photo / name changes (the QR gateway fills avatar_url a few
+  // seconds after a message): patch the list, the open thread and the
+  // panel in place — no refetch.
+  const { accountId } = useAuth();
+  const handleContactUpdate = useCallback((updated: Contact) => {
+    setConversations((prev) => applyContactUpdate(prev, updated));
+    setActiveContact((prev) =>
+      prev && prev.id === updated.id ? { ...prev, ...updated } : prev,
+    );
+    setActiveConversation((prev) =>
+      prev && prev.contact_id === updated.id
+        ? { ...prev, contact: { ...prev.contact, ...updated } }
+        : prev,
+    );
+  }, []);
+  useContactUpdates(accountId, handleContactUpdate);
 
   // Subscribe to realtime. The `isConnected` flag below feeds the
   // reconnect resync: realtime is best-effort and events sent while the
@@ -736,6 +755,7 @@ export default function InboxPage() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            onOpenConversation={handleSelectConversation}
           />
         </div>
 

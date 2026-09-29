@@ -459,6 +459,40 @@ async function sendListAndSuspend(
   return { outcome: "advanced", node_key: node.node_key };
 }
 
+/**
+ * Hand-off: move the run's conversation to `pending` (plus any
+ * assignment). When that conversation was resolved and the contact
+ * already has a newer live one, the one-live-conversation index
+ * (migration 060) refuses the status change (23505): keep the old thread
+ * resolved and still apply the rest of the patch. Errors are logged,
+ * never thrown — the run still ends as handed off.
+ */
+export async function handoffConversation(
+  db: AdminClient,
+  conversationId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await db.from("conversations").update(patch).eq("id", conversationId);
+  if (!error) return;
+  if ((error as { code?: string }).code === "23505") {
+    console.warn(
+      "[flows] handoff: conversation is resolved and a newer one is live; status left as is",
+      conversationId,
+    );
+    const rest = { ...patch };
+    delete rest.status;
+    if (Object.keys(rest).some((k) => k !== "updated_at")) {
+      const { error: restErr } = await db
+        .from("conversations")
+        .update(rest)
+        .eq("id", conversationId);
+      if (restErr) console.error("[flows] handoff update failed:", restErr);
+    }
+    return;
+  }
+  console.error("[flows] handoff update failed:", error);
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
@@ -471,10 +505,7 @@ async function executeHandoff(
   };
   if (cfg.assign_to) convUpdate.assigned_agent_id = cfg.assign_to;
   if (run.conversation_id) {
-    await db
-      .from("conversations")
-      .update(convUpdate)
-      .eq("id", run.conversation_id);
+    await handoffConversation(db, run.conversation_id, convUpdate);
   }
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
@@ -1067,10 +1098,10 @@ async function handleReplyForActiveRun(
   }
   if (action.type === "handoff") {
     if (run.conversation_id) {
-      await db
-        .from("conversations")
-        .update({ status: "pending", updated_at: new Date().toISOString() })
-        .eq("id", run.conversation_id);
+      await handoffConversation(db, run.conversation_id, {
+        status: "pending",
+        updated_at: new Date().toISOString(),
+      });
     }
     await logEvent(db, run.id, "handoff", run.current_node_key, {
       reason: "fallback_exhausted",

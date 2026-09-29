@@ -183,6 +183,9 @@ describe('POST /ack', () => {
       op: 'update',
       payload: { status: 'read' },
     })
+    // Exactly these filters — no conversation / conversation-status
+    // scope, so a message that lives in an older, resolved conversation
+    // (a new one was opened after it, migration 060) still gets its ack.
     expect(h.writes[0].filters).toEqual([
       ['message_id', 'ABCD'],
       ['channel', 'qr'],

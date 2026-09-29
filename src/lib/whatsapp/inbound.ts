@@ -29,6 +29,7 @@ import { isOptOutMessage, normalizeOptOutText } from '@/lib/whatsapp/opt-out'
 import { isWithinBusinessHours, startOfLocalDay } from '@/lib/business-hours'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import { engineSendText } from '@/lib/automations/meta-send'
+import { canSendMessages, type AccountRole } from '@/lib/auth/roles'
 import { notifyInboundMessage } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
@@ -93,8 +94,20 @@ export interface IngestResult {
   autoAssignedTo?: string | null
   /** Out-of-hours auto-reply outcome, when the feature is on and we are closed. */
   outOfHoursReply?: 'sent' | 'skipped' | 'failed'
-  /** True when the customer's message reopened a resolved conversation. */
+  /**
+   * True when this message started a new conversation — the contact had
+   * none, or only resolved ones (a resolved conversation is final).
+   */
+  newConversation?: boolean
+  /** The resolved conversation the new one follows, if any. */
+  previousConversationId?: string
+  /**
+   * The customer answered our recent outbound message (< 24 h) in a
+   * resolved conversation: that conversation was reopened instead.
+   */
   reopened?: boolean
+  /** New conversation handed to the previous conversation's agent. */
+  inheritedAssignee?: string
 }
 
 // ------------------------------------------------------------
@@ -165,21 +178,122 @@ export async function findOrCreateContact(
   return { contact: newContact, wasCreated: true }
 }
 
+/**
+ * Every conversation this contact has with the account, newest first.
+ * Null on a DB error (the caller fails the delivery so it is retried).
+ */
+export async function listContactConversations(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+): Promise<Row[] | null> {
+  const { data, error } = await db
+    .from('conversations')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .order('created_at', { ascending: false })
+  if (error) {
+    console.error('[inbound] conversation lookup failed:', error)
+    return null
+  }
+  return (data ?? []) as Row[]
+}
+
+/**
+ * The contact's live (open / pending) conversation. Migration 060 keeps
+ * at most one; if the index was skipped over legacy duplicates, the
+ * newest wins. Rows must be newest first.
+ */
+export function pickActiveConversation(rows: Row[]): Row | null {
+  return rows.find((c) => c.status !== 'closed') ?? null
+}
+
+export interface ConversationOutcome {
+  conversation: Row
+  /** True when this call inserted the row. */
+  created: boolean
+  /** The newest resolved conversation a new row replaces, if any. */
+  previous: Row | null
+  /** True when a resolved conversation was reopened (reply to our outbound). */
+  reopened?: boolean
+}
+
+/** A reply within this window to our last outbound message continues it. */
+export const OUTBOUND_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Did WE write last in this conversation, less than 24 h ago? Outbound
+ * means an agent, automation, flow or broadcast message — not a phone
+ * echo (the WhatsApp Business app's greeting / a personal reply) and
+ * not the customer. Then the customer's message is an answer to it, and
+ * the conversation continues even though it was resolved.
+ */
+export async function lastMessageIsRecentOutbound(
+  db: SupabaseClient,
+  conversationId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('messages')
+    .select('sender_type, origin, created_at')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error) {
+    console.error('[inbound] last message lookup failed:', error.message)
+    return false
+  }
+  const last = ((data ?? []) as Row[])[0]
+  if (!last || last.sender_type === 'customer' || last.origin === 'phone') return false
+  const sentAt = new Date(last.created_at).getTime()
+  if (!Number.isFinite(sentAt)) return false
+  return now.getTime() - sentAt <= OUTBOUND_REPLY_WINDOW_MS
+}
+
+/**
+ * The conversation a customer message belongs to. A resolved
+ * conversation is final: when the contact has no open / pending one, a
+ * NEW conversation is created (fresh SLA, unread and attendance), even
+ * if older resolved ones exist. Concurrent deliveries race on the
+ * partial unique index (migration 060); the loser re-selects the
+ * winner's row instead of failing.
+ */
 export async function findOrCreateConversation(
   db: SupabaseClient,
   accountId: string,
   ownerUserId: string,
   contactId: string,
   channel: WhatsAppChannel,
-): Promise<Row | null> {
-  const { data: existing, error: findError } = await db
-    .from('conversations')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('contact_id', contactId)
-    .single()
+  known?: Row[],
+): Promise<ConversationOutcome | null> {
+  const rows = known ?? (await listContactConversations(db, accountId, contactId))
+  if (!rows) return null
+  const active = pickActiveConversation(rows)
+  if (active) return { conversation: active, created: false, previous: null }
+  const previous = rows[0] ?? null
 
-  if (!findError && existing) return existing
+  // We started this exchange (template, automation, agent message) and
+  // the customer is answering within 24 h: continue that conversation.
+  if (previous && (await lastMessageIsRecentOutbound(db, previous.id))) {
+    const { data: reopened, error: reopenError } = await db
+      .from('conversations')
+      .update({ status: 'open', updated_at: new Date().toISOString() })
+      .eq('id', previous.id)
+      .eq('status', 'closed')
+      .select()
+      .maybeSingle()
+    if (!reopenError && reopened) {
+      return { conversation: reopened, created: false, previous: null, reopened: true }
+    }
+    // Lost a race (another delivery reopened it or opened a new one).
+    if (reopenError && !isUniqueViolation(reopenError)) {
+      console.error('[inbound] reopen on reply failed:', reopenError)
+    }
+    const raced = await listContactConversations(db, accountId, contactId)
+    const winner = raced ? pickActiveConversation(raced) : null
+    if (winner) return { conversation: winner, created: false, previous: null }
+  }
 
   const { data: newConv, error: createError } = await db
     .from('conversations')
@@ -188,16 +302,46 @@ export async function findOrCreateConversation(
       user_id: ownerUserId,
       contact_id: contactId,
       channel,
+      status: 'open',
     })
     .select()
     .single()
 
   if (createError) {
+    if (isUniqueViolation(createError)) {
+      const raced = await listContactConversations(db, accountId, contactId)
+      const winner = raced ? pickActiveConversation(raced) : null
+      if (winner) return { conversation: winner, created: false, previous: null }
+    }
     console.error('[inbound] error creating conversation:', createError)
     return null
   }
 
-  return newConv
+  return { conversation: newConv, created: true, previous }
+}
+
+/**
+ * A provider id already stored in any of these conversations (a
+ * redelivery can arrive after the conversation it landed in was
+ * resolved — it must not open a new one).
+ */
+export async function findStoredMessage(
+  db: SupabaseClient,
+  providerId: string,
+  conversationIds: string[],
+): Promise<{ id: string; conversation_id: string } | null> {
+  if (!providerId || conversationIds.length === 0) return null
+  const { data, error } = await db
+    .from('messages')
+    .select('id, conversation_id')
+    .eq('message_id', providerId)
+    .in('conversation_id', conversationIds)
+    .limit(1)
+  if (error) {
+    console.error('[inbound] findStoredMessage failed:', error.message)
+    return null
+  }
+  return ((data ?? [])[0] as { id: string; conversation_id: string } | undefined) ?? null
 }
 
 /**
@@ -353,6 +497,66 @@ async function autoAssignIfEnabled(
   }
 }
 
+/** One out-of-hours notice per contact per 12 h, across conversations. */
+export const OUT_OF_HOURS_CONTACT_WINDOW_MS = 12 * 60 * 60 * 1000
+
+/** Newest `out_of_hours_replied_at` among the contact's conversations. */
+function latestOutOfHoursReply(conversations: Row[]): string | null {
+  let best: string | null = null
+  for (const c of conversations) {
+    const at = c.out_of_hours_replied_at as string | null | undefined
+    if (at && (!best || new Date(at).getTime() > new Date(best).getTime())) best = at
+  }
+  return best
+}
+
+/**
+ * A new conversation that auto-assign left without an owner goes to the
+ * agent of the conversation it replaces, when that user is still an
+ * agent+ member of the account. Logs the `assigned` pill. Best-effort.
+ */
+async function assignPreviousAgentIfMember(
+  db: SupabaseClient,
+  accountId: string,
+  conversation: Row,
+  previous: Row | null,
+): Promise<string | null> {
+  const agentId = previous?.assigned_agent_id as string | null | undefined
+  if (!agentId || conversation.assigned_agent_id) return null
+  try {
+    const { data: member, error } = await db
+      .from('profiles')
+      .select('user_id, account_role')
+      .eq('account_id', accountId)
+      .eq('user_id', agentId)
+      .maybeSingle()
+    if (error || !member) return null
+    if (!canSendMessages(member.account_role as AccountRole)) return null
+    const { error: updErr } = await db
+      .from('conversations')
+      .update({ assigned_agent_id: agentId, updated_at: new Date().toISOString() })
+      .eq('id', conversation.id)
+      .eq('account_id', accountId)
+    if (updErr) {
+      console.error('[inbound] previous-agent assign failed:', updErr)
+      return null
+    }
+    conversation.assigned_agent_id = agentId
+    const { error: evErr } = await db.from('conversation_events').insert({
+      account_id: accountId,
+      conversation_id: conversation.id,
+      actor_user_id: null,
+      event_type: 'assigned',
+      payload: { assignee_user_id: agentId, source: 'previous_conversation' },
+    })
+    if (evErr) console.error('[inbound] previous-agent event insert failed:', evErr)
+    return agentId
+  } catch (err) {
+    console.error('[inbound] assignPreviousAgentIfMember failed:', err)
+    return null
+  }
+}
+
 /** Meta refuses free-form text outside the 24 h customer-service window. */
 function isOutsideMetaWindowError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
@@ -374,9 +578,17 @@ async function replyOutOfHoursIfNeeded(
   conversation: Row,
   prefs: AccountPreferences,
   now: Date,
+  /** Latest out-of-hours reply to this contact in ANY of its conversations. */
+  lastRepliedAnywhere: string | null = null,
 ): Promise<IngestResult['outOfHoursReply'] | undefined> {
   if (!prefs.out_of_hours_enabled) return undefined
   if (isWithinBusinessHours(prefs, now)) return undefined
+  // A new conversation after a resolved one must not greet again when
+  // the contact got the notice a few hours ago in the previous one.
+  const anywhere = lastRepliedAnywhere ? new Date(lastRepliedAnywhere).getTime() : NaN
+  if (Number.isFinite(anywhere) && now.getTime() - anywhere < OUT_OF_HOURS_CONTACT_WINDOW_MS) {
+    return undefined
+  }
   const dayStart = startOfLocalDay(now, prefs.business_hours.timezone)
   const lastReplied = conversation.out_of_hours_replied_at
     ? new Date(conversation.out_of_hours_replied_at)
@@ -527,43 +739,56 @@ export async function ingestInboundMessage(
   if (!contactOutcome) return { ok: false, reason: 'contact_failed' }
   const contact = contactOutcome.contact
 
-  const conversation = await findOrCreateConversation(
-    db,
-    accountId,
-    ownerUserId,
-    contact.id,
-    channel,
-  )
-  if (!conversation) {
+  const knownConversations = await listContactConversations(db, accountId, contact.id)
+  if (!knownConversations) {
     return { ok: false, reason: 'conversation_failed', contactId: contact.id }
   }
 
-  // Dedupe redeliveries (gateway retries, Meta replays) by provider id.
+  // Dedupe redeliveries (gateway retries, Meta replays) by provider id,
+  // across every conversation of the contact: a replay of a message
+  // stored before the conversation was resolved must not open a new one.
   if (input.messageId) {
-    const existingId = await lookupInternalIdByProviderId(
+    const stored = await findStoredMessage(
       db,
       input.messageId,
-      conversation.id,
+      knownConversations.map((c) => c.id as string),
     )
-    if (existingId) {
+    if (stored) {
       return {
         ok: true,
         reason: 'duplicate',
         contactId: contact.id,
-        conversationId: conversation.id,
+        conversationId: stored.conversation_id,
         contactCreated: contactOutcome.wasCreated,
       }
     }
   }
 
+  // Open / pending → same conversation; only resolved ones → a NEW
+  // conversation (a resolved conversation is final, migration 060).
+  const conversationOutcome = await findOrCreateConversation(
+    db,
+    accountId,
+    ownerUserId,
+    contact.id,
+    channel,
+    knownConversations,
+  )
+  if (!conversationOutcome) {
+    return { ok: false, reason: 'conversation_failed', contactId: contact.id }
+  }
+  const conversation = conversationOutcome.conversation
+  const newConversation = conversationOutcome.created
+
   // Swipe-reply context. A missing parent is fine — NULL, no quote.
   let replyToInternalId: string | null = null
   if (input.quotedMessageId) {
-    replyToInternalId = await lookupInternalIdByProviderId(
-      db,
-      input.quotedMessageId,
-      conversation.id,
-    )
+    // The quoted message may live in an earlier (resolved) conversation.
+    const quoted = await findStoredMessage(db, input.quotedMessageId, [
+      conversation.id as string,
+      ...knownConversations.map((c) => c.id as string),
+    ])
+    replyToInternalId = quoted?.id ?? null
     if (!replyToInternalId) {
       console.warn('[inbound] reply context parent not found:', input.quotedMessageId)
     }
@@ -582,7 +807,8 @@ export async function ingestInboundMessage(
     .select('id', { count: 'exact', head: true })
     .eq('conversation_id', conversation.id)
     .eq('sender_type', 'customer')
-  const isFirstInboundMessage = (priorCustomerMsgCount ?? 0) === 0
+  const isFirstInboundMessage =
+    !conversationOutcome.reopened && (priorCustomerMsgCount ?? 0) === 0
 
   const { error: msgError } = await db.from('messages').insert({
     conversation_id: conversation.id,
@@ -621,10 +847,9 @@ export async function ingestInboundMessage(
   }
 
   // Conversation bookkeeping. `channel` follows the customer's latest
-  // inbound transport so an agent reply goes back the way it came.
-  // A customer writing into a resolved conversation reopens it (same
-  // thread, same owner) so it comes back to the open inbox.
-  const reopening = conversation.status === 'closed'
+  // inbound transport so an agent reply goes back the way it came. The
+  // conversation is never closed here (see findOrCreateConversation), so
+  // nothing is reopened.
   const { error: convError } = await db
     .from('conversations')
     .update({
@@ -633,29 +858,52 @@ export async function ingestInboundMessage(
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
       channel,
-      ...(reopening ? { status: 'open' } : {}),
     })
     .eq('id', conversation.id)
 
   if (convError) {
     console.error('[inbound] error updating conversation:', convError)
   }
-  const reopened = reopening && !convError
+
+  // The customer answered: follow-ups parked with "cancel if the
+  // customer replies" stop here (migration 048), before this message
+  // can schedule new ones — including those parked on the resolved
+  // conversation this one replaces.
+  await cancelWaitsOnCustomerReply(conversation.id)
+  if (newConversation && conversationOutcome.previous) {
+    await cancelWaitsOnCustomerReply(conversationOutcome.previous.id)
+  }
+
+  const reopened = !!conversationOutcome.reopened
   if (reopened) {
     const { error: evErr } = await db.from('conversation_events').insert({
       account_id: accountId,
       conversation_id: conversation.id,
       actor_user_id: null,
       event_type: 'status_changed',
-      payload: { status: 'open', previous_status: 'closed', source: 'customer_message' },
+      payload: { status: 'open', previous_status: 'closed', source: 'customer_reply' },
     })
     if (evErr) console.error('[inbound] reopen event insert failed:', evErr)
   }
 
-  // The customer answered: follow-ups parked with "cancel if the
-  // customer replies" stop here (migration 048), before this message
-  // can schedule new ones.
-  await cancelWaitsOnCustomerReply(conversation.id)
+  // A flow still running on a resolved conversation of this contact
+  // (e.g. waiting for an answer) follows the customer into the new one,
+  // before the runner sees this message.
+  if (newConversation) {
+    const closedIds = knownConversations
+      .filter((c) => c.status === 'closed')
+      .map((c) => c.id as string)
+    if (closedIds.length > 0) {
+      const { error: runErr } = await db
+        .from('flow_runs')
+        .update({ conversation_id: conversation.id })
+        .eq('account_id', accountId)
+        .eq('contact_id', contact.id)
+        .eq('status', 'active')
+        .in('conversation_id', closedIds)
+      if (runErr) console.error('[inbound] moving flow runs failed:', runErr)
+    }
+  }
 
   await flagBroadcastReplyIfAny(db, accountId, contact.id)
 
@@ -680,6 +928,10 @@ export async function ingestInboundMessage(
     prefs,
     isFirstInboundMessage,
   )
+  const inheritedAssignee =
+    newConversation && !autoAssignedTo
+      ? await assignPreviousAgentIfMember(db, accountId, conversation, conversationOutcome.previous)
+      : null
   const outOfHoursReply = optedOut
     ? undefined
     : await replyOutOfHoursIfNeeded(
@@ -690,6 +942,7 @@ export async function ingestInboundMessage(
         conversation,
         prefs,
         new Date(),
+        latestOutOfHoursReply(knownConversations),
       )
 
   // Browser push (spec round 2 §5a): the assignee, or every available
@@ -756,11 +1009,14 @@ export async function ingestInboundMessage(
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
-  // Auto-assign and reopen were written to `conversations` above; the
-  // table trigger queued conversation_assigned / conversation_reopened
+  // Assignment / reopen were written to `conversations` above; the table
+  // trigger queued conversation_assigned / conversation_reopened
   // (migration 048). Drain this account now instead of waiting for the
-  // cron minute. Fire-and-forget like the dispatches above.
-  if (autoAssignedTo || reopened) {
+  // cron minute. Fire-and-forget like the dispatches above. A customer
+  // coming back after a resolved conversation starts a new one
+  // (first_inbound_message above); only a reply to our own recent
+  // outbound message reopens.
+  if (autoAssignedTo || inheritedAssignee || reopened) {
     drainAutomationEvents({ accountId }).catch((err) =>
       console.error('[automations] event drain failed:', err),
     )
@@ -774,6 +1030,11 @@ export async function ingestInboundMessage(
     optedOut,
     ...(autoAssignedTo ? { autoAssignedTo } : {}),
     ...(outOfHoursReply ? { outOfHoursReply } : {}),
+    ...(newConversation ? { newConversation } : {}),
     ...(reopened ? { reopened } : {}),
+    ...(inheritedAssignee ? { inheritedAssignee } : {}),
+    ...(newConversation && conversationOutcome.previous
+      ? { previousConversationId: conversationOutcome.previous.id as string }
+      : {}),
   }
 }

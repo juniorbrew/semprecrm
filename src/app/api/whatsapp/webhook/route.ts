@@ -6,9 +6,9 @@ import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import {
   findOrCreateContact,
-  findOrCreateConversation,
+  findStoredMessage,
   ingestInboundMessage,
-  lookupInternalIdByProviderId,
+  listContactConversations,
 } from '@/lib/whatsapp/inbound'
 import {
   handleTemplateWebhookChange,
@@ -488,18 +488,20 @@ async function handleStatusUpdate(status: {
  */
 async function handleReaction(
   message: WhatsAppMessage,
-  conversationId: string,
+  conversationIds: string[],
   contactId: string
 ) {
   const reaction = message.reaction
   if (!reaction?.message_id) return
 
-  const targetInternalId = await lookupInternalIdByProviderId(
+  const target = await findStoredMessage(
     supabaseAdmin(),
     reaction.message_id,
-    conversationId
+    conversationIds
   )
-  if (!targetInternalId) {
+  const targetInternalId = target?.id
+  const conversationId = target?.conversation_id
+  if (!targetInternalId || !conversationId) {
     console.warn(
       '[webhook] reaction target message not found; skipping',
       reaction.message_id
@@ -568,15 +570,19 @@ async function processMessage(
       contactName
     )
     if (!contactOutcome) return
-    const conversation = await findOrCreateConversation(
+    // The reacted message may live in a resolved conversation: look it up
+    // across all of the contact's conversations, never create one.
+    const conversations = await listContactConversations(
       supabaseAdmin(),
       accountId,
-      configOwnerUserId,
-      contactOutcome.contact.id,
-      'official'
+      contactOutcome.contact.id
     )
-    if (!conversation) return
-    await handleReaction(message, conversation.id, contactOutcome.contact.id)
+    if (!conversations) return
+    await handleReaction(
+      message,
+      conversations.map((c) => c.id as string),
+      contactOutcome.contact.id
+    )
     return
   }
 

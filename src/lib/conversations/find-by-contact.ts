@@ -95,3 +95,93 @@ export async function listConversationsByContact(
   if (error || !data) return []
   return sortConversationsNewestFirst(data as Conversation[])
 }
+
+/**
+ * The contact's live (open / pending) conversation other than
+ * `excludeId`. A resolved conversation is final (migration 060): while
+ * one of these exists, the resolved thread can neither be reopened nor
+ * receive an inbox send — the agent is pointed here instead.
+ */
+export async function findOtherActiveConversation(
+  supabase: Client,
+  contactId: string,
+  excludeId: string,
+): Promise<Conversation | null> {
+  if (!contactId) return null
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('contact_id', contactId)
+    .neq('status', 'closed')
+    .neq('id', excludeId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error || !data) return null
+  return ((data as Conversation[])[0] as Conversation | undefined) ?? null
+}
+
+type ContinuityRow = Pick<
+  Conversation,
+  'id' | 'status' | 'created_at' | 'last_message_at' | 'updated_at'
+>
+
+/**
+ * Pure: for the thread on screen, the resolved conversation right before
+ * it (the "Conversa anterior encerrada em …" line) and, when the thread
+ * itself is resolved, the contact's live conversation that replaced it.
+ */
+export function conversationContinuity<T extends ContinuityRow>(
+  current: ContinuityRow,
+  rows: T[],
+): { previousClosed: T | null; activeOther: T | null } {
+  const createdAt = (c: ContinuityRow) => {
+    const t = new Date(c.created_at).getTime()
+    return Number.isNaN(t) ? 0 : t
+  }
+  const others = rows.filter((c) => c.id !== current.id)
+  const previousClosed =
+    others
+      .filter((c) => c.status === 'closed' && createdAt(c) < createdAt(current))
+      .sort((a, b) => createdAt(b) - createdAt(a))[0] ?? null
+  const activeOther =
+    current.status === 'closed' ? (others.find((c) => c.status !== 'closed') ?? null) : null
+  return { previousClosed, activeOther }
+}
+
+/**
+ * "Reabrir" guard: moving a resolved `conversation` to `nextStatus`
+ * (open / pending) is blocked while the contact has another live
+ * conversation — returns that one so the UI can point to it. Null when
+ * the change is not a reopen or nothing blocks it.
+ */
+export async function reopenBlockedBy(
+  supabase: Client,
+  conversation: Pick<Conversation, 'id' | 'status' | 'contact_id'>,
+  nextStatus: Conversation['status'],
+): Promise<Conversation | null> {
+  if (conversation.status !== 'closed' || nextStatus === 'closed') return null
+  return findOtherActiveConversation(supabase, conversation.contact_id, conversation.id)
+}
+
+/**
+ * When this conversation was last resolved: the newest `status_changed`
+ * → closed event (migration 024). Null when there is none (older data,
+ * or closed by a path that logs no event) — callers fall back to
+ * `last_message_at`.
+ */
+export async function findClosedAt(
+  supabase: Client,
+  conversationId: string,
+): Promise<string | null> {
+  if (!conversationId) return null
+  const { data, error } = await supabase
+    .from('conversation_events')
+    .select('created_at')
+    .eq('conversation_id', conversationId)
+    .eq('event_type', 'status_changed')
+    .eq('payload->>status', 'closed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error || !data) return null
+  return ((data as { created_at: string }[])[0]?.created_at as string | undefined) ?? null
+}

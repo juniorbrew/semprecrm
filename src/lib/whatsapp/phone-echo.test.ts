@@ -128,6 +128,7 @@ function makeDb() {
         return b
       },
       order: () => b,
+      limit: () => b,
       maybeSingle: () => {
         const r = resolve()
         const first = (r.data as R[] | null)?.[0] ?? null
@@ -346,6 +347,56 @@ describe('ingestPhoneEcho', () => {
       media_url: 'https://x/a.jpg',
     })
     expect(h.state.conversations[0]).toMatchObject({ last_message_text: '[image]' })
+  })
+
+  it('goes to the open conversation when the contact also has an older resolved one', async () => {
+    // Newest activity first, as the lookup orders them: the resolved one
+    // happens to hold the latest message.
+    seedConversation({ last_message_at: iso(T0 - 10) })
+    h.state.conversations.push({
+      id: 'conv-2',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      unread_count: 0,
+      status: 'open',
+      channel: 'qr',
+      last_message_at: iso(T0 - 60),
+    })
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-2' })
+    expect(h.state.messages[0]).toMatchObject({ conversation_id: 'conv-2' })
+  })
+
+  it('a swipe-reply quoting a message from an older resolved conversation keeps the link', async () => {
+    seedConversation()
+    h.state.conversations.push({
+      id: 'conv-2',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      status: 'open',
+      channel: 'qr',
+      last_message_at: iso(T0 - 60),
+    })
+    h.state.messages.push({ id: 'm-old', conversation_id: 'conv-1', message_id: 'OLDMSG', sender_type: 'customer' })
+    await ingestPhoneEcho({ ...ECHO, quotedMessageId: 'OLDMSG' }, makeDb())
+    expect(h.state.messages.at(-1)).toMatchObject({ conversation_id: 'conv-2', reply_to_message_id: 'm-old' })
+  })
+
+  it('only resolved conversations → the latest one, left resolved, nothing created', async () => {
+    seedConversation({ id: 'conv-new' })
+    h.state.conversations.push({
+      id: 'conv-old',
+      account_id: 'acct-1',
+      contact_id: 'c-1',
+      status: 'closed',
+      channel: 'qr',
+      last_message_at: iso(T0 - 9000),
+    })
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, conversationId: 'conv-new' })
+    expect(h.state.messages[0]).toMatchObject({ conversation_id: 'conv-new' })
+    expect(h.state.conversations).toHaveLength(2)
+    expect(h.state.conversations.every((c) => c.status === 'closed')).toBe(true)
   })
 })
 

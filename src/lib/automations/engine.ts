@@ -261,11 +261,13 @@ async function resolveRunScope(
   const db = supabaseAdmin()
   let query = db
     .from('conversations')
-    .select('id, service_count')
+    .select('id, status, service_count')
     .eq('account_id', automation.account_id)
   query = ctx?.conversation_id ? query.eq('id', ctx.conversation_id) : query.eq('contact_id', contactId)
-  const { data } = await query.order('updated_at', { ascending: false }).limit(1).maybeSingle()
-  const conv = data as { id: string; service_count?: number | null } | null
+  const { data } = await query.order('updated_at', { ascending: false }).limit(50)
+  const conv = pickLiveConversation(
+    (data ?? []) as { id: string; status?: string | null; service_count?: number | null }[],
+  )
   return runScopeKey(frequency, {
     conversationId: conv?.id ?? null,
     serviceCount: conv?.service_count ?? 1,
@@ -979,6 +981,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         p_status: null,
         p_depth: args.depth + 1,
         p_origin: args.automation.id,
+        p_conversation_id: args.context.conversation_id ?? null,
       })
       if (assignErr) throw new Error(`assign_conversation failed: ${assignErr.message}`)
       for (const conversationId of rpcIds(assignedIds)) {
@@ -1109,6 +1112,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         p_status: 'closed',
         p_depth: args.depth + 1,
         p_origin: args.automation.id,
+        p_conversation_id: args.context.conversation_id ?? null,
       })
       if (closeErr) throw new Error(`close_conversation failed: ${closeErr.message}`)
       return 'conversation closed'
@@ -1209,19 +1213,29 @@ function rpcIds(data: unknown): string[] {
  * manual engine POSTs. Throws if none exists — send steps have
  * no meaningful target without a conversation.
  */
+/**
+ * The contact's live (open / pending) conversation, else the most
+ * recently updated one. Rows must be newest `updated_at` first. Since
+ * migration 060 a contact may have many resolved conversations; a
+ * contact-only trigger must act on the live one.
+ */
+export function pickLiveConversation<T extends { status?: string | null }>(rows: T[]): T | null {
+  return rows.find((r) => r.status && r.status !== 'closed') ?? rows[0] ?? null
+}
+
 async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
   if (fromCtx) return fromCtx
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
-  const { data, error } = await supabaseAdmin()
+  const { data: rows, error } = await supabaseAdmin()
     .from('conversations')
-    .select('id')
+    .select('id, status')
     .eq('account_id', args.automation.account_id)
     .eq('contact_id', args.contactId)
     .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(50)
   if (error) throw new Error(`conversation lookup failed: ${error.message}`)
+  const data = pickLiveConversation((rows ?? []) as { id: string; status?: string | null }[])
   if (!data?.id) throw new Error('no conversation for contact')
   return data.id as string
 }
