@@ -6,7 +6,8 @@
 //   1. Collects the contact's conversations; scrubs every message
 //      (content_text → "[conteúdo removido]", media_url → null) and
 //      removes the `chat-media` objects those URLs pointed at.
-//   2. Deletes contact_notes and contact_custom_values, and the stored
+//   2. Deletes contact_notes, contact_custom_values and the AI contact
+//      memory (`ai_contact_memories`, migration 064), and the stored
 //      WhatsApp profile photo (`contact-avatars/account-<acc>/<id>`,
 //      migration 055).
 //   3. contacts: name → "Contato anonimizado", phone → `anon-<8 hex>`
@@ -68,6 +69,7 @@ export interface AnonymizeResult {
   mediaDeleted: number
   notesDeleted: number
   customValuesDeleted: number
+  memoriesDeleted: number
   /** Non-fatal problems (storage delete refused, …). */
   warnings: string[]
 }
@@ -194,6 +196,18 @@ export async function anonymizeContact(
     else customValuesDeleted = data?.length ?? 0
   }
 
+  let memoriesDeleted = 0
+  {
+    const { data, error } = await admin
+      .from('ai_contact_memories')
+      .delete()
+      .eq('contact_id', contactId)
+      .eq('account_id', accountId)
+      .select('id')
+    if (error) warnings.push(`ai memories: ${error.message}`)
+    else memoriesDeleted = data?.length ?? 0
+  }
+
   // 3. The contact row itself — last on purpose (see header). The
   //    per-account UNIQUE on `phone_normalized` (digits of `phone`)
   //    could in theory collide on the digit projection of the random
@@ -227,6 +241,7 @@ export async function anonymizeContact(
     mediaDeleted,
     notesDeleted,
     customValuesDeleted,
+    memoriesDeleted,
     warnings,
   }
 }

@@ -53,12 +53,13 @@ describe('audit catalogue', () => {
   })
 
   it('contains the 22 spec actions plus account.registration_updated (042)', () => {
-    expect(AUDIT_ACTION_LIST).toHaveLength(29)
+    expect(AUDIT_ACTION_LIST).toHaveLength(30)
     expect(AUDIT_ACTION_LIST).toContain('account.registration_updated')
     expect(AUDIT_ACTION_LIST).toContain('member.role_changed')
     expect(AUDIT_ACTION_LIST).toContain('plan.changed')
     expect(AUDIT_ACTION_LIST).toContain('mfa.disabled')
     expect(AUDIT_ACTION_LIST).toContain('ai.knowledge_changed')
+    expect(AUDIT_ACTION_LIST).toContain('ai.agents_changed')
   })
 
   it('isAuditAction accepts catalogue keys only', () => {

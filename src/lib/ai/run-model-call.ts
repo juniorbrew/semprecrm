@@ -18,7 +18,7 @@ import { monthStartInTimeZone, isBudgetExhausted } from './budget';
 import { createLanguageModel } from './client';
 import { AiError, mapProviderError, type AiErrorCode } from './errors';
 import { computeCostCents } from './pricing';
-import type { AiFeature, AiProvider } from './providers';
+import { isValidModelId, modelMatchesProvider, type AiFeature, type AiProvider } from './providers';
 import { loadAiSettings, loadDecryptedKey, recordUsage, usageSummarySince } from './store';
 
 export const AI_CALL_TIMEOUT_MS = 30_000;
@@ -78,6 +78,12 @@ export interface RunModelCallInput {
   maxOutputTokens?: number;
   /** The prompt carries knowledge-base snippets — flagged in `ai_usage`. */
   kbUsed?: boolean;
+  /**
+   * Model override (an AI agent's, migration 064). Still the account's
+   * provider, key and budget; ignored when it belongs to another
+   * provider (e.g. the admin switched provider after setting it).
+   */
+  model?: string | null;
   /** Client cancel (request aborted). */
   signal?: AbortSignal;
   /** Injectable for tests. */
@@ -109,7 +115,9 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     throw new AiError('not_enabled');
   }
   const provider = settings.provider;
-  const model = settings.model;
+  const override = input.model?.trim();
+  const model =
+    override && isValidModelId(override) && modelMatchesProvider(provider, override) ? override : settings.model;
 
   const apiKey = await loadDecryptedKey(input.db, input.accountId, provider);
   if (!apiKey) throw new AiError('no_key');

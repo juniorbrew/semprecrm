@@ -32,6 +32,8 @@ export interface ContactExport {
   notes: Record<string, unknown>[]
   deals: Record<string, unknown>[]
   tasks: Record<string, unknown>[]
+  /** "Memória do contato" facts (AI, migration 064), every status. */
+  ai_memories: Record<string, unknown>[]
   /** Consent-related audit events (export / anonymisation) for this contact. */
   consent_events: Record<string, unknown>[]
   /** Tables that failed to load (RLS gap, missing migration) — never fatal. */
@@ -82,7 +84,7 @@ export async function buildContactExport(
     }
   }
 
-  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows] =
+  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows] =
     await Promise.all([
       load('custom_fields', () =>
         db
@@ -132,6 +134,14 @@ export async function buildContactExport(
           .eq('account_id', accountId)
           .eq('entity_type', 'contact')
           .eq('entity_id', contactId)
+          .order('created_at', { ascending: true }),
+      ),
+      load('ai_memories', () =>
+        db
+          .from('ai_contact_memories')
+          .select('id, fact, status, source, conversation_id, created_at, updated_at')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
           .order('created_at', { ascending: true }),
       ),
     ])
@@ -195,6 +205,7 @@ export async function buildContactExport(
     notes: noteRows,
     deals: dealRows,
     tasks: taskRows,
+    ai_memories: memoryRows,
     consent_events: auditRows,
     warnings,
   }

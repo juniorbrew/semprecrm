@@ -193,4 +193,13 @@ describe('callProfile', () => {
     await expect(call()).rejects.toMatchObject({ code: 'rate_limited' });
     expect(store.recordUsage.mock.calls[0][1]).toMatchObject({ inputTokens: 0, costCents: 0 });
   });
+
+  it('model override (AI agent): used when it belongs to the provider, ignored otherwise', async () => {
+    generateText.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
+    const r = await call({ model: 'gpt-4.1', feature: 'agent_test' });
+    expect(r.model).toBe('gpt-4.1');
+    expect(store.recordUsage.mock.calls[0][1]).toMatchObject({ model: 'gpt-4.1', feature: 'agent_test' });
+    expect((await call({ model: 'claude-haiku-4-5' })).model).toBe('gpt-4.1-mini');
+    expect((await call({ model: null })).model).toBe('gpt-4.1-mini');
+  });
 });
