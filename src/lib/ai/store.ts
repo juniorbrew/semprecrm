@@ -8,6 +8,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { decrypt, encrypt } from '@/lib/whatsapp/encryption';
+import type { KbSearchHit } from './knowledge';
 import { isAiProvider, type AiFeature, type AiProvider } from './providers';
 
 export interface AiSettingsRow {
@@ -55,6 +56,8 @@ export interface AiUsageRecord {
   status: 'ok' | 'error' | 'blocked';
   errorCode: string | null;
   latencyMs: number | null;
+  /** The prompt carried knowledge-base snippets (migration 063). */
+  kbUsed?: boolean;
 }
 
 // ------------------------------------------------------------
@@ -240,9 +243,35 @@ export async function recordUsage(db: SupabaseClient, rec: AiUsageRecord): Promi
       status: rec.status,
       error_code: rec.errorCode,
       latency_ms: rec.latencyMs,
+      // Only sent when true, so a DB without 063 still records usage.
+      ...(rec.kbUsed ? { kb_used: true } : {}),
     });
     if (error) console.error('[ai] usage insert failed:', error.message);
   } catch (err) {
     console.error('[ai] usage insert threw:', err instanceof Error ? err.message : err);
   }
+}
+
+// ------------------------------------------------------------
+// Knowledge base (migration 063)
+// ------------------------------------------------------------
+
+/**
+ * Search the account's knowledge base. Takes the CALLER's RLS client:
+ * the function is SECURITY INVOKER and checks membership, so the
+ * service role (no session) gets nothing.
+ */
+export async function searchKnowledge(
+  db: SupabaseClient,
+  accountId: string,
+  query: string,
+  limit: number,
+): Promise<KbSearchHit[]> {
+  const { data, error } = await db.rpc('ai_knowledge_search', {
+    p_account_id: accountId,
+    p_query: query,
+    p_limit: limit,
+  });
+  if (error) throw new Error(`knowledge search failed: ${error.message}`);
+  return ((data ?? []) as KbSearchHit[]).map((h) => ({ ...h, rank: Number(h.rank) || 0 }));
 }
