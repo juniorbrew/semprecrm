@@ -15,24 +15,72 @@
 // the account's knowledge base (through the caller's RLS client) and up
 // to 5 snippets go into the prompt as reference data. A failed search
 // never blocks the suggestion — it just goes out without snippets.
+//
+// Phase 3 (064): the resolved AI agent (tag → number → default, see
+// src/lib/ai/agents.ts) supplies instructions, tone, model override and
+// knowledge on/off; body `{ agent_id }` picks another enabled agent for
+// this one suggestion. Up to 10 ACTIVE contact-memory facts go in as a
+// data block. GET returns the agent list + the resolved agent so the
+// composer can label (and switch) it before asking.
 // ============================================================
 
 import { NextResponse } from 'next/server';
 
-import { requireModule, requireRole } from '@/lib/auth/account';
+import { requireModule, requireRole, type AccountContext } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
+import { AGENT_COLUMNS, AGENT_ERRORS, agentInstructions, resolveAgent, type AiAgent } from '@/lib/ai/agents';
+import {
+  contactAnonymizedResponse,
+  loadAiConversation,
+  loadPromptKnowledge,
+  loadPromptMessages,
+  type AiConversation,
+} from '@/lib/ai/conversation-context';
 import { AiError } from '@/lib/ai/errors';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { kbQueryFromMessages, KB_LIMITS, selectKbHits } from '@/lib/ai/knowledge';
-import { AI_LIMITS } from '@/lib/ai/providers';
 import { runModelCall } from '@/lib/ai/run-model-call';
-import { searchKnowledge } from '@/lib/ai/store';
-import { buildSuggestReplyPrompt, isPromptableMessage, type SuggestMessage } from '@/lib/ai/suggest-reply';
+import { buildSuggestReplyPrompt, MEMORY_PROMPT_MAX_FACTS } from '@/lib/ai/suggest-reply';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const notFound = () => NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+/** Enabled agents (oldest first) + the one the rules pick for this conversation. */
+async function loadAgents(ctx: AccountContext, conv: AiConversation) {
+  const [agentsRes, tagsRes] = await Promise.all([
+    ctx.supabase
+      .from('ai_agents')
+      .select(AGENT_COLUMNS)
+      .eq('account_id', ctx.accountId)
+      .eq('enabled', true)
+      .order('created_at', { ascending: true }),
+    ctx.supabase.from('contact_tags').select('tag_id').eq('contact_id', conv.contact_id),
+  ]);
+  if (agentsRes.error) throw new Error(`ai agents read failed: ${agentsRes.error.message}`);
+  if (tagsRes.error) throw new Error(`contact tags read failed: ${tagsRes.error.message}`);
+  const agents = (agentsRes.data ?? []) as AiAgent[];
+  const tagIds = ((tagsRes.data ?? []) as { tag_id: string }[]).map((r) => r.tag_id);
+  const resolved = resolveAgent(agents, { channel: conv.channel ?? 'official', tagIds });
+  return { agents, resolved: resolved?.agent ?? null };
+}
+
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const ctx = await requireRole('agent');
+    await requireModule(ctx, 'ai');
+    const found = await loadAiConversation(ctx, id);
+    if (!found) return notFound();
+    const { agents, resolved } = await loadAgents(ctx, found.conv);
+    return NextResponse.json({
+      agents: agents.map((a) => ({ id: a.id, name: a.name })),
+      resolved: resolved?.id ?? null,
+    });
+  } catch (err) {
+    return aiErrorResponse(err);
+  }
+}
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -43,52 +91,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const limit = checkRateLimit(`ai:suggest:${ctx.userId}`, RATE_LIMITS.aiSuggest);
     if (!limit.success) return rateLimitResponse(limit);
 
-    if (!UUID_RE.test(id)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const body = (await request.json().catch(() => null)) as { agent_id?: unknown } | null;
+    const pickedAgentId = typeof body?.agent_id === 'string' && body.agent_id ? body.agent_id : null;
 
-    const { data: conv, error: convErr } = await ctx.supabase
-      .from('conversations')
-      .select('id, contact:contacts(name, anonymized_at)')
-      .eq('id', id)
-      .eq('account_id', ctx.accountId)
-      .maybeSingle();
-    if (convErr) throw new Error(`conversation read failed: ${convErr.message}`);
-    if (!conv) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const found = await loadAiConversation(ctx, id);
+    if (!found) return notFound();
+    const { conv, contact } = found;
+    if (contact?.anonymized_at) return contactAnonymizedResponse();
 
-    const contact = (Array.isArray(conv.contact) ? conv.contact[0] : conv.contact) as
-      | { name?: string | null; anonymized_at?: string | null }
-      | null;
-    if (contact?.anonymized_at) {
-      return NextResponse.json(
-        { error: 'This contact was anonymized (LGPD) — AI suggestions are not available.', code: 'contact_anonymized' },
-        { status: 403 },
-      );
-    }
-
-    const { data: settings, error: setErr } = await ctx.supabase
-      .from('ai_settings')
-      .select('enabled, instructions, suggest_history_messages')
-      .eq('account_id', ctx.accountId)
-      .maybeSingle();
-    if (setErr) throw new Error(`ai settings read failed: ${setErr.message}`);
-    if (!settings?.enabled) throw new AiError('not_enabled');
-
-    const historyLimit = Math.min(
-      AI_LIMITS.historyMax,
-      Math.max(AI_LIMITS.historyMin, Number(settings.suggest_history_messages) || AI_LIMITS.historyDefault),
-    );
-    const { data: rows, error: msgErr } = await ctx.supabase
-      .from('messages')
-      .select('sender_type, content_type, content_text, template_name, status, created_at')
-      .eq('conversation_id', id)
-      .order('created_at', { ascending: false })
-      // Over-fetch a little so failed sends (dropped below) don't eat the window.
-      .limit(historyLimit + 20);
-    if (msgErr) throw new Error(`messages read failed: ${msgErr.message}`);
-    // Newest N that reached the customer (failed sends never did), oldest first.
-    const messages = ((rows ?? []) as SuggestMessage[])
-      .filter(isPromptableMessage)
-      .slice(0, historyLimit)
-      .reverse();
+    const { instructions, messages } = await loadPromptMessages(ctx, id);
     if (messages.length === 0) {
       return NextResponse.json(
         { error: 'There are no messages in this conversation to reply to yet.', code: 'no_messages' },
@@ -96,23 +107,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       );
     }
 
-    let knowledge: { title: string; content: string }[] = [];
-    const kbQuery = kbQueryFromMessages(messages);
-    if (kbQuery) {
-      try {
-        const hits = await searchKnowledge(ctx.supabase, ctx.accountId, kbQuery, KB_LIMITS.promptMaxChunks);
-        knowledge = selectKbHits(hits).map((h) => ({ title: h.title, content: h.content }));
-      } catch (err) {
-        console.error('[ai/suggest] knowledge search failed:', err instanceof Error ? err.message : err);
-      }
+    const { agents, resolved } = await loadAgents(ctx, conv);
+    const agent = pickedAgentId ? agents.find((a) => a.id === pickedAgentId) ?? null : resolved;
+    if (pickedAgentId && !agent) {
+      return NextResponse.json({ error: AGENT_ERRORS.notFound }, { status: 404 });
     }
+
+    const { data: memRows, error: memErr } = await ctx.supabase
+      .from('ai_contact_memories')
+      .select('fact')
+      .eq('account_id', ctx.accountId)
+      .eq('contact_id', conv.contact_id)
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(MEMORY_PROMPT_MAX_FACTS);
+    if (memErr) throw new Error(`contact memory read failed: ${memErr.message}`);
+    const memory = ((memRows ?? []) as { fact: string }[]).map((r) => r.fact);
+
+    const knowledge = !agent || agent.knowledge_enabled ? await loadPromptKnowledge(ctx, messages) : [];
 
     const { system, prompt } = buildSuggestReplyPrompt({
       accountName: ctx.account.name,
       contactName: contact?.name ?? null,
-      instructions: (settings.instructions as string | null) ?? null,
+      instructions: agent ? agentInstructions(agent) : instructions,
       messages,
       knowledge,
+      memory,
     });
 
     const result = await runModelCall({
@@ -124,10 +144,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       system,
       prompt,
       kbUsed: knowledge.length > 0,
+      model: agent?.model ?? null,
       signal: request.signal,
     });
 
-    return NextResponse.json({ text: result.text });
+    return NextResponse.json({ text: result.text, agent: agent ? { id: agent.id, name: agent.name } : null });
   } catch (err) {
     if (err instanceof AiError && err.code === 'cancelled') {
       return new NextResponse(null, { status: 499 });

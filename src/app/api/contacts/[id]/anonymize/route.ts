@@ -95,6 +95,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         media_deleted: result.mediaDeleted,
         notes_deleted: result.notesDeleted,
         custom_values_deleted: result.customValuesDeleted,
+        ai_memories_deleted: result.memoriesDeleted,
         warnings: result.warnings,
       },
     })

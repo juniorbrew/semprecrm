@@ -28,6 +28,7 @@ function makeDb(state: {
   messagesCount?: number
   notesCount?: number
   customCount?: number
+  memoriesCount?: number
   updateErrors?: ({ code?: string; message: string } | null)[]
 }) {
   const calls: Call[] = []
@@ -94,6 +95,10 @@ function makeDb(state: {
       if (table === 'contact_notes') {
         const n = state.notesCount ?? 0
         return { data: Array.from({ length: n }, (_, i) => ({ id: `n${i}` })), error: null }
+      }
+      if (table === 'ai_contact_memories') {
+        const n = state.memoriesCount ?? 0
+        return { data: Array.from({ length: n }, (_, i) => ({ id: `mem${i}` })), error: null }
       }
       if (table === 'contact_custom_values') {
         const n = state.customCount ?? 0
@@ -184,6 +189,7 @@ describe('anonymizeContact', () => {
       messagesCount: 5,
       notesCount: 2,
       customCount: 3,
+      memoriesCount: 4,
     })
 
     const res = await anonymizeContact(db, 'acc', 'c1', { now, randomHex: () => 'deadbeef' })
@@ -196,6 +202,7 @@ describe('anonymizeContact', () => {
       mediaDeleted: 1,
       notesDeleted: 2,
       customValuesDeleted: 3,
+      memoriesDeleted: 4,
       warnings: [],
     })
     // Chat media, then the stored WhatsApp profile photo (migration 055).
@@ -211,6 +218,11 @@ describe('anonymizeContact', () => {
 
     expect(calls.some((c) => c.table === 'contact_notes' && c.op === 'delete')).toBe(true)
     expect(calls.some((c) => c.table === 'contact_custom_values' && c.op === 'delete')).toBe(true)
+    // AI contact memory (migration 064) is personal data too.
+    const memDelete = calls.find((c) => c.table === 'ai_contact_memories')!
+    expect(memDelete.op).toBe('delete')
+    expect(memDelete.filters).toContainEqual(['eq', 'contact_id', ['c1']])
+    expect(memDelete.filters).toContainEqual(['eq', 'account_id', ['acc']])
 
     const contactUpdate = calls.find((c) => c.table === 'contacts' && c.op === 'update')!
     expect(contactUpdate.payload).toEqual({

@@ -3,7 +3,7 @@
 //
 // Streams one JSON document (contact, custom fields, tags,
 // conversations + messages with media URLs, notes, deals, tasks,
-// consent events) as an attachment `contato-<id>.json`. Audited as
+// AI contact memory, consent events) as an attachment `contato-<id>.json`. Audited as
 // `contact.exported`.
 //
 // Reads with the caller's RLS-scoped client (see src/lib/lgpd/export.ts).
@@ -54,6 +54,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         notes: payload.notes.length,
         deals: payload.deals.length,
         tasks: payload.tasks.length,
+        ai_memories: payload.ai_memories.length,
       },
     })
 
