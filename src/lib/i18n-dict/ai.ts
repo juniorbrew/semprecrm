@@ -123,4 +123,75 @@ export const DICT_AI: Record<string, string> = {
   'Tokens (in / out)': 'Tokens (entrada / saída)',
   'Estimated cost': 'Custo estimado',
   'Budget used': 'Orçamento utilizado',
+
+  // ---- knowledge base (migration 063) ------------------------------------
+  'Knowledge base': 'Base de conhecimento',
+  "Questions and answers, texts and files the assistant looks up before suggesting a reply — prices, opening hours, policies. Only the snippets that match the customer's latest messages are sent to the AI provider.":
+    'Perguntas e respostas, textos e arquivos que o assistente consulta antes de sugerir uma resposta — preços, horários, políticas. Só os trechos que combinam com as últimas mensagens do cliente são enviados ao provedor de IA.',
+  'Add question': 'Adicionar pergunta',
+  'Add text': 'Adicionar texto',
+  'Upload file': 'Enviar arquivo',
+  'Reading file…': 'Lendo arquivo…',
+  'Files: .txt, .md, .csv or .pdf with text (scanned PDFs are not read), up to 5 MB.':
+    'Arquivos: .txt, .md, .csv ou .pdf com texto (PDFs digitalizados não são lidos), até 5 MB.',
+  'Could not load the knowledge base': 'Não foi possível carregar a base de conhecimento',
+  'The knowledge base is empty. Add your most frequent questions first.':
+    'A base de conhecimento está vazia. Comece pelas perguntas mais frequentes.',
+  FAQ: 'Pergunta',
+  characters: 'caracteres',
+  'Use in suggestions': 'Usar nas sugestões',
+  'Delete this item from the knowledge base?': 'Excluir este item da base de conhecimento?',
+  'Item deleted': 'Item excluído',
+  'Knowledge base updated': 'Base de conhecimento atualizada',
+  'File added to the knowledge base': 'Arquivo adicionado à base de conhecimento',
+  'Test the search': 'Testar busca',
+  'Type a question as a customer would, e.g.: how much is delivery?':
+    'Digite uma pergunta como o cliente faria, ex.: quanto custa a entrega?',
+  'Shows the snippets that would go to the AI with this question. Nothing is sent to the provider here.':
+    'Mostra os trechos que iriam para a IA com esta pergunta. Nada é enviado ao provedor aqui.',
+  'Nothing found — the suggestion would rely only on the instructions and the conversation.':
+    'Nada encontrado — a sugestão usaria só as instruções e a conversa.',
+  'Edit knowledge item': 'Editar item da base',
+  'New question': 'Nova pergunta',
+  'New text': 'Novo texto',
+  'Write the question the way customers ask it, and the answer the assistant should use.':
+    'Escreva a pergunta do jeito que os clientes perguntam e a resposta que o assistente deve usar.',
+  'Short, factual texts work best: one subject per item.': 'Textos curtos e objetivos funcionam melhor: um assunto por item.',
+  Question: 'Pergunta',
+  Answer: 'Resposta',
+  Content: 'Conteúdo',
+  'E.g.: Do you deliver on Sundays?': 'Ex.: Vocês entregam aos domingos?',
+  'E.g.: Delivery policy': 'Ex.: Política de entrega',
+  // API errors (src/lib/ai/knowledge.ts, knowledge-extract.ts, /api/ai/knowledge*)
+  'Unknown knowledge item type': 'Tipo de item desconhecido',
+  'The title is required (up to 200 characters).': 'O título é obrigatório (até 200 caracteres).',
+  'The question is required (up to 1000 characters).': 'A pergunta é obrigatória (até 1000 caracteres).',
+  'The content is required (up to 20,000 characters).': 'O conteúdo é obrigatório (até 20.000 caracteres).',
+  'The text is too long (up to 200,000 characters).': 'O texto é longo demais (até 200.000 caracteres).',
+  'The knowledge base is full (up to 500 items). Remove items you no longer need.':
+    'A base de conhecimento está cheia (até 500 itens). Remova itens que não usa mais.',
+  'Knowledge item not found': 'Item da base de conhecimento não encontrado',
+  'Type a question to search.': 'Digite uma pergunta para buscar.',
+  'Failed to save the knowledge item': 'Não foi possível salvar o item da base de conhecimento',
+  'Unsupported file type. Send a .txt, .md, .csv or .pdf file.':
+    'Tipo de arquivo não suportado. Envie um arquivo .txt, .md, .csv ou .pdf.',
+  'The file is too large (maximum 5 MB).': 'O arquivo é grande demais (máximo 5 MB).',
+  'The file has no text.': 'O arquivo não tem texto.',
+  'The file has too much text (maximum 200,000 characters). Split it into smaller files.':
+    'O arquivo tem texto demais (máximo 200.000 caracteres). Divida em arquivos menores.',
+  'This PDF has no selectable text (it looks scanned). Send a PDF with text, or paste the content as a text item.':
+    'Este PDF não tem texto selecionável (parece digitalizado). Envie um PDF com texto ou cole o conteúdo como um item de texto.',
+  'Could not read this PDF. It may be damaged or password-protected.':
+    'Não foi possível ler este PDF. Ele pode estar corrompido ou protegido por senha.',
+  'This file does not look like text. Send a plain-text .txt, .md or .csv file.':
+    'Este arquivo não parece texto. Envie um arquivo de texto simples .txt, .md ou .csv.',
+  'This PDF has too many pages (maximum 300). Split it into smaller files.':
+    'Este PDF tem páginas demais (máximo 300). Divida em arquivos menores.',
+  'This PDF is too heavy to read. Split it into smaller files or paste the text as a text item.':
+    'Este PDF é pesado demais para ler. Divida em arquivos menores ou cole o texto como um item de texto.',
+  'Reading this PDF took too long. Split it into smaller files or paste the text as a text item.':
+    'A leitura deste PDF demorou demais. Divida em arquivos menores ou cole o texto como um item de texto.',
+  'Could not load the item': 'Não foi possível carregar o item',
+  'Could not delete the item': 'Não foi possível excluir o item',
+  'The search failed': 'A busca falhou',
 };

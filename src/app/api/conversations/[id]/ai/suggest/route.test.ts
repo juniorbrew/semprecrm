@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
     tables: {} as Record<string, Row[]>,
   },
   runModelCall: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn() }));
@@ -27,6 +28,7 @@ vi.mock('@/lib/ai/run-model-call', () => ({ runModelCall: h.runModelCall }));
 /** Minimal query builder: select/eq/order/limit/maybeSingle/await. */
 function makeSupabase() {
   return {
+    rpc: h.rpc,
     from(table: string) {
       let rows = [...(h.state.tables[table] ?? [])];
       const b = {
@@ -76,7 +78,7 @@ vi.mock('@/lib/auth/account', async (importOriginal) => {
 
 import { __resetRateLimitForTests } from '@/lib/rate-limit';
 import { AiError } from '@/lib/ai/errors';
-import { HISTORY_CLOSE, HISTORY_OPEN } from '@/lib/ai/suggest-reply';
+import { HISTORY_CLOSE, HISTORY_OPEN, KB_CLOSE, KB_OPEN } from '@/lib/ai/suggest-reply';
 import { POST } from './route';
 
 const CONV_A = '11111111-1111-4111-8111-111111111111';
@@ -119,6 +121,8 @@ beforeEach(() => {
     ],
   };
   h.runModelCall.mockResolvedValue({ text: 'Entregamos sim! Qual o endereço?' });
+  h.rpc.mockReset();
+  h.rpc.mockResolvedValue({ data: [], error: null });
 });
 
 describe('POST /api/conversations/:id/ai/suggest', () => {
@@ -211,5 +215,33 @@ describe('POST /api/conversations/:id/ai/suggest', () => {
   it('rate-limits per user', async () => {
     for (let i = 0; i < 10; i++) expect((await post(CONV_A)).status).toBe(200);
     expect((await post(CONV_A)).status).toBe(429);
+  });
+
+  it('adds knowledge-base snippets found with the customer messages', async () => {
+    h.rpc.mockResolvedValue({
+      data: [{ chunk_id: 'c1', item_id: 'i1', title: 'Frete', kind: 'faq', content: 'Entrega custa R$ 10.', rank: 0.4 }],
+      error: null,
+    });
+    expect((await post(CONV_A)).status).toBe(200);
+    expect(h.rpc).toHaveBeenCalledWith('ai_knowledge_search', {
+      p_account_id: 'acc-a',
+      p_query: 'Vocês entregam hoje?',
+      p_limit: 5,
+    });
+    const input = h.runModelCall.mock.calls[0][0];
+    expect(input.prompt).toContain(KB_OPEN);
+    expect(input.prompt).toContain('{"titulo":"Frete","trecho":"Entrega custa R$ 10."}');
+    expect(input.prompt.indexOf(KB_CLOSE)).toBeLessThan(input.prompt.indexOf(HISTORY_OPEN));
+    expect(input.kbUsed).toBe(true);
+  });
+
+  it('suggests without the knowledge base when nothing matches or the search fails', async () => {
+    await post(CONV_A);
+    expect(h.runModelCall.mock.calls[0][0].prompt).not.toContain(KB_OPEN);
+    expect(h.runModelCall.mock.calls[0][0].kbUsed).toBe(false);
+
+    h.rpc.mockResolvedValue({ data: null, error: { message: 'function does not exist' } });
+    expect((await post(CONV_A)).status).toBe(200);
+    expect(h.runModelCall.mock.calls[1][0].kbUsed).toBe(false);
   });
 });

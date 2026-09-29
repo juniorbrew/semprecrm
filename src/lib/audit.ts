@@ -49,6 +49,7 @@ export const AUDIT_ACTIONS = {
   AI_SETTINGS_UPDATED: 'ai.settings_updated',
   AI_KEY_SAVED: 'ai.key_saved',
   AI_KEY_REMOVED: 'ai.key_removed',
+  AI_KNOWLEDGE_CHANGED: 'ai.knowledge_changed',
 } as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS]
@@ -94,6 +95,7 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'ai.settings_updated': 'Configurações de IA atualizadas',
     'ai.key_saved': 'Chave de API de IA salva',
     'ai.key_removed': 'Chave de API de IA removida',
+    'ai.knowledge_changed': 'Base de conhecimento da IA alterada',
   },
   'en-US': {
     'member.invited': 'Member invited',
@@ -124,6 +126,7 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'ai.settings_updated': 'AI settings updated',
     'ai.key_saved': 'AI API key saved',
     'ai.key_removed': 'AI API key removed',
+    'ai.knowledge_changed': 'AI knowledge base changed',
   },
 }
 

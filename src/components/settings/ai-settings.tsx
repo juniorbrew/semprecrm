@@ -37,6 +37,7 @@ import {
   type AiProvider,
 } from "@/lib/ai/providers";
 import { cn } from "@/lib/utils";
+import { AiKnowledge } from "./ai-knowledge";
 import { SettingsChip } from "./settings-chip";
 import { SettingsPanelHead } from "./settings-panel-head";
 
@@ -720,6 +721,9 @@ export function AiSettings() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Knowledge base (migration 063) */}
+        <AiKnowledge />
       </div>
     </section>
   );

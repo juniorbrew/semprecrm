@@ -10,6 +10,11 @@
 // its messages are read through the caller's RLS client and filtered
 // by that account, so another account's conversation is a plain 404.
 // Anonymised contacts (LGPD) are refused before anything is read.
+//
+// Knowledge base (063): the last 1–3 customer messages are searched in
+// the account's knowledge base (through the caller's RLS client) and up
+// to 5 snippets go into the prompt as reference data. A failed search
+// never blocks the suggestion — it just goes out without snippets.
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -18,8 +23,10 @@ import { requireModule, requireRole } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { AiError } from '@/lib/ai/errors';
 import { aiErrorResponse } from '@/lib/ai/http';
+import { kbQueryFromMessages, KB_LIMITS, selectKbHits } from '@/lib/ai/knowledge';
 import { AI_LIMITS } from '@/lib/ai/providers';
 import { runModelCall } from '@/lib/ai/run-model-call';
+import { searchKnowledge } from '@/lib/ai/store';
 import { buildSuggestReplyPrompt, isPromptableMessage, type SuggestMessage } from '@/lib/ai/suggest-reply';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
@@ -89,11 +96,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       );
     }
 
+    let knowledge: { title: string; content: string }[] = [];
+    const kbQuery = kbQueryFromMessages(messages);
+    if (kbQuery) {
+      try {
+        const hits = await searchKnowledge(ctx.supabase, ctx.accountId, kbQuery, KB_LIMITS.promptMaxChunks);
+        knowledge = selectKbHits(hits).map((h) => ({ title: h.title, content: h.content }));
+      } catch (err) {
+        console.error('[ai/suggest] knowledge search failed:', err instanceof Error ? err.message : err);
+      }
+    }
+
     const { system, prompt } = buildSuggestReplyPrompt({
       accountName: ctx.account.name,
       contactName: contact?.name ?? null,
       instructions: (settings.instructions as string | null) ?? null,
       messages,
+      knowledge,
     });
 
     const result = await runModelCall({
@@ -104,6 +123,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       feature: 'suggest_reply',
       system,
       prompt,
+      kbUsed: knowledge.length > 0,
       signal: request.signal,
     });
 
