@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
 import type { ConversationPriority, WhatsAppChannel } from "@/types";
 import { CATEGORY_DOT, PRIORITIES, PRIORITY_DOT, supportCopy, type ConversationCategory } from "@/lib/support/model";
+import { slaCopy } from "@/lib/support/sla";
+import { teamCopy, type Team } from "@/lib/support/teams";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -68,6 +70,14 @@ interface FilterPopoverProps {
   priority?: ConversationPriority | null;
   onCategoryChange?: (id: string | null) => void;
   onPriorityChange?: (priority: ConversationPriority | null) => void;
+  /** Teams (migration 073): the section shows once the account has any. */
+  teams?: Team[];
+  teamId?: string | null;
+  onTeamChange?: (id: string | null) => void;
+  /** SLA (migration 072): offered only when the account has deadlines. */
+  slaEnabled?: boolean;
+  slaBreached?: boolean;
+  onSlaBreachedChange?: (on: boolean) => void;
 }
 
 /** Header button + popover: multi-select tags and (when both exist) the channel. */
@@ -83,12 +93,23 @@ export function FilterPopover({
   priority = null,
   onCategoryChange,
   onPriorityChange,
+  teams = [],
+  teamId = null,
+  onTeamChange,
+  slaEnabled = false,
+  slaBreached = false,
+  onSlaBreachedChange,
 }: FilterPopoverProps) {
   const { t, language } = useLanguage();
   const support = supportCopy(language);
+  const teamText = teamCopy(language);
+  const slaText = slaCopy(language);
   const showSupport = categories.length > 0 && !!onCategoryChange && !!onPriorityChange;
-  const active = tagIds.length + (channel ? 1 : 0) + (categoryId ? 1 : 0) + (priority ? 1 : 0);
-  if (tags.length === 0 && !hasBothChannels && !showSupport) return null;
+  const showTeams = teams.length > 0 && !!onTeamChange;
+  const showSla = slaEnabled && !!onSlaBreachedChange;
+  const active =
+    tagIds.length + (channel ? 1 : 0) + (categoryId ? 1 : 0) + (priority ? 1 : 0) + (teamId ? 1 : 0) + (slaBreached ? 1 : 0);
+  if (tags.length === 0 && !hasBothChannels && !showSupport && !showTeams && !showSla) return null;
 
   const toggle = (id: string) =>
     onTagsChange(tagIds.includes(id) ? tagIds.filter((x) => x !== id) : [...tagIds, id]);
@@ -211,6 +232,45 @@ export function FilterPopover({
             </div>
           </div>
         )}
+        {(showTeams || showSla) && (
+          <div data-no-translate className="space-y-3">
+            {showTeams && (
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">{teamText.filterTeam}</p>
+                <div className="max-h-40 overflow-y-auto">
+                  {teams.map((team) => (
+                    <button
+                      key={team.id}
+                      type="button"
+                      aria-pressed={teamId === team.id}
+                      onClick={() => onTeamChange?.(teamId === team.id ? null : team.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted",
+                        teamId === team.id && "text-primary",
+                      )}
+                    >
+                      <span className="truncate">{team.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {showSla && (
+              <button
+                type="button"
+                aria-pressed={slaBreached}
+                onClick={() => onSlaBreachedChange?.(!slaBreached)}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
+                  slaBreached ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-foreground hover:bg-muted",
+                )}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden />
+                {slaText.breachedFilter}
+              </button>
+            )}
+          </div>
+        )}
         {active > 0 && (
           <button
             type="button"
@@ -219,6 +279,8 @@ export function FilterPopover({
               onChannelChange(null);
               onCategoryChange?.(null);
               onPriorityChange?.(null);
+              onTeamChange?.(null);
+              onSlaBreachedChange?.(false);
             }}
             className="self-start text-xs font-medium text-primary hover:underline"
           >
@@ -242,6 +304,11 @@ export function FilterChips({
   priority = null,
   onCategoryChange,
   onPriorityChange,
+  teams = [],
+  teamId = null,
+  onTeamChange,
+  slaBreached = false,
+  onSlaBreachedChange,
 }: Pick<
   FilterPopoverProps,
   | "tags"
@@ -254,11 +321,18 @@ export function FilterChips({
   | "priority"
   | "onCategoryChange"
   | "onPriorityChange"
+  | "teams"
+  | "teamId"
+  | "onTeamChange"
+  | "slaBreached"
+  | "onSlaBreachedChange"
 >) {
   const { t, language } = useLanguage();
   const support = supportCopy(language);
+  const slaText = slaCopy(language);
   const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
-  if (tagIds.length === 0 && !channel && !category && !priority) return null;
+  const team = teamId ? teams.find((x) => x.id === teamId) : null;
+  if (tagIds.length === 0 && !channel && !category && !priority && !team && !slaBreached) return null;
   const chip =
     "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 pl-2 pr-1 text-[11px] font-medium text-primary";
   return (
@@ -291,6 +365,32 @@ export function FilterChips({
             type="button"
             aria-label={`${t("Remove filter")}: ${category.name}`}
             onClick={() => onCategoryChange?.(null)}
+            className="rounded-full p-0.5 hover:bg-primary/20"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      )}
+      {team && (
+        <span className={chip}>
+          <span className="max-w-24 truncate">{team.name}</span>
+          <button
+            type="button"
+            aria-label={`${t("Remove filter")}: ${team.name}`}
+            onClick={() => onTeamChange?.(null)}
+            className="rounded-full p-0.5 hover:bg-primary/20"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      )}
+      {slaBreached && (
+        <span className={chip}>
+          <span>{slaText.breachedFilter}</span>
+          <button
+            type="button"
+            aria-label={`${t("Remove filter")}: ${slaText.breachedFilter}`}
+            onClick={() => onSlaBreachedChange?.(false)}
             className="rounded-full p-0.5 hover:bg-primary/20"
           >
             <X className="h-3 w-3" />

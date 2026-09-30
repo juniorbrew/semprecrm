@@ -10,7 +10,8 @@
 // CRON_INTERVAL_MS with the shared `x-cron-secret` header.
 //
 // Automatic AI replies (GET /api/ai/auto-reply/cron, migration 066) are
-// drained on every tick too.
+// drained on every tick too, and so are the SLA warnings / breaches
+// (GET /api/support/sla/cron, migration 072).
 //
 // The calendar sync (Google / Outlook, POST /api/integrations/calendar/sync)
 // rides on the same loop but on its own, slower interval
@@ -50,6 +51,7 @@ const ENDPOINTS = [
   { path: '/api/automations/cron', method: 'GET', everyMs: null },
   { path: '/api/flows/cron', method: 'GET', everyMs: null },
   { path: '/api/ai/auto-reply/cron', method: 'GET', everyMs: null },
+  { path: '/api/support/sla/cron', method: 'GET', everyMs: null },
   { path: '/api/integrations/calendar/sync', method: 'POST', everyMs: CALENDAR_SYNC_INTERVAL_MS },
 ]
 
@@ -79,7 +81,7 @@ function summarise(body) {
     if (i.errors) parts.push(`inactive_errors=${i.errors}`)
   }
   if (body.lead_events_purged != null) parts.push(`lead_events_purged=${body.lead_events_purged}`)
-  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff']) {
+  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'warnings', 'breaches', 'notified', 'attempted']) {
     if (k in body) parts.push(`${k}=${body[k]}`)
   }
   return parts.join(' ')

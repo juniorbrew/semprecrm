@@ -31,7 +31,10 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
+import { SlaSettings } from "./support-sla-settings";
+import { RoutingSettings, TeamsSettings } from "./support-teams-settings";
 
 const COPY: Record<
   Language,
@@ -198,13 +201,9 @@ export function SupportSettings() {
     <div>
       <SettingsPanelHead title={copy.title} description={copy.intro} />
 
-      <section aria-labelledby="support-categories" className="rounded-xl border border-border bg-card p-5">
-        <h3 id="support-categories" className="text-sm font-semibold text-foreground">
-          {copy.categories}
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">{copy.categoriesHint}</p>
-
-        <div className="mt-4">
+      <div className="space-y-8">
+      <SettingsGroup title={copy.categories} description={copy.categoriesHint}>
+        <div>
           {loading || profileLoading ? (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
@@ -236,7 +235,7 @@ export function SupportSettings() {
                     maxLength={CATEGORY_LIMITS.name}
                     className="h-8 max-w-64 text-sm"
                   />
-                  <Button type="submit" size="sm" disabled={adding || !newName.trim()}>
+                  <Button type="submit" size="sm" variant="outline" disabled={adding || !newName.trim()}>
                     {copy.add}
                   </Button>
                 </form>
@@ -273,9 +272,13 @@ export function SupportSettings() {
             </>
           )}
         </div>
-      </section>
+      </SettingsGroup>
 
       <AutoTriage copy={copy} readOnly={readOnly} hasCategories={live.length > 0} />
+      <SlaSettings readOnly={readOnly} />
+      <TeamsSettings readOnly={readOnly} />
+      <RoutingSettings readOnly={readOnly} />
+      </div>
     </div>
   );
 }
@@ -437,22 +440,19 @@ function AutoTriage({
   const hint = !aiEnabled ? copy.autoNeedsAi : !hasCategories ? copy.autoNeedsCategory : null;
 
   return (
-    <section aria-labelledby="support-auto" className="mt-6 rounded-xl border border-border bg-card p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h3 id="support-auto" className="text-sm font-semibold text-foreground">
-            {copy.auto}
-          </h3>
-          <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">{copy.autoBody}</p>
-          {loaded && hint && <p className="mt-2 text-xs text-muted-foreground">{hint}</p>}
-        </div>
+    <SettingsGroup
+      title={<span id="support-auto">{copy.auto}</span>}
+      description={copy.autoBody}
+      action={
         <Switch
           checked={triageEnabled}
           disabled={readOnly || saving || !loaded || !aiEnabled}
           onCheckedChange={(v) => void toggle(v)}
           aria-labelledby="support-auto"
         />
-      </div>
-    </section>
+      }
+    >
+      {loaded && hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </SettingsGroup>
   );
 }

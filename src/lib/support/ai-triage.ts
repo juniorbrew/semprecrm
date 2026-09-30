@@ -31,6 +31,7 @@ import {
 import { plainMessageText } from '@/lib/inbox/vcard'
 import type { ConversationPriority, ConversationSentiment } from '@/types'
 import { isPriority, isSentiment, type ConversationCategory } from './model'
+import { applyRouting } from './routing'
 import { aiPriority, sanitizeSubject, triageEvents, type TriageChange } from './triage-fields'
 
 export const TRIAGE_MIN_CONFIDENCE = 0.6
@@ -404,6 +405,8 @@ export async function runTriage(
     )
     if (evErr) console.error('[triage] event insert failed:', evErr.message)
   }
+  // A category the AI just set may have a routing rule (never throws).
+  if (plan.patch.category_id) await applyRouting(db, conversationId, { accountId })
   return { status: 'applied', result }
 }
 

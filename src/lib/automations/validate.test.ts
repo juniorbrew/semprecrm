@@ -378,3 +378,33 @@ describe("validateTriggerForActivation", () => {
     expect(validateTriggerForActivation("some_future_trigger", {})).toEqual([]);
   });
 });
+
+describe("support actions and SLA triggers (migrations 072-073)", () => {
+  it("set_category / assign_team need their target, set_priority a valid priority", () => {
+    expect(
+      validateStepsForActivation([
+        { step_type: "set_category", step_config: { category_id: "c" } },
+        { step_type: "set_priority", step_config: { priority: "urgent" } },
+        { step_type: "assign_team", step_config: { team_id: "t" } },
+      ]),
+    ).toEqual([]);
+    const issues = validateStepsForActivation([
+      { step_type: "set_category", step_config: { category_id: "" } },
+      { step_type: "set_priority", step_config: { priority: "critical" } },
+      { step_type: "assign_team", step_config: {} },
+    ]);
+    expect(issues.map((i) => i.path)).toEqual(["steps[0].category_id", "steps[1].priority", "steps[2].team_id"]);
+  });
+
+  it("sla triggers take an optional kind; the new event triggers need no config", () => {
+    for (const type of ["sla_warning", "sla_breached"] as const) {
+      expect(validateTriggerForActivation(type, {})).toEqual([]);
+      expect(validateTriggerForActivation(type, { kind: "resolution" })).toEqual([]);
+      expect(validateTriggerForActivation(type, { kind: "first_response" })).toEqual([]);
+      expect(validateTriggerForActivation(type, { kind: "soon" }).map((i) => i.path)).toEqual(["trigger.kind"]);
+    }
+    for (const type of ["category_set", "priority_changed", "team_changed"] as const) {
+      expect(validateTriggerForActivation(type, {})).toEqual([]);
+    }
+  });
+});

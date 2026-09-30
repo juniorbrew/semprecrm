@@ -16,6 +16,7 @@ export const PUSH_EVENT_KINDS = [
   'conversation_assigned',
   'chat_message',
   'calendar_reminder',
+  'sla_breached',
 ] as const;
 export type PushEventKind = (typeof PUSH_EVENT_KINDS)[number];
 
@@ -28,6 +29,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   conversation_assigned: true,
   chat_message: true,
   calendar_reminder: true,
+  sla_breached: true,
 };
 
 /** English labels — go through `t()` in the UI. */
@@ -55,6 +57,10 @@ export const PUSH_EVENT_LABELS: Record<PushEventKind, { title: string; descripti
   calendar_reminder: {
     title: 'Appointment reminders',
     description: 'Before an appointment you own or attend starts, at the reminder time set on the event.',
+  },
+  sla_breached: {
+    title: 'Deadline missed',
+    description: 'When a conversation assigned to you misses its deadline (admins also get the unassigned ones).',
   },
 };
 

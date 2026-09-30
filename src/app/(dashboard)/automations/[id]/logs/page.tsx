@@ -291,6 +291,9 @@ const STEP_TYPE_LABEL: Record<Lang, Record<string, string>> = {
     send_webhook: 'enviar webhook',
     close_conversation: 'resolver conversa',
     create_task: 'criar tarefa',
+    set_category: 'definir categoria',
+    set_priority: 'definir prioridade',
+    assign_team: 'atribuir à equipe',
   },
   'en-US': {
     send_message: 'send message',
@@ -305,6 +308,9 @@ const STEP_TYPE_LABEL: Record<Lang, Record<string, string>> = {
     send_webhook: 'send webhook',
     close_conversation: 'resolve conversation',
     create_task: 'create task',
+    set_category: 'set category',
+    set_priority: 'set priority',
+    assign_team: 'assign to team',
   },
 };
 

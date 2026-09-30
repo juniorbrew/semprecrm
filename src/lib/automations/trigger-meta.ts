@@ -52,6 +52,26 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Conversation Resolved',
     pillClass: 'border-lime-500/30 bg-lime-500/10 text-lime-300',
   },
+  sla_warning: {
+    label: 'SLA Warning',
+    pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  },
+  sla_breached: {
+    label: 'SLA Breached',
+    pillClass: 'border-red-500/30 bg-red-500/10 text-red-300',
+  },
+  category_set: {
+    label: 'Category Set',
+    pillClass: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
+  },
+  priority_changed: {
+    label: 'Priority Changed',
+    pillClass: 'border-rose-500/30 bg-rose-500/10 text-rose-300',
+  },
+  team_changed: {
+    label: 'Team Changed',
+    pillClass: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
+  },
 };
 
 const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
@@ -66,6 +86,11 @@ const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
   conversation_inactive: 'Conversa sem resposta',
   conversation_reopened: 'Conversa reaberta',
   conversation_resolved: 'Conversa resolvida',
+  sla_warning: 'Prazo perto de vencer',
+  sla_breached: 'Prazo estourado',
+  category_set: 'Categoria definida',
+  priority_changed: 'Prioridade alterada',
+  team_changed: 'Equipe alterada',
 };
 
 export function triggerMeta(

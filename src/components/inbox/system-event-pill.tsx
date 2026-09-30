@@ -12,6 +12,8 @@ import {
   Clock,
   DollarSign,
   Flag,
+  Timer,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Language } from "@/lib/i18n";
@@ -49,6 +51,12 @@ function EventIcon({ event }: { event: ConversationEvent }) {
       return <CheckCheck className={cls} />;
     case "deal_stage_changed":
       return <DollarSign className={cls} />;
+    case "sla_warning":
+      return <Timer className={cls} />;
+    case "sla_breached":
+      return <Timer className={cn(cls, "text-red-500")} />;
+    case "team_changed":
+      return <Users className={cls} />;
     case "contact_opted_out":
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":

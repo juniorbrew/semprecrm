@@ -152,6 +152,24 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
     case 'close_conversation':
       // No config required.
       break
+    case 'set_category':
+      if (!nonEmpty(c.category_id)) {
+        issues.push({ path: `${path}.category_id`, message: 'category is required' })
+      }
+      break
+    case 'set_priority':
+      if (!['low', 'normal', 'high', 'urgent'].includes(String(c.priority))) {
+        issues.push({
+          path: `${path}.priority`,
+          message: 'priority must be low, normal, high or urgent',
+        })
+      }
+      break
+    case 'assign_team':
+      if (!nonEmpty(c.team_id)) {
+        issues.push({ path: `${path}.team_id`, message: 'team is required' })
+      }
+      break
     case 'create_task':
       if (!nonEmpty(c.title)) {
         issues.push({ path: `${path}.title`, message: 'task title is required' })
@@ -211,6 +229,11 @@ export function validateTriggerForActivation(
   } else if (triggerType === 'tag_added') {
     if (!nonEmpty(cfg.tag_id)) {
       issues.push({ path: 'trigger.tag_id', message: 'tag is required' })
+    }
+  } else if (triggerType === 'sla_warning' || triggerType === 'sla_breached') {
+    // kind is optional ("either target"); when present it names one.
+    if (nonEmpty(cfg.kind) && !['first_response', 'resolution'].includes(String(cfg.kind))) {
+      issues.push({ path: 'trigger.kind', message: 'kind must be "first_response" or "resolution"' })
     }
   } else if (triggerType === 'lead_captured') {
     // source_id is optional ("any source"); when present it must be a uuid.

@@ -6,6 +6,10 @@ import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationPriority, ConversationStatus, WhatsAppChannel } from "@/types";
 import { useConversationCategories } from "@/hooks/use-conversation-categories";
+import { useSlaPolicies } from "@/hooks/use-sla-policies";
+import { useTeams } from "@/hooks/use-teams";
+import { slaCopy, activeSlaTarget, isSlaBreached } from "@/lib/support/sla";
+import { SlaRowLabel } from "./sla-indicator";
 import { CATEGORY_DOT, PRIORITY_DOT, supportCopy, type CategoryColor } from "@/lib/support/model";
 import type { Language } from "@/lib/i18n";
 import { useAuth } from "@/hooks/use-auth";
@@ -75,6 +79,7 @@ import {
   Clock,
   UserX,
   Snowflake,
+  Timer,
   Building2,
   RefreshCw,
   Keyboard,
@@ -336,8 +341,21 @@ export function ConversationList({
   const [priorityFilter, setPriorityFilter] = useState<ConversationPriority | null>(null);
   const { active: activeCategories, byId: categoryById } = useConversationCategories();
   const support = supportCopy(language);
+  // Team and "SLA estourado" filters (migrations 073 / 072).
+  const [teamFilter, setTeamFilter] = useState<string | null>(null);
+  const [slaBreached, setSlaBreached] = useState(false);
+  const { active: activeTeams, byId: teamById } = useTeams();
+  const { hasPolicies } = useSlaPolicies();
+  const sla = slaCopy(language);
   // The persisted support filters ride along with every persistTriage call.
-  const supportFilterRef = useRef<Pick<TriageState, "categoryId" | "priority">>({ categoryId: null, priority: null });
+  const supportFilterRef = useRef<Pick<TriageState, "categoryId" | "priority" | "teamId" | "slaBreached">>({
+    categoryId: null,
+    priority: null,
+    teamId: null,
+    slaBreached: false,
+  });
+  // A saved team that was deleted must not filter (nor show a chip).
+  const validTeamId = teamFilter && (teamById.size === 0 || teamById.has(teamFilter)) ? teamFilter : null;
   // A saved category that was deleted must not filter (nor show a chip).
   const validCategoryId =
     categoryId && (categoryById.size === 0 || categoryById.has(categoryId)) ? categoryId : null;
@@ -407,7 +425,14 @@ export function ConversationList({
           setChannelFilter(stored.channel);
           setCategoryId(stored.categoryId ?? null);
           setPriorityFilter(stored.priority ?? null);
-          supportFilterRef.current = { categoryId: stored.categoryId ?? null, priority: stored.priority ?? null };
+          setTeamFilter(stored.teamId ?? null);
+          setSlaBreached(stored.slaBreached === true);
+          supportFilterRef.current = {
+            categoryId: stored.categoryId ?? null,
+            priority: stored.priority ?? null,
+            teamId: stored.teamId ?? null,
+            slaBreached: stored.slaBreached === true,
+          };
         }
       } catch {
         // localStorage can throw in private-browsing / sandboxed contexts.
@@ -484,6 +509,24 @@ export function ConversationList({
     [persistTriage, tab, liveFilter, tagIds, channelFilter]
   );
 
+  const handleTeamFilterChange = useCallback(
+    (next: string | null) => {
+      setTeamFilter(next);
+      supportFilterRef.current = { ...supportFilterRef.current, teamId: next };
+      persistTriage({ tab, live: liveFilter, tagIds, channel: channelFilter });
+    },
+    [persistTriage, tab, liveFilter, tagIds, channelFilter]
+  );
+
+  const handleSlaBreachedChange = useCallback(
+    (next: boolean) => {
+      setSlaBreached(next);
+      supportFilterRef.current = { ...supportFilterRef.current, slaBreached: next };
+      persistTriage({ tab, live: liveFilter, tagIds, channel: channelFilter });
+    },
+    [persistTriage, tab, liveFilter, tagIds, channelFilter]
+  );
+
   useEffect(() => {
     if (facetsLoaded && validTagIds.length !== tagIds.length) {
       setTagIds(validTagIds);
@@ -529,8 +572,10 @@ export function ConversationList({
       channel,
       categoryId: validCategoryId,
       priority: priorityFilter,
+      teamId: validTeamId,
+      slaBreached,
     }),
-    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, validTagIds, channel, validCategoryId, priorityFilter],
+    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, validTagIds, channel, validCategoryId, priorityFilter, validTeamId, slaBreached],
   );
   const key = viewKey(view);
   const baseKey = viewKey({ ...view, search: "" });
@@ -684,7 +729,7 @@ export function ConversationList({
     const { data, error } = await createClient().rpc(
       "inbox_counts",
       countsArgs(
-        { live: effectiveLive, unread: unreadOnly, radar, tagIds: validTagIds, channel, categoryId: validCategoryId, priority: priorityFilter },
+        { live: effectiveLive, unread: unreadOnly, radar, tagIds: validTagIds, channel, categoryId: validCategoryId, priority: priorityFilter, teamId: validTeamId, slaBreached },
         { accountId, prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours } },
       ),
     );
@@ -694,7 +739,7 @@ export function ConversationList({
       return;
     }
     setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
-  }, [accountId, effectiveLive, unreadOnly, radar, validTagIds, channel, validCategoryId, priorityFilter, slaMinutes, coolingHours]);
+  }, [accountId, effectiveLive, unreadOnly, radar, validTagIds, channel, validCategoryId, priorityFilter, validTeamId, slaBreached, slaMinutes, coolingHours]);
   const fetchCountsRef = useRef(fetchCounts);
   useEffect(() => {
     fetchCountsRef.current = fetchCounts;
@@ -810,8 +855,14 @@ export function ConversationList({
     if (priorityFilter) {
       result = result.filter((c) => (c.priority ?? "normal") === priorityFilter);
     }
+    if (validTeamId) {
+      result = result.filter((c) => (c.team_id ?? null) === validTeamId);
+    }
+    if (slaBreached) {
+      result = result.filter((c) => isSlaBreached(c, now));
+    }
     return result;
-  }, [conversations, unreadOnly, radar, channel, validCategoryId, priorityFilter, preferences, now]);
+  }, [conversations, unreadOnly, radar, channel, validCategoryId, priorityFilter, validTeamId, slaBreached, preferences, now]);
 
   const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
@@ -929,13 +980,18 @@ export function ConversationList({
   }, [accountId]);
   const showOwner = useMemo(() => showOwnerBadge(tab, filtered), [tab, filtered]);
 
-  const anyFilter = unreadOnly || !!radar || validTagIds.length > 0 || !!channel || !!validCategoryId || !!priorityFilter;
+  const anyFilter =
+    unreadOnly || !!radar || validTagIds.length > 0 || !!channel || !!validCategoryId || !!priorityFilter || !!validTeamId || slaBreached;
   const clearFilters = useCallback(() => {
     setUnreadOnly(false);
     if (radar) setRadar(null);
     handleTagsChange([]);
     handleChannelChange(null);
-  }, [radar, setRadar, handleTagsChange, handleChannelChange]);
+    handleCategoryChange(null);
+    handlePriorityChange(null);
+    handleTeamFilterChange(null);
+    handleSlaBreachedChange(false);
+  }, [radar, setRadar, handleTagsChange, handleChannelChange, handleCategoryChange, handlePriorityChange, handleTeamFilterChange, handleSlaBreachedChange]);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -1001,6 +1057,12 @@ export function ConversationList({
               priority={priorityFilter}
               onCategoryChange={handleCategoryChange}
               onPriorityChange={handlePriorityChange}
+              teams={activeTeams}
+              teamId={validTeamId}
+              onTeamChange={handleTeamFilterChange}
+              slaEnabled={hasPolicies}
+              slaBreached={slaBreached}
+              onSlaBreachedChange={handleSlaBreachedChange}
             />
 
             {/* Unread-only toggle */}
@@ -1059,6 +1121,11 @@ export function ConversationList({
           priority={priorityFilter}
           onCategoryChange={handleCategoryChange}
           onPriorityChange={handlePriorityChange}
+          teams={activeTeams}
+          teamId={validTeamId}
+          onTeamChange={handleTeamFilterChange}
+          slaBreached={slaBreached}
+          onSlaBreachedChange={handleSlaBreachedChange}
         />
 
         {/* Radar chips (spec §3): waiting past SLA · open without owner ·
@@ -1106,6 +1173,33 @@ export function ConversationList({
               </button>
             );
           })}
+          {(hasPolicies || slaBreached) && (
+            <button
+              type="button"
+              aria-pressed={slaBreached}
+              title={sla.breachedFilter}
+              onClick={() => handleSlaBreachedChange(!slaBreached)}
+              className={cn(
+                "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] font-medium whitespace-nowrap transition-colors",
+                slaBreached
+                  ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
+                  : counts.slaBreached > 0
+                    ? "border-border bg-muted/60 text-foreground hover:bg-muted"
+                    : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <Timer className="h-3 w-3" aria-hidden />
+              {sla.breachedChip}
+              <span
+                className={cn(
+                  "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums leading-none",
+                  slaBreached ? "bg-background/70" : "bg-background/60 text-muted-foreground",
+                )}
+              >
+                {counts.slaBreached}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Queue tabs with live counts */}
@@ -1223,7 +1317,8 @@ export function ConversationList({
                 channelLabel={copy.channel}
                 channelChip={copy.channelChip}
                 moreTags={copy.moreTags}
-                waitingLabel={waitingLabelFor(conv, preferences, now, language)}
+                waitingLabel={activeSlaTarget(conv) ? null : waitingLabelFor(conv, preferences, now, language)}
+                now={now}
                 waitingTitle={copy.waitingTitle}
                 queue={
                   tab === "queue"
@@ -1329,6 +1424,8 @@ export interface ConversationItemProps {
   moreTags: (n: number) => string;
   /** Set when the customer is waiting past the SLA ("há 12 min"). */
   waitingLabel: string | null;
+  /** Clock of the list (minute tick), for the SLA remaining time. */
+  now?: number;
   waitingTitle: string;
   /** Fila tab only: position + wait. */
   queue: QueueBadge | null;
@@ -1353,6 +1450,7 @@ export function ConversationItem({
   waitingLabel,
   waitingTitle,
   queue,
+  now,
 }: ConversationItemProps) {
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
@@ -1503,6 +1601,7 @@ export function ConversationItem({
             {conversation.last_message_text || "No messages yet"}
           </p>
           <div data-no-translate className="flex shrink-0 items-center gap-1.5">
+            {now !== undefined && <SlaRowLabel conversation={conversation} now={now} />}
             {waitingLabel && !queue && (
               <span
                 title={waitingTitle}

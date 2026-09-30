@@ -31,6 +31,7 @@ import {
 import { engineSendText, engineSendTemplate } from './meta-send'
 import { DestinoNaoPermitido, fetchSeguro } from '@/lib/webhooks/ssrf'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
+import { applyRouting } from '@/lib/support/routing'
 import type { AccountPreferences } from '@/types'
 import { parseAccountPreferences } from '@/lib/account-preferences'
 import { isWithinBusinessHours, localClock } from '@/lib/business-hours'
@@ -855,11 +856,89 @@ async function describeStep(step: AutomationStep, args: ExecuteArgs): Promise<st
       return `chamaria o webhook ${String(cfg.url ?? '')}`
     case 'close_conversation':
       return 'resolveria a conversa'
+    case 'set_category':
+      return 'definiria a categoria da conversa'
+    case 'set_priority':
+      return `definiria a prioridade como ${String(cfg.priority ?? '')}`
+    case 'assign_team':
+      return 'atribuiria a conversa à equipe escolhida'
     case 'create_task':
       return `criaria a tarefa "${await interpolate(String(cfg.title ?? ''), args)}"`
     default:
       return `executaria ${step.step_type}`
   }
+}
+
+/**
+ * set_category / set_priority / assign_team (migrations 071-073). One RPC
+ * writes the field so the event it raises (category_set, priority_changed,
+ * team_changed) inherits this run's depth — loop protection, like the tag
+ * and assignment actions. The conversation event is logged only when the
+ * value really changed; a new category also runs its routing rule.
+ */
+export async function runSupportStep(step: AutomationStep, args: ExecuteArgs): Promise<string> {
+  const db = supabaseAdmin()
+  const accountId = args.automation.account_id
+  const cfg = step.step_config as Record<string, unknown>
+  const conversationId = await resolveConversationId(args)
+
+  const categoryId = step.step_type === 'set_category' ? String(cfg.category_id ?? '') : ''
+  const priority = step.step_type === 'set_priority' ? String(cfg.priority ?? '') : ''
+  const teamId = step.step_type === 'assign_team' ? String(cfg.team_id ?? '') : ''
+  if (step.step_type === 'set_category' && !categoryId) throw new Error('set_category needs a category')
+  if (step.step_type === 'set_priority' && !['low', 'normal', 'high', 'urgent'].includes(priority)) {
+    throw new Error('set_priority needs a valid priority')
+  }
+  if (step.step_type === 'assign_team' && !teamId) throw new Error('assign_team needs a team')
+
+  const { data: before } = await db
+    .from('conversations')
+    .select('category_id, priority, team_id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (!before) throw new Error('conversation not found')
+  const prev = before as { category_id: string | null; priority: string; team_id: string | null }
+
+  const { data: ok, error } = await db.rpc('automation_set_conversation', {
+    p_account_id: accountId,
+    p_conversation_id: conversationId,
+    p_category_id: categoryId || null,
+    p_priority: priority || null,
+    p_team_id: teamId || null,
+    p_depth: args.depth + 1,
+    p_origin: args.automation.id,
+  })
+  if (error) throw new Error(`${step.step_type} failed: ${error.message}`)
+  if (!ok) throw new Error('conversation not found')
+
+  const event = async (event_type: string, payload: Record<string, unknown>) => {
+    await db.from('conversation_events').insert({
+      account_id: accountId,
+      conversation_id: conversationId,
+      actor_user_id: null,
+      event_type,
+      payload: { ...payload, source: 'automation' },
+    })
+  }
+
+  if (categoryId) {
+    if (categoryId === prev.category_id) return 'category already set'
+    const { data: cat } = await db.from('conversation_categories').select('name').eq('id', categoryId).eq('account_id', accountId).maybeSingle()
+    await event('category_changed', { category_id: categoryId, category_name: (cat as { name?: string } | null)?.name ?? null })
+    // The new category may have a routing rule (team + available member).
+    await applyRouting(db, conversationId, { accountId, depth: args.depth + 1, origin: args.automation.id })
+    return `category ${categoryId} set`
+  }
+  if (priority) {
+    if (priority === prev.priority) return 'priority already set'
+    await event('priority_changed', { priority, previous_priority: prev.priority })
+    return `priority ${priority} set`
+  }
+  if (teamId === prev.team_id) return 'team already set'
+  const { data: team } = await db.from('teams').select('name').eq('id', teamId).eq('account_id', accountId).maybeSingle()
+  await event('team_changed', { team_id: teamId, team_name: (team as { name?: string } | null)?.name ?? null })
+  return `team ${teamId} set`
 }
 
 async function tagName(args: ExecuteArgs, tagId: unknown): Promise<string> {
@@ -1118,6 +1197,11 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       return 'conversation closed'
     }
 
+    case 'set_category':
+    case 'set_priority':
+    case 'assign_team':
+      return runSupportStep(step, args)
+
     case 'create_task': {
       const cfg = step.step_config as CreateTaskStepConfig
       const accountId = args.automation.account_id
@@ -1255,6 +1339,12 @@ function triggerMatches(automation: Automation, ctx: AutomationContext | undefin
     // inactivity rule in the same account does not piggy-back.
     const wanted = ctx?.vars?.inactive_automation_id
     return !wanted || wanted === automation.id
+  }
+  if (automation.trigger_type === 'sla_warning' || automation.trigger_type === 'sla_breached') {
+    // Optional filter on which target (first response / resolution); the
+    // event (migration 072) carries `kind` in its context.
+    const wanted = (automation.trigger_config as { kind?: string } | null)?.kind
+    return !wanted || ctx?.vars?.kind === wanted
   }
   if (automation.trigger_type === 'tag_added') {
     // The rule names one tag; the event carries the tag that was added.

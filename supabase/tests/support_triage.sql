@@ -141,7 +141,7 @@ BEGIN
     VALUES ((SELECT acc_a FROM ids), (SELECT conv_1 FROM ids), t, '{}'::jsonb);
   END LOOP;
 END $$;
-SELECT pg_temp.assert_fails(format('INSERT INTO conversation_events(account_id, conversation_id, event_type) VALUES (%L, %L, %L)', (SELECT acc_a FROM ids), (SELECT conv_1 FROM ids), 'sla_breached'), 'unknown event type rejected');
+SELECT pg_temp.assert_fails(format('INSERT INTO conversation_events(account_id, conversation_id, event_type) VALUES (%L, %L, %L)', (SELECT acc_a FROM ids), (SELECT conv_1 FROM ids), 'not_a_real_event'), 'unknown event type rejected');
 
 -- ---- ai_settings / ai_usage ---------------------------------------------
 INSERT INTO ai_settings(account_id) VALUES ((SELECT acc_a FROM ids)) ON CONFLICT (account_id) DO NOTHING;
