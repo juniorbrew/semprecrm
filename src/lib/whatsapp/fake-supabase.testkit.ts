@@ -6,7 +6,7 @@
 //
 // Supports what broadcast-core / broadcast-resume use: select (with
 // { count: 'exact', head: true }), insert, update, eq, neq, in, is,
-// lt, not(col,'is',null), or(...) with and(...) groups, order, range,
+// lt, gte, not(col,'is',null), or(...) with and(...) groups, order, range,
 // limit, maybeSingle, single, and `await`. Each statement executes
 // synchronously when awaited, so an UPDATE ... WHERE is atomic exactly
 // like a single Postgres statement is.
@@ -108,8 +108,14 @@ export class FakeDb {
     return `id-${this.seq}`;
   }
 
+  /** Optional `rpc` handler for tests that call Postgres functions. */
+  rpcHandler: ((fn: string, args: Row) => { data: unknown; error: unknown }) | null = null;
+
   client(): SupabaseClient {
-    return { from: (t: string) => new Query(this, t) } as unknown as SupabaseClient;
+    return {
+      from: (t: string) => new Query(this, t),
+      rpc: async (fn: string, args: Row) => this.rpcHandler?.(fn, args) ?? { data: null, error: null },
+    } as unknown as SupabaseClient;
   }
 }
 
@@ -172,6 +178,10 @@ class Query implements PromiseLike<unknown> {
   }
   lt(col: string, val: unknown) {
     this.preds.push((r) => r[col] != null && cmp(r[col], val) < 0);
+    return this;
+  }
+  gte(col: string, val: unknown) {
+    this.preds.push((r) => r[col] != null && cmp(r[col], val) >= 0);
     return this;
   }
   not(col: string, op: string, val: unknown) {

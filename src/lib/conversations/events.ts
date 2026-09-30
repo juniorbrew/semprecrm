@@ -18,6 +18,7 @@ import type {
   ConversationStatus,
 } from '@/types'
 import type { Language } from '@/lib/i18n'
+import { normalizeTransferReason } from './transfer-reason'
 
 export type { ConversationEventType } from '@/types'
 
@@ -50,6 +51,13 @@ export interface ConversationEvent {
   note_id?: string
   /** `contact_opted_out`: the normalised stop word the customer sent. */
   keyword?: string
+  /** `assigned`: the optional note that came with a transfer. */
+  reason?: string
+  /** `deal_stage_changed` */
+  deal_id?: string
+  deal_title?: string
+  from_stage_name?: string
+  to_stage_name?: string
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -109,6 +117,12 @@ export function eventFromRecord(
     tag_name: payload.tag_name,
     note_id: payload.note_id,
     keyword: payload.keyword,
+    deal_id: payload.deal_id,
+    deal_title: payload.deal_title,
+    from_stage_name: payload.from_stage_name,
+    to_stage_name: payload.to_stage_name,
+    reason:
+      row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
 }
 
@@ -262,6 +276,11 @@ export function formatConversationEvent(
       if (actor && event.self_assigned) {
         return pt ? `${actor} atribuiu para si` : `${actor} self-assigned`
       }
+      if (actor && who && event.reason) {
+        return pt
+          ? `Transferida por ${actor} para ${who} — ${event.reason}`
+          : `Transferred by ${actor} to ${who} — ${event.reason}`
+      }
       if (actor && who) {
         return pt ? `${actor} atribuiu para ${who}` : `${actor} assigned to ${who}`
       }
@@ -318,6 +337,37 @@ export function formatConversationEvent(
         : pt
           ? 'Contato reativado'
           : 'Contact reactivated'
+    case 'deal_stage_changed': {
+      // Anonymisation empties the payload: fall back to a generic sentence.
+      const hasStages = !!event.from_stage_name || !!event.to_stage_name
+      const title = event.deal_title ? ` ${event.deal_title}` : ''
+      const base = !hasStages
+        ? pt
+          ? `Negócio${title} movido de etapa`
+          : `Deal${title} moved to another stage`
+        : pt
+          ? `Negócio${title} movido de ${event.from_stage_name ?? '—'} para ${event.to_stage_name ?? '—'}`
+          : `Deal${title} moved from ${event.from_stage_name ?? '—'} to ${event.to_stage_name ?? '—'}`
+      return actor ? (pt ? `${base} por ${actor}` : `${base} by ${actor}`) : base
+    }
+    case 'ai_handoff':
+      return pt ? 'A IA passou a conversa para a equipe' : 'The AI handed the conversation to the team'
+    case 'ai_paused':
+      return actor
+        ? pt
+          ? `${actor} pausou a IA nesta conversa`
+          : `${actor} paused the AI in this conversation`
+        : pt
+          ? 'IA pausada nesta conversa'
+          : 'AI paused in this conversation'
+    case 'ai_resumed':
+      return actor
+        ? pt
+          ? `${actor} retomou a IA nesta conversa`
+          : `${actor} resumed the AI in this conversation`
+        : pt
+          ? 'IA retomada nesta conversa'
+          : 'AI resumed in this conversation'
     default:
       return ''
   }

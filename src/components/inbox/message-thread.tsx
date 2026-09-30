@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
@@ -61,6 +61,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
+import { TransferDialog } from "./transfer-dialog";
+import { normalizeTransferReason, transferEventPayload } from "@/lib/conversations/transfer-reason";
+import { INBOX_SHORTCUT_EVENT, type ShortcutAction } from "@/lib/inbox/shortcuts";
 import { updateConversationAssignee } from "@/lib/conversations/assign";
 import {
   conversationContinuity,
@@ -84,6 +87,7 @@ import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { InternalNoteBubble } from "./internal-note-bubble";
 import { SystemEventPill } from "./system-event-pill";
+import { AiHandoffCard, AiPauseButton, useAiAutoState } from "./ai-auto-controls";
 import { ContactAvatar } from "./contact-avatar";
 import { useConversationEvents } from "@/hooks/use-conversation-events";
 import {
@@ -102,6 +106,17 @@ import {
 } from "@/lib/conversations/timeline";
 import { toast } from "sonner";
 import { renderTemplateBody } from "@/lib/whatsapp/template-body";
+import {
+  anchoredScrollTop,
+  mergeOlder,
+  MESSAGE_PAGE_SIZE,
+  missingParentIds,
+  olderThanFilter,
+  oldestPersisted,
+  pageFromNewestFirst,
+  resyncLimit,
+  withinLoadedWindow,
+} from "@/lib/inbox/message-paging";
 
 interface ReplyDraft {
   id: string;
@@ -225,6 +240,9 @@ const THREAD_STATUS_COPY: Record<
     /** Channel chip + tooltip in the header (migration 026). */
     channelChip: Record<WhatsAppChannel, string>;
     channelTitle: Record<WhatsAppChannel, string>;
+    /** History paging: button above the oldest loaded message + failure toast. */
+    olderMessages: string;
+    olderFailed: string;
     /** Queue actions (Assumir / Transferir / Arquivar). */
     claim: string;
     claimTitle: string;
@@ -276,6 +294,8 @@ const THREAD_STATUS_COPY: Record<
     changeStatus: "Alterar status",
     back: "Voltar para as conversas",
     channelChip: { official: "Oficial", qr: "QR" },
+    olderMessages: "Carregar mensagens anteriores",
+    olderFailed: "Não foi possível carregar as mensagens anteriores",
     channelTitle: {
       official: "Canal: API oficial do WhatsApp",
       qr: "Canal: WhatsApp via QR code (sem janela de 24 h nem modelos)",
@@ -332,6 +352,8 @@ const THREAD_STATUS_COPY: Record<
     changeStatus: "Change status",
     back: "Back to conversations",
     channelChip: { official: "Official", qr: "QR" },
+    olderMessages: "Load earlier messages",
+    olderFailed: "Could not load earlier messages",
     channelTitle: {
       official: "Channel: official WhatsApp API",
       qr: "Channel: WhatsApp via QR code (no 24-hour window or templates)",
@@ -455,6 +477,12 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  // Automatic reply (migration 066): pause / resume + hand-over card.
+  // Refetched when the realtime row's pause or status changes.
+  const { state: aiAuto, reload: reloadAiAuto } = useAiAutoState(
+    conversation?.id,
+    `${conversation?.ai_paused_until ?? ""}|${conversation?.status ?? ""}|${resyncToken}`,
+  );
 
   // A resolved conversation is final (migration 060): the contact's other
   // conversations drive the "Conversa anterior" line and the guards that
@@ -569,19 +597,22 @@ export function MessageThread({
   const sessionInfo = useMemo(() => {
     if (!messages.length) return { expired: false, remaining: "", short: "" };
 
-    // Find last customer message
+    // Find last customer message. Only the newest page is loaded, so when
+    // it holds none the conversation's own timestamp answers.
     const lastCustomerMsg = [...messages]
       .reverse()
       .find((m) => m.sender_type === "customer");
+    const lastCustomerAt =
+      lastCustomerMsg?.created_at ?? conversation?.last_customer_message_at ?? null;
 
-    if (!lastCustomerMsg)
+    if (!lastCustomerAt)
       return {
         expired: true,
         remaining: "No customer messages",
         short: "Expired",
       };
 
-    const hoursSince = differenceInHours(new Date(), new Date(lastCustomerMsg.created_at));
+    const hoursSince = differenceInHours(new Date(), new Date(lastCustomerAt));
     const expired = hoursSince >= 24;
 
     if (expired) {
@@ -598,7 +629,7 @@ export function MessageThread({
         : `${Math.floor(hoursLeft * 60)}m`;
 
     return { expired, remaining: `${short} remaining`, short };
-  }, [messages]);
+  }, [messages, conversation?.last_customer_message_at]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -621,7 +652,17 @@ export function MessageThread({
   // they only flip hasUnread, which only the reset effect listens to.
   // A resync of the same conversation refetches silently — the spinner
   // is only for opening a thread, not for background catch-ups.
+  //
+  // Only the newest page is loaded (a resync refetches as many as are
+  // loaded, so it never collapses history the agent scrolled back to);
+  // "Carregar mensagens anteriores" pages backwards (`loadOlder`).
   const loadedConversationIdRef = useRef<string | null>(null);
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  });
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   useEffect(() => {
     if (!conversationId) return;
 
@@ -629,22 +670,31 @@ export function MessageThread({
     let cancelled = false;
     const isResync = loadedConversationIdRef.current === conversationId;
     loadedConversationIdRef.current = conversationId;
+    const limit = isResync ? resyncLimit(messagesRef.current) : MESSAGE_PAGE_SIZE;
 
     (async () => {
-      if (!isResync) setLoading(true);
+      if (!isResync) {
+        setLoading(true);
+        setHasOlder(false);
+      }
 
+      // One extra row tells whether older messages exist.
       const { data, error } = await supabase
         .from("messages")
         .select("*")
         .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(limit + 1);
 
       if (cancelled) return;
 
       if (error) {
         console.error("Failed to fetch messages:", error);
       } else {
-        onMessagesLoadedRef.current(data ?? []);
+        const page = pageFromNewestFirst((data ?? []) as Message[], limit);
+        setHasOlder(page.hasMore);
+        onMessagesLoadedRef.current(page.messages);
       }
 
       if (!cancelled) setLoading(false);
@@ -658,6 +708,74 @@ export function MessageThread({
     // realtime is best-effort and any message events sent while the WS
     // was disconnected or throttled are otherwise lost.
   }, [conversationId, resyncToken]);
+
+  // Older page: fetched with a (created_at, id) keyset from the oldest
+  // loaded message and prepended; the scroll position is captured first and
+  // restored in the layout effect below so the message under the eye stays put.
+  const scrollAnchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+  const loadOlder = useCallback(async () => {
+    if (!conversationId || loadingOlder || !hasOlder) return;
+    const cursor = oldestPersisted(messagesRef.current);
+    if (!cursor) return;
+    setLoadingOlder(true);
+    try {
+      const { data, error } = await createClient()
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .or(olderThanFilter(cursor))
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(MESSAGE_PAGE_SIZE + 1);
+      if (error) {
+        console.error("Failed to fetch older messages:", error);
+        toast.error(statusCopy.olderFailed);
+        return;
+      }
+      // The agent moved to another conversation while this was in flight.
+      if (loadedConversationIdRef.current !== conversationId) return;
+      const page = pageFromNewestFirst((data ?? []) as Message[], MESSAGE_PAGE_SIZE);
+      const el = scrollRef.current;
+      if (el) scrollAnchorRef.current = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight };
+      setHasOlder(page.hasMore);
+      onMessagesLoadedRef.current(mergeOlder(messagesRef.current, page.messages));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [conversationId, loadingOlder, hasOlder, statusCopy.olderFailed]);
+
+  useLayoutEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    const el = scrollRef.current;
+    if (!anchor || !el) return;
+    scrollAnchorRef.current = null;
+    el.scrollTop = anchoredScrollTop(anchor, el.scrollHeight);
+  }, [messages]);
+
+  // Reply parents that are older than the loaded page are fetched on demand
+  // so the quote above a reply still renders.
+  const [quotedExtra, setQuotedExtra] = useState<Map<string, Message>>(() => new Map());
+  const requestedParentsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const missing = missingParentIds(messages, requestedParentsRef.current);
+    if (missing.length === 0) return;
+    for (const id of missing) requestedParentsRef.current.add(id);
+    void createClient()
+      .from("messages")
+      .select("*")
+      .in("id", missing)
+      .then(({ data, error }) => {
+        if (error) {
+          for (const id of missing) requestedParentsRef.current.delete(id);
+          return;
+        }
+        setQuotedExtra((prev) => {
+          const next = new Map(prev);
+          for (const m of (data ?? []) as Message[]) next.set(m.id, m);
+          return next;
+        });
+      });
+  }, [messages]);
 
   // Reactions fetch — pulls the current state from the DB. Kept separate
   // from the channel subscription below so a `resyncToken` bump just
@@ -832,8 +950,10 @@ export function MessageThread({
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].sender_type === "customer") return messages[i].id;
     }
-    return null;
-  }, [messages]);
+    // Only the newest page is loaded: when it holds no customer message
+    // (long agent / bot tail) the conversation's own timestamp stands in.
+    return conversation?.last_customer_message_at ?? null;
+  }, [messages, conversation?.last_customer_message_at]);
   useEffect(() => {
     if (!conversationId || !lastCustomerMessageId) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -860,7 +980,6 @@ export function MessageThread({
   useEffect(() => {
     const signature = [
       conversationId,
-      messages.length,
       messages[messages.length - 1]?.id,
       notes.length,
       eventRecords.length,
@@ -1063,15 +1182,20 @@ export function MessageThread({
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
   // as "still open" for this toggle, so the button always resolves
   // unless the thread is already closed.
-  const handleResolveToggle = useCallback(async () => {
+  const handleResolveToggle = useCallback(async (withUndo = false) => {
     if (!conversation) return;
     const next: ConversationStatus =
       conversation.status === "closed" ? "open" : "closed";
     if (!(await handleStatusChange(next))) return;
-    toast.success(
-      next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast
-    );
-  }, [conversation, handleStatusChange, statusCopy]);
+    const message = next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast;
+    if (withUndo && next === "closed") {
+      toast.success(message, {
+        action: { label: t("Undo"), onClick: () => void handleStatusChange("open") },
+      });
+    } else {
+      toast.success(message);
+    }
+  }, [conversation, handleStatusChange, statusCopy, t]);
 
   // ---- Internal notes ----------------------------------------------
 
@@ -1319,7 +1443,7 @@ export function MessageThread({
   const handleAssignChange = useCallback(
     async (
       agentId: string | null,
-      opts: { expectCurrent?: boolean } = {},
+      opts: { expectCurrent?: boolean; reason?: string | null } = {},
     ): Promise<"ok" | "failed" | "conflict"> => {
       if (!conversation) return "failed";
 
@@ -1350,17 +1474,23 @@ export function MessageThread({
       onAssignChange(conversation.id, agentId);
       if (agentId && agentId !== user?.id) {
         // Push (spec round 2 §5d): the server notifies the new assignee.
-        notifyPushEvent({ kind: "conversation_assigned", conversation_id: conversation.id });
+        const reason = normalizeTransferReason(opts.reason);
+        notifyPushEvent({
+          kind: "conversation_assigned",
+          conversation_id: conversation.id,
+          ...(reason ? { reason } : {}),
+        });
       }
       if (agentId) {
         const assignee = profiles.find((p) => p.user_id === agentId);
         void logEvent({
           event_type: "assigned",
-          payload: {
-            assignee_user_id: agentId,
-            assignee_name: assignee?.full_name ?? undefined,
-            self_assigned: agentId === user?.id,
-          },
+          payload: transferEventPayload({
+            assigneeUserId: agentId,
+            assigneeName: assignee?.full_name,
+            selfAssigned: agentId === user?.id,
+            reason: opts.reason,
+          }),
         });
       } else {
         void logEvent({ event_type: "unassigned", payload: {} });
@@ -1377,10 +1507,38 @@ export function MessageThread({
     if (outcome === "ok") toast.success(statusCopy.claimedToast);
   }, [handleAssignChange, user?.id, statusCopy]);
 
+  // Keyboard shortcuts "a" (Assumir) / "e" (Resolver): the page already
+  // applied the header rules; re-check them here against this thread's state.
+  const shortcutRef = useRef({ handleClaim, handleResolveToggle, conversation, accountRole, userId: user?.id });
+  useEffect(() => {
+    shortcutRef.current = { handleClaim, handleResolveToggle, conversation, accountRole, userId: user?.id };
+  });
+  useEffect(() => {
+    const onShortcut = (e: Event) => {
+      const action = (e as CustomEvent<ShortcutAction>).detail;
+      const st = shortcutRef.current;
+      if (!st.conversation || (action !== "claim" && action !== "resolve")) return;
+      const allowed = conversationHeaderActions({
+        role: st.accountRole,
+        userId: st.userId,
+        conversation: st.conversation,
+        tasksEnabled: false,
+      });
+      if (action === "claim" && allowed.claim.enabled) void st.handleClaim();
+      if (action === "resolve" && allowed.close.enabled && st.conversation.status !== "closed") {
+        void st.handleResolveToggle(true);
+      }
+    };
+    window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+    return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+  }, []);
+
   // Arquivar = resolve + `archived_at` (migration 056); Desarquivar only
   // clears `archived_at` (the thread stays resolved). The DB trigger
   // unarchives by itself when the customer writes again or it reopens.
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  // Transferir: picking a teammate (other than me) asks for an optional reason.
+  const [transferTarget, setTransferTarget] = useState<Profile | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const handleArchive = useCallback(
     async (archive: boolean) => {
@@ -1441,8 +1599,17 @@ export function MessageThread({
     const logged = eventRecords.map((r) => eventFromRecord(r, profileName));
     const baseline = deriveBaselineEvents(conversation, logged, profileName);
     const visible = [...logged, ...baseline].filter(isVisibleEvent);
-    return groupTimelineByDay(buildThreadTimeline(messages, notes, visible));
-  }, [conversation, messages, notes, eventRecords, profiles]);
+    // Notes / pills older than the loaded page wait until the history
+    // reaches them (otherwise they float above messages not loaded yet).
+    const oldestAt = oldestPersisted(messages)?.created_at ?? null;
+    return groupTimelineByDay(
+      buildThreadTimeline(
+        messages,
+        withinLoadedWindow(notes, oldestAt, hasOlder),
+        withinLoadedWindow(visible, oldestAt, hasOlder),
+      ),
+    );
+  }, [conversation, messages, notes, eventRecords, profiles, hasOlder]);
   const timelineNow = Date.now();
 
   // Empty state — same WhatsApp-style doodle background as the active
@@ -1593,6 +1760,14 @@ export function MessageThread({
           {/* Assumir — outline, one click to own the thread. Once it is
               mine, a static "✓ Sua" takes its place; hidden when resolved;
               disabled for viewers. */}
+          {aiAuto && (
+            <AiPauseButton
+              conversationId={conversation.id}
+              state={aiAuto}
+              canWrite={actions.canWrite}
+              onChanged={reloadAiAuto}
+            />
+          )}
           {actions.claimIsMine && (
             <span
               data-no-translate
@@ -1657,7 +1832,11 @@ export function MessageThread({
                   return (
                     <DropdownMenuItem
                       key={p.id}
-                      onClick={() => handleAssignChange(p.user_id)}
+                      onClick={() =>
+                        p.user_id === user?.id || isSelected
+                          ? handleAssignChange(p.user_id)
+                          : setTransferTarget(p)
+                      }
                       className={cn(
                         "text-sm",
                         isSelected ? "text-primary" : "text-popover-foreground"
@@ -1703,7 +1882,7 @@ export function MessageThread({
           >
             <button
               type="button"
-              onClick={handleResolveToggle}
+              onClick={() => void handleResolveToggle()}
               disabled={!actions.close.enabled}
               aria-label={isResolved ? statusCopy.reopen : statusCopy.resolve}
               title={
@@ -1879,6 +2058,16 @@ export function MessageThread({
         </div>
       </div>
 
+      <TransferDialog
+        targetName={transferTarget ? transferTarget.full_name || "?" : null}
+        onCancel={() => setTransferTarget(null)}
+        onConfirm={(reason) => {
+          const target = transferTarget;
+          setTransferTarget(null);
+          if (target) void handleAssignChange(target.user_id, { reason });
+        }}
+      />
+
       <Dialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
         <DialogContent data-no-translate>
           <DialogHeader>
@@ -1947,6 +2136,21 @@ export function MessageThread({
             )}
           </p>
         )}
+        {hasOlder && !loading && (
+          <div className="mb-3 flex justify-center" data-no-translate>
+            <button
+              type="button"
+              onClick={() => void loadOlder()}
+              disabled={loadingOlder}
+              className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+            >
+              {loadingOlder && (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              )}
+              {statusCopy.olderMessages}
+            </button>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -2000,7 +2204,8 @@ export function MessageThread({
                     }
                     const msg = item.message;
                     const parent = msg.reply_to_message_id
-                      ? messagesById.get(msg.reply_to_message_id)
+                      ? (messagesById.get(msg.reply_to_message_id) ??
+                        quotedExtra.get(msg.reply_to_message_id))
                       : null;
                     const reply = parent
                       ? {
@@ -2035,6 +2240,7 @@ export function MessageThread({
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
+                          onOpenConversation={onOpenConversation ? openConversation : undefined}
                           senderLabel={senderLabelFor(msg, {
                             currentUserId: user?.id,
                             nameFor: profileNameFor,
@@ -2067,6 +2273,14 @@ export function MessageThread({
             </button>
           )}
         </div>
+      )}
+
+      {aiAuto?.handoff && (
+        <AiHandoffCard
+          handoff={aiAuto.handoff}
+          canClaim={actions.claim.visible && actions.claim.enabled}
+          onClaim={() => void handleClaim()}
+        />
       )}
 
       {/* Composer */}

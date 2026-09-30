@@ -294,6 +294,12 @@ export interface Conversation {
    * cleared by a DB trigger when the customer writes again or it reopens.
    */
   archived_at?: string | null;
+  /**
+   * Automatic reply (migration 066): the AI stays quiet until then
+   * ('infinity' = until resumed); last automatic reply.
+   */
+  ai_paused_until?: string | null;
+  ai_last_reply_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
@@ -306,7 +312,7 @@ export type SenderType = 'customer' | 'agent' | 'bot';
  * 059). `phone` = sent from the connected phone / WhatsApp Web (QR echo,
  * sender_type 'agent', no sender_id). NULL/absent = inbox send or legacy.
  */
-export type MessageOrigin = 'phone' | 'automation' | 'flow' | 'system';
+export type MessageOrigin = 'phone' | 'automation' | 'flow' | 'system' | 'ai';
 export type ContentType =
   | 'text'
   | 'image'
@@ -381,7 +387,13 @@ export type ConversationEventType =
   | 'note_added'
   /** Contact opt-out (migration 030): customer sent a stop word / admin reactivated. */
   | 'contact_opted_out'
-  | 'contact_opted_in';
+  | 'contact_opted_in'
+  /** Automatic reply (migration 066): hand-over to the team, per-conversation pause / resume. */
+  | 'ai_handoff'
+  | 'ai_paused'
+  | 'ai_resumed'
+  /** Deal moved between stages from the inbox panel (migration 070). */
+  | 'deal_stage_changed';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -404,6 +416,13 @@ export interface ConversationEventPayload {
   note_id?: string;
   /** `contact_opted_out` — the normalised stop word that triggered it. */
   keyword?: string;
+  /** `ai_handoff` — why the AI handed the conversation over. */
+  reason?: string;
+  /** `deal_stage_changed` */
+  deal_id?: string;
+  deal_title?: string;
+  from_stage_name?: string;
+  to_stage_name?: string;
 }
 
 /** Row of `conversation_events` (migration 024). */

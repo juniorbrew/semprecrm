@@ -3,12 +3,14 @@
 import {
   Ban,
   BellRing,
+  Bot,
   CheckCheck,
   RotateCcw,
   Tag as TagIcon,
   UserMinus,
   UserPlus,
   Clock,
+  DollarSign,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Language } from "@/lib/i18n";
@@ -39,10 +41,16 @@ function EventIcon({ event }: { event: ConversationEvent }) {
     case "label_added":
     case "label_removed":
       return <TagIcon className={cls} />;
+    case "deal_stage_changed":
+      return <DollarSign className={cls} />;
     case "contact_opted_out":
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":
       return <BellRing className={cn(cls, "text-emerald-500")} />;
+    case "ai_handoff":
+    case "ai_paused":
+    case "ai_resumed":
+      return <Bot className={cls} />;
     default:
       return null;
   }
@@ -71,7 +79,7 @@ export function SystemEventPill({ event, language, now }: SystemEventPillProps) 
         <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-background/60 text-foreground/70">
           <EventIcon event={event} />
         </span>
-        <span className="truncate font-medium text-foreground/80">{text}</span>
+        <span className={cn("font-medium text-foreground/80", event.reason ? "line-clamp-3 break-words" : "truncate")}>{text}</span>
         {age && (
           <span className="shrink-0 text-muted-foreground/80">· {age}</span>
         )}

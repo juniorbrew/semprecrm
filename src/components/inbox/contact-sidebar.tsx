@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
@@ -28,27 +28,21 @@ import {
   Tag as TagIcon,
   DollarSign,
   StickyNote,
-  Plus,
   ListChecks,
   CheckSquare,
   History,
   Lock,
   MessageCircle,
   Loader2,
-  ExternalLink,
   Ban,
   ShieldCheck,
   CalendarPlus,
   UserRound,
   Brain,
+  CalendarDays,
+  Activity,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { formatCurrency } from "@/lib/currency";
 import { listConversationsByContact } from "@/lib/conversations/find-by-contact";
 import { insertConversationEvent } from "@/lib/conversations/events";
 import { addContactNote, onContactNotesChanged } from "@/lib/conversations/notes";
@@ -69,9 +63,10 @@ import { TeamNoteComposer } from "./team-note-composer";
 import { ContactAvatar } from "./contact-avatar";
 import { ContactMemorySection } from "./contact-memory";
 import { toast } from "sonner";
-
-// Same preset palette as Settings › Tags; picked round-robin for inline creation.
-const TAG_PALETTE = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4", "#f97316", "#ec4899"];
+import { PanelSection, SectionAddButton, SectionHeader } from "./panel-section";
+import { PanelTags, TAG_PALETTE, type ContactTag } from "./panel-tags";
+import { PanelDeals } from "./panel-deals";
+import { PanelActivity } from "./panel-activity";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -247,61 +242,6 @@ function formatDateTime(iso: string, language: Language): string {
   });
 }
 
-/** The small "+" at the right of a section header (Etiquetas style). */
-function SectionAddButton({
-  label,
-  onClick,
-  disabled,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-    >
-      {disabled ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        <Plus className="h-3.5 w-3.5" />
-      )}
-    </button>
-  );
-}
-
-function SectionHeader({
-  icon: Icon,
-  label,
-  count,
-  action,
-}: {
-  icon: typeof TagIcon;
-  label: string;
-  count?: number;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2 px-1">
-      <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        <Icon className="h-3 w-3" />
-        <span>{label}</span>
-        {typeof count === "number" && count > 0 && (
-          <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
-            {count}
-          </span>
-        )}
-      </div>
-      {action}
-    </div>
-  );
-}
-
 /** One tile of the contact shortcut row. */
 function ShortcutButton({
   icon: Icon,
@@ -346,7 +286,7 @@ export function ContactSidebar({
   onOpenConversation,
   onContactChanged,
 }: ContactSidebarProps) {
-  const { user, profile, accountId, defaultCurrency } = useAuth();
+  const { user, profile, accountId } = useAuth();
   const { language, t } = useLanguage();
   const copy = PANEL_COPY[language] ?? PANEL_COPY["pt-BR"];
   // Admin+ can define fields (custom_fields RLS); agent+ can write values,
@@ -412,14 +352,17 @@ export function ContactSidebar({
   }, [contact?.id, accountId, user?.id, reactivating, conversationId, profile?.full_name, copy]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
-  const [contactTags, setContactTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [contactTags, setContactTags] = useState<ContactTag[]>([]);
+  const [tagUsage, setTagUsage] = useState<Record<string, number>>({});
+  // Which contact the first fetch has finished for (skeletons until then).
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // Bumped after panel actions that write to the activity feed.
+  const [activityVersion, setActivityVersion] = useState(0);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
   const [previous, setPrevious] = useState<Conversation[]>([]);
   const [tagBusy, setTagBusy] = useState<string | null>(null);
-  const [tagPickerOpen, setTagPickerOpen] = useState(false);
-  const [newTagName, setNewTagName] = useState("");
   const [creatingTag, setCreatingTag] = useState(false);
   const [newFieldOpen, setNewFieldOpen] = useState(false);
   const [noteComposerOpen, setNoteComposerOpen] = useState(false);
@@ -448,7 +391,7 @@ export function ContactSidebar({
     if (!contactId) return;
     const supabase = createClient();
 
-    const [dealsRes, notesRes, tagsRes, allTagsRes, fieldsRes, valuesRes, convs] =
+    const [dealsRes, notesRes, tagsRes, allTagsRes, fieldsRes, valuesRes, convs, usageRes] =
       await Promise.all([
         supabase
           .from("deals")
@@ -471,6 +414,7 @@ export function ContactSidebar({
           .select("*")
           .eq("contact_id", contactId),
         listConversationsByContact(supabase, contactId),
+        supabase.rpc("account_tag_usage"),
       ]);
 
     if (dealsRes.data) setDeals(dealsRes.data as Deal[]);
@@ -493,7 +437,15 @@ export function ContactSidebar({
       }
       setCustomValues(map);
     }
+    if (usageRes.data) {
+      const usage: Record<string, number> = {};
+      for (const row of usageRes.data as { tag_id: string; uses: number | string }[]) {
+        usage[row.tag_id] = Number(row.uses);
+      }
+      setTagUsage(usage);
+    }
     setPrevious(convs);
+    setLoadedFor(contactId);
   }, [contactId]);
 
   // Load on contact change; all setState calls happen inside the async
@@ -545,7 +497,7 @@ export function ContactSidebar({
           actor_user_id: user?.id ?? null,
           event_type,
           payload: { actor_name: actor, tag_id: tag.id, tag_name: tag.name },
-        });
+        }).then(() => setActivityVersion((v) => v + 1));
       };
       try {
         if (existing) {
@@ -592,18 +544,17 @@ export function ContactSidebar({
   );
 
   /** Create a tag inline (same palette as Settings › Tags) and attach it. */
-  const createAndAttachTag = useCallback(async () => {
-    const name = newTagName.trim();
+  const createAndAttachTag = useCallback(async (rawName: string, colorChoice?: string) => {
+    const name = rawName.trim();
     if (!name || creatingTag || !accountId || !user?.id) return;
     const duplicate = allTags.find((t) => t.name.toLowerCase() === name.toLowerCase());
     if (duplicate) {
-      setNewTagName("");
       if (!contactTags.some((t) => t.id === duplicate.id)) void toggleTag(duplicate);
       return;
     }
     setCreatingTag(true);
     const supabase = createClient();
-    const color = TAG_PALETTE[allTags.length % TAG_PALETTE.length];
+    const color = colorChoice ?? TAG_PALETTE[allTags.length % TAG_PALETTE.length];
     try {
       const { data, error } = await supabase
         .from("tags")
@@ -613,7 +564,6 @@ export function ContactSidebar({
       if (error || !data) throw error ?? new Error("insert failed");
       const tag = data as Tag;
       setAllTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)));
-      setNewTagName("");
       await toggleTag(tag);
     } catch (err) {
       console.error("Failed to create tag:", err);
@@ -621,13 +571,7 @@ export function ContactSidebar({
     } finally {
       setCreatingTag(false);
     }
-  }, [newTagName, creatingTag, accountId, user?.id, allTags, contactTags, toggleTag, copy.tagCreateFailed]);
-
-
-  const contactTagIds = useMemo(
-    () => new Set(contactTags.map((tag) => tag.id)),
-    [contactTags],
-  );
+  }, [creatingTag, accountId, user?.id, allTags, contactTags, toggleTag, copy.tagCreateFailed]);
 
   const refreshDeals = useCallback(async () => {
     if (!contactId) return;
@@ -638,6 +582,10 @@ export function ContactSidebar({
       .order("created_at", { ascending: false });
     if (data) setDeals(data as Deal[]);
   }, [contactId]);
+
+  const patchDeal = useCallback((dealId: string, patch: Partial<Deal>) => {
+    setDeals((prev) => prev.map((d) => (d.id === dealId ? { ...d, ...patch } : d)));
+  }, []);
 
   // Resolve the first pipeline (by creation) and its stages, then open the
   // shared deal sheet prefilled with this contact and the first stage.
@@ -729,6 +677,8 @@ export function ContactSidebar({
     );
   }
 
+  const panelLoaded = loadedFor === contact.id;
+  const activityLabel = language === "pt-BR" ? "Atividade" : "Activity";
   const displayName = contact.name || contact.phone;
   const otherConversations = previous.filter((c) => c.id !== conversationId);
   const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
@@ -875,192 +825,113 @@ export function ContactSidebar({
 
           <div className="my-4 border-t border-border" />
 
-          {/* Companies (migration 054) — primary first, each linking to
-              /companies?company=<id>; agent+ links / unlinks / marks the
-              primary through the shared data layer. */}
-          <ContactCompanies
-            key={contact.id}
-            contactId={contact.id}
-            readOnly={!canWrite}
-            compact
-            header={({ count, togglePicker, readOnly }) => (
+          {/* Labels: click a chip to remove, one-click "most used"
+              suggestions, quick create with colour. Every section below
+              is collapsible and remembers its open/closed state. */}
+          <PanelSection id="tags">
+            <PanelTags
+              contactTags={contactTags}
+              allTags={allTags}
+              usage={tagUsage}
+              loaded={panelLoaded}
+              canWrite={canWrite}
+              canCreate={canDefineFields}
+              busyId={tagBusy}
+              creating={creatingTag}
+              onToggle={(tag) => void toggleTag(tag)}
+              onCreate={(name, color) => void createAndAttachTag(name, color)}
+            />
+          </PanelSection>
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Custom fields: every account definition, this contact's
+              value editable inline; "+" defines a new field (admin+). */}
+          <PanelSection id="fields" defaultOpen={false}>
+            <div>
               <SectionHeader
-                icon={Building2}
-                label={copy.companies}
-                count={count}
+                icon={ListChecks}
+                label={copy.customFields}
+                count={customFields.length}
                 action={
-                  readOnly ? undefined : (
-                    <SectionAddButton label={t("Link company")} onClick={togglePicker} />
-                  )
+                  canDefineFields ? (
+                    <SectionAddButton
+                      label={t("Add custom field")}
+                      onClick={() => setNewFieldOpen(true)}
+                    />
+                  ) : undefined
                 }
               />
-            )}
+              <div className="mt-2 px-1">
+                {!panelLoaded ? (
+                  <div className="h-8 animate-pulse rounded-lg bg-muted/60" />
+                ) : customFields.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
+                ) : (
+                  <dl className="divide-y divide-border/60 rounded-lg border border-border/60">
+                    {customFields.map((field) => (
+                      <CustomFieldValue
+                        key={field.id}
+                        contactId={contact.id}
+                        field={field}
+                        value={customValues[field.id] ?? ""}
+                        onSaved={handleValueSaved}
+                        emptyLabel={copy.emptyValue}
+                        disabled={!canWrite}
+                      />
+                    ))}
+                  </dl>
+                )}
+              </div>
+            </div>
+          </PanelSection>
+          <NewCustomFieldDialog
+            open={newFieldOpen}
+            onOpenChange={setNewFieldOpen}
+            existing={customFields}
+            onCreated={handleFieldCreated}
           />
 
           <div className="my-4 border-t border-border" />
 
-          {/* Labels — toggle from the account's tag set */}
-          <div>
-            <SectionHeader
-              icon={TagIcon}
-              label={copy.tags}
-              count={contactTags.length}
-              action={
-                <Popover open={tagPickerOpen} onOpenChange={setTagPickerOpen}>
-                  <PopoverTrigger
-                    aria-label={copy.addTag}
-                    title={copy.addTag}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    className="w-56 border-border bg-popover p-1.5"
-                  >
-                    {allTags.length === 0 ? (
-                      <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                        {copy.noTagsToPick}
-                      </p>
-                    ) : (
-                      <ul className="max-h-56 overflow-y-auto">
-                        {allTags.map((tag) => {
-                          const selected = contactTagIds.has(tag.id);
-                          const busy = tagBusy === tag.id;
-                          return (
-                            <li key={tag.id}>
-                              <button
-                                type="button"
-                                disabled={!!tagBusy}
-                                onClick={() => void toggleTag(tag)}
-                                aria-pressed={selected}
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-popover-foreground transition-colors hover:bg-muted disabled:opacity-60"
-                              >
-                                <span
-                                  className="h-2 w-2 shrink-0 rounded-full"
-                                  style={{ backgroundColor: tag.color }}
-                                />
-                                <span className="flex-1 truncate">{tag.name}</span>
-                                {busy ? (
-                                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                ) : selected ? (
-                                  <Check className="h-3 w-3 text-primary" />
-                                ) : null}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                    <form
-                      className="mt-1 flex items-center gap-1 border-t border-border pt-1.5"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void createAndAttachTag();
-                      }}
-                    >
-                      <input
-                        value={newTagName}
-                        onChange={(e) => setNewTagName(e.target.value)}
-                        placeholder={copy.newTagPlaceholder}
-                        maxLength={40}
-                        disabled={creatingTag}
-                        aria-label={copy.newTagPlaceholder}
-                        className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <button
-                        type="submit"
-                        disabled={creatingTag || !newTagName.trim()}
-                        className="inline-flex h-7 shrink-0 items-center rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
-                      >
-                        {creatingTag ? <Loader2 className="h-3 w-3 animate-spin" /> : copy.createTag}
-                      </button>
-                    </form>
-                  </PopoverContent>
-                </Popover>
-              }
-            />
-            <div className="mt-2 flex flex-wrap gap-1 px-1">
-              {contactTags.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{copy.noTags}</p>
-              ) : (
-                contactTags.map((tag) => (
-                  <button
-                    key={tag.contact_tag_id}
-                    type="button"
-                    onClick={() => void toggleTag(tag)}
-                    disabled={!!tagBusy}
-                    title={copy.removeTag(tag.name)}
-                    aria-label={copy.removeTag(tag.name)}
-                    className="group/tag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-60"
-                    style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
-                  >
-                    <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: tag.color }}
-                    />
-                    {tag.name}
-                  </button>
-                ))
+          {/* Companies (migration 054): primary first, each linking to
+              /companies?company=id; agent+ links / unlinks / marks the
+              primary through the shared data layer. */}
+          <PanelSection id="companies">
+            <ContactCompanies
+              key={contact.id}
+              contactId={contact.id}
+              readOnly={!canWrite}
+              compact
+              header={({ count, togglePicker, readOnly }) => (
+                <SectionHeader
+                  icon={Building2}
+                  label={copy.companies}
+                  count={count}
+                  action={
+                    readOnly ? undefined : (
+                      <SectionAddButton label={t("Link company")} onClick={togglePicker} />
+                    )
+                  }
+                />
               )}
-            </div>
-          </div>
+            />
+          </PanelSection>
 
           <div className="my-4 border-t border-border" />
 
-          {/* Custom fields — every account definition, this contact's
-              value editable inline; "+" defines a new field (admin+). */}
-          <div>
-            <SectionHeader
-              icon={ListChecks}
-              label={copy.customFields}
-              count={customFields.length}
-              action={
-                canDefineFields ? (
-                  <SectionAddButton
-                    label={t("Add custom field")}
-                    onClick={() => setNewFieldOpen(true)}
-                  />
-                ) : undefined
-              }
-            />
-            <div className="mt-2 px-1">
-              {customFields.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
-              ) : (
-                <dl className="divide-y divide-border/60 rounded-lg border border-border/60">
-                  {customFields.map((field) => (
-                    <CustomFieldValue
-                      key={field.id}
-                      contactId={contact.id}
-                      field={field}
-                      value={customValues[field.id] ?? ""}
-                      onSaved={handleValueSaved}
-                      emptyLabel={copy.emptyValue}
-                      disabled={!canWrite}
-                    />
-                  ))}
-                </dl>
-              )}
-            </div>
-            <NewCustomFieldDialog
-              open={newFieldOpen}
-              onOpenChange={setNewFieldOpen}
-              existing={customFields}
-              onCreated={handleFieldCreated}
-            />
-          </div>
-
-          <div className="my-4 border-t border-border" />
-
-          {/* Linked deals — "+" opens the shared deal sheet prefilled
-              with this contact; hidden when the plan has no Pipelines. */}
-          <div>
-            <SectionHeader
-              icon={DollarSign}
-              label={copy.deals}
-              count={deals.length}
-              action={
+          {/* Linked deals: stage select + expandable deal fields; "+"
+              opens the shared deal sheet prefilled with this contact;
+              hidden when the plan has no Pipelines. */}
+          <PanelSection id="deals">
+            <PanelDeals
+              deals={deals}
+              onPatch={patchDeal}
+              onMoved={() => setActivityVersion((v) => v + 1)}
+              loaded={panelLoaded}
+              canWrite={canWrite}
+              conversationId={conversationId}
+              addAction={
                 pipelinesEnabled && canWrite ? (
                   <SectionAddButton
                     label={t("Add Deal")}
@@ -1070,109 +941,76 @@ export function ContactSidebar({
                 ) : undefined
               }
             />
-            <div className="mt-2 space-y-2 px-1">
-              {deals.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{copy.noDeals}</p>
-              ) : (
-                deals.map((deal) => (
-                  <Link
-                    key={deal.id}
-                    href="/pipelines"
-                    title={t("Open in Pipelines")}
-                    className="group/deal block rounded-lg bg-muted px-3 py-2 transition-colors hover:bg-muted/70"
-                  >
-                    <p className="flex items-center gap-1 text-sm font-medium text-foreground">
-                      <span className="min-w-0 flex-1 truncate">{deal.title}</span>
-                      <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/deal:opacity-100" />
-                    </p>
-                    <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span className="tabular-nums">
-                        {formatCurrency(deal.value, deal.currency ?? defaultCurrency)}
-                      </span>
-                      {deal.stage && (
-                        <span
-                          className="truncate rounded-full px-1.5 py-0.5 text-[10px]"
-                          style={{
-                            backgroundColor: `${deal.stage.color}20`,
-                            color: deal.stage.color,
-                          }}
-                        >
-                          {deal.stage.name}
-                        </span>
-                      )}
-                    </div>
-                  </Link>
-                ))
-              )}
-            </div>
-            {dealTarget && (
-              <DealForm
-                open={dealFormOpen}
-                onOpenChange={setDealFormOpen}
-                pipelineId={dealTarget.pipeline.id}
-                stages={dealTarget.stages}
-                defaultStageId={dealTarget.stages[0]?.id}
-                defaultContactId={contact.id}
-                onSaved={() => void refreshDeals()}
-              />
-            )}
-          </div>
+          </PanelSection>
+          {dealTarget && (
+            <DealForm
+              open={dealFormOpen}
+              onOpenChange={setDealFormOpen}
+              pipelineId={dealTarget.pipeline.id}
+              stages={dealTarget.stages}
+              defaultStageId={dealTarget.stages[0]?.id}
+              defaultContactId={contact.id}
+              onSaved={() => void refreshDeals()}
+            />
+          )}
 
           {tasksEnabled && (
             <>
               <div className="my-4 border-t border-border" />
 
-              {/* Tasks — open tasks linked to this contact; the checkbox
+              {/* Tasks: open tasks linked to this contact; the checkbox
                   completes (default done status), "+" reveals the inline
                   title + due creator linked to the contact and thread. */}
-              <div>
-                <SectionHeader
-                  icon={CheckSquare}
-                  label={t("Tasks")}
-                  count={linkedTasks.tasks.length}
-                  action={
-                    canWrite ? (
-                      <SectionAddButton
-                        label={t("Add task")}
-                        onClick={() => setTaskAddOpen((open) => !open)}
-                      />
-                    ) : undefined
-                  }
-                />
-                <div className="mt-2 space-y-2 px-1">
-                  {taskAddOpen && (
-                    <TaskQuickCreate
-                      defaults={{
-                        contact_id: contact.id,
-                        conversation_id: conversationId ?? undefined,
-                      }}
-                      statuses={linkedTasks.statuses}
-                      onCreated={linkedTasks.add}
-                      onCancel={() => setTaskAddOpen(false)}
-                    />
-                  )}
-                  <LinkedTaskRows
-                    tasks={linkedTasks.tasks}
-                    readOnly={!canWrite}
-                    emptyLabel={
-                      linkedTasks.loading ? t("Loading...") : t("No open tasks")
+              <PanelSection id="tasks">
+                <div>
+                  <SectionHeader
+                    icon={CheckSquare}
+                    label={t("Tasks")}
+                    count={linkedTasks.tasks.length}
+                    action={
+                      canWrite ? (
+                        <SectionAddButton
+                          label={t("Add task")}
+                          onClick={() => setTaskAddOpen((open) => !open)}
+                        />
+                      ) : undefined
                     }
-                    onComplete={(task) => void linkedTasks.complete(task)}
-                    onOpen={(task) => {
-                      setTaskDrawerTask(task);
-                      setTaskDrawerOpen(true);
-                    }}
                   />
+                  <div className="mt-2 space-y-2 px-1">
+                    {taskAddOpen && (
+                      <TaskQuickCreate
+                        defaults={{
+                          contact_id: contact.id,
+                          conversation_id: conversationId ?? undefined,
+                        }}
+                        statuses={linkedTasks.statuses}
+                        onCreated={linkedTasks.add}
+                        onCancel={() => setTaskAddOpen(false)}
+                      />
+                    )}
+                    <LinkedTaskRows
+                      tasks={linkedTasks.tasks}
+                      readOnly={!canWrite}
+                      emptyLabel={
+                        linkedTasks.loading ? t("Loading...") : t("No open tasks")
+                      }
+                      onComplete={(task) => void linkedTasks.complete(task)}
+                      onOpen={(task) => {
+                        setTaskDrawerTask(task);
+                        setTaskDrawerOpen(true);
+                      }}
+                    />
+                  </div>
                 </div>
-                <TaskDrawer
-                  open={taskDrawerOpen}
-                  onOpenChange={setTaskDrawerOpen}
-                  task={taskDrawerTask}
-                  statuses={linkedTasks.statuses}
-                  onUpdated={linkedTasks.patch}
-                  onDeleted={linkedTasks.remove}
-                />
-              </div>
+              </PanelSection>
+              <TaskDrawer
+                open={taskDrawerOpen}
+                onOpenChange={setTaskDrawerOpen}
+                task={taskDrawerTask}
+                statuses={linkedTasks.statuses}
+                onUpdated={linkedTasks.patch}
+                onDeleted={linkedTasks.remove}
+              />
             </>
           )}
 
@@ -1180,153 +1018,170 @@ export function ContactSidebar({
             <>
               <div className="my-4 border-t border-border" />
 
-              {/* Agenda — the contact's next appointments; "+" reveals the
+              {/* Agenda: the contact's next appointments; "+" reveals the
                   inline title + when creator linked to the contact and thread. */}
-              <LinkedEvents
-                key={`${contact.id}:${eventsVersion}`}
-                contactId={contact.id}
-                defaults={{ conversation_id: conversationId ?? undefined }}
-                readOnly={!canWrite}
-                headerClassName="px-1"
-                bodyClassName="px-1"
-              />
+              <PanelSection id="agenda" lazyHeader={<SectionHeader icon={CalendarDays} label={t("Calendar")} />}>
+                <LinkedEvents
+                  key={`${contact.id}:${eventsVersion}`}
+                  contactId={contact.id}
+                  defaults={{ conversation_id: conversationId ?? undefined }}
+                  readOnly={!canWrite}
+                  headerClassName="px-1"
+                  bodyClassName="px-1"
+                />
+              </PanelSection>
             </>
           )}
 
           <div className="my-4 border-t border-border" />
 
           {/* Previous conversations with this contact */}
-          <div>
-            <SectionHeader
-              icon={History}
-              label={copy.previous}
-              count={otherConversations.length}
-            />
-            <div className="mt-2 space-y-1 px-1">
-              {otherConversations.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{copy.noPrevious}</p>
-              ) : (
-                otherConversations.map((conv) => (
-                  <button
-                    key={conv.id}
-                    type="button"
-                    onClick={() =>
-                      onOpenConversation?.({ ...conv, contact: conv.contact ?? contact })
-                    }
-                    disabled={!onOpenConversation}
-                    className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted disabled:cursor-default"
-                  >
-                    <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                          <span
-                            className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[conv.status])}
-                          />
-                          {copy.status[conv.status]}
+          <PanelSection id="previous" defaultOpen={false}>
+            <div>
+              <SectionHeader
+                icon={History}
+                label={copy.previous}
+                count={otherConversations.length}
+              />
+              <div className="mt-2 space-y-1 px-1">
+                {otherConversations.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{copy.noPrevious}</p>
+                ) : (
+                  otherConversations.map((conv) => (
+                    <button
+                      key={conv.id}
+                      type="button"
+                      onClick={() =>
+                        onOpenConversation?.({ ...conv, contact: conv.contact ?? contact })
+                      }
+                      disabled={!onOpenConversation}
+                      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted disabled:cursor-default"
+                    >
+                      <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            <span
+                              className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[conv.status])}
+                            />
+                            {copy.status[conv.status]}
+                          </span>
+                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                            {formatShortDate(conv.last_message_at ?? conv.created_at, language)}
+                          </span>
                         </span>
-                        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                          {formatShortDate(conv.last_message_at ?? conv.created_at, language)}
+                        <span className="mt-0.5 block truncate text-xs text-foreground">
+                          {conv.last_message_text || copy.emptyValue}
                         </span>
                       </span>
-                      <span className="mt-0.5 block truncate text-xs text-foreground">
-                        {conv.last_message_text || copy.emptyValue}
-                      </span>
-                    </span>
-                  </button>
-                ))
-              )}
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          </PanelSection>
 
           <div className="my-4 border-t border-border" />
 
-          {/* Team notes — the latest few; the full history sits in the
-              thread as amber bubbles. "+" reveals an inline note box that
-              writes through the same path as the composer's Nota interna. */}
-          <div>
-            <SectionHeader
-              icon={StickyNote}
-              label={copy.notes}
-              count={notes.length}
-              action={
-                canWrite ? (
-                  <SectionAddButton
-                    label={t("Add team note")}
-                    onClick={() => setNoteComposerOpen((open) => !open)}
-                  />
-                ) : undefined
-              }
-            />
-            <div className="mt-2 space-y-2 px-1">
-              {noteComposerOpen && (
-                <TeamNoteComposer
-                  onSubmit={submitTeamNote}
-                  onCancel={() => setNoteComposerOpen(false)}
-                />
-              )}
-              {panelNotes.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border px-3 py-2">
-                  <p className="text-xs text-muted-foreground">{copy.noNotes}</p>
-                  <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground/80">
-                    <Lock className="h-3 w-3" />
-                    {copy.notesHint}
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {panelNotes.map((note) => (
-                    <div
-                      key={note.id}
-                      className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2"
-                    >
-                      <p className="line-clamp-3 whitespace-pre-wrap text-xs text-foreground">
-                        {note.note_text}
-                      </p>
-                      <p className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <Lock className="h-2.5 w-2.5" />
-                        {formatDateTime(note.created_at, language)}
-                      </p>
-                    </div>
-                  ))}
-                  {hiddenNotes > 0 && (
-                    <p className="text-[10px] text-muted-foreground">
-                      {copy.moreNotes(hiddenNotes)}
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
+          {/* Activity: merged feed (contact_activity RPC, migration 070). */}
+          <PanelSection id="activity" lazyHeader={<SectionHeader icon={Activity} label={activityLabel} />}>
+            <PanelActivity contactId={contact.id} refreshKey={activityVersion} />
+          </PanelSection>
 
-          {/* Contact memory (AI, migration 064) — facts used in suggestions. */}
+          {/* Contact memory (AI, migration 064): facts used in suggestions. */}
           {aiEnabled && (
             <>
               <div className="my-4 border-t border-border" />
-              <ContactMemorySection
-                contactId={contact.id}
-                conversationId={conversationId}
-                anonymized={!!contact.anonymized_at}
-                renderHeader={(action, count) => (
-                  <SectionHeader icon={Brain} label={t("Contact memory")} count={count} action={action} />
-                )}
-                renderAddButton={(label, onClick) => <SectionAddButton label={label} onClick={onClick} />}
-              />
+              <PanelSection id="memory" lazyHeader={<SectionHeader icon={Brain} label={t("Contact memory")} />}>
+                <ContactMemorySection
+                  contactId={contact.id}
+                  conversationId={conversationId}
+                  anonymized={!!contact.anonymized_at}
+                  renderHeader={(action, count) => (
+                    <SectionHeader icon={Brain} label={t("Contact memory")} count={count} action={action} />
+                  )}
+                  renderAddButton={(label, onClick) => <SectionAddButton label={label} onClick={onClick} />}
+                />
+              </PanelSection>
             </>
           )}
 
           <div className="my-4 border-t border-border" />
 
-          {/* Privacy (LGPD, migration 035) — consent, export, anonymise. */}
-          <div>
-            <SectionHeader icon={ShieldCheck} label={t("Privacy")} />
-            <ContactPrivacySection
-              compact
-              className="mt-2"
-              contact={contact}
-              onChanged={() => void handlePrivacyChanged()}
-            />
-          </div>
+          {/* Team notes: the latest few; the full history sits in the
+              thread as amber bubbles. "+" reveals an inline note box that
+              writes through the same path as the composer note tab. */}
+          <PanelSection id="notes">
+            <div>
+              <SectionHeader
+                icon={StickyNote}
+                label={copy.notes}
+                count={notes.length}
+                action={
+                  canWrite ? (
+                    <SectionAddButton
+                      label={t("Add team note")}
+                      onClick={() => setNoteComposerOpen((open) => !open)}
+                    />
+                  ) : undefined
+                }
+              />
+              <div className="mt-2 space-y-2 px-1">
+                {noteComposerOpen && (
+                  <TeamNoteComposer
+                    onSubmit={submitTeamNote}
+                    onCancel={() => setNoteComposerOpen(false)}
+                  />
+                )}
+                {panelNotes.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border px-3 py-2">
+                    <p className="text-xs text-muted-foreground">{copy.noNotes}</p>
+                    <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground/80">
+                      <Lock className="h-3 w-3" />
+                      {copy.notesHint}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {panelNotes.map((note) => (
+                      <div
+                        key={note.id}
+                        className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2"
+                      >
+                        <p className="line-clamp-3 whitespace-pre-wrap text-xs text-foreground">
+                          {note.note_text}
+                        </p>
+                        <p className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <Lock className="h-2.5 w-2.5" />
+                          {formatDateTime(note.created_at, language)}
+                        </p>
+                      </div>
+                    ))}
+                    {hiddenNotes > 0 && (
+                      <p className="text-[10px] text-muted-foreground">
+                        {copy.moreNotes(hiddenNotes)}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </PanelSection>
+
+          <div className="my-4 border-t border-border" />
+
+          {/* Privacy (LGPD, migration 035): consent, export, anonymise. */}
+          <PanelSection id="privacy" defaultOpen={false} lazyHeader={<SectionHeader icon={ShieldCheck} label={t("Privacy")} />}>
+            <div>
+              <SectionHeader icon={ShieldCheck} label={t("Privacy")} />
+              <ContactPrivacySection
+                compact
+                className="mt-2"
+                contact={contact}
+                onChanged={() => void handlePrivacyChanged()}
+              />
+            </div>
+          </PanelSection>
         </div>
       </ScrollArea>
     </div>

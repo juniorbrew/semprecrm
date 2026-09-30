@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { Message, MessageReaction } from "@/types";
+import type { Conversation, Message, MessageReaction } from "@/types";
 import {
   Clock,
   Check,
@@ -14,12 +14,17 @@ import {
   ImageOff,
   CornerDownLeft,
   Ban,
+  Bot,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
 import { failureReason } from "@/lib/whatsapp/failure-reason";
 import type { SenderLabel } from "./sender-label";
+import { AudioPlayer } from "./audio-player";
+import { ContactCard } from "./contact-card";
+import { isStickerMedia } from "@/lib/inbox/sticker";
+import { isVCardText } from "@/lib/inbox/vcard";
 
 interface MessageBubbleProps {
   message: Message;
@@ -30,6 +35,8 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
   /** Who sent an outbound bubble (see sender-label.ts). */
   senderLabel?: SenderLabel | null;
+  /** Lets a received contact card jump to that contact's conversation. */
+  onOpenConversation?: (conversation: Conversation) => void;
 }
 
 // Delivery state is icon-only; the title/aria-label carry the words
@@ -89,7 +96,19 @@ function MediaUnavailable({ label }: { label: string }) {
   );
 }
 
-function MediaImage({ url, alt }: { url: string; alt: string }) {
+function MediaImage({
+  url,
+  alt,
+  sticker = false,
+  onMime,
+}: {
+  url: string;
+  alt: string;
+  /** Render as a bare sticker (no bubble frame). */
+  sticker?: boolean;
+  /** Reports the fetched file's MIME type (proxied media has no extension). */
+  onMime?: (mime: string) => void;
+}) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -105,6 +124,7 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
         setSrc(blobUrl);
+        if (blob.type) onMime?.(blob.type);
       } catch {
         setError(true);
       } finally {
@@ -114,6 +134,7 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
       setSrc(url);
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
   useEffect(() => {
@@ -146,7 +167,12 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
     <img
       src={src ?? ""}
       alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
+      className={
+        sticker
+          ? "h-[140px] w-[140px] object-contain"
+          : "max-h-64 max-w-60 rounded-lg object-cover"
+      }
+      data-sticker={sticker ? "" : undefined}
       onError={() => setError(true)}
     />
   );
@@ -155,13 +181,27 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
 function MessageContent({
   message,
   isAgent,
+  sticker,
+  onImageMime,
+  onOpenConversation,
 }: {
   message: Message;
   /** Outbound bubbles sit on the primary fill — badges must invert. */
   isAgent: boolean;
+  sticker: boolean;
+  onImageMime: (mime: string) => void;
+  onOpenConversation?: (conversation: Conversation) => void;
 }) {
   switch (message.content_type) {
     case "text":
+      if (isVCardText(message.content_text)) {
+        return (
+          <ContactCard
+            text={message.content_text ?? ""}
+            onOpenConversation={onOpenConversation}
+          />
+        );
+      }
       return (
         <p className="whitespace-pre-wrap break-words text-sm">
           {message.content_text}
@@ -172,7 +212,12 @@ function MessageContent({
       return (
         <div>
           {message.media_url ? (
-            <MediaImage url={message.media_url} alt="Shared image" />
+            <MediaImage
+              url={message.media_url}
+              alt={sticker ? "Sticker" : "Shared image"}
+              sticker={sticker}
+              onMime={onImageMime}
+            />
           ) : (
             <MediaUnavailable label="Image" />
           )}
@@ -208,7 +253,7 @@ function MessageContent({
       return (
         <div>
           {message.media_url ? (
-            <audio src={message.media_url} controls className="max-w-60" />
+            <AudioPlayer src={message.media_url} />
           ) : (
             <MediaUnavailable label="Audio" />
           )}
@@ -312,7 +357,17 @@ export function MessageBubble({
   currentUserId,
   onToggleReaction,
   senderLabel,
+  onOpenConversation,
 }: MessageBubbleProps) {
+  // Stickers are WebP images without a caption: bare image, no bubble frame.
+  // Proxied (Meta) media has no file extension, so the fetched MIME decides.
+  const [imageMime, setImageMime] = useState<string | null>(null);
+  const sticker = isStickerMedia({
+    contentType: message.content_type,
+    caption: message.content_text,
+    url: message.media_url,
+    mime: imageMime,
+  });
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
   const failure = isAgent ? failureReason(message) : null;
@@ -334,11 +389,17 @@ export function MessageBubble({
     >
       <div
         className={cn(
-          "relative rounded-2xl px-3 py-2",
-          isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted text-foreground",
+          "relative",
+          sticker
+            ? "px-1 py-0.5 text-foreground"
+            : cn(
+                "rounded-2xl px-3 py-2",
+                isAgent
+                  ? "rounded-br-md bg-primary text-primary-foreground"
+                  : "rounded-bl-md bg-muted text-foreground",
+              ),
         )}
+        data-sticker={sticker ? "" : undefined}
       >
         {reply && (
           <ReplyQuote
@@ -351,7 +412,13 @@ export function MessageBubble({
           className={cn(revoked && "line-through decoration-1 opacity-60")}
           data-revoked={revoked ? "" : undefined}
         >
-          <MessageContent message={message} isAgent={isAgent} />
+          <MessageContent
+            message={message}
+            isAgent={isAgent}
+            sticker={sticker}
+            onImageMime={setImageMime}
+            onOpenConversation={onOpenConversation}
+          />
         </div>
         {revoked && (
           <p
@@ -373,11 +440,12 @@ export function MessageBubble({
           {label && (
             <>
               <span
-                className="max-w-40 truncate text-[10px] font-medium text-primary-foreground/80"
+                className={cn("max-w-40 truncate text-[10px] font-medium", sticker ? "text-muted-foreground" : "text-primary-foreground/80")}
                 title={label.hint ?? (label.translate ? undefined : label.text)}
                 data-sender-kind={label.kind}
                 {...(label.translate ? {} : { "data-no-translate": true })}
               >
+                {label.kind === "ai" && <Bot className="mr-0.5 inline h-3 w-3 align-[-2px]" aria-hidden />}
                 {label.text}
               </span>
               <span aria-hidden className="text-[10px] text-primary-foreground/50">
@@ -392,7 +460,7 @@ export function MessageBubble({
               // timestamp must read against that (not the neutral
               // foreground) — otherwise it goes low-contrast in light
               // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
+              isAgent && !sticker ? "text-primary-foreground/70" : "text-muted-foreground",
             )}
           >
             {time}

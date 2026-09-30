@@ -84,6 +84,7 @@ export async function POST(request: Request) {
       accountId: ctx.accountId,
       conversationId: body.conversation_id,
       actorUserId: ctx.userId,
+      reason: body.reason,
     })
     return NextResponse.json({ ok: true, result })
   } catch (err) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WAMessage } from "@whiskeysockets/baileys";
 import {
+  capVCards,
   extFromMime,
   jidToPhone,
   mapInboundMessage,
@@ -200,6 +201,13 @@ describe("mapInboundMessage", () => {
       kind: "skip",
       reason: "unsupported-type",
     });
+    // With a vCard the card is forwarded as text (the inbox renders it).
+    expect(
+      mapInboundMessage(
+        ACCOUNT,
+        fixture({ message: { contactMessage: { displayName: "x", vcard: "BEGIN:VCARD\nFN:Ana\nEND:VCARD" } } }),
+      ),
+    ).toMatchObject({ kind: "message", payload: { type: "text", text: "BEGIN:VCARD\nFN:Ana\nEND:VCARD" } });
     expect(mapInboundMessage(ACCOUNT, fixture({ message: undefined }))).toEqual({ kind: "skip", reason: "no-message" });
   });
 
@@ -333,5 +341,15 @@ describe("mapInboundMessage — apagar para todos (REVOKE)", () => {
     expect(revokedMessageId({ protocolMessage: { type: 0, key: { id: "A" } } })).toBe("A");
     expect(revokedMessageId({ protocolMessage: { type: 14, key: { id: "A" } } })).toBeUndefined();
     expect(revokedMessageId({ conversation: "x" })).toBeUndefined();
+  });
+});
+
+describe("capVCards", () => {
+  it("drops PHOTO lines with their folded continuation, caps cards and size", () => {
+    const nl = String.fromCharCode(10);
+    const card = ["BEGIN:VCARD", "FN:Ana", "PHOTO;ENCODING=b:AAAA", " BBBB", "TEL:1", "END:VCARD"].join(nl);
+    expect(capVCards([card])).toBe(["BEGIN:VCARD", "FN:Ana", "TEL:1", "END:VCARD"].join(nl));
+    expect(capVCards(Array(20).fill("BEGIN:VCARD")).split("BEGIN:VCARD")).toHaveLength(11);
+    expect(capVCards(["BEGIN:VCARD" + nl + "NOTE:" + "x".repeat(20000)]).length).toBe(8192);
   });
 });

@@ -110,6 +110,26 @@ function defaultFilename(kind: InboundType, mimetype: string): string {
   return `${kind}.${extFromMime(mimetype)}`;
 }
 
+const MAX_VCARDS = 10;
+const MAX_VCARD_CHARS = 8 * 1024;
+
+/** Stored vCard text: at most 10 cards, PHOTO/LOGO lines (and folded continuations) dropped, 8 KB cap. */
+export function capVCards(vcards: string[]): string {
+  const out: string[] = [];
+  for (const card of vcards.slice(0, MAX_VCARDS)) {
+    let skipping = false;
+    for (const line of card.split(/\r?\n|\r/)) {
+      if (/^[ \t]/.test(line)) {
+        if (!skipping) out.push(line);
+        continue;
+      }
+      skipping = /^(PHOTO|LOGO)[;:]/i.test(line);
+      if (!skipping) out.push(line);
+    }
+  }
+  return out.join("\n").slice(0, MAX_VCARD_CHARS);
+}
+
 interface Extracted {
   type: InboundType;
   text?: string;
@@ -182,6 +202,16 @@ function extract(content: proto.IMessage): Extracted | { skip: SkipReason } {
     const label = [name, address].filter((s): s is string => !!s).join(" - ");
     const text = label ? `${label} (${lat},${lng})` : `${lat},${lng}`;
     return { type: "location", text, contextInfo: loc.contextInfo };
+  }
+  // Contact cards travel as vCard text ("BEGIN:VCARD..."): the inbox renders
+  // a card from it (src/lib/inbox/vcard.ts).
+  const vcards = [
+    content.contactMessage?.vcard,
+    ...(content.contactsArrayMessage?.contacts ?? []).map((c) => c.vcard),
+  ].filter((v): v is string => !!v && /^\s*BEGIN:VCARD/i.test(v));
+  if (vcards.length > 0) {
+    const info = content.contactMessage?.contextInfo ?? content.contactsArrayMessage?.contextInfo;
+    return { type: "text", text: vcards.join("\n"), contextInfo: info };
   }
   if (
     content.protocolMessage ||

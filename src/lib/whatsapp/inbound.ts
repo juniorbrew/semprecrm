@@ -30,7 +30,9 @@ import { isWithinBusinessHours, startOfLocalDay } from '@/lib/business-hours'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import { engineSendText } from '@/lib/automations/meta-send'
 import { canSendMessages, type AccountRole } from '@/lib/auth/roles'
+import { plainMessageText, vcardPreview } from '@/lib/inbox/vcard'
 import { notifyInboundMessage } from '@/lib/push/notify'
+import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { isPushConfigured } from '@/lib/push/send'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
@@ -108,6 +110,11 @@ export interface IngestResult {
   reopened?: boolean
   /** New conversation handed to the previous conversation's agent. */
   inheritedAssignee?: string
+  /**
+   * An AI agent in automatic mode will answer (migration 066): a job was
+   * queued / extended. The transport route kicks the drain with `after()`.
+   */
+  aiReplyQueued?: boolean
 }
 
 // ------------------------------------------------------------
@@ -395,6 +402,13 @@ const ALLOWED_CONTENT_TYPES = new Set([
   'template',
   'interactive',
 ])
+
+/** List / push preview: the text, a person icon + name for a contact card, else "[type]". */
+export function previewText(contentText: string | null | undefined, type: string): string {
+  const card = vcardPreview(contentText)
+  if (card !== null) return `\u{1F464} ${card}`
+  return contentText || `[${type}]`
+}
 
 export function toContentType(type: string): string {
   if (ALLOWED_CONTENT_TYPES.has(type)) return type
@@ -810,7 +824,10 @@ export async function ingestInboundMessage(
   const isFirstInboundMessage =
     !conversationOutcome.reopened && (priorCustomerMsgCount ?? 0) === 0
 
+  // Id chosen here so the automatic-reply job can reference the row.
+  const inboundMessageId = crypto.randomUUID()
   const { error: msgError } = await db.from('messages').insert({
+    id: inboundMessageId,
     conversation_id: conversation.id,
     sender_type: 'customer',
     content_type: contentType,
@@ -853,7 +870,7 @@ export async function ingestInboundMessage(
   const { error: convError } = await db
     .from('conversations')
     .update({
-      last_message_text: contentText || `[${input.type}]`,
+      last_message_text: previewText(contentText, input.type),
       last_message_at: new Date().toISOString(),
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
@@ -954,7 +971,7 @@ export async function ingestInboundMessage(
       conversationId: conversation.id,
       assigneeUserId: (conversation.assigned_agent_id as string | null) ?? null,
       contactName: (contact.name as string | null) || senderPhone,
-      preview: contentText || `[${input.type}]`,
+      preview: previewText(contentText, input.type),
     })
   }
 
@@ -962,7 +979,8 @@ export async function ingestInboundMessage(
   // automation triggers are suppressed (the customer is navigating a
   // bot menu, not sending a trigger word). Relationship-level triggers
   // still fire. The runner never throws.
-  const inboundText = contentText ?? ''
+  // A shared contact card is third-party data: automations / flows only see a placeholder.
+  const inboundText = plainMessageText(contentText)
   const flowResult = await dispatchInboundToFlows({
     accountId,
     userId: ownerUserId,
@@ -1022,6 +1040,20 @@ export async function ingestInboundMessage(
     )
   }
 
+  // Automatic reply (AI phase 4): after flows and automations, only when
+  // no flow took the message and it was not a stop word. Debounced job;
+  // never throws.
+  const aiReplyQueued =
+    !flowResult.consumed && !optedOut
+      ? await enqueueAutoReplyIfEligible(db, {
+          accountId,
+          // The customer just wrote: the 24 h window is open.
+          conversation: { ...conversation, last_customer_message_at: new Date().toISOString() },
+          contact,
+          messageIds: [inboundMessageId],
+        })
+      : false
+
   return {
     ok: true,
     contactId: contact.id,
@@ -1033,6 +1065,7 @@ export async function ingestInboundMessage(
     ...(newConversation ? { newConversation } : {}),
     ...(reopened ? { reopened } : {}),
     ...(inheritedAssignee ? { inheritedAssignee } : {}),
+    ...(aiReplyQueued ? { aiReplyQueued } : {}),
     ...(newConversation && conversationOutcome.previous
       ? { previousConversationId: conversationOutcome.previous.id as string }
       : {}),

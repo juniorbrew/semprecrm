@@ -43,6 +43,10 @@ interface SendTextArgs {
   conversationId: string
   contactId: string
   text: string
+  /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
+  origin?: 'automation' | 'ai'
+  /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
+  skipPacing?: boolean
 }
 
 interface SendTemplateArgs {
@@ -77,7 +81,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // there — send the rendered body as plain text instead.
   if ((await conversationChannel(db, input.conversationId)) === 'qr') {
     // Anti-ban: automated sends of one number go out spaced, not in a burst.
-    await paceAutomatedQrSend(input.accountId)
+    if (!(input.kind === 'text' && input.skipPacing)) await paceAutomatedQrSend(input.accountId)
     if (input.kind === 'template') {
       const body = await loadTemplateBody(db, input.accountId, input.templateName, input.language)
       if (!body) {
@@ -98,7 +102,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
     }
     return engineSendViaQr(db, {
-      origin: 'automation',
+      origin: input.origin ?? 'automation',
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -218,7 +222,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',
-    origin: 'automation',
+    origin: (input.kind === 'text' && input.origin) || 'automation',
     content_type,
     content_text,
     template_name,

@@ -70,7 +70,8 @@ export interface RunModelCallInput {
   db: SupabaseClient;
   /** From the session — never from the request body. */
   accountId: string;
-  userId: string;
+  /** null for the automatic-reply runtime (no signed-in user). */
+  userId: string | null;
   conversationId: string | null;
   feature: AiFeature;
   system: string;

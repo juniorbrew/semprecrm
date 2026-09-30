@@ -32,12 +32,37 @@ describe('buildContactExport — AI contact memory (064)', () => {
         { id: 'm1', fact: 'Prefere entrega à tarde', status: 'active', source: 'manual' },
         { id: 'm2', fact: 'Trabalha com eventos', status: 'proposed', source: 'ai' },
       ],
+      ai_handoffs: [{ id: 'h1', reason: 'Pediu atendente', last_customer_words: 'quero falar com alguém' }],
     })
     const out = await buildContactExport(db, 'acc', 'c1', () => new Date('2026-09-29T00:00:00Z'))
     expect(out.ai_memories.map((m) => m.fact)).toEqual(['Prefere entrega à tarde', 'Trabalha com eventos'])
     expect(filters.ai_contact_memories).toEqual([
       ['account_id', 'acc'],
       ['contact_id', 'c1'],
+    ])
+    // Automatic-reply hand-overs (066) quote the customer too.
+    expect(out.ai_handoffs).toEqual([{ id: 'h1', reason: 'Pediu atendente', last_customer_words: 'quero falar com alguém' }])
+    expect(filters.ai_handoffs).toEqual([
+      ['account_id', 'acc'],
+      ['contact_id', 'c1'],
+    ])
+    expect(out.warnings).toEqual([])
+  })
+})
+
+describe('buildContactExport — conversation events', () => {
+  it('includes the activity log, transfer reasons included, under each conversation', async () => {
+    const { db } = makeDb({
+      contacts: [{ id: 'c1', name: 'Maria' }],
+      conversations: [{ id: 'conv1' }],
+      conversation_events: [
+        { id: 'e1', conversation_id: 'conv1', event_type: 'assigned', payload: { reason: 'boleto vencido' } },
+        { id: 'e2', conversation_id: 'other', event_type: 'assigned', payload: {} },
+      ],
+    })
+    const out = await buildContactExport(db, 'acc', 'c1')
+    expect(out.conversations[0].events).toEqual([
+      { id: 'e1', conversation_id: 'conv1', event_type: 'assigned', payload: { reason: 'boleto vencido' } },
     ])
     expect(out.warnings).toEqual([])
   })

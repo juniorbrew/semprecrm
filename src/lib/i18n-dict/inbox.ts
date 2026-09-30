@@ -122,4 +122,40 @@ export const DICT_INBOX: Record<string, string> = {
   'Load failed': 'Falha de conexão. Verifique sua internet e tente novamente.',
   'NetworkError when attempting to fetch resource.':
     'Falha de conexão. Verifique sua internet e tente novamente.',
+
+  // ---- List filters, keyboard shortcuts (agilidade) ----
+  Filters: 'Filtros',
+  Tag: 'Etiqueta',
+  Both: 'Ambos',
+  Official: 'Oficial',
+  QR: 'QR',
+  'Clear filters': 'Limpar filtros',
+  'Remove filter': 'Remover filtro',
+  'Keyboard shortcuts': 'Atalhos do teclado',
+  'Next conversation': 'Próxima conversa',
+  'Previous conversation': 'Conversa anterior',
+  'Open conversation': 'Abrir conversa',
+  'Take the conversation': 'Assumir a conversa',
+  Resolve: 'Resolver',
+  'Search conversations': 'Buscar conversas',
+  'Leave the field': 'Sair do campo',
+
+  Undo: 'Desfazer',
+
+  // ---- Transfer with a reason ----
+  'Transfer conversation': 'Transferir conversa',
+  To: 'Para',
+  'Reason (optional)': 'Motivo (opcional)',
+  'Context for the new owner…': 'Contexto para quem vai assumir…',
+  Transfer: 'Transferir',
+  'Do not include sensitive personal data in the reason.': 'Não inclua dados pessoais sensíveis no motivo.',
+
+  // ---- Voice player, contact card ----
+  Play: 'Reproduzir',
+  Seek: 'Posição do áudio',
+  'Playback speed': 'Velocidade de reprodução',
+  'Save as contact': 'Salvar como contato',
+  'Contact saved': 'Contato salvo',
+  'Contact already saved': 'Este contato já está salvo',
+  'Could not save the contact': 'Não foi possível salvar o contato',
 };

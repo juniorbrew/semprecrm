@@ -28,12 +28,18 @@ export interface ContactExport {
     opted_out_at: unknown
     anonymized_at: unknown
   }
-  conversations: (Record<string, unknown> & { messages: Record<string, unknown>[] })[]
+  conversations: (Record<string, unknown> & {
+    messages: Record<string, unknown>[]
+    /** Activity log (assignments incl. transfer reasons, status changes, labels). */
+    events: Record<string, unknown>[]
+  })[]
   notes: Record<string, unknown>[]
   deals: Record<string, unknown>[]
   tasks: Record<string, unknown>[]
   /** "Memória do contato" facts (AI, migration 064), every status. */
   ai_memories: Record<string, unknown>[]
+  /** Automatic-reply hand-overs (migration 066): reason, what the customer wanted, their last words. */
+  ai_handoffs: Record<string, unknown>[]
   /** Consent-related audit events (export / anonymisation) for this contact. */
   consent_events: Record<string, unknown>[]
   /** Tables that failed to load (RLS gap, missing migration) — never fatal. */
@@ -84,7 +90,7 @@ export async function buildContactExport(
     }
   }
 
-  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows] =
+  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows, handoffRows] =
     await Promise.all([
       load('custom_fields', () =>
         db
@@ -144,6 +150,14 @@ export async function buildContactExport(
           .eq('contact_id', contactId)
           .order('created_at', { ascending: true }),
       ),
+      load('ai_handoffs', () =>
+        db
+          .from('ai_handoffs')
+          .select('id, conversation_id, reason, customer_wants, last_customer_words, notified, created_at')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: true }),
+      ),
     ])
 
   const conversationIds = convRows.map((r) => r.id as string)
@@ -158,6 +172,21 @@ export async function buildContactExport(
         .in('conversation_id', conversationIds)
         .order('created_at', { ascending: true }),
     )
+  }
+  let eventRows: Row[] = []
+  if (conversationIds.length > 0) {
+    eventRows = await load('conversation_events', () =>
+      db
+        .from('conversation_events')
+        .select('id, conversation_id, event_type, actor_user_id, payload, created_at')
+        .in('conversation_id', conversationIds)
+        .order('created_at', { ascending: true }),
+    )
+  }
+  const eventsByConversation = new Map<string, Row[]>()
+  for (const e of eventRows) {
+    const key = e.conversation_id as string
+    eventsByConversation.set(key, [...(eventsByConversation.get(key) ?? []), e])
   }
   const byConversation = new Map<string, Row[]>()
   for (const m of messageRows) {
@@ -201,11 +230,13 @@ export async function buildContactExport(
     conversations: convRows.map((conv) => ({
       ...conv,
       messages: byConversation.get(conv.id as string) ?? [],
+      events: eventsByConversation.get(conv.id as string) ?? [],
     })),
     notes: noteRows,
     deals: dealRows,
     tasks: taskRows,
     ai_memories: memoryRows,
+    ai_handoffs: handoffRows,
     consent_events: auditRows,
     warnings,
   }

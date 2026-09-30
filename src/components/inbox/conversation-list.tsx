@@ -15,7 +15,6 @@ import {
 import { useLanguage } from "@/hooks/use-language";
 import {
   classifyConversation,
-  countRadar,
   formatWaitingAge,
   isRadarKey,
   matchesRadar,
@@ -34,21 +33,49 @@ import {
   LIVE_FILTERS,
   migrateTriage,
   tabConversations,
-  tabCounts,
   tabForConversation,
   type InboxTab,
   type LiveFilter,
+  type TriageState,
 } from "@/lib/inbox/triage";
+import {
+  compareForTab,
+  countsArgs,
+  cursorFor,
+  EMPTY_COUNTS,
+  INBOX_PAGE_SIZE,
+  INBOX_RESYNC_MAX,
+  mergePage,
+  pageArgs,
+  parseCounts,
+  showOwnerBadge,
+  viewKey,
+  type InboxCounts,
+  type InboxListState,
+  type InboxRow,
+  type InboxView,
+} from "@/lib/inbox/list-query";
+import { buildSearchPattern, normalizeSearch } from "@/lib/inbox/search";
+import { debounceWithMaxWait } from "@/lib/inbox/throttle";
+import {
+  INBOX_SHORTCUT_EVENT,
+  stepIndex,
+  type ShortcutAction,
+} from "@/lib/inbox/shortcuts";
+import { findConversationById } from "@/lib/conversations/find-by-contact";
 import {
   Search,
   ChevronDown,
   Check,
   MessageCircle,
+  Bot,
   MailOpen,
   Clock,
   UserX,
   Snowflake,
   Building2,
+  RefreshCw,
+  Keyboard,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -58,7 +85,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ContactAvatar } from "./contact-avatar";
+import { ContactAvatar, avatarInitial } from "./contact-avatar";
+import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filters";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -72,6 +100,18 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  /**
+   * Bumped by the parent (debounced) on every realtime message / conversation
+   * event so the server-side tab badges and Radar chips refresh.
+   */
+  countsToken?: number;
+  /**
+   * Reports the active view + paging window so the parent can decide which
+   * realtime rows belong in the loaded list (lib/inbox/list-query).
+   */
+  onListStateChange?: (state: InboxListState) => void;
+  /** Opens the shortcut help (the "?" button in the header). */
+  onShowShortcuts?: () => void;
 }
 
 /**
@@ -113,6 +153,14 @@ const STRIP_COPY: Record<
     queuePositionTitle: string;
     queueEmpty: string;
     queueEmptyHint: string;
+    loadMore: string;
+    loadError: string;
+    retry: string;
+    /** Empty state when filters (tags / channel / unread / radar) hide everything. */
+    clearFilters: string;
+    filteredEmpty: string;
+    shortcuts: string;
+    ownerTitle: (name: string) => string;
   }
 > = {
   "pt-BR": {
@@ -138,6 +186,13 @@ const STRIP_COPY: Record<
     queuePositionTitle: "Posição na fila (maior espera primeiro)",
     queueEmpty: "Ninguém na fila",
     queueEmptyHint: "Conversas abertas sem responsável aparecem aqui, a mais antiga primeiro.",
+    loadMore: "Carregar mais",
+    loadError: "Não foi possível carregar as conversas.",
+    retry: "Tentar de novo",
+    clearFilters: "Limpar filtros",
+    filteredEmpty: "Nenhuma conversa com esses filtros",
+    shortcuts: "Atalhos do teclado (?)",
+    ownerTitle: (name) => `Responsável: ${name}`,
   },
   "en-US": {
     title: "Conversations",
@@ -162,6 +217,13 @@ const STRIP_COPY: Record<
     queuePositionTitle: "Position in the queue (longest wait first)",
     queueEmpty: "Nobody in the queue",
     queueEmptyHint: "Open conversations with no owner show up here, oldest first.",
+    loadMore: "Load more",
+    loadError: "Could not load conversations.",
+    retry: "Try again",
+    clearFilters: "Clear filters",
+    filteredEmpty: "No conversations match these filters",
+    shortcuts: "Keyboard shortcuts (?)",
+    ownerTitle: (name) => `Owner: ${name}`,
   },
 };
 
@@ -227,8 +289,11 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  countsToken = 0,
+  onListStateChange,
+  onShowShortcuts,
 }: ConversationListProps) {
-  const { user, preferences } = useAuth();
+  const { user, preferences, accountId } = useAuth();
   const { language } = useLanguage();
   const copy = STRIP_COPY[language] ?? STRIP_COPY["pt-BR"];
   const userId = user?.id ?? null;
@@ -251,10 +316,46 @@ export function ConversationList({
   );
 
   const [search, setSearch] = useState("");
+  // The server query follows the box 300 ms after the last keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(normalizeSearch(search)), 300);
+    return () => clearTimeout(id);
+  }, [search]);
   const [tab, setTab] = useState<InboxTab>("all");
   const [liveFilter, setLiveFilter] = useState<LiveFilter>("live");
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // Contact-tag and WhatsApp-channel filters (migration 068), persisted with
+  // the tab / live filter.
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [channelFilter, setChannelFilter] = useState<WhatsAppChannel | null>(null);
+  const { tags: facetTags, hasBothChannels, loaded: facetsLoaded } = useInboxFacets(accountId);
+  // A saved channel filter is meaningless (and invisible) without both channels.
+  const channel = hasBothChannels ? channelFilter : null;
+  // A saved tag that no longer exists must not filter (or show a chip).
+  const validTagIds = useMemo(
+    () => (facetsLoaded ? tagIds.filter((id) => facetTags.some((t) => t.id === id)) : tagIds),
+    [tagIds, facetTags, facetsLoaded],
+  );
+  // With a saved facet filter, wait until the facets are known before the
+  // first fetch, so the list never loads unfiltered and then again filtered.
+  const facetsSettled = facetsLoaded || (!channelFilter && tagIds.length === 0);
+  // View key of the last page that finished loading; `loading` is derived.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  // Same, without the search text: a search that is still settling keeps the
+  // current rows on screen (dimmed) instead of swapping them for a spinner.
+  const [loadedBaseKey, setLoadedBaseKey] = useState<string | null>(null);
+  // View whose first page failed to load (shows an error state with retry).
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Edge of the loaded window (last row the server returned) + whether more
+  // pages exist. The next-page cursor is derived from `boundary`.
+  const [paging, setPaging] = useState<{ hasMore: boolean; boundary: InboxRow | null }>({
+    hasMore: false,
+    boundary: null,
+  });
+  const [counts, setCounts] = useState<InboxCounts>(EMPTY_COUNTS);
   const [tagsByContact, setTagsByContact] = useState<Map<string, RowTag[]>>(
     () => new Map()
   );
@@ -269,41 +370,48 @@ export function ConversationList({
     []
   );
 
-  // The persisted queue view is restored inside the fetch effect below,
-  // right before the first batch of conversations lands — so tabs and
-  // rows appear in one paint, and the server-rendered defaults never
-  // disagree with the client (reading localStorage in the initializer
-  // would be a hydration mismatch). Once only, hence the ref.
-  const triageRestoredRef = useRef(false);
-  // A ?c= deep link to a resolved / archived conversation lands on the
-  // tab that lists it (first load only — later list refetches must not
-  // yank the agent off the tab they picked).
+  // The persisted queue view (and the tab a ?c= deep link to a resolved /
+  // archived conversation lives in) is restored once, before the first page
+  // is fetched — so the list opens on the right tab in one paint, and the
+  // server-rendered defaults never disagree with the client (reading
+  // localStorage in the initializer would be a hydration mismatch). Later
+  // refetches must not yank the agent off the tab they picked.
+  const [ready, setReady] = useState(false);
   const deepLinkId = searchParams.get("c");
   const deepLinkIdRef = useRef(deepLinkId);
   useEffect(() => {
     deepLinkIdRef.current = deepLinkId;
   });
-  const restorePersistedTriage = useCallback((loaded: Conversation[]) => {
-    if (triageRestoredRef.current) return;
-    triageRestoredRef.current = true;
-    try {
-      const raw = localStorage.getItem(TRIAGE_STORAGE_KEY);
-      if (raw) {
-        const stored = migrateTriage(JSON.parse(raw));
-        setTab(stored.tab);
-        setLiveFilter(stored.live);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = localStorage.getItem(TRIAGE_STORAGE_KEY);
+        if (raw) {
+          const stored = migrateTriage(JSON.parse(raw));
+          setTab(stored.tab);
+          setLiveFilter(stored.live);
+          setTagIds(stored.tagIds);
+          setChannelFilter(stored.channel);
+        }
+      } catch {
+        // localStorage can throw in private-browsing / sandboxed contexts.
       }
-    } catch {
-      // localStorage can throw in private-browsing / sandboxed contexts.
-    }
-    const linked = deepLinkIdRef.current
-      ? loaded.find((c) => c.id === deepLinkIdRef.current)
-      : undefined;
-    const linkedTab = linked ? tabForConversation(linked) : null;
-    if (linkedTab) setTab(linkedTab);
+      const linkedId = deepLinkIdRef.current;
+      if (linkedId) {
+        const linked = await findConversationById(createClient(), linkedId);
+        if (cancelled) return;
+        const linkedTab = linked ? tabForConversation(linked) : null;
+        if (linkedTab) setTab(linkedTab);
+      }
+      if (!cancelled) setReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const persistTriage = useCallback((next: { tab: InboxTab; live: LiveFilter }) => {
+  const persistTriage = useCallback((next: TriageState) => {
     try {
       localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify(next));
     } catch {
@@ -314,19 +422,41 @@ export function ConversationList({
   const handleTabChange = useCallback(
     (next: InboxTab) => {
       setTab(next);
-      persistTriage({ tab: next, live: liveFilter });
+      persistTriage({ tab: next, live: liveFilter, tagIds, channel: channelFilter });
     },
-    [persistTriage, liveFilter]
+    [persistTriage, liveFilter, tagIds, channelFilter]
   );
 
   const handleLiveChange = useCallback(
     (next: LiveFilter) => {
       setLiveFilter(next);
-      persistTriage({ tab, live: next });
+      persistTriage({ tab, live: next, tagIds, channel: channelFilter });
     },
-    [persistTriage, tab]
+    [persistTriage, tab, tagIds, channelFilter]
   );
 
+  const handleTagsChange = useCallback(
+    (next: string[]) => {
+      setTagIds(next);
+      persistTriage({ tab, live: liveFilter, tagIds: next, channel: channelFilter });
+    },
+    [persistTriage, tab, liveFilter, channelFilter]
+  );
+
+  const handleChannelChange = useCallback(
+    (next: WhatsAppChannel | null) => {
+      setChannelFilter(next);
+      persistTriage({ tab, live: liveFilter, tagIds, channel: next });
+    },
+    [persistTriage, tab, liveFilter, tagIds]
+  );
+
+  useEffect(() => {
+    if (facetsLoaded && validTagIds.length !== tagIds.length) {
+      setTagIds(validTagIds);
+      persistTriage({ tab, live: liveFilter, tagIds: validTagIds, channel: channelFilter });
+    }
+  }, [facetsLoaded, validTagIds, tagIds.length, persistTriage, tab, liveFilter, channelFilter]);
   // Ticks once a minute so the relative ages in the rows stay honest
   // without a refetch. Rows only render client-side (after the fetch),
   // so the initial Date.now() never reaches SSR markup.
@@ -353,15 +483,71 @@ export function ConversationList({
     onConversationsLoadedRef.current = onConversationsLoaded;
   });
 
+  // Radar buckets replace the live filter (the bucket fixes the status).
+  const effectiveLive: LiveFilter = radar ? "live" : liveFilter;
+  const view = useMemo<InboxView>(
+    () => ({
+      tab,
+      live: effectiveLive,
+      unread: unreadOnly,
+      radar,
+      search: debouncedSearch,
+      tagIds: validTagIds,
+      channel,
+    }),
+    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, validTagIds, channel],
+  );
+  const key = viewKey(view);
+  const baseKey = viewKey({ ...view, search: "" });
+  const loadFailed = errorKey === key;
+  const loading = loadedKey !== key && !loadFailed;
+  // Only the search text changed: keep showing the rows we have.
+  const softLoading = loading && loadedBaseKey === baseKey;
+  const slaMinutes = preferences.inbox_sla_minutes;
+  const coolingHours = preferences.cooling_hours;
+
+  const conversationsRef = useRef(conversations);
+  const loadedCountRef = useRef(0);
+  const loadedKeyRef = useRef<string | null>(null);
+  // Bumped whenever a first-page fetch starts: a "Carregar mais" answer that
+  // was in flight across it is stale (its cursor predates the refreshed
+  // window) and is discarded.
+  const generationRef = useRef(0);
+  const keyRef = useRef(key);
   useEffect(() => {
+    conversationsRef.current = conversations;
+    keyRef.current = key;
+  });
+
+  // First page of the current view (and background refreshes of it). The
+  // server applies the tab / live / unread / Radar / search filters and the
+  // order (Fila: longest wait first) — see migration 067. A resync of the
+  // same view refetches as many rows as are loaded, so it never collapses
+  // pages the agent already scrolled through.
+  useEffect(() => {
+    if (!ready || !accountId || !facetsSettled) return;
     const supabase = createClient();
     let cancelled = false;
+    const isResync = loadedKeyRef.current === key;
+    generationRef.current += 1;
+    const limit = isResync
+      ? Math.min(Math.max(loadedCountRef.current, INBOX_PAGE_SIZE), INBOX_RESYNC_MAX)
+      : INBOX_PAGE_SIZE;
 
     (async () => {
+      setErrorKey(null);
+      // One extra row tells whether another page exists.
       const { data, error } = await supabase
-        .from("conversations")
-        .select("*, contact:contacts(*)")
-        .order("last_message_at", { ascending: false });
+        .rpc(
+          "inbox_conversation_page",
+          pageArgs(view, {
+            accountId,
+            prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours },
+            pattern: buildSearchPattern(view.search),
+            limit: limit + 1,
+          }),
+        )
+        .select("*, contact:contacts(*)");
 
       if (cancelled) return;
 
@@ -373,13 +559,21 @@ export function ConversationList({
           hint: error.hint,
           code: error.code,
         });
-        setLoading(false);
+        // A failed background refresh keeps the rows already shown; a view
+        // that never loaded shows an error state (with retry), not stale rows.
+        if (!isResync) setErrorKey(key);
         return;
       }
 
-      restorePersistedTriage(data ?? []);
-      onConversationsLoadedRef.current(data ?? []);
-      setLoading(false);
+      const rows = (data ?? []) as Conversation[];
+      const hasMore = rows.length > limit;
+      const page = (hasMore ? rows.slice(0, limit) : rows).sort(compareForTab(view.tab));
+      loadedCountRef.current = page.length;
+      setPaging({ hasMore, boundary: page[page.length - 1] ?? null });
+      onConversationsLoadedRef.current(page);
+      loadedKeyRef.current = key;
+      setLoadedKey(key);
+      setLoadedBaseKey(baseKey);
     })();
 
     return () => {
@@ -388,7 +582,103 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken, restorePersistedTriage]);
+  }, [ready, accountId, facetsSettled, key, baseKey, view, resyncToken, retryTick, slaMinutes, coolingHours]);
+
+  const loadMore = useCallback(async () => {
+    const boundary = paging.boundary;
+    if (loadingMore || !paging.hasMore || !boundary || !accountId) return;
+    setLoadingMore(true);
+    const startKey = keyRef.current;
+    const startGeneration = generationRef.current;
+    try {
+      const { data, error } = await createClient()
+        .rpc(
+          "inbox_conversation_page",
+          pageArgs(view, {
+            accountId,
+            prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours },
+            pattern: buildSearchPattern(view.search),
+            cursor: cursorFor(view.tab, boundary),
+            limit: INBOX_PAGE_SIZE + 1,
+          }),
+        )
+        .select("*, contact:contacts(*)");
+      // The view changed, or a resync refreshed the window, while the page
+      // was in flight: drop it.
+      if (keyRef.current !== startKey || generationRef.current !== startGeneration) return;
+      if (error) {
+        console.error("Failed to load more conversations:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        return;
+      }
+      const rows = (data ?? []) as Conversation[];
+      const hasMore = rows.length > INBOX_PAGE_SIZE;
+      const page = (hasMore ? rows.slice(0, INBOX_PAGE_SIZE) : rows).sort(
+        compareForTab(view.tab),
+      );
+      loadedCountRef.current += page.length;
+      setPaging({ hasMore, boundary: page[page.length - 1] ?? boundary });
+      onConversationsLoadedRef.current(mergePage(conversationsRef.current, page));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [paging, loadingMore, accountId, view, slaMinutes, coolingHours]);
+
+  // Tell the parent which view / window is on screen (realtime merge rules).
+  useEffect(() => {
+    onListStateChange?.({
+      view,
+      hasMore: paging.hasMore,
+      boundary: paging.boundary,
+      ready: !loading,
+    });
+  }, [view, paging, loading, onListStateChange]);
+
+  // Tab badges + Radar chips: counted on the server over the same filters.
+  // A filter change / resync refetches at once; realtime events (the parent
+  // bumps `countsToken`) are debounced with a 2 s max wait, so a busy inbox
+  // still refreshes the badges instead of resetting the timer forever.
+  const countsSeqRef = useRef(0);
+  const fetchCounts = useCallback(async () => {
+    if (!accountId) return;
+    const seq = ++countsSeqRef.current;
+    const { data, error } = await createClient().rpc(
+      "inbox_counts",
+      countsArgs(
+        { live: effectiveLive, unread: unreadOnly, radar, tagIds: validTagIds, channel },
+        { accountId, prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours } },
+      ),
+    );
+    if (seq !== countsSeqRef.current) return;
+    if (error) {
+      console.error("Failed to fetch inbox counts:", error.message);
+      return;
+    }
+    setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
+  }, [accountId, effectiveLive, unreadOnly, radar, validTagIds, channel, slaMinutes, coolingHours]);
+  const fetchCountsRef = useRef(fetchCounts);
+  useEffect(() => {
+    fetchCountsRef.current = fetchCounts;
+  });
+  useEffect(() => {
+    if (!ready || !facetsSettled) return;
+    void fetchCounts();
+  }, [ready, facetsSettled, fetchCounts, resyncToken]);
+  const countsDebounce = useMemo(
+    () => debounceWithMaxWait(() => void fetchCountsRef.current(), 300, 2000),
+    [],
+  );
+  const lastCountsTokenRef = useRef(countsToken);
+  useEffect(() => {
+    if (lastCountsTokenRef.current === countsToken) return;
+    lastCountsTokenRef.current = countsToken;
+    countsDebounce.call();
+  }, [countsToken, countsDebounce]);
+  useEffect(() => () => countsDebounce.cancel(), [countsDebounce]);
 
   // Label chips on rows: one batched contact_tags fetch for every contact
   // in the list. Keyed on the sorted id set so realtime preview / unread
@@ -475,10 +765,13 @@ export function ConversationList({
     if (unreadOnly) {
       result = result.filter((c) => c.unread_count > 0);
     }
+    if (channel) {
+      // Realtime patches keep rows in the list; the server already filtered.
+      result = result.filter((c) => (c.channel ?? "official") === channel);
+    }
     return result;
-  }, [conversations, unreadOnly, radar, preferences, now]);
+  }, [conversations, unreadOnly, radar, channel, preferences, now]);
 
-  const effectiveLive: LiveFilter = radar ? "live" : liveFilter;
   const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
   // The queue, longest wait first, with 1-based positions.
@@ -488,29 +781,21 @@ export function ConversationList({
   );
   const queueById = useMemo(() => queueIndex(queue), [queue]);
 
-  // Radar counts are taken over every conversation the list knows — the
-  // same population the dashboard card counts — regardless of the
-  // status / unread / queue filters, so both surfaces show identical
-  // numbers.
-  const radarCounts = useMemo(
-    () => countRadar(conversations, preferences, now),
-    [conversations, preferences, now],
-  );
-
-  const counts = useMemo(
-    () =>
-      tabCounts(basePool, { live: effectiveLive, userId, queueLength: queue.length }),
-    [basePool, effectiveLive, userId, queue]
-  );
-
+  // Search: the server answers once the box settles; while the debounce is
+  // pending the loaded rows are narrowed locally so typing feels instant.
+  // (A settled server search must not be re-filtered here: it also matches
+  // company names, which the rows do not carry.)
+  const searchPending = normalizeSearch(search) !== debouncedSearch;
   const filtered = useMemo(() => {
     let result: Conversation[] =
       tab === "queue"
         ? queue.map((e) => e.conversation)
-        : tabConversations(basePool, tab, { live: effectiveLive, userId });
+        : tabConversations(basePool, tab, { live: effectiveLive, userId }).sort(
+            compareForTab(tab),
+          );
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if ((searchPending || softLoading) && search.trim()) {
+      const q = search.trim().toLowerCase();
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
@@ -520,7 +805,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [basePool, queue, tab, effectiveLive, userId, search]);
+  }, [basePool, queue, tab, effectiveLive, userId, search, searchPending, softLoading]);
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -529,18 +814,99 @@ export function ConversationList({
     []
   );
 
+  // Keyboard cursor (j / k). It follows the open conversation until the agent
+  // moves it; Enter / o opens the highlighted row. Reset by any selection.
+  const [cursorOverride, setCursorOverride] = useState<string | null>(null);
+  const cursorId =
+    cursorOverride && filtered.some((c) => c.id === cursorOverride)
+      ? cursorOverride
+      : activeConversationId;
+
   const handleSelect = useCallback(
     (conv: Conversation) => {
+      setCursorOverride(null);
       onSelect(conv);
     },
     [onSelect]
   );
 
+  // Shortcuts dispatched by useInboxShortcuts (lib/inbox/shortcuts).
+  const shortcutRef = useRef({ filtered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore });
+  useEffect(() => {
+    shortcutRef.current = { filtered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore };
+  });
+  useEffect(() => {
+    const onShortcut = (e: Event) => {
+      const action = (e as CustomEvent<ShortcutAction>).detail;
+      const st = shortcutRef.current;
+      if (action === "next" || action === "prev") {
+        const at = st.filtered.findIndex((c) => c.id === st.cursorId);
+        const idx = stepIndex(at, action === "next" ? 1 : -1, st.filtered.length);
+        const row = st.filtered[idx];
+        if (!row) return;
+        setCursorOverride(row.id);
+        // Near the end of the loaded window: fetch the next page.
+        if (st.hasMore && idx >= st.filtered.length - 3) void st.loadMore();
+        requestAnimationFrame(() =>
+          document
+            .querySelector(`[data-conv-id="${row.id}"]`)
+            ?.scrollIntoView({ block: "nearest" }),
+        );
+      } else if (action === "open") {
+        const row = st.filtered.find((c) => c.id === st.cursorId);
+        if (row) st.handleSelect(row);
+      }
+    };
+    window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+    return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+  }, []);
+
+  // Team members, for the owner badge on rows (RLS scopes them to the account).
+  const [owners, setOwners] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    createClient()
+      .from("profiles")
+      .select("user_id, full_name")
+      .eq("account_id", accountId)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setOwners(
+          new Map(
+            (data as { user_id: string; full_name: string | null }[]).map((p) => [
+              p.user_id,
+              p.full_name || "?",
+            ]),
+          ),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+  const showOwner = useMemo(() => showOwnerBadge(tab, filtered), [tab, filtered]);
+
+  const anyFilter = unreadOnly || !!radar || validTagIds.length > 0 || !!channel;
+  const clearFilters = useCallback(() => {
+    setUnreadOnly(false);
+    if (radar) setRadar(null);
+    handleTagsChange([]);
+    handleChannelChange(null);
+  }, [radar, setRadar, handleTagsChange, handleChannelChange]);
+
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
-    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border bg-card lg:w-80">
+    <div
+      className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border bg-card lg:w-80"
+      data-inbox-cursor-pending={
+        cursorOverride && cursorId === cursorOverride && cursorId !== activeConversationId
+          ? ""
+          : undefined
+      }
+    >
       {/* Triage strip: title + live filter, search, tabs */}
       <div className="border-b border-border">
         <div
@@ -581,6 +947,15 @@ export function ConversationList({
               </DropdownMenuContent>
             </DropdownMenu>
 
+            <FilterPopover
+              tags={facetTags}
+              hasBothChannels={hasBothChannels}
+              tagIds={validTagIds}
+              channel={channel}
+              onTagsChange={handleTagsChange}
+              onChannelChange={handleChannelChange}
+            />
+
             {/* Unread-only toggle */}
             <button
               type="button"
@@ -597,6 +972,19 @@ export function ConversationList({
             >
               <MailOpen className="h-3.5 w-3.5" />
             </button>
+
+            {onShowShortcuts && (
+              <button
+                type="button"
+                onClick={onShowShortcuts}
+                aria-label={copy.shortcuts}
+                title={copy.shortcuts}
+                data-testid="shortcuts-button"
+                className="hidden h-7 w-7 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:inline-flex"
+              >
+                <Keyboard className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -606,11 +994,20 @@ export function ConversationList({
             <Input
               value={search}
               onChange={handleSearchChange}
+              data-inbox-search
               placeholder="Search conversations..."
               className="h-8 border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
             />
           </div>
         </div>
+
+        <FilterChips
+          tags={facetTags}
+          tagIds={validTagIds}
+          channel={channel}
+          onTagsChange={handleTagsChange}
+          onChannelChange={handleChannelChange}
+        />
 
         {/* Radar chips (spec §3): waiting past SLA · open without owner ·
             cooling after our last message. Bound to ?radar=; clicking the
@@ -626,7 +1023,7 @@ export function ConversationList({
           </span>
           {RADAR_KEYS.map((key) => {
             const active = radar === key;
-            const count = radarCounts[key];
+            const count = counts.radar[key];
             const Icon = RADAR_ICON[key];
             return (
               <button
@@ -690,7 +1087,7 @@ export function ConversationList({
                       : "bg-muted text-muted-foreground"
                   )}
                 >
-                  {counts[value]}
+                  {counts.tabs[value]}
                 </span>
               </button>
             );
@@ -705,7 +1102,19 @@ export function ConversationList({
           space — the list then overflows and gets clipped by the
           parent's overflow-hidden with no scrollbar (issue #229). */}
       <ScrollArea className="min-h-0 flex-1">
-        {loading ? (
+        {loadFailed ? (
+          <div className="px-4 py-12 text-center" data-no-translate role="alert">
+            <p className="text-sm text-muted-foreground">{copy.loadError}</p>
+            <button
+              type="button"
+              onClick={() => setRetryTick((n) => n + 1)}
+              className="mt-3 inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden />
+              {copy.retry}
+            </button>
+          </div>
+        ) : loading && !(softLoading && filtered.length > 0) ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
@@ -714,6 +1123,18 @@ export function ConversationList({
             <div className="px-4 py-12 text-center" data-no-translate>
               <p className="text-sm text-muted-foreground">{copy.queueEmpty}</p>
               <p className="mt-1 text-xs text-muted-foreground/80">{copy.queueEmptyHint}</p>
+            </div>
+          ) : anyFilter ? (
+            <div className="px-4 py-12 text-center" data-no-translate>
+              <p className="text-sm text-muted-foreground">{copy.filteredEmpty}</p>
+              <button
+                type="button"
+                onClick={clearFilters}
+                data-testid="clear-filters"
+                className="mt-3 inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                {copy.clearFilters}
+              </button>
             </div>
           ) : (
             <div className="px-4 py-12 text-center">
@@ -724,12 +1145,22 @@ export function ConversationList({
             </div>
           )
         ) : (
-          <div className="flex flex-col">
+          <div
+            className={cn("flex flex-col transition-opacity", softLoading && "opacity-50")}
+            aria-busy={softLoading}
+          >
             {filtered.map((conv) => (
               <ConversationItem
                 key={conv.id}
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
+                isCursor={conv.id === cursorId && conv.id !== activeConversationId}
+                ownerName={
+                  showOwner && conv.assigned_agent_id
+                    ? (owners.get(conv.assigned_agent_id) ?? null)
+                    : null
+                }
+                ownerTitle={copy.ownerTitle}
                 onSelect={handleSelect}
                 age={formatAge(conv.last_message_at, language, now)}
                 tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
@@ -742,11 +1173,35 @@ export function ConversationList({
                 waitingTitle={copy.waitingTitle}
                 queue={
                   tab === "queue"
-                    ? queueBadgeFor(queueById.get(conv.id), preferences, now, language, copy.queuePositionTitle)
+                    ? queueBadgeFor(
+                        queueById.get(conv.id),
+                        preferences,
+                        now,
+                        language,
+                        copy.queuePositionTitle,
+                        // A search narrows the loaded rows, so their rank
+                        // among the results is not their place in the Fila.
+                        !debouncedSearch,
+                      )
                     : null
                 }
               />
             ))}
+            {paging.hasMore && (
+              <div className="flex justify-center px-3 py-3" data-no-translate>
+                <button
+                  type="button"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {loadingMore && (
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  )}
+                  {copy.loadMore}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </ScrollArea>
@@ -784,11 +1239,12 @@ function queueBadgeFor(
   now: number,
   language: Language,
   positionTitle: string,
+  showPosition = true,
 ): QueueBadge | null {
   if (!entry) return null;
   const since = entry.waitingSince;
   return {
-    position: formatQueuePosition(entry.position, language),
+    position: showPosition ? formatQueuePosition(entry.position, language) : "",
     positionTitle,
     wait: since ? formatQueueWait(since, now, language) : null,
     overdue:
@@ -799,6 +1255,11 @@ function queueBadgeFor(
 interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
+  /** Keyboard cursor (j / k) is here. */
+  isCursor: boolean;
+  /** Assigned agent's name when the owner badge is shown for this row. */
+  ownerName: string | null;
+  ownerTitle: (name: string) => string;
   onSelect: (conversation: Conversation) => void;
   age: string;
   tags: RowTag[];
@@ -818,6 +1279,9 @@ interface ConversationItemProps {
 function ConversationItem({
   conversation,
   isActive,
+  isCursor,
+  ownerName,
+  ownerTitle,
   onSelect,
   age,
   tags,
@@ -835,6 +1299,16 @@ function ConversationItem({
   const displayName = contact?.name || contact?.phone || "Unknown contact";
   const isUnread = conversation.unread_count > 0;
   const status = conversation.status;
+  const { language } = useLanguage();
+  // "IA" badge: the AI has answered here and is not paused (migration 066).
+  const pausedUntil = conversation.ai_paused_until;
+  // Mount-time clock: a timed pause that expires while the row is shown
+  // only shows the badge again on the next render cycle — good enough.
+  const [mountedAt] = useState(Date.now);
+  const aiHandling =
+    !!conversation.ai_last_reply_at &&
+    status !== "closed" &&
+    !(pausedUntil === "infinity" || (pausedUntil && Date.parse(pausedUntil) > mountedAt));
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
@@ -847,9 +1321,11 @@ function ConversationItem({
     <button
       onClick={handleClick}
       aria-current={isActive ? "true" : undefined}
+      data-conv-id={conversation.id}
       className={cn(
         "flex w-full min-w-0 items-start gap-2.5 border-b border-border/60 px-3 py-2 text-left transition-colors hover:bg-muted/50",
-        isActive && "bg-muted/70 shadow-[inset_2px_0_0_var(--color-primary)]"
+        isActive && "bg-muted/70 shadow-[inset_2px_0_0_var(--color-primary)]",
+        isCursor && "bg-muted/50 ring-1 ring-inset ring-primary/40"
       )}
     >
       {/* Avatar + channel badge */}
@@ -893,7 +1369,29 @@ function ConversationItem({
           >
             {channelChip[channel]}
           </span>
+          {aiHandling && (
+            <span
+              data-no-translate
+              data-testid="ai-handling-badge"
+              title={language === "pt-BR" ? "A IA está respondendo esta conversa" : "The AI is answering this conversation"}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-500/15 px-1 text-[9px] font-semibold uppercase leading-[14px] tracking-wide text-violet-600 dark:text-violet-400"
+            >
+              <Bot className="h-2.5 w-2.5" aria-hidden />
+              {language === "pt-BR" ? "IA" : "AI"}
+            </span>
+          )}
           <span className="flex-1" />
+          {ownerName && (
+            <span
+              data-no-translate
+              data-testid="owner-badge"
+              title={ownerTitle(ownerName)}
+              aria-label={ownerTitle(ownerName)}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[9px] font-semibold leading-none text-primary"
+            >
+              {avatarInitial(ownerName)}
+            </span>
+          )}
           <span
             data-no-translate
             className={cn(
@@ -954,13 +1452,15 @@ function ConversationItem({
         </div>
         {queue && (
           <div data-no-translate className="mt-1 flex min-w-0 items-center gap-1.5">
-            <span
-              title={queue.positionTitle}
-              aria-label={queue.positionTitle}
-              className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
-            >
-              {queue.position}
-            </span>
+            {queue.position && (
+              <span
+                title={queue.positionTitle}
+                aria-label={queue.positionTitle}
+                className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
+              >
+                {queue.position}
+              </span>
+            )}
             {queue.wait && (
               <span
                 title={queue.overdue ? waitingTitle : undefined}
