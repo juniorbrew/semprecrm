@@ -53,6 +53,11 @@ export interface ConversationEvent {
   keyword?: string
   /** `assigned`: the optional note that came with a transfer. */
   reason?: string
+  /** `deal_stage_changed` */
+  deal_id?: string
+  deal_title?: string
+  from_stage_name?: string
+  to_stage_name?: string
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -112,6 +117,10 @@ export function eventFromRecord(
     tag_name: payload.tag_name,
     note_id: payload.note_id,
     keyword: payload.keyword,
+    deal_id: payload.deal_id,
+    deal_title: payload.deal_title,
+    from_stage_name: payload.from_stage_name,
+    to_stage_name: payload.to_stage_name,
     reason:
       row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
@@ -328,6 +337,12 @@ export function formatConversationEvent(
         : pt
           ? 'Contato reativado'
           : 'Contact reactivated'
+    case 'deal_stage_changed': {
+      const base = pt
+        ? `Negócio ${event.deal_title ?? ''} movido de ${event.from_stage_name ?? '—'} para ${event.to_stage_name ?? '—'}`
+        : `Deal ${event.deal_title ?? ''} moved from ${event.from_stage_name ?? '—'} to ${event.to_stage_name ?? '—'}`
+      return actor ? (pt ? `${base} por ${actor}` : `${base} by ${actor}`) : base
+    }
     case 'ai_handoff':
       return pt ? 'A IA passou a conversa para a equipe' : 'The AI handed the conversation to the team'
     case 'ai_paused':

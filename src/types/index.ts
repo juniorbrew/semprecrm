@@ -391,7 +391,9 @@ export type ConversationEventType =
   /** Automatic reply (migration 066): hand-over to the team, per-conversation pause / resume. */
   | 'ai_handoff'
   | 'ai_paused'
-  | 'ai_resumed';
+  | 'ai_resumed'
+  /** Deal moved between stages from the inbox panel (migration 070). */
+  | 'deal_stage_changed';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -416,6 +418,11 @@ export interface ConversationEventPayload {
   keyword?: string;
   /** `ai_handoff` — why the AI handed the conversation over. */
   reason?: string;
+  /** `deal_stage_changed` */
+  deal_id?: string;
+  deal_title?: string;
+  from_stage_name?: string;
+  to_stage_name?: string;
 }
 
 /** Row of `conversation_events` (migration 024). */

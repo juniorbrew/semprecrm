@@ -10,6 +10,7 @@ import {
   UserMinus,
   UserPlus,
   Clock,
+  DollarSign,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Language } from "@/lib/i18n";
@@ -40,6 +41,8 @@ function EventIcon({ event }: { event: ConversationEvent }) {
     case "label_added":
     case "label_removed":
       return <TagIcon className={cls} />;
+    case "deal_stage_changed":
+      return <DollarSign className={cls} />;
     case "contact_opted_out":
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":
