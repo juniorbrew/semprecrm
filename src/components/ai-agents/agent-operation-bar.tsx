@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, Loader2, Pause, Play, Trash2 } from "lucide-react";
+import { Loader2, Pause, Play, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -34,8 +34,8 @@ export function AgentOperationBar({
   const paused = agent.mode === "auto" && !!agent.paused_at;
 
   return (
-    <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-2 border-y border-border py-4">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <AgentStatusBadge status={agentStatus(agent)} />
         <label className="flex items-center gap-2 text-sm text-foreground">
           <span className="text-muted-foreground">{t("Mode")}</span>
@@ -43,7 +43,7 @@ export function AgentOperationBar({
             value={agent.mode}
             disabled={!canEdit || busy}
             onChange={(e) => onPatch({ mode: e.target.value as AgentMode })}
-            className="h-8 rounded-lg border border-input bg-card px-2 text-sm text-foreground"
+            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground"
           >
             <option value="suggest">{t("Suggestion (the agent reviews)")}</option>
             <option value="auto">{t("Automatic (replies on its own)")}</option>
@@ -73,10 +73,7 @@ export function AgentOperationBar({
           </Button>
         ) : null}
       </div>
-      <p className="flex items-start gap-1.5 text-sm text-muted-foreground">
-        <Info className="mt-0.5 size-3.5 shrink-0" />
-        {t(operationHelp(agent))}
-      </p>
+      <p className="text-sm text-muted-foreground">{t(operationHelp(agent))}</p>
     </div>
   );
 }
