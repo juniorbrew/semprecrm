@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
@@ -103,6 +103,17 @@ import {
 } from "@/lib/conversations/timeline";
 import { toast } from "sonner";
 import { renderTemplateBody } from "@/lib/whatsapp/template-body";
+import {
+  anchoredScrollTop,
+  mergeOlder,
+  MESSAGE_PAGE_SIZE,
+  missingParentIds,
+  olderThanFilter,
+  oldestPersisted,
+  pageFromNewestFirst,
+  resyncLimit,
+  withinLoadedWindow,
+} from "@/lib/inbox/message-paging";
 
 interface ReplyDraft {
   id: string;
@@ -226,6 +237,9 @@ const THREAD_STATUS_COPY: Record<
     /** Channel chip + tooltip in the header (migration 026). */
     channelChip: Record<WhatsAppChannel, string>;
     channelTitle: Record<WhatsAppChannel, string>;
+    /** History paging: button above the oldest loaded message + failure toast. */
+    olderMessages: string;
+    olderFailed: string;
     /** Queue actions (Assumir / Transferir / Arquivar). */
     claim: string;
     claimTitle: string;
@@ -277,6 +291,8 @@ const THREAD_STATUS_COPY: Record<
     changeStatus: "Alterar status",
     back: "Voltar para as conversas",
     channelChip: { official: "Oficial", qr: "QR" },
+    olderMessages: "Carregar mensagens anteriores",
+    olderFailed: "Não foi possível carregar as mensagens anteriores",
     channelTitle: {
       official: "Canal: API oficial do WhatsApp",
       qr: "Canal: WhatsApp via QR code (sem janela de 24 h nem modelos)",
@@ -333,6 +349,8 @@ const THREAD_STATUS_COPY: Record<
     changeStatus: "Change status",
     back: "Back to conversations",
     channelChip: { official: "Official", qr: "QR" },
+    olderMessages: "Load earlier messages",
+    olderFailed: "Could not load earlier messages",
     channelTitle: {
       official: "Channel: official WhatsApp API",
       qr: "Channel: WhatsApp via QR code (no 24-hour window or templates)",
@@ -576,19 +594,22 @@ export function MessageThread({
   const sessionInfo = useMemo(() => {
     if (!messages.length) return { expired: false, remaining: "", short: "" };
 
-    // Find last customer message
+    // Find last customer message. Only the newest page is loaded, so when
+    // it holds none the conversation's own timestamp answers.
     const lastCustomerMsg = [...messages]
       .reverse()
       .find((m) => m.sender_type === "customer");
+    const lastCustomerAt =
+      lastCustomerMsg?.created_at ?? conversation?.last_customer_message_at ?? null;
 
-    if (!lastCustomerMsg)
+    if (!lastCustomerAt)
       return {
         expired: true,
         remaining: "No customer messages",
         short: "Expired",
       };
 
-    const hoursSince = differenceInHours(new Date(), new Date(lastCustomerMsg.created_at));
+    const hoursSince = differenceInHours(new Date(), new Date(lastCustomerAt));
     const expired = hoursSince >= 24;
 
     if (expired) {
@@ -605,7 +626,7 @@ export function MessageThread({
         : `${Math.floor(hoursLeft * 60)}m`;
 
     return { expired, remaining: `${short} remaining`, short };
-  }, [messages]);
+  }, [messages, conversation?.last_customer_message_at]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -628,7 +649,17 @@ export function MessageThread({
   // they only flip hasUnread, which only the reset effect listens to.
   // A resync of the same conversation refetches silently — the spinner
   // is only for opening a thread, not for background catch-ups.
+  //
+  // Only the newest page is loaded (a resync refetches as many as are
+  // loaded, so it never collapses history the agent scrolled back to);
+  // "Carregar mensagens anteriores" pages backwards (`loadOlder`).
   const loadedConversationIdRef = useRef<string | null>(null);
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  });
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   useEffect(() => {
     if (!conversationId) return;
 
@@ -636,22 +667,31 @@ export function MessageThread({
     let cancelled = false;
     const isResync = loadedConversationIdRef.current === conversationId;
     loadedConversationIdRef.current = conversationId;
+    const limit = isResync ? resyncLimit(messagesRef.current) : MESSAGE_PAGE_SIZE;
 
     (async () => {
-      if (!isResync) setLoading(true);
+      if (!isResync) {
+        setLoading(true);
+        setHasOlder(false);
+      }
 
+      // One extra row tells whether older messages exist.
       const { data, error } = await supabase
         .from("messages")
         .select("*")
         .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(limit + 1);
 
       if (cancelled) return;
 
       if (error) {
         console.error("Failed to fetch messages:", error);
       } else {
-        onMessagesLoadedRef.current(data ?? []);
+        const page = pageFromNewestFirst((data ?? []) as Message[], limit);
+        setHasOlder(page.hasMore);
+        onMessagesLoadedRef.current(page.messages);
       }
 
       if (!cancelled) setLoading(false);
@@ -665,6 +705,74 @@ export function MessageThread({
     // realtime is best-effort and any message events sent while the WS
     // was disconnected or throttled are otherwise lost.
   }, [conversationId, resyncToken]);
+
+  // Older page: fetched with a (created_at, id) keyset from the oldest
+  // loaded message and prepended; the scroll position is captured first and
+  // restored in the layout effect below so the message under the eye stays put.
+  const scrollAnchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+  const loadOlder = useCallback(async () => {
+    if (!conversationId || loadingOlder || !hasOlder) return;
+    const cursor = oldestPersisted(messagesRef.current);
+    if (!cursor) return;
+    setLoadingOlder(true);
+    try {
+      const { data, error } = await createClient()
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .or(olderThanFilter(cursor))
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(MESSAGE_PAGE_SIZE + 1);
+      if (error) {
+        console.error("Failed to fetch older messages:", error);
+        toast.error(statusCopy.olderFailed);
+        return;
+      }
+      // The agent moved to another conversation while this was in flight.
+      if (loadedConversationIdRef.current !== conversationId) return;
+      const page = pageFromNewestFirst((data ?? []) as Message[], MESSAGE_PAGE_SIZE);
+      const el = scrollRef.current;
+      if (el) scrollAnchorRef.current = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight };
+      setHasOlder(page.hasMore);
+      onMessagesLoadedRef.current(mergeOlder(messagesRef.current, page.messages));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [conversationId, loadingOlder, hasOlder, statusCopy.olderFailed]);
+
+  useLayoutEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    const el = scrollRef.current;
+    if (!anchor || !el) return;
+    scrollAnchorRef.current = null;
+    el.scrollTop = anchoredScrollTop(anchor, el.scrollHeight);
+  }, [messages]);
+
+  // Reply parents that are older than the loaded page are fetched on demand
+  // so the quote above a reply still renders.
+  const [quotedExtra, setQuotedExtra] = useState<Map<string, Message>>(() => new Map());
+  const requestedParentsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const missing = missingParentIds(messages, requestedParentsRef.current);
+    if (missing.length === 0) return;
+    for (const id of missing) requestedParentsRef.current.add(id);
+    void createClient()
+      .from("messages")
+      .select("*")
+      .in("id", missing)
+      .then(({ data, error }) => {
+        if (error) {
+          for (const id of missing) requestedParentsRef.current.delete(id);
+          return;
+        }
+        setQuotedExtra((prev) => {
+          const next = new Map(prev);
+          for (const m of (data ?? []) as Message[]) next.set(m.id, m);
+          return next;
+        });
+      });
+  }, [messages]);
 
   // Reactions fetch — pulls the current state from the DB. Kept separate
   // from the channel subscription below so a `resyncToken` bump just
@@ -867,7 +975,6 @@ export function MessageThread({
   useEffect(() => {
     const signature = [
       conversationId,
-      messages.length,
       messages[messages.length - 1]?.id,
       notes.length,
       eventRecords.length,
@@ -1448,8 +1555,17 @@ export function MessageThread({
     const logged = eventRecords.map((r) => eventFromRecord(r, profileName));
     const baseline = deriveBaselineEvents(conversation, logged, profileName);
     const visible = [...logged, ...baseline].filter(isVisibleEvent);
-    return groupTimelineByDay(buildThreadTimeline(messages, notes, visible));
-  }, [conversation, messages, notes, eventRecords, profiles]);
+    // Notes / pills older than the loaded page wait until the history
+    // reaches them (otherwise they float above messages not loaded yet).
+    const oldestAt = oldestPersisted(messages)?.created_at ?? null;
+    return groupTimelineByDay(
+      buildThreadTimeline(
+        messages,
+        withinLoadedWindow(notes, oldestAt, hasOlder),
+        withinLoadedWindow(visible, oldestAt, hasOlder),
+      ),
+    );
+  }, [conversation, messages, notes, eventRecords, profiles, hasOlder]);
   const timelineNow = Date.now();
 
   // Empty state — same WhatsApp-style doodle background as the active
@@ -1962,6 +2078,21 @@ export function MessageThread({
             )}
           </p>
         )}
+        {hasOlder && !loading && (
+          <div className="mb-3 flex justify-center" data-no-translate>
+            <button
+              type="button"
+              onClick={() => void loadOlder()}
+              disabled={loadingOlder}
+              className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+            >
+              {loadingOlder && (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              )}
+              {statusCopy.olderMessages}
+            </button>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -2015,7 +2146,8 @@ export function MessageThread({
                     }
                     const msg = item.message;
                     const parent = msg.reply_to_message_id
-                      ? messagesById.get(msg.reply_to_message_id)
+                      ? (messagesById.get(msg.reply_to_message_id) ??
+                        quotedExtra.get(msg.reply_to_message_id))
                       : null;
                     const reply = parent
                       ? {
