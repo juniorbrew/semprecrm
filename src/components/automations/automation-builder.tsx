@@ -40,6 +40,9 @@ import {
   MousePointerClick,
   AlertTriangle,
   FlaskConical,
+  Flag,
+  Layers,
+  Users,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -70,6 +73,7 @@ import type {
 } from "@/types"
 import { createClient } from "@/lib/supabase/client"
 import { useLanguage } from "@/hooks/use-language"
+import { PRIORITIES, supportCopy } from "@/lib/support/model"
 import { LeadSourceSelect } from "@/components/automations/lead-source-select"
 import { AutomationTestDialog } from "@/components/automations/test-dialog"
 import {
@@ -139,13 +143,19 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-border", tile: ACTION_TILE },
   close_conversation: { label: "Resolve conversation", icon: CircleSlash, border: "border-border", tile: ACTION_TILE },
   create_task: { label: "Create task", icon: CheckSquare, border: "border-border", tile: ACTION_TILE },
+  set_category: { label: "Set category", icon: Layers, border: "border-border", tile: ACTION_TILE },
+  set_priority: { label: "Set priority", icon: Flag, border: "border-border", tile: ACTION_TILE },
+  assign_team: { label: "Assign to team", icon: Users, border: "border-border", tile: ACTION_TILE },
 }
 
 /** Grouped menu for the "add action" pickers. */
 const STEP_GROUPS: { label: string; types: AutomationStepType[] }[] = [
   { label: "Messages", types: ["send_message", "send_template"] },
   { label: "Contact", types: ["add_tag", "remove_tag", "update_contact_field", "create_deal"] },
-  { label: "Conversation", types: ["assign_conversation", "close_conversation", "create_task"] },
+  {
+    label: "Conversation",
+    types: ["assign_conversation", "close_conversation", "create_task", "set_category", "set_priority", "assign_team"],
+  },
   { label: "Flow control", types: ["wait", "condition", "send_webhook"] },
 ]
 
@@ -184,6 +194,31 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
     label: "Conversation Resolved",
     hint: "When a conversation is marked as resolved",
   },
+  {
+    value: "sla_warning",
+    label: "SLA Warning",
+    hint: "When 80% of a conversation's deadline has passed (Settings → Support → Deadlines). Once per conversation and deadline.",
+  },
+  {
+    value: "sla_breached",
+    label: "SLA Breached",
+    hint: "When a conversation misses its first-response or resolution deadline. Once per conversation and deadline.",
+  },
+  {
+    value: "category_set",
+    label: "Category Set",
+    hint: "When a conversation gets a category, by an agent, the AI or an automation",
+  },
+  {
+    value: "priority_changed",
+    label: "Priority Changed",
+    hint: "When the priority of a conversation changes",
+  },
+  {
+    value: "team_changed",
+    label: "Team Changed",
+    hint: "When a conversation is assigned to a team, manually or by a routing rule",
+  },
 ]
 
 /** Kept only so old rows still render a name; not offered in the picker. */
@@ -207,6 +242,31 @@ const PT_COPY: Record<string, string> = {
   "Conversation Resolved": "Conversa resolvida",
   "When a conversation is marked as resolved": "Quando uma conversa é marcada como resolvida",
   "Time-Based": "Baseado em horário",
+  "SLA Warning": "Prazo perto de vencer",
+  "SLA Breached": "Prazo estourado",
+  "Category Set": "Categoria definida",
+  "Priority Changed": "Prioridade alterada",
+  "Team Changed": "Equipe alterada",
+  "When 80% of a conversation's deadline has passed (Settings → Support → Deadlines). Once per conversation and deadline.":
+    "Quando 80% do prazo de uma conversa já passou (Configurações → Suporte → Prazos). Uma vez por conversa e prazo.",
+  "When a conversation misses its first-response or resolution deadline. Once per conversation and deadline.":
+    "Quando uma conversa estoura o prazo de primeira resposta ou de resolução. Uma vez por conversa e prazo.",
+  "When a conversation gets a category, by an agent, the AI or an automation":
+    "Quando uma conversa ganha uma categoria, por um atendente, pela IA ou por uma automação",
+  "When the priority of a conversation changes": "Quando a prioridade de uma conversa muda",
+  "When a conversation is assigned to a team, manually or by a routing rule":
+    "Quando uma conversa é atribuída a uma equipe, manualmente ou por uma regra de encaminhamento",
+  "Set category": "Definir categoria",
+  "Set priority": "Definir prioridade",
+  "Assign to team": "Atribuir à equipe",
+  "Category": "Categoria",
+  "Priority": "Prioridade",
+  "Team": "Equipe",
+  "Select…": "Selecione…",
+  "Deadline": "Prazo",
+  "Either deadline": "Qualquer prazo",
+  "First response": "Primeira resposta",
+  "Resolution": "Resolução",
   "No longer available — this trigger never ran. Pick another trigger or use a wait step.":
     "Não está mais disponível — este gatilho nunca executava. Escolha outro gatilho ou use uma etapa de espera.",
 }
@@ -247,6 +307,12 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
       return { url: "", headers: {}, body_template: "" }
     case "close_conversation":
       return {}
+    case "set_category":
+      return { category_id: "" }
+    case "set_priority":
+      return { priority: "high" }
+    case "assign_team":
+      return { team_id: "" }
     case "create_task":
       return { title: "", description: "", priority: "normal", assignee_user_id: "", due_in_hours: 24 }
     default:
@@ -280,6 +346,9 @@ interface AutomationResources {
   customFields: CustomField[]
   pipelines: Pipeline[]
   stages: PipelineStage[]
+  /** Support (migrations 071 / 073): pickable categories and teams. */
+  categories: { id: string; name: string }[]
+  teams: { id: string; name: string }[]
 }
 
 const EMPTY_RESOURCES: AutomationResources = {
@@ -289,6 +358,8 @@ const EMPTY_RESOURCES: AutomationResources = {
   customFields: [],
   pipelines: [],
   stages: [],
+  categories: [],
+  teams: [],
 }
 
 const ResourcesContext = createContext<AutomationResources>(EMPTY_RESOURCES)
@@ -304,10 +375,22 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   const [customFields, setCustomFields] = useState<CustomField[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [stages, setStages] = useState<PipelineStage[]>([])
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
+  const [teams, setTeams] = useState<{ id: string; name: string }[]>([])
 
   useEffect(() => {
     let cancelled = false
     const supabase = createClient()
+
+    void (async () => {
+      const [cats, tms] = await Promise.all([
+        supabase.from("conversation_categories").select("id, name").is("archived_at", null).order("position"),
+        supabase.from("teams").select("id, name").is("archived_at", null).order("name"),
+      ])
+      if (cancelled) return
+      setCategories((cats.data as { id: string; name: string }[] | null) ?? [])
+      setTeams((tms.data as { id: string; name: string }[] | null) ?? [])
+    })()
 
     // Tags, templates and custom fields come straight from the DB — RLS
     // scopes them to the caller's account. Only APPROVED templates can
@@ -359,8 +442,8 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ tags, members, templates, customFields, pipelines, stages }),
-    [tags, members, templates, customFields, pipelines, stages],
+    () => ({ tags, members, templates, customFields, pipelines, stages, categories, teams }),
+    [tags, members, templates, customFields, pipelines, stages, categories, teams],
   )
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>
@@ -932,6 +1015,16 @@ function stepSummary(step: BuilderStep, res: AutomationResources, lang: Language
       return String(c.url ?? "") || (pt ? "Sem URL" : "No URL")
     case "close_conversation":
       return pt ? "Marca a conversa como resolvida" : "Marks the conversation as resolved"
+    case "set_category": {
+      const name = res.categories.find((x) => x.id === c.category_id)?.name
+      return name ?? (c.category_id ? (pt ? "Categoria selecionada" : "Selected category") : pt ? "Escolha uma categoria" : "Pick a category")
+    }
+    case "set_priority":
+      return supportCopy(lang).priorities[(c.priority as keyof ReturnType<typeof supportCopy>["priorities"]) ?? "normal"] ?? ""
+    case "assign_team": {
+      const name = res.teams.find((x) => x.id === c.team_id)?.name
+      return name ?? (c.team_id ? (pt ? "Equipe selecionada" : "Selected team") : pt ? "Escolha uma equipe" : "Pick a team")
+    }
     case "create_task": {
       const title = String(c.title ?? "").trim()
       const hours = Number(c.due_in_hours)
@@ -978,6 +1071,13 @@ function triggerSummary(
     }
     case "time_based":
       return pt ? "Indisponível — escolha outro gatilho" : "Unavailable — pick another trigger"
+    case "sla_warning":
+    case "sla_breached":
+      return cfg.kind === "first_response"
+        ? pt ? "Prazo de primeira resposta" : "First-response deadline"
+        : cfg.kind === "resolution"
+          ? pt ? "Prazo de resolução" : "Resolution deadline"
+          : pt ? "Qualquer prazo" : "Either deadline"
     case "lead_captured":
       return cfg.source_id ? (pt ? "Somente uma fonte" : "One source only") : pt ? "Qualquer fonte" : "Any source"
     case "conversation_inactive": {
@@ -2093,7 +2193,45 @@ function TriggerEditor({
       {type === "conversation_inactive" && (
         <ConversationInactiveConfig key={type} config={config} onChange={onConfigChange} />
       )}
+      {(type === "sla_warning" || type === "sla_breached") && (
+        <FieldBlock label={copy("Deadline", language, t)}>
+          <select
+            value={(config.kind as string) ?? ""}
+            onChange={(e) => onConfigChange(e.target.value ? { ...config, kind: e.target.value } : { ...config, kind: undefined })}
+            className={SELECT_CLASS}
+          >
+            <option value="">{copy("Either deadline", language, t)}</option>
+            <option value="first_response">{copy("First response", language, t)}</option>
+            <option value="resolution">{copy("Resolution", language, t)}</option>
+          </select>
+        </FieldBlock>
+      )}
     </>
+  )
+}
+
+/** Category / team picker of the support actions (pickable, non-archived ones). */
+function SupportSelect({
+  kind,
+  value,
+  onChange,
+}: {
+  kind: "categories" | "teams"
+  value: string
+  onChange: (v: string) => void
+}) {
+  const res = useResources()
+  const { t, language } = useLanguage()
+  const options = kind === "categories" ? res.categories : res.teams
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+      <option value="">{copy("Select…", language, t)}</option>
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.name}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -2349,6 +2487,34 @@ function StepEditor({
             </FieldBlock>
           )}
         </>
+      )
+    case "set_category":
+      return (
+        <FieldBlock label={copy("Category", language, t)}>
+          <SupportSelect kind="categories" value={(cfg.category_id as string) ?? ""} onChange={(v) => set({ category_id: v })} />
+        </FieldBlock>
+      )
+    case "assign_team":
+      return (
+        <FieldBlock label={copy("Team", language, t)}>
+          <SupportSelect kind="teams" value={(cfg.team_id as string) ?? ""} onChange={(v) => set({ team_id: v })} />
+        </FieldBlock>
+      )
+    case "set_priority":
+      return (
+        <FieldBlock label={copy("Priority", language, t)}>
+          <select
+            value={(cfg.priority as string) ?? "high"}
+            onChange={(e) => set({ priority: e.target.value })}
+            className={SELECT_CLASS}
+          >
+            {PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {supportCopy(language).priorities[p]}
+              </option>
+            ))}
+          </select>
+        </FieldBlock>
       )
     case "update_contact_field":
       return (

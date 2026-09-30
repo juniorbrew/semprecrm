@@ -115,6 +115,11 @@ export interface AccountPreferences {
   auto_assign_enabled: boolean;
   /** Owners/admins must have a verified TOTP factor (round 2 spec, section 7). */
   require_mfa_admins: boolean;
+  /**
+   * SLA deadlines (migration 072) only run during `business_hours`.
+   * Read by the `conversations_sla_stamp` trigger under the same key.
+   */
+  sla_count_only_business_hours: boolean;
 }
 
 /** `"HH:MM"` 24h local time. */
@@ -320,6 +325,18 @@ export interface Conversation {
   triage_at?: string | null;
   resolution?: ConversationResolution | null;
   resolved_at?: string | null;
+  /** First agent / bot reply (migration 032). */
+  first_response_at?: string | null;
+  /** SLA deadlines stamped by the database (migration 072); null = no policy applied. */
+  first_response_due_at?: string | null;
+  first_response_warn_at?: string | null;
+  resolution_due_at?: string | null;
+  resolution_warn_at?: string | null;
+  sla_breached_at?: string | null;
+  /** Support team (migration 073) and who set it / the assignee: 'auto' or 'manual'. */
+  team_id?: string | null;
+  team_source?: 'auto' | 'manual' | null;
+  assignment_source?: 'auto' | 'manual' | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
@@ -417,7 +434,12 @@ export type ConversationEventType =
   /** Support triage (migration 071). */
   | 'category_changed'
   | 'priority_changed'
-  | 'resolution_set';
+  | 'resolution_set'
+  /** SLA (migration 072): 80% of a target used / target missed, once each. */
+  | 'sla_warning'
+  | 'sla_breached'
+  /** Team (migration 073). */
+  | 'team_changed';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -455,8 +477,14 @@ export interface ConversationEventPayload {
   previous_priority?: ConversationPriority;
   /** `resolution_set` */
   resolution?: ConversationResolution;
-  /** 'ai' when the automatic triage wrote it. */
-  source?: 'ai';
+  /** 'ai' when the automatic triage wrote it; 'routing' / 'automation' for rules. */
+  source?: 'ai' | 'routing' | 'automation';
+  /** `sla_warning` / `sla_breached`: which target, and its deadline. */
+  kind?: 'first_response' | 'resolution';
+  due_at?: string;
+  /** `team_changed` — name snapshot (null = team removed). */
+  team_id?: string | null;
+  team_name?: string | null;
 }
 
 /** Row of `conversation_events` (migration 024). */
@@ -720,7 +748,13 @@ export type AutomationTriggerType =
   /** Resolved conversation came back to open/pending — a new attendance (migration 048). */
   | 'conversation_reopened'
   /** Conversation marked resolved (migration 048). */
-  | 'conversation_resolved';
+  | 'conversation_resolved'
+  /** Support (migrations 072 / 073): SLA at 80% / missed, category set, priority or team changed. */
+  | 'sla_warning'
+  | 'sla_breached'
+  | 'category_set'
+  | 'priority_changed'
+  | 'team_changed';
 
 /**
  * How often one automation may run for the same contact (migration 048).
@@ -745,7 +779,11 @@ export type AutomationStepType =
   | 'condition'
   | 'send_webhook'
   | 'close_conversation'
-  | 'create_task';
+  | 'create_task'
+  /** Support (migrations 071-073). */
+  | 'set_category'
+  | 'set_priority'
+  | 'assign_team';
 
 export type AutomationLogStatus =
   | 'success'
@@ -813,6 +851,18 @@ export interface SendTemplateStepConfig {
 
 export interface TagStepConfig {
   tag_id: string;
+}
+
+export interface SetCategoryStepConfig {
+  category_id: string;
+}
+
+export interface SetPriorityStepConfig {
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+}
+
+export interface AssignTeamStepConfig {
+  team_id: string;
 }
 
 export interface AssignConversationStepConfig {

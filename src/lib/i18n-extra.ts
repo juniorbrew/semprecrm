@@ -2114,6 +2114,14 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Appointment reminders': 'Lembretes de compromissos',
   'Before an appointment you own or attend starts, at the reminder time set on the event.':
     'Antes de começar um compromisso em que você é responsável ou participante, no horário de lembrete definido no compromisso.',
+  'Set category': 'Definir categoria',
+  'Set priority': 'Definir prioridade',
+  'Assign to team': 'Atribuir à equipe',
+  'Deadline missed': 'Prazo estourado',
+  'When a conversation assigned to you misses its deadline (admins also get the unassigned ones).':
+    'Quando uma conversa atribuída a você estoura o prazo (administradores também recebem as sem responsável).',
+  'first response': 'primeira resposta',
+  'resolution': 'resolução',
   'Appointment in': 'Compromisso em',
   'Appointment starting now': 'Compromisso começando agora',
   'Appointment today': 'Compromisso hoje',
