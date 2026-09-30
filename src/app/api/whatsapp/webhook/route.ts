@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl } from '@/lib/whatsapp/meta-api'
@@ -10,6 +10,7 @@ import {
   ingestInboundMessage,
   listContactConversations,
 } from '@/lib/whatsapp/inbound'
+import { kickAutoReplies } from '@/lib/ai/auto-reply-runtime'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -595,7 +596,7 @@ async function processMessage(
   // Everything from here on — contact dedupe, conversation upsert,
   // messages row, flow runner, automations, broadcast-reply flag — is
   // the shared pipeline both the Meta webhook and the QR gateway use.
-  await ingestInboundMessage({
+  const ingested = await ingestInboundMessage({
     accountId,
     channel: 'official',
     from: message.from,
@@ -610,6 +611,18 @@ async function processMessage(
     interactiveReplyId,
     userId: configOwnerUserId,
   })
+  // Automatic reply: this handler already runs detached from the
+  // response (see POST), so the drain kick is fire-and-forget too; the
+  // cron catches anything it misses.
+  if (ingested.aiReplyQueued) {
+    // Tracked by the framework (graceful stop waits for it) when we are
+    // still inside the request's scope; otherwise fire-and-forget.
+    try {
+      after(kickAutoReplies)
+    } catch {
+      void kickAutoReplies()
+    }
+  }
 }
 
 async function parseMessageContent(

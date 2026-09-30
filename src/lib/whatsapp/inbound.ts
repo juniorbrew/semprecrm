@@ -31,6 +31,7 @@ import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import { engineSendText } from '@/lib/automations/meta-send'
 import { canSendMessages, type AccountRole } from '@/lib/auth/roles'
 import { notifyInboundMessage } from '@/lib/push/notify'
+import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { isPushConfigured } from '@/lib/push/send'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
@@ -108,6 +109,11 @@ export interface IngestResult {
   reopened?: boolean
   /** New conversation handed to the previous conversation's agent. */
   inheritedAssignee?: string
+  /**
+   * An AI agent in automatic mode will answer (migration 066): a job was
+   * queued / extended. The transport route kicks the drain with `after()`.
+   */
+  aiReplyQueued?: boolean
 }
 
 // ------------------------------------------------------------
@@ -810,7 +816,10 @@ export async function ingestInboundMessage(
   const isFirstInboundMessage =
     !conversationOutcome.reopened && (priorCustomerMsgCount ?? 0) === 0
 
+  // Id chosen here so the automatic-reply job can reference the row.
+  const inboundMessageId = crypto.randomUUID()
   const { error: msgError } = await db.from('messages').insert({
+    id: inboundMessageId,
     conversation_id: conversation.id,
     sender_type: 'customer',
     content_type: contentType,
@@ -1022,6 +1031,20 @@ export async function ingestInboundMessage(
     )
   }
 
+  // Automatic reply (AI phase 4): after flows and automations, only when
+  // no flow took the message and it was not a stop word. Debounced job;
+  // never throws.
+  const aiReplyQueued =
+    !flowResult.consumed && !optedOut
+      ? await enqueueAutoReplyIfEligible(db, {
+          accountId,
+          // The customer just wrote: the 24 h window is open.
+          conversation: { ...conversation, last_customer_message_at: new Date().toISOString() },
+          contact,
+          messageIds: [inboundMessageId],
+        })
+      : false
+
   return {
     ok: true,
     contactId: contact.id,
@@ -1033,6 +1056,7 @@ export async function ingestInboundMessage(
     ...(newConversation ? { newConversation } : {}),
     ...(reopened ? { reopened } : {}),
     ...(inheritedAssignee ? { inheritedAssignee } : {}),
+    ...(aiReplyQueued ? { aiReplyQueued } : {}),
     ...(newConversation && conversationOutcome.previous
       ? { previousConversationId: conversationOutcome.previous.id as string }
       : {}),

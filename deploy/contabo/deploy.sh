@@ -24,6 +24,9 @@ fi
 npm ci --include=dev            # build needs devDependencies even if NODE_ENV=production
 npm run build                  # .env.production is read at build time for NEXT_PUBLIC_*
 pm2 reload semprecrm --update-env || pm2 start deploy/contabo/ecosystem.config.cjs --only semprecrm
+# The cron loop (scripts/cron-tick.mjs) must pick up new endpoints, e.g.
+# /api/ai/auto-reply/cron (migration 066).
+pm2 reload semprecrm-cron --update-env || pm2 start deploy/contabo/ecosystem.config.cjs --only semprecrm-cron
 
 # Gateway WhatsApp QR (services/wa-gateway): pacote próprio, build separado.
 # Sem .env ele não sobe (falta WA_GATEWAY_SECRET etc.), então só é implantado

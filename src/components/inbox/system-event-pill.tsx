@@ -3,6 +3,7 @@
 import {
   Ban,
   BellRing,
+  Bot,
   CheckCheck,
   RotateCcw,
   Tag as TagIcon,
@@ -43,6 +44,10 @@ function EventIcon({ event }: { event: ConversationEvent }) {
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":
       return <BellRing className={cn(cls, "text-emerald-500")} />;
+    case "ai_handoff":
+    case "ai_paused":
+    case "ai_resumed":
+      return <Bot className={cls} />;
     default:
       return null;
   }

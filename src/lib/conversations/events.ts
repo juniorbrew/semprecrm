@@ -318,6 +318,24 @@ export function formatConversationEvent(
         : pt
           ? 'Contato reativado'
           : 'Contact reactivated'
+    case 'ai_handoff':
+      return pt ? 'A IA passou a conversa para a equipe' : 'The AI handed the conversation to the team'
+    case 'ai_paused':
+      return actor
+        ? pt
+          ? `${actor} pausou a IA nesta conversa`
+          : `${actor} paused the AI in this conversation`
+        : pt
+          ? 'IA pausada nesta conversa'
+          : 'AI paused in this conversation'
+    case 'ai_resumed':
+      return actor
+        ? pt
+          ? `${actor} retomou a IA nesta conversa`
+          : `${actor} resumed the AI in this conversation`
+        : pt
+          ? 'IA retomada nesta conversa'
+          : 'AI resumed in this conversation'
     default:
       return ''
   }

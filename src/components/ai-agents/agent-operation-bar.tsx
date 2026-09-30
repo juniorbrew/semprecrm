@@ -77,11 +77,6 @@ export function AgentOperationBar({
         <Info className="mt-0.5 size-3.5 shrink-0" />
         {t(operationHelp(agent))}
       </p>
-      {agent.mode === "auto" ? (
-        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          {t("Automatic mode will be activated in the next update. Until then this agent keeps only suggesting replies.")}
-        </p>
-      ) : null}
     </div>
   );
 }

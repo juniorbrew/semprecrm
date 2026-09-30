@@ -101,12 +101,13 @@ describe('AgentOperationBar', () => {
     expect(html).not.toContain('próxima atualização');
   });
 
-  it('automatic mode: pause / resume and the honest "next update" notice', () => {
+  it('automatic mode: pause / resume, no "next update" notice any more', () => {
     const running = renderToString(
       <AgentOperationBar agent={{ ...base, mode: 'auto' }} canEdit busy={false} onPatch={() => {}} onDelete={() => {}} />,
     );
     expect(running).toContain('Pausar automático');
-    expect(running).toContain('O modo automático será ativado na próxima atualização');
+    expect(running).not.toContain('próxima atualização');
+    expect(running).toContain('responde sozinho aos clientes');
     const paused = renderToString(
       <AgentOperationBar agent={{ ...base, mode: 'auto', paused_at: 'x' }} canEdit busy={false} onPatch={() => {}} onDelete={() => {}} />,
     );

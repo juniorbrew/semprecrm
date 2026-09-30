@@ -14,6 +14,7 @@ import {
   ImageOff,
   CornerDownLeft,
   Ban,
+  Bot,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
@@ -378,6 +379,7 @@ export function MessageBubble({
                 data-sender-kind={label.kind}
                 {...(label.translate ? {} : { "data-no-translate": true })}
               >
+                {label.kind === "ai" && <Bot className="mr-0.5 inline h-3 w-3 align-[-2px]" aria-hidden />}
                 {label.text}
               </span>
               <span aria-hidden className="text-[10px] text-primary-foreground/50">

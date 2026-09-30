@@ -502,6 +502,8 @@ async function executeHandoff(
   const convUpdate: Record<string, unknown> = {
     status: "pending",
     updated_at: new Date().toISOString(),
+    // A person takes over: the automatic-reply AI stays quiet (migration 066).
+    ai_paused_until: "infinity",
   };
   if (cfg.assign_to) convUpdate.assigned_agent_id = cfg.assign_to;
   if (run.conversation_id) {
@@ -1101,6 +1103,7 @@ async function handleReplyForActiveRun(
       await handoffConversation(db, run.conversation_id, {
         status: "pending",
         updated_at: new Date().toISOString(),
+        ai_paused_until: "infinity",
       });
     }
     await logEvent(db, run.id, "handoff", run.current_node_key, {

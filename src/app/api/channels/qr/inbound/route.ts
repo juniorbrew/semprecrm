@@ -6,6 +6,7 @@ import { fetchContactAvatarViaGateway, isGatewayRequest } from '@/lib/whatsapp/q
 import { refreshContactAvatar } from '@/lib/whatsapp/contact-avatar'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { parseQrMessageBody } from '@/lib/whatsapp/qr-inbound-body'
+import { kickAutoReplies } from '@/lib/ai/auto-reply-runtime'
 
 /**
  * POST /api/channels/qr/inbound  (gateway → app)
@@ -75,6 +76,9 @@ export async function POST(request: Request) {
       ).then(() => undefined),
     )
   }
+  // Automatic reply: drain once the debounce window has passed (the
+  // cron catches anything this misses).
+  if (result.aiReplyQueued) after(kickAutoReplies)
   return NextResponse.json({
     ok: true,
     duplicate: result.reason === 'duplicate',

@@ -7,7 +7,8 @@
 //      (content_text → "[conteúdo removido]", media_url → null) and
 //      removes the `chat-media` objects those URLs pointed at.
 //   2. Deletes contact_notes, contact_custom_values and the AI contact
-//      memory (`ai_contact_memories`, migration 064), and the stored
+//      memory (`ai_contact_memories`, migration 064), the automatic-reply
+//      hand-overs and jobs (`ai_handoffs` / `ai_reply_jobs`, 066), and the stored
 //      WhatsApp profile photo (`contact-avatars/account-<acc>/<id>`,
 //      migration 055).
 //   3. contacts: name → "Contato anonimizado", phone → `anon-<8 hex>`
@@ -162,6 +163,14 @@ export async function anonymizeContact(
       .in('id', conversationIds)
       .not('last_message_text', 'is', null)
     if (convUpdErr) warnings.push(`conversations preview: ${convUpdErr.message}`)
+
+    // AI hand-over pills (066) carry the reason text, which can quote the customer.
+    const { error: evErr } = await admin
+      .from('conversation_events')
+      .update({ payload: {} })
+      .in('conversation_id', conversationIds)
+      .eq('event_type', 'ai_handoff')
+    if (evErr) warnings.push(`ai_handoff events: ${evErr.message}`)
   }
 
   // 2. Notes + custom field values.
@@ -206,6 +215,13 @@ export async function anonymizeContact(
       .select('id')
     if (error) warnings.push(`ai memories: ${error.message}`)
     else memoriesDeleted = data?.length ?? 0
+  }
+
+  // Automatic reply (migration 066): hand-over cards quote the customer's
+  // last words and a job may hold an unsent reply — both personal data.
+  for (const table of ['ai_handoffs', 'ai_reply_jobs'] as const) {
+    const { error } = await admin.from(table).delete().eq('contact_id', contactId).eq('account_id', accountId)
+    if (error) warnings.push(`${table}: ${error.message}`)
   }
 
   // 3. The contact row itself — last on purpose (see header). The

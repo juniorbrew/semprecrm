@@ -89,4 +89,4 @@ export const AI_LIMITS = {
 } as const;
 
 /** Features recorded in `ai_usage.feature`. */
-export type AiFeature = 'suggest_reply' | 'memory_extract' | 'agent_test';
+export type AiFeature = 'suggest_reply' | 'memory_extract' | 'agent_test' | 'auto_reply';
