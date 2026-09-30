@@ -31,7 +31,7 @@ import {
 import { plainMessageText } from '@/lib/inbox/vcard'
 import type { ConversationPriority, ConversationSentiment } from '@/types'
 import { isPriority, isSentiment, type ConversationCategory } from './model'
-import { sanitizeSubject, triageEvents, type TriageChange } from './triage-fields'
+import { aiPriority, sanitizeSubject, triageEvents, type TriageChange } from './triage-fields'
 
 export const TRIAGE_MIN_CONFIDENCE = 0.6
 export const TRIAGE_HISTORY_MESSAGES = 15
@@ -54,7 +54,7 @@ export function triageDueOnInbound(priorCustomerMessages: number): boolean {
 export interface TriagePromptInput {
   accountName: string
   contactName: string | null
-  categories: Pick<ConversationCategory, 'id' | 'name' | 'description'>[]
+  categories: Pick<ConversationCategory, 'id' | 'name' | 'description' | 'default_priority'>[]
   /** Oldest first. */
   messages: SuggestMessage[]
 }
@@ -66,6 +66,7 @@ export function buildTriagePrompt(input: TriagePromptInput): { system: string; p
       id: c.id,
       nome: sanitizeUntrusted(c.name, 80),
       descricao: c.description ? sanitizeUntrusted(c.description, 300) : '',
+      prioridade_padrao: c.default_priority,
     }),
   )
 
@@ -75,8 +76,8 @@ export function buildTriagePrompt(input: TriagePromptInput): { system: string; p
     '{"category_id": string | null, "priority": "low" | "normal" | "high" | "urgent", "sentiment": "negative" | "neutral" | "positive", "subject": string, "confidence": número de 0 a 1}',
     '',
     'Regras:',
-    `1. As categorias disponíveis vêm entre ${CATEGORIES_OPEN} e ${CATEGORIES_CLOSE}, uma por linha em JSON: {"id", "nome", "descricao"}. "category_id" deve ser exatamente um desses ids, ou null se nenhuma combinar.`,
-    '2. "priority": urgent = cliente sem poder usar o serviço, perda de dinheiro ou prazo estourando; high = problema real e importante; normal = pedido ou dúvida comum; low = sem pressa.',
+    `1. As categorias disponíveis vêm entre ${CATEGORIES_OPEN} e ${CATEGORIES_CLOSE}, uma por linha em JSON: {"id", "nome", "descricao", "prioridade_padrao"}. "category_id" deve ser exatamente um desses ids, ou null se nenhuma combinar.`,
+    '2. "priority": use a prioridade_padrao da categoria escolhida como ponto de partida e ajuste só se o histórico justificar. urgent = cliente sem poder usar o serviço, perda de dinheiro ou prazo estourando; high = problema real e importante; normal = pedido ou dúvida comum; low = sem pressa.',
     '3. "sentiment": o humor do cliente agora.',
     '4. "subject": o assunto em uma frase curta (até 80 caracteres), no idioma do cliente (português do Brasil se não der para saber). Sem nome, telefone, e-mail, documento ou qualquer dado pessoal.',
     '5. "confidence": sua confiança na classificação. Seja honesto: use valores baixos quando o histórico for curto ou ambíguo.',
@@ -154,6 +155,7 @@ export interface TriageCurrent {
   priority: ConversationPriority
   subject: string | null
   triage_source: 'ai' | 'manual' | null
+  priority_manual?: boolean
 }
 
 export interface TriagePlan {
@@ -164,6 +166,7 @@ export interface TriagePlan {
     subject?: string | null
     triage_source: 'ai'
     triage_at: string
+    priority_manual?: boolean
   }
   events: ReturnType<typeof triageEvents>
 }
@@ -177,13 +180,23 @@ export interface TriagePlan {
 export function planTriageApply(
   current: TriageCurrent,
   result: TriageResult,
-  categories: ReadonlyMap<string, Pick<ConversationCategory, 'name'>>,
+  categories: ReadonlyMap<string, Pick<ConversationCategory, 'name'> & { default_priority?: ConversationPriority }>,
   now: Date = new Date(),
+  force = false,
 ): TriagePlan | null {
-  if (current.triage_source === 'manual') return null
+  if (current.triage_source === 'manual' && !force) return null
   if (result.confidence < TRIAGE_MIN_CONFIDENCE) return null
 
-  const change: TriageChange = { priority: result.priority }
+  // "Reclassificar com IA" replaces the human classification, pinned priority included.
+  const pinned = !!current.priority_manual && !force
+  const cat = result.category_id ? categories.get(result.category_id) : null
+  const priority = aiPriority(
+    result.priority,
+    cat?.default_priority ? { default_priority: cat.default_priority } : null,
+    pinned,
+    current.priority,
+  )
+  const change: TriageChange = { priority }
   if (result.category_id) change.category_id = result.category_id
   if (result.subject) change.subject = result.subject
 
@@ -191,9 +204,10 @@ export function planTriageApply(
     patch: {
       ...change,
       sentiment: result.sentiment,
-      priority: result.priority,
+      priority,
       triage_source: 'ai',
       triage_at: now.toISOString(),
+      ...(force ? { priority_manual: false } : {}),
     },
     events: triageEvents(current, change, categories, 'ai'),
   }
@@ -232,7 +246,10 @@ export function triageSkipReason(i: {
 
 export type TriageOutcome =
   | { status: 'applied'; result: TriageResult }
-  | { status: 'skipped'; reason: TriageSkip | 'low_confidence' | 'invalid_output' | 'changed_meanwhile' }
+  | {
+      status: 'skipped'
+      reason: TriageSkip | 'low_confidence' | 'invalid_output' | 'changed_meanwhile' | 'recently_run'
+    }
 
 type Row = Record<string, unknown>
 
@@ -243,7 +260,16 @@ type Row = Record<string, unknown>
  */
 export async function runTriage(
   db: SupabaseClient,
-  input: { accountId: string; conversationId: string; userId?: string | null; signal?: AbortSignal },
+  input: {
+    accountId: string
+    conversationId: string
+    userId?: string | null
+    signal?: AbortSignal
+    /** Manual "Reclassificar com IA": overrides a manual classification. */
+    force?: boolean
+    /** Automatic run: claim one of the capped runs atomically (migration 071). */
+    claim?: boolean
+  },
 ): Promise<TriageOutcome> {
   const { accountId, conversationId } = input
 
@@ -251,13 +277,13 @@ export async function runTriage(
     db.from('ai_settings').select('enabled, triage_enabled').eq('account_id', accountId).maybeSingle(),
     db
       .from('conversations')
-      .select('id, status, category_id, priority, subject, triage_source, contact:contacts(name, anonymized_at)')
+      .select('id, status, category_id, priority, priority_manual, subject, triage_source, contact_id, contact:contacts(name, anonymized_at)')
       .eq('id', conversationId)
       .eq('account_id', accountId)
       .maybeSingle(),
     db
       .from('conversation_categories')
-      .select('id, name, description')
+      .select('id, name, description, default_priority')
       .eq('account_id', accountId)
       .is('archived_at', null)
       .order('position', { ascending: true }),
@@ -267,13 +293,14 @@ export async function runTriage(
   const contact = (Array.isArray(c.contact) ? c.contact[0] : c.contact) as
     | { name?: string | null; anonymized_at?: string | null }
     | null
-  const categories = (cats ?? []) as Pick<ConversationCategory, 'id' | 'name' | 'description'>[]
+  const categories = (cats ?? []) as Pick<ConversationCategory, 'id' | 'name' | 'description' | 'default_priority'>[]
 
   // Snapshot before the (slow) model call; the conditional write below
   // covers anything that changes meanwhile.
   const current: TriageCurrent = {
     category_id: (c.category_id as string | null) ?? null,
     priority: isPriority(c.priority) ? c.priority : 'normal',
+    priority_manual: !!c.priority_manual,
     subject: (c.subject as string | null) ?? null,
     triage_source: (c.triage_source as 'ai' | 'manual' | null) ?? null,
   }
@@ -284,9 +311,15 @@ export async function runTriage(
     categoryCount: categories.length,
     contactAnonymized: !!contact?.anonymized_at,
     status: String(c.status),
-    triageSource: current.triage_source,
+    triageSource: input.force ? null : current.triage_source,
   })
   if (skip) return { status: 'skipped', reason: skip }
+
+  if (input.claim) {
+    const { data: won, error: claimErr } = await db.rpc('claim_triage_run', { p_conversation_id: conversationId })
+    if (claimErr) throw new Error(`triage claim failed: ${claimErr.message}`)
+    if (!won) return { status: 'skipped', reason: 'recently_run' }
+  }
 
   const { data: rows, error: msgErr } = await db
     .from('messages')
@@ -326,21 +359,38 @@ export async function runTriage(
   if (!result) return { status: 'skipped', reason: 'invalid_output' }
 
   const byId = new Map(categories.map((k) => [k.id, k]))
-  const plan = planTriageApply(current, result, byId)
+  const plan = planTriageApply(current, result, byId, new Date(), !!input.force)
   if (!plan) return { status: 'skipped', reason: result.confidence < TRIAGE_MIN_CONFIDENCE ? 'low_confidence' : 'manual' }
 
+  // LGPD: anonymisation may have happened while the model was thinking.
+  const anonymizedNow = async () => {
+    const { data } = await db
+      .from('contacts')
+      .select('anonymized_at')
+      .eq('id', c.contact_id as string)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    return !!(data as Row | null)?.anonymized_at
+  }
+  if (await anonymizedNow()) return { status: 'skipped', reason: 'contact_anonymized' }
+
   // Conditional write: a human edit that landed while the model was
-  // thinking keeps winning.
-  const { data: written, error: upErr } = await db
+  // thinking keeps winning (unless this is an explicit re-classification).
+  let write = db
     .from('conversations')
     .update(plan.patch)
     .eq('id', conversationId)
     .eq('account_id', accountId)
     .neq('status', 'closed')
-    .or('triage_source.is.null,triage_source.eq.ai')
-    .select('id')
+  if (!input.force) write = write.or('triage_source.is.null,triage_source.eq.ai')
+  const { data: written, error: upErr } = await write.select('id')
   if (upErr) throw new Error(`triage write failed: ${upErr.message}`)
   if (!written?.length) return { status: 'skipped', reason: 'changed_meanwhile' }
+  // Anonymised between the check and the write: take the free text back out.
+  if (await anonymizedNow()) {
+    await db.from('conversations').update({ subject: null, sentiment: null }).eq('id', conversationId)
+    return { status: 'skipped', reason: 'contact_anonymized' }
+  }
 
   if (plan.events.length) {
     const { error: evErr } = await db.from('conversation_events').insert(
@@ -363,7 +413,7 @@ export async function runTriageQuietly(
   input: { accountId: string; conversationId: string },
 ): Promise<TriageOutcome | null> {
   try {
-    return await runTriage(db, input)
+    return await runTriage(db, { ...input, claim: true })
   } catch (err) {
     if (!(err instanceof AiError)) {
       console.error('[triage] failed:', err instanceof Error ? err.message : err)

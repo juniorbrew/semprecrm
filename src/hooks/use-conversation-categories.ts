@@ -31,6 +31,31 @@ export function useConversationCategories() {
 
   const refresh = useCallback(() => setTick((n) => n + 1), [])
 
+  // Other agents / tabs: realtime on the table, plus a refetch when the
+  // window regains focus (realtime is best-effort).
+  useEffect(() => {
+    if (!accountId) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`conversation-categories:${accountId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversation_categories", filter: `account_id=eq.${accountId}` },
+        () => setTick((n) => n + 1),
+      )
+      .subscribe();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setTick((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      supabase.removeChannel(channel);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [accountId]);
+
   useEffect(() => {
     if (!accountId) return
     let cancelled = false

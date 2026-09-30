@@ -312,6 +312,8 @@ export interface Conversation {
   /** Support triage (migration 071). */
   category_id?: string | null;
   priority?: ConversationPriority;
+  /** An agent pinned the priority by hand. */
+  priority_manual?: boolean;
   subject?: string | null;
   sentiment?: ConversationSentiment | null;
   triage_source?: 'ai' | 'manual' | null;

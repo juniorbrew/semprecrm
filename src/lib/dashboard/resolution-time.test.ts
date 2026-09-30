@@ -40,6 +40,7 @@ describe('loadResolutionTime', () => {
     expect(r.count).toBe(1)
     expect(calls).toContainEqual(['eq', 'account_id', 'acc'])
     expect(calls).toContainEqual(['not', 'resolved_at', 'is', null])
+    expect(calls).toContainEqual(['eq', 'resolved_at_estimated', false])
     expect(calls.some((c) => c[0] === 'gte' && c[1] === 'resolved_at')).toBe(true)
   })
 })

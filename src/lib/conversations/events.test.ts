@@ -300,3 +300,12 @@ describe('support triage events (071)', () => {
     expect(isVisibleEvent(ev)).toBe(true)
   })
 })
+
+describe('one pill per resolve action', () => {
+  const base = { id: 'e', conversation_id: 'c', created_at: '2026-09-30T10:00:00Z', type: 'status_changed', status: 'closed' } as const
+  it('a non-default outcome replaces the plain resolved sentence', () => {
+    expect(formatConversationEvent({ ...base, actor_name: 'Ana', resolution: 'duplicate' }, 'pt-BR')).toBe('Ana resolveu como: duplicada')
+    expect(formatConversationEvent({ ...base, actor_name: 'Ana', resolution: 'resolved' }, 'pt-BR')).toBe('Ana resolveu a conversa')
+    expect(formatConversationEvent({ ...base, resolution: 'expired' }, 'en-US')).toBe('Resolved as: no reply from customer')
+  })
+})

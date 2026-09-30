@@ -58,8 +58,8 @@ export function ResolutionTimeCard({ refreshToken = 0 }: { refreshToken?: number
     <section className="flex h-full flex-col rounded-xl border border-border bg-card" data-no-translate>
       <header className="flex flex-wrap items-start justify-between gap-3 px-5 pt-4">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">{t('Average resolution time')}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t('From the first message to resolved')}</p>
+          <h2 className="text-sm font-semibold text-foreground">{t('Resolution time')}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('From creation to resolution')}</p>
         </div>
         <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label={t('Period')}>
           {PERIODS.map((p) => (

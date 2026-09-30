@@ -39,9 +39,51 @@ export interface TriageChange {
   subject?: string | null
 }
 
-/** Columns a manual edit writes: the change plus "a human decided this". */
-export function manualTriagePatch(change: TriageChange, now: Date = new Date()) {
-  return { ...change, triage_source: 'manual' as const, triage_at: now.toISOString() }
+/**
+ * Columns a manual edit writes. Only a category or priority decision marks
+ * the triage as human (the AI then keeps off); a subject-only edit does not.
+ * Choosing a priority by hand also pins it (`priority_manual`); choosing a
+ * category applies that category's default priority unless the priority
+ * was set by hand before (`current.priority_manual`).
+ */
+export function manualTriagePatch(
+  change: TriageChange,
+  opts: {
+    now?: Date
+    current?: { priority_manual?: boolean | null }
+    category?: { default_priority: ConversationPriority } | null
+  } = {},
+) {
+  const patch: TriageChange & {
+    triage_source?: 'manual'
+    triage_at?: string
+    priority_manual?: boolean
+  } = { ...change }
+  if (change.priority !== undefined) patch.priority_manual = true
+  else if (change.category_id && opts.category && !opts.current?.priority_manual) {
+    patch.priority = opts.category.default_priority
+  }
+  if (change.category_id !== undefined || change.priority !== undefined) {
+    patch.triage_source = 'manual'
+    patch.triage_at = (opts.now ?? new Date()).toISOString()
+  }
+  return patch
+}
+
+/**
+ * Priority the AI writes: the model's own, except that a model that says
+ * "normal" for a category whose default is higher gets the default. A
+ * priority an agent pinned is never touched.
+ */
+export function aiPriority(
+  modelPriority: ConversationPriority,
+  category: { default_priority: ConversationPriority } | null | undefined,
+  priorityManual: boolean,
+  current: ConversationPriority,
+): ConversationPriority {
+  if (priorityManual) return current
+  if (modelPriority === 'normal' && category && category.default_priority !== 'normal') return category.default_priority
+  return modelPriority
 }
 
 /** Patch that resolves with an outcome (status + resolution in one write). */

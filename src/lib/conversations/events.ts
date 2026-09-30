@@ -312,6 +312,16 @@ export function formatConversationEvent(
           : 'Conversation unassigned'
     case 'status_changed': {
       const status = event.status ?? 'open'
+      if (status === 'closed' && event.resolution && event.resolution !== 'resolved') {
+        const label = supportCopy(language).resolutions[event.resolution].toLowerCase()
+        return actor
+          ? pt
+            ? `${actor} resolveu como: ${label}`
+            : `${actor} resolved as: ${label}`
+          : pt
+            ? `Resolvida como: ${label}`
+            : `Resolved as: ${label}`
+      }
       if (actor) {
         if (pt) {
           if (status === 'closed') return `${actor} resolveu a conversa`

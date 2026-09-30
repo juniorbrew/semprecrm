@@ -464,6 +464,7 @@ export function MessageThread({
   const { active: activeCategories, byId: categoryById } = useConversationCategories();
   const triageSettings = useTriageSettings();
   const [classifying, setClassifying] = useState(false);
+  const [reclassifyOpen, setReclassifyOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -1192,13 +1193,16 @@ export function MessageThread({
       if (status !== "closed" && conversation.archived_at) {
         onConversationPatch?.(conversation.id, { archived_at: null });
       }
+      // One pill per resolve action: a non-default outcome rides on the
+      // status event ("resolveu como: duplicada").
       void logEvent({
         event_type: "status_changed",
-        payload: { status, previous_status: conversation.status },
+        payload: {
+          status,
+          previous_status: conversation.status,
+          ...(status === "closed" && resolution && resolution !== DEFAULT_RESOLUTION ? { resolution } : {}),
+        },
       });
-      if (status === "closed" && resolution && resolution !== DEFAULT_RESOLUTION) {
-        void logEvent({ event_type: "resolution_set", payload: { resolution } });
-      }
       return true;
     },
     [conversation, onStatusChange, onConversationPatch, logEvent, t, notifyActiveOther, statusCopy.reopenBlocked]
@@ -1250,7 +1254,8 @@ export function MessageThread({
   const handleTriageChange = useCallback(
     async (change: TriageChange) => {
       if (!conversation) return;
-      const patch = manualTriagePatch(change);
+      const category = change.category_id ? categoryById.get(change.category_id) : null;
+      const patch = manualTriagePatch(change, { current: conversation, category });
       const { error } = await createClient().from("conversations").update(patch).eq("id", conversation.id);
       if (error) {
         console.error("Failed to update triage:", error);
@@ -1260,7 +1265,7 @@ export function MessageThread({
       onConversationPatch?.(conversation.id, patch);
       const events = triageEvents(
         { category_id: conversation.category_id, priority: conversation.priority },
-        change,
+        { category_id: patch.category_id, priority: patch.priority },
         categoryById,
       );
       for (const e of events) void logEvent(e);
@@ -1268,11 +1273,16 @@ export function MessageThread({
     [conversation, categoryById, logEvent, onConversationPatch, support.saveFailed],
   );
 
-  const handleClassify = useCallback(async () => {
+  const handleClassify = useCallback(async (force = false) => {
     if (!conversation || classifying) return;
+    setReclassifyOpen(false);
     setClassifying(true);
     try {
-      const res = await fetch(`/api/conversations/${conversation.id}/ai/triage`, { method: "POST" });
+      const res = await fetch(`/api/conversations/${conversation.id}/ai/triage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
       const data = (await res.json().catch(() => ({}))) as { applied?: boolean; reason?: string; error?: string };
       if (!res.ok) {
         toast.error(data.error ? t(data.error) : support.classifyFailed);
@@ -1660,7 +1670,14 @@ export function MessageThread({
           payload: { status: "closed", previous_status: conversation.status },
         });
       }
-      onConversationPatch?.(conversation.id, { archived_at: patch.archived_at ?? null });
+      // Archiving an open conversation is not a resolution (the DB trigger
+      // leaves resolved_at / resolution empty); mirror that locally.
+      onConversationPatch?.(
+        conversation.id,
+        archive && conversation.status !== "closed"
+          ? { archived_at: patch.archived_at ?? null, resolution: null, resolved_at: null }
+          : { archived_at: patch.archived_at ?? null },
+      );
       toast.success(archive ? statusCopy.archivedToast : statusCopy.unarchivedToast);
     },
     [conversation, onStatusChange, onConversationPatch, logEvent, statusCopy],
@@ -1835,7 +1852,6 @@ export function MessageThread({
               >
                 <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])} />
                 {isArchived ? statusCopy.archivedLabel : statusCopy.labels[status]}
-                {resolutionLabel && <span className="font-normal">{`· ${resolutionLabel}`}</span>}
               </span>
               {/* Channel chip — QR vs official (migration 026). */}
               <span
@@ -1850,16 +1866,6 @@ export function MessageThread({
               >
                 {statusCopy.channelChip[channel]}
               </span>
-              {supportMode && (
-                <TriageChips
-                  conversation={conversation}
-                  categories={activeCategories}
-                  byId={categoryById}
-                  canEdit={canTriage}
-                  onCategory={(id) => void handleTriageChange({ category_id: id })}
-                  onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
-                />
-              )}
               {/* 24 h session window — official channel only, and only
                   when the thread is >= 32rem wide; the composer banner
                   explains an expired window. */}
@@ -1878,6 +1884,23 @@ export function MessageThread({
                 </Badge>
               )}
             </div>
+            {supportMode && (
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <TriageChips
+                  conversation={conversation}
+                  categories={activeCategories}
+                  byId={categoryById}
+                  canEdit={canTriage}
+                  onCategory={(id) => void handleTriageChange({ category_id: id })}
+                  onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
+                />
+                {resolutionLabel && (
+                  <span data-no-translate className="truncate text-xs text-muted-foreground">
+                    {resolutionLabel}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -2153,9 +2176,10 @@ export function MessageThread({
               )}
               {canClassify && (
                 <DropdownMenuItem
-                  disabled={classifying || isResolved || conversation.triage_source === "manual"}
-                  onClick={() => void handleClassify()}
-                  title={conversation.triage_source === "manual" ? support.classifyManual : undefined}
+                  disabled={classifying || isResolved}
+                  onClick={() =>
+                    conversation.triage_source === "manual" ? setReclassifyOpen(true) : void handleClassify()
+                  }
                   className="gap-2 text-sm text-popover-foreground"
                   data-no-translate
                 >
@@ -2225,6 +2249,21 @@ export function MessageThread({
           if (target) void handleAssignChange(target.user_id, { reason });
         }}
       />
+
+      <Dialog open={reclassifyOpen} onOpenChange={setReclassifyOpen}>
+        <DialogContent data-no-translate>
+          <DialogHeader>
+            <DialogTitle>{support.reclassify}</DialogTitle>
+            <DialogDescription>{support.reclassifyBody}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReclassifyOpen(false)}>
+              {statusCopy.cancel}
+            </Button>
+            <Button onClick={() => void handleClassify(true)}>{support.reclassify}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
         <DialogContent data-no-translate>

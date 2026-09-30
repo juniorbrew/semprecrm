@@ -36,7 +36,6 @@ export function resolutionNote(
 
 export const CATEGORY_COLORS = [
   'gray',
-  'red',
   'orange',
   'amber',
   'green',
@@ -50,7 +49,6 @@ export type CategoryColor = (typeof CATEGORY_COLORS)[number]
 /** Full class names (Tailwind scans source for them) for a 6 px dot. */
 export const CATEGORY_DOT: Record<CategoryColor, string> = {
   gray: 'bg-zinc-400',
-  red: 'bg-red-500',
   orange: 'bg-orange-500',
   amber: 'bg-amber-500',
   green: 'bg-emerald-500',
@@ -114,6 +112,8 @@ export interface SupportCopy {
   classified: string
   classifyNothing: string
   classifyManual: string
+  reclassify: string
+  reclassifyBody: string
   classifyDisabled: string
   classifyFailed: string
   autoClassified: string
@@ -153,6 +153,8 @@ export const SUPPORT_COPY: Record<Language, SupportCopy> = {
     classified: 'Conversa classificada',
     classifyNothing: 'Sem certeza suficiente para classificar',
     classifyManual: 'Você já classificou esta conversa',
+    reclassify: 'Reclassificar com IA',
+    reclassifyBody: 'Substitui a classificação atual desta conversa.',
     classifyDisabled: 'Ative a classificação em Configurações > Suporte',
     classifyFailed: 'Não foi possível classificar',
     autoClassified: 'Classificada automaticamente',
@@ -189,6 +191,8 @@ export const SUPPORT_COPY: Record<Language, SupportCopy> = {
     classified: 'Conversation classified',
     classifyNothing: 'Not confident enough to classify',
     classifyManual: 'You already classified this conversation',
+    reclassify: 'Reclassify with AI',
+    reclassifyBody: 'Replaces the current classification of this conversation.',
     classifyDisabled: 'Turn on classification in Settings > Support',
     classifyFailed: 'Could not classify',
     autoClassified: 'Classified automatically',

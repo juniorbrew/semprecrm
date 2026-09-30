@@ -52,6 +52,8 @@ export async function loadResolutionTime(
     .select('created_at, resolved_at')
     .eq('account_id', accountId)
     .not('resolved_at', 'is', null)
+    // Backfilled rows (resolved_at = updated_at) are not a real measure.
+    .eq('resolved_at_estimated', false)
     .gte('resolved_at', since)
     .order('resolved_at', { ascending: false })
     .limit(RESOLUTION_SAMPLE_LIMIT)

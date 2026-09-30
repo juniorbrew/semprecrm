@@ -3,7 +3,8 @@
 //
 // Agent+ and plan module `ai`. Runs the AI triage for this one
 // conversation and applies it under the same rules as the automatic
-// runs (confidence >= 0.6, never over a manual choice). Returns
+// runs (confidence >= 0.6, never over a manual choice) unless the body says
+// { force: true } ("Reclassificar com IA": replaces the manual classification). Returns
 // { applied, reason? } — a skip is not an error. The account comes from
 // the session; the conversation is read through the caller's RLS client,
 // so another account's conversation is a plain 404. Anonymised contacts
@@ -31,6 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const limit = checkRateLimit(`ai:triage:${ctx.userId}`, RATE_LIMITS.aiTriage)
     if (!limit.success) return rateLimitResponse(limit)
 
+    const body = (await request.json().catch(() => null)) as { force?: unknown } | null
     const found = await loadAiConversation(ctx, id)
     if (!found) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     if (found.contact?.anonymized_at) return contactAnonymizedResponse()
@@ -40,6 +42,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       conversationId: id,
       userId: ctx.userId,
       signal: request.signal,
+      force: body?.force === true,
     })
     if (outcome.status === 'skipped' && (outcome.reason === 'triage_disabled' || outcome.reason === 'ai_disabled')) {
       return NextResponse.json({ error: 'Triage is not enabled for this account.', code: outcome.reason }, { status: 409 })

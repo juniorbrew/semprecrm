@@ -11,8 +11,8 @@ export const DICT_DASHBOARD: Record<string, string> = {
   'appointment in the next 2 h': 'compromisso nas próximas 2 h',
   'appointments in the next 2 h': 'compromissos nas próximas 2 h',
   // ---- Average resolution time (migration 071) ----
-  'Average resolution time': 'Tempo médio de resolução',
-  'From the first message to resolved': 'Da primeira mensagem até resolver',
+  'Resolution time': 'Tempo de resolução',
+  'From creation to resolution': 'Da criação à resolução',
   'No conversations resolved in this period.': 'Nenhuma conversa resolvida neste período.',
   'conversation resolved': 'conversa resolvida',
   'conversations resolved': 'conversas resolvidas',

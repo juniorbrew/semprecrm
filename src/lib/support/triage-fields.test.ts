@@ -2,18 +2,37 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { normalizeCategoryDraft } from './categories'
 import { activeCategories, DEFAULT_RESOLUTION, RESOLVE_AS_OPTIONS, RESOLUTIONS, resolutionNote, type ConversationCategory } from './model'
-import { manualTriagePatch, resolvePatch, sanitizeSubject, triageEvents } from './triage-fields'
+import { aiPriority, manualTriagePatch, resolvePatch, sanitizeSubject, triageEvents } from './triage-fields'
 
 describe('manual edits', () => {
   it('a manual edit marks the triage as human, so the AI never overwrites it', () => {
-    const patch = manualTriagePatch({ priority: 'urgent' }, new Date('2026-09-30T10:00:00Z'))
-    expect(patch).toEqual({ priority: 'urgent', triage_source: 'manual', triage_at: '2026-09-30T10:00:00.000Z' })
+    const patch = manualTriagePatch({ priority: 'urgent' }, { now: new Date('2026-09-30T10:00:00Z') })
+    expect(patch).toEqual({ priority: 'urgent', priority_manual: true, triage_source: 'manual', triage_at: '2026-09-30T10:00:00.000Z' })
   })
 
   it('resolving defaults to "resolved" (one click) and accepts another outcome', () => {
     expect(DEFAULT_RESOLUTION).toBe('resolved')
     expect(resolvePatch()).toEqual({ status: 'closed', resolution: 'resolved' })
     expect(resolvePatch('duplicate')).toEqual({ status: 'closed', resolution: 'duplicate' })
+  })
+})
+
+describe('manualTriagePatch rules', () => {
+  const now = new Date('2026-09-30T10:00:00Z')
+  it('a subject-only edit does not mark the triage manual', () => {
+    expect(manualTriagePatch({ subject: 'x' }, { now })).toEqual({ subject: 'x' })
+  })
+  it('a category change applies its default priority unless the agent pinned the priority', () => {
+    const category = { default_priority: 'high' as const }
+    expect(manualTriagePatch({ category_id: 'c1' }, { now, category })).toMatchObject({ category_id: 'c1', priority: 'high', triage_source: 'manual' })
+    expect(manualTriagePatch({ category_id: 'c1' }, { now, category, current: { priority_manual: true } })).not.toHaveProperty('priority')
+  })
+  it('AI priority: default only lifts a normal answer and never moves a pinned priority', () => {
+    const c = { default_priority: 'high' as const }
+    expect(aiPriority('normal', c, false, 'normal')).toBe('high')
+    expect(aiPriority('urgent', c, false, 'normal')).toBe('urgent')
+    expect(aiPriority('low', c, false, 'normal')).toBe('low')
+    expect(aiPriority('urgent', c, true, 'low')).toBe('low')
   })
 })
 

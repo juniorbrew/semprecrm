@@ -47,7 +47,7 @@ ALTER TABLE public.conversation_categories ADD CONSTRAINT conversation_categorie
   CHECK (description IS NULL OR char_length(description) <= 200);
 ALTER TABLE public.conversation_categories DROP CONSTRAINT IF EXISTS conversation_categories_color_check;
 ALTER TABLE public.conversation_categories ADD CONSTRAINT conversation_categories_color_check
-  CHECK (color IN ('gray', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'));
+  CHECK (color IN ('gray', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'));
 ALTER TABLE public.conversation_categories DROP CONSTRAINT IF EXISTS conversation_categories_priority_check;
 ALTER TABLE public.conversation_categories ADD CONSTRAINT conversation_categories_priority_check
   CHECK (default_priority IN ('low', 'normal', 'high', 'urgent'));
@@ -87,6 +87,13 @@ ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS triage_source TEXT;
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS triage_at TIMESTAMPTZ;
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS resolution TEXT;
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+-- resolved_at backfilled from updated_at (no closing event): not a real measure.
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS resolved_at_estimated BOOLEAN NOT NULL DEFAULT FALSE;
+-- An agent chose the priority by hand: a category change no longer moves it.
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS priority_manual BOOLEAN NOT NULL DEFAULT FALSE;
+-- Automatic triage runs claimed (cost cap) and when the last claim happened (dedupe).
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS triage_runs SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS triage_claimed_at TIMESTAMPTZ;
 
 ALTER TABLE public.conversations DROP CONSTRAINT IF EXISTS conversations_priority_check;
 ALTER TABLE public.conversations ADD CONSTRAINT conversations_priority_check
@@ -136,6 +143,11 @@ SET search_path = public
 AS $$
 BEGIN
   IF NEW.status = 'closed' THEN
+    -- Archiving an open conversation is not a resolution (migration 056
+    -- writes status closed + archived_at together).
+    IF NEW.archived_at IS NOT NULL AND NEW.resolved_at IS NULL THEN
+      RETURN NEW;
+    END IF;
     IF TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status OR NEW.resolved_at IS NULL THEN
       NEW.resolved_at := NOW();
     END IF;
@@ -155,12 +167,13 @@ $$;
 -- the trigger exists and only fills NULLs, so a re-run changes nothing.
 ALTER TABLE public.conversations DISABLE TRIGGER set_updated_at;
 UPDATE public.conversations c
-   SET resolved_at = COALESCE(
-         (SELECT max(e.created_at) FROM public.conversation_events e
-           WHERE e.conversation_id = c.id AND e.event_type = 'status_changed'
-             AND e.payload->>'status' = 'closed'),
-         c.updated_at)
- WHERE c.status = 'closed' AND c.resolved_at IS NULL;
+   SET resolved_at = COALESCE(ev.at, c.updated_at),
+       resolved_at_estimated = (ev.at IS NULL)
+  FROM (SELECT c2.id, (SELECT max(e.created_at) FROM public.conversation_events e
+           WHERE e.conversation_id = c2.id AND e.event_type = 'status_changed'
+             AND e.payload->>'status' = 'closed') AS at
+          FROM public.conversations c2) ev
+ WHERE ev.id = c.id AND c.status = 'closed' AND c.resolved_at IS NULL;
 ALTER TABLE public.conversations ENABLE TRIGGER set_updated_at;
 
 DROP TRIGGER IF EXISTS conversations_stamp_resolved ON public.conversations;
@@ -177,6 +190,44 @@ CREATE INDEX IF NOT EXISTS idx_conversations_account_priority
   ON public.conversations (account_id, priority) WHERE priority <> 'normal';
 CREATE INDEX IF NOT EXISTS idx_conversations_account_resolved
   ON public.conversations (account_id, resolved_at) WHERE resolved_at IS NOT NULL;
+
+-- Claim one automatic triage run (cost cap + dedupe), atomically: at most
+-- 2 automatic runs per conversation (1st and 3rd customer message), none
+-- within 60 s of the previous claim / applied triage / 'triage' usage row.
+-- Two parallel inbound messages cannot both win. Server only.
+CREATE OR REPLACE FUNCTION public.claim_triage_run(p_conversation_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  UPDATE public.conversations c
+     SET triage_runs = c.triage_runs + 1, triage_claimed_at = NOW()
+   WHERE c.id = p_conversation_id
+     AND c.triage_runs < 2
+     AND (c.triage_claimed_at IS NULL OR c.triage_claimed_at < NOW() - INTERVAL '60 seconds')
+     AND (c.triage_at IS NULL OR c.triage_at < NOW() - INTERVAL '60 seconds')
+     AND NOT EXISTS (
+       SELECT 1 FROM public.ai_usage u
+        WHERE u.conversation_id = c.id AND u.feature = 'triage'
+          AND u.created_at > NOW() - INTERVAL '60 seconds')
+  RETURNING c.id INTO v_id;
+  RETURN v_id IS NOT NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.claim_triage_run(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_triage_run(uuid) TO service_role;
+
+-- Categories are cached by open inboxes: realtime keeps them in step.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'conversation_categories') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.conversation_categories;
+  END IF;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
 
 -- ---- conversation_events types (070 list + 3) ----------------------
 ALTER TABLE public.conversation_events DROP CONSTRAINT IF EXISTS conversation_events_event_type_check;

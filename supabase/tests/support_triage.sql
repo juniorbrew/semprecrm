@@ -204,5 +204,26 @@ SELECT pg_temp.assert_eq((SELECT count(*) FROM pg_proc WHERE proname IN ('inbox_
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.inbox_counts(uuid, text, boolean, text, integer, integer, uuid[], text, uuid, text)', 'EXECUTE'), 'anon cannot execute counts');
 SELECT pg_temp.assert_true(has_function_privilege('authenticated', 'public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer, uuid[], text, uuid, text)', 'EXECUTE'), 'authenticated can execute page');
 
+-- ---- archive is not a resolution; estimated flag; claim_triage_run -------------
+INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES ('71000000-0000-4000-8000-0000000000d5', '71000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511971000005', 'Dora');
+INSERT INTO conversations(id, user_id, account_id, contact_id, status) VALUES
+ ('71000000-0000-4000-8000-0000000000f9', '71000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '71000000-0000-4000-8000-0000000000d5', 'open');
+UPDATE conversations SET status = 'closed', archived_at = now() WHERE id = '71000000-0000-4000-8000-0000000000f9';
+SELECT pg_temp.assert_true((SELECT resolved_at IS NULL AND resolution IS NULL FROM conversations WHERE id = '71000000-0000-4000-8000-0000000000f9'), 'archiving an open conversation does not stamp a resolution');
+SELECT pg_temp.assert_true((SELECT resolved_at_estimated = false FROM conversations WHERE id = (SELECT conv_2 FROM ids)), 'live rows are not estimated');
+SELECT pg_temp.assert_fails(format('INSERT INTO conversation_categories(account_id, name, color) VALUES (%L, %L, %L)', (SELECT acc_a FROM ids), 'Vermelha', 'red'), 'red left the palette');
+SELECT pg_temp.assert_true(NOT public.claim_triage_run((SELECT conv_1 FROM ids)), 'a triage applied within 60 s blocks the claim');
+UPDATE conversations SET triage_at = now() - interval '5 minutes' WHERE id = (SELECT conv_1 FROM ids);
+INSERT INTO ai_usage(account_id, conversation_id, feature, provider, model, status) VALUES ((SELECT acc_a FROM ids), (SELECT conv_1 FROM ids), 'triage', 'openai', 'gpt-5-mini', 'ok');
+SELECT pg_temp.assert_true(NOT public.claim_triage_run((SELECT conv_1 FROM ids)), 'a recent triage usage row blocks the claim');
+DELETE FROM ai_usage WHERE conversation_id = (SELECT conv_1 FROM ids);
+SELECT pg_temp.assert_true(public.claim_triage_run((SELECT conv_1 FROM ids)), 'first claim wins');
+SELECT pg_temp.assert_true(NOT public.claim_triage_run((SELECT conv_1 FROM ids)), 'second claim within 60 s loses');
+UPDATE conversations SET triage_claimed_at = now() - interval '2 minutes' WHERE id = (SELECT conv_1 FROM ids);
+SELECT pg_temp.assert_true(public.claim_triage_run((SELECT conv_1 FROM ids)), 'third message claim after the gap');
+UPDATE conversations SET triage_claimed_at = now() - interval '2 minutes' WHERE id = (SELECT conv_1 FROM ids);
+SELECT pg_temp.assert_true(NOT public.claim_triage_run((SELECT conv_1 FROM ids)), 'cost cap: 2 automatic runs max');
+SELECT pg_temp.assert_true(NOT has_function_privilege('authenticated', 'public.claim_triage_run(uuid)', 'EXECUTE'), 'claim is server only');
+
 SELECT 'OK support triage smoke' AS result;
 ROLLBACK;
