@@ -14,12 +14,23 @@ import { AGENT_PRESETS } from '@/lib/ai/agent-presets';
 import { CHANNEL_LABEL, MODE_LABEL, STATUS_LABEL } from '@/components/ai-agents/agent-card';
 import { SAFETY_CHECKS } from '@/components/ai-agents/agent-config-form';
 import { operationHelp } from '@/components/ai-agents/agent-operation-bar';
+import { JOB_RESULT_LABEL, SKIP_REASON_LABEL } from '@/components/ai-agents/agent-recent-replies';
 import { DICT_AI } from './ai';
 
 // Every English string the AI routes return, and every key the AI
 // settings panel renders, must have a pt-BR entry (the DOM translator
 // and `t()` match by exact string).
 const KEYS = [
+  // automatic reply (066)
+  ...Object.values(JOB_RESULT_LABEL).filter((k) => k !== 'Failed' && k !== 'Waiting'),
+  ...Object.values(SKIP_REASON_LABEL),
+  'AI',
+  'Pause AI',
+  'Resume AI',
+  'Why the AI handed this to you',
+  'Take and reply',
+  'Latest automatic replies',
+  "'action' must be 'pause' or 'resume'",
   ...Object.values(AI_ERROR_MESSAGES),
   ...Object.values(AI_SETTINGS_ERRORS).filter((m) => m !== AI_SETTINGS_ERRORS.body && m !== AI_SETTINGS_ERRORS.provider),
   'Unknown AI provider',

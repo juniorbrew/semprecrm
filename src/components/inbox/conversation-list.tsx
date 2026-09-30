@@ -44,6 +44,7 @@ import {
   ChevronDown,
   Check,
   MessageCircle,
+  Bot,
   MailOpen,
   Clock,
   UserX,
@@ -835,6 +836,16 @@ function ConversationItem({
   const displayName = contact?.name || contact?.phone || "Unknown contact";
   const isUnread = conversation.unread_count > 0;
   const status = conversation.status;
+  const { language } = useLanguage();
+  // "IA" badge: the AI has answered here and is not paused (migration 066).
+  const pausedUntil = conversation.ai_paused_until;
+  // Mount-time clock: a timed pause that expires while the row is shown
+  // only shows the badge again on the next render cycle — good enough.
+  const [mountedAt] = useState(Date.now);
+  const aiHandling =
+    !!conversation.ai_last_reply_at &&
+    status !== "closed" &&
+    !(pausedUntil === "infinity" || (pausedUntil && Date.parse(pausedUntil) > mountedAt));
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
@@ -893,6 +904,17 @@ function ConversationItem({
           >
             {channelChip[channel]}
           </span>
+          {aiHandling && (
+            <span
+              data-no-translate
+              data-testid="ai-handling-badge"
+              title={language === "pt-BR" ? "A IA está respondendo esta conversa" : "The AI is answering this conversation"}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-500/15 px-1 text-[9px] font-semibold uppercase leading-[14px] tracking-wide text-violet-600 dark:text-violet-400"
+            >
+              <Bot className="h-2.5 w-2.5" aria-hidden />
+              {language === "pt-BR" ? "IA" : "AI"}
+            </span>
+          )}
           <span className="flex-1" />
           <span
             data-no-translate

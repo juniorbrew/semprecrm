@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { type TagOption } from "@/components/ai-agents/agent-card";
 import { AgentConfigForm } from "@/components/ai-agents/agent-config-form";
 import { AgentOperationBar } from "@/components/ai-agents/agent-operation-bar";
+import { AgentRecentReplies } from "@/components/ai-agents/agent-recent-replies";
 import { AgentTestPanel } from "@/components/ai-agents/agent-test-panel";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -128,6 +129,7 @@ export default function AiAgentPage() {
             onPatch={(b) => void quickPatch(b)}
             onDelete={() => void remove()}
           />
+          {data.agent.mode === "auto" ? <AgentRecentReplies agentId={data.agent.id} /> : null}
           <Tabs defaultValue="config">
             <TabsList className="bg-muted">
               <TabsTrigger value="config" className={TAB_CLASS}>

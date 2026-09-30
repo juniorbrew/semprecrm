@@ -84,6 +84,7 @@ import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { InternalNoteBubble } from "./internal-note-bubble";
 import { SystemEventPill } from "./system-event-pill";
+import { AiHandoffCard, AiPauseButton, useAiAutoState } from "./ai-auto-controls";
 import { ContactAvatar } from "./contact-avatar";
 import { useConversationEvents } from "@/hooks/use-conversation-events";
 import {
@@ -455,6 +456,12 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  // Automatic reply (migration 066): pause / resume + hand-over card.
+  // Refetched when the realtime row's pause or status changes.
+  const { state: aiAuto, reload: reloadAiAuto } = useAiAutoState(
+    conversation?.id,
+    `${conversation?.ai_paused_until ?? ""}|${conversation?.status ?? ""}|${resyncToken}`,
+  );
 
   // A resolved conversation is final (migration 060): the contact's other
   // conversations drive the "Conversa anterior" line and the guards that
@@ -1593,6 +1600,14 @@ export function MessageThread({
           {/* Assumir — outline, one click to own the thread. Once it is
               mine, a static "✓ Sua" takes its place; hidden when resolved;
               disabled for viewers. */}
+          {aiAuto && (
+            <AiPauseButton
+              conversationId={conversation.id}
+              state={aiAuto}
+              canWrite={actions.canWrite}
+              onChanged={reloadAiAuto}
+            />
+          )}
           {actions.claimIsMine && (
             <span
               data-no-translate
@@ -2067,6 +2082,14 @@ export function MessageThread({
             </button>
           )}
         </div>
+      )}
+
+      {aiAuto?.handoff && (
+        <AiHandoffCard
+          handoff={aiAuto.handoff}
+          canClaim={actions.claim.visible && actions.claim.enabled}
+          onClaim={() => void handleClaim()}
+        />
       )}
 
       {/* Composer */}
