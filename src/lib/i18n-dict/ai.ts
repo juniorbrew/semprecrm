@@ -264,8 +264,6 @@ export const DICT_AI: Record<string, string> = {
   'The name is required (up to 80 characters).': 'O nome é obrigatório (até 80 caracteres).',
   'The instructions are required (up to 4000 characters).': 'As instruções são obrigatórias (até 4000 caracteres).',
   'The tone must be at most 200 characters.': 'O tom de voz deve ter no máximo 200 caracteres.',
-  "'knowledge_enabled', 'is_default' and 'enabled' must be true or false":
-    "'knowledge_enabled', 'is_default' e 'enabled' devem ser true ou false",
   "'channels' must be a list of 'official' and/or 'qr'": "'channels' deve ser uma lista com 'official' e/ou 'qr'",
   "'tag_ids' must be a list of up to 50 tag ids": "'tag_ids' deve ser uma lista de até 50 etiquetas",
   'AI agent not found': 'Agente de IA não encontrado',
@@ -274,4 +272,158 @@ export const DICT_AI: Record<string, string> = {
     'Outro agente virou o padrão ao mesmo tempo. Recarregue e tente de novo.',
   'Type a customer message to test (up to 1000 characters).':
     'Digite uma mensagem de cliente para testar (até 1000 caracteres).',
+
+  // ---- /ai/agents page (migration 065) ------------------------------------
+  'On/off settings must be true or false.': 'As opções de ligar/desligar devem ser verdadeiro ou falso.',
+  'The description must be at most 300 characters.': 'A descrição deve ter no máximo 300 caracteres.',
+  "The mode must be 'suggest' or 'auto'.": "O modo deve ser 'suggest' ou 'auto'.",
+  'Invalid business hours: pick a time zone, start and end times and at least one day.':
+    'Horário de atendimento inválido: escolha o fuso, o início, o fim e pelo menos um dia.',
+  'The maximum size per message must be between 80 and 1000 characters.':
+    'O tamanho máximo por mensagem deve ficar entre 80 e 1000 caracteres.',
+  'The messages per automatic reply must be between 1 and 5.':
+    'As mensagens por resposta automática devem ficar entre 1 e 5.',
+  'The automatic replies per conversation per day must be between 1 and 200.':
+    'As respostas automáticas por conversa por dia devem ficar entre 1 e 200.',
+  'Up to 20 hand-over words, each up to 60 characters.': 'Até 20 palavras de transferência, cada uma com até 60 caracteres.',
+  'The hand-over message must be at most 500 characters.': 'A mensagem de transferência deve ter no máximo 500 caracteres.',
+  'Something went wrong. Try again.': 'Algo deu errado. Tente de novo.',
+  'Assistants that suggest or send replies on WhatsApp, each with its own instructions, channels and limits.':
+    'Assistentes que sugerem ou enviam respostas no WhatsApp, cada um com suas instruções, canais e limites.',
+  'Agent created': 'Agente criado',
+  'Agent deleted': 'Agente excluído',
+  'Search agents': 'Buscar agentes',
+  'Search agents…': 'Buscar agentes…',
+  Status: 'Situação',
+  'All statuses': 'Todas as situações',
+  Suggestion: 'Sugestão',
+  Automatic: 'Automático',
+  'WhatsApp QR': 'WhatsApp (QR)',
+  'No description.': 'Sem descrição.',
+  'No AI agents yet': 'Nenhum agente de IA ainda',
+  'Create an agent from a ready template (sales, support or general service) and adjust it to your business.':
+    'Crie um agente a partir de um modelo pronto (vendas, suporte ou atendimento geral) e ajuste ao seu negócio.',
+  'Create first agent': 'Criar primeiro agente',
+  'No agents match the filters.': 'Nenhum agente corresponde aos filtros.',
+  'Choose a starting point. Everything can be adjusted afterwards.':
+    'Escolha um ponto de partida. Tudo pode ser ajustado depois.',
+  'Starting template': 'Modelo inicial',
+  Sales: 'Vendas',
+  'Consultative: understands the need and leads to a demo or proposal.':
+    'Consultivo: entende a necessidade e conduz para demonstração ou proposta.',
+  Support: 'Suporte',
+  'Empathetic: collects the details and escalates when needed.':
+    'Empático: coleta os detalhes e passa para o time quando precisa.',
+  'General service': 'Atendimento geral',
+  'Friendly receptionist: welcomes, answers the basics and routes.':
+    'Recepção simpática: acolhe, responde o básico e direciona.',
+  Blank: 'Em branco',
+  'Start from scratch and write your own instructions.': 'Comece do zero e escreva suas próprias instruções.',
+  Instructions: 'Instruções',
+  'Describe what the agent does, how it talks and what it must never do.':
+    'Descreva o que o agente faz, como ele fala e o que ele nunca deve fazer.',
+  'Create agent': 'Criar agente',
+  'Suggestion (the agent reviews)': 'Sugestão (o atendente revisa)',
+  'Automatic (replies on its own)': 'Automático (responde sozinho)',
+  'Pause automatic': 'Pausar automático',
+  'Resume automatic': 'Retomar automático',
+  'This agent is turned off: it neither suggests nor replies.': 'Este agente está desativado: não sugere nem responde.',
+  'The agent writes suggestions in the inbox; an agent reviews them and sends.':
+    'O agente escreve sugestões na caixa de entrada; um atendente revisa e envia.',
+  'Automatic replies are paused. The agent only suggests until you resume.':
+    'As respostas automáticas estão pausadas. O agente só sugere até você retomar.',
+  'The agent replies to customers on its own, within the rules below.':
+    'O agente responde sozinho aos clientes, dentro das regras abaixo.',
+  'Automatic mode will be activated in the next update. Until then this agent keeps only suggesting replies.':
+    'O modo automático será ativado na próxima atualização. Até lá, este agente continua apenas sugerindo respostas.',
+  Configuration: 'Configuração',
+  'Who this agent is': 'Quem é este agente',
+  'What this agent does, in one sentence.': 'O que este agente faz, em uma frase.',
+  'The intelligence it uses': 'A inteligência que ele usa',
+  'Provider of the account': 'Provedor da conta',
+  "Leave blank to use the account's model.": 'Deixe em branco para usar o modelo da conta.',
+  'Where it works': 'Onde ele atende',
+  "The agent linked to a contact's tag wins over the one linked to the number.":
+    'O agente ligado a uma etiqueta do contato tem prioridade sobre o ligado ao número.',
+  'Contact tags': 'Etiquetas do contato',
+  'No tags created yet.': 'Nenhuma etiqueta criada ainda.',
+  'Account default': 'Padrão da conta',
+  'Answers when no tag or number matches another agent.':
+    'Atende quando nenhuma etiqueta ou número leva a outro agente.',
+  'Its instructions': 'As instruções dele',
+  "The account's general instructions (Settings → AI) always apply first.":
+    'As instruções gerais da conta (Configurações → IA) sempre valem primeiro.',
+  'Tone of voice': 'Tom de voz',
+  'What it consults': 'O que ele consulta',
+  'active items in the knowledge base.': 'itens ativos na base de conhecimento.',
+  'Manage knowledge base': 'Gerenciar base de conhecimento',
+  'When it steps in': 'Quando ele entra em ação',
+  'Applies to automatic mode.': 'Vale para o modo automático.',
+  'Only within business hours': 'Só dentro do horário de atendimento',
+  'Time zone': 'Fuso horário',
+  'Days of the week': 'Dias da semana',
+  Sun: 'Dom',
+  Mon: 'Seg',
+  Tue: 'Ter',
+  Wed: 'Qua',
+  Thu: 'Qui',
+  Fri: 'Sex',
+  Sat: 'Sáb',
+  'Do not reply in groups': 'Não responder em grupos',
+  'Response style': 'Estilo de resposta',
+  'Reply in several short messages': 'Responder em várias mensagens curtas',
+  'Maximum size per message': 'Tamanho máximo por mensagem',
+  'Characters, from 80 to 1000.': 'Caracteres, de 80 a 1000.',
+  'Hand over to a person': 'Passar para uma pessoa',
+  'Let the agent call a person when it does not know': 'Deixar o agente chamar uma pessoa quando não souber',
+  'Words that call a person right away': 'Palavras que chamam uma pessoa na hora',
+  'Type and press Enter': 'Digite e aperte Enter',
+  'Message to the customer on hand-over': 'Mensagem ao cliente ao passar',
+  'Safety brakes': 'Freios de segurança',
+  'Max messages per automatic reply': 'Máx. de mensagens por resposta automática',
+  'Automatic replies per conversation per day': 'Limite de respostas automáticas por conversa por dia',
+  'Checks before sending': 'Confere antes de enviar',
+  'Always on for every automatic reply.': 'Sempre ativo em toda resposta automática.',
+  'What it protects': 'O que protege',
+  'This cannot be turned off.': 'Isto não se desliga.',
+  'Respects whoever asked to stop': 'Respeita quem pediu para parar',
+  'A contact who opted out of messages never gets an automatic reply.':
+    'Um contato que pediu para não receber mensagens nunca recebe resposta automática.',
+  'Does not answer anonymized contacts': 'Não responde contato anonimizado',
+  'Contacts anonymized under the LGPD are never processed by the AI.':
+    'Contatos anonimizados pela LGPD nunca passam pela IA.',
+  'Respects the official WhatsApp 24-hour window': 'Respeita a janela de 24h do WhatsApp oficial',
+  'Outside the window Meta only allows approved templates — the agent stays silent.':
+    'Fora da janela a Meta só permite modelos aprovados — o agente fica em silêncio.',
+  'Does not promise prices, deadlines or discounts outside the knowledge base':
+    'Não promete preço, prazo ou desconto fora da base',
+  'Commercial terms only come from what your team wrote down.':
+    'Condições comerciais só saem do que o seu time registrou.',
+  'Says it is a virtual assistant when asked': 'Diz que é assistente virtual quando perguntado',
+  'The customer is never led to believe they are talking to a person.':
+    'O cliente nunca é levado a achar que fala com uma pessoa.',
+  'Monthly spending limit': 'Limite de gasto do mês',
+  "When the account's AI budget runs out, the agent stops calling the provider.":
+    'Quando o orçamento de IA da conta acaba, o agente para de chamar o provedor.',
+  'Fix the highlighted fields before saving.': 'Corrija os campos destacados antes de salvar.',
+  Discard: 'Descartar',
+  'Test this agent': 'Testar este agente',
+  'No message is sent over WhatsApp • uses credits from your AI provider':
+    'Nenhuma mensagem é enviada pelo WhatsApp • consome créditos do seu provedor',
+  'Customer name (optional)': 'Nome do cliente (opcional)',
+  'Customer message': 'Mensagem do cliente',
+  'Run test': 'Executar teste',
+  'Only admins can run tests.': 'Só administradores podem executar testes.',
+  Result: 'Resultado',
+  'Run a test to see the answer here.': 'Execute um teste para ver a resposta aqui.',
+  'Message that WOULD be sent': 'Mensagem que SERIA enviada',
+  Tokens: 'Tokens usados',
+  Cost: 'Custo',
+  Latency: 'Latência',
+  'Knowledge base used': 'Base de conhecimento usada',
+  'No knowledge-base snippet was used.': 'Nenhum trecho da base de conhecimento foi usado.',
+  'Different instructions per team, number or tag, with suggestion or automatic mode. Managed on their own page.':
+    'Instruções diferentes por time, número ou etiqueta, com modo sugestão ou automático. Gerenciados em uma página própria.',
+  'Open AI agents': 'Abrir agentes de IA',
+  "Read-only — your role can't create AI agents": 'Somente leitura — seu perfil não pode criar agentes de IA',
 };

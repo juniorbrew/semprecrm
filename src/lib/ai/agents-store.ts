@@ -2,7 +2,7 @@
 // caller's RLS client; admin+ is checked by the route).
 
 import type { AccountContext } from '@/lib/auth/account';
-import { modelMatchesProvider } from './providers';
+import { AI_DEFAULT_MODELS, isAiProvider, modelMatchesProvider, type AiProvider } from './providers';
 import { AI_SETTINGS_ERRORS } from './settings';
 
 /**
@@ -37,4 +37,19 @@ export async function checkAgentModel(ctx: AccountContext, model: string | null 
     return AI_SETTINGS_ERRORS.modelProvider;
   }
   return null;
+}
+
+/** What the agents page shows next to the agents: the account's provider and default model. */
+export async function loadAgentAccountAi(
+  ctx: AccountContext,
+): Promise<{ provider: AiProvider | null; account_model: string | null }> {
+  const { data, error } = await ctx.supabase
+    .from('ai_settings')
+    .select('provider, model')
+    .eq('account_id', ctx.accountId)
+    .maybeSingle();
+  if (error) throw new Error(`ai settings read failed: ${error.message}`);
+  const row = (data ?? {}) as { provider?: string | null; model?: string | null };
+  const provider = isAiProvider(row.provider) ? row.provider : null;
+  return { provider, account_model: row.model || (provider ? AI_DEFAULT_MODELS[provider] : null) };
 }
