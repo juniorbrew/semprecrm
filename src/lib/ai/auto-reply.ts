@@ -357,12 +357,12 @@ export function parseAutoReplyOutput(text: string): AutoReplyOutput | null {
 const fold = (s: string) =>
   s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ');
 
-/** "1.500,00" / "1500.00" / "99,9" → "1500,00" / "1500,00" / "99,9". */
+/** "1.500,00" / "1500.00" / "R$ 100" / "99,9" → "1500" / "1500" / "100" / "99,9" (a zero decimal part is dropped). */
 function canonNumber(raw: string): string {
   const s = raw.replace(/\s/g, '');
   const dec = s.match(/[.,](\d{1,2})$/);
   const int = (dec ? s.slice(0, -dec[0].length) : s).replace(/[.,]/g, '');
-  return dec ? `${int},${dec[1]}` : int;
+  return dec && Number(dec[1]) !== 0 ? `${int},${dec[1]}` : int;
 }
 
 function unitOf(raw: string): string {
@@ -390,8 +390,16 @@ const UNIT_RE = new RegExp(
   'g',
 );
 const DATE_RE = /\b(\d{1,2})\/(\d{1,2})\b/g;
+/** "sala 12/13", "nº 10/12": a room / house number, not a date. */
+const ADDRESS_BEFORE = /(?:sala|n[º°o]|numero|apto|ap|apartamento|loja|cj|conjunto|bloco|casa|lote|quadra|rua|av|avenida)\s*\.?\s*$/;
 const WORD_RE =
-  /\b(desconto|cupom|promo[a-z]*|frete|gratuit[ao]s?|gratis|de graca|brinde|sem juros|parcel[a-z]*|ate (?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje))\b/g;
+  /\b(desconto|cupom|promo[a-z]*|frete|gratuit[ao]s?|gratis|de graca|brinde|sem juros|parcel[a-z]*)\b/g;
+/** "até sexta" only means a deadline promise next to a price / giveaway. */
+const UNTIL_RE = /\bate (?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g;
+const OFFER_KEY = /^(?:money:|%:|w:(?!ate ))/;
+/** A word negated in its sentence ("não temos desconto", "sem frete") is not an offer. */
+const NEGATED = /\b(?:nao|nunca|sem(?!\s+juros))(?:\s+[^\s.;!?,]+){1,4}/g;
+const stripNegated = (t: string) => t.replace(NEGATED, (m) => m.replace(WORD_RE, ' '));
 
 function wordKey(w: string): string {
   if (/^promo/.test(w)) return 'w:promo';
@@ -406,39 +414,65 @@ export function commercialTokens(text: string): string[] {
   const out = new Set<string>();
   for (const re of MONEY_RES) for (const m of t.matchAll(re)) out.add(`money:${canonNumber(m[1])}`);
   for (const m of t.matchAll(UNIT_RE)) out.add(`${unitOf(m[2])}:${canonNumber(m[1])}`);
-  for (const m of t.matchAll(DATE_RE)) out.add(`date:${Number(m[1])}/${Number(m[2])}`);
-  for (const m of t.matchAll(WORD_RE)) out.add(wordKey(m[1]));
+  for (const m of t.matchAll(DATE_RE)) {
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    if (day < 1 || day > 31 || month < 1 || month > 12) continue;
+    if (ADDRESS_BEFORE.test(t.slice(Math.max(0, (m.index ?? 0) - 14), m.index ?? 0))) continue;
+    out.add(`date:${day}/${month}`);
+  }
+  for (const m of stripNegated(t).matchAll(WORD_RE)) out.add(wordKey(m[1]));
+  for (const m of t.matchAll(UNTIL_RE)) out.add(`w:${m[0]}`);
   return [...out];
 }
 
-/** What the trusted texts state. A word only after "não" / "nunca" (e.g. "não damos desconto") grounds nothing. */
+/** What the trusted texts state (negated words, e.g. "não damos desconto", ground nothing). */
 function groundTokens(ground: readonly string[]): Set<string> {
   const text = fold(ground.join('\n'));
-  const numeric = commercialTokens(text).filter((k) => !k.startsWith('w:'));
-  // up to 4 words after "não" / "nunca", within the sentence
-  const positive = text.replace(/\b(?:nao|nunca)(?:\s+[^\s.;!?]+){1,4}/g, (m) => m.replace(WORD_RE, ' '));
-  const words = commercialTokens(positive).filter((k) => k.startsWith('w:'));
-  return new Set([...numeric, ...words]);
+  const out = new Set(commercialTokens(text));
+  // Every HH:MM in the ground text (opening hours) grounds "Hh" in a reply: 08:00 → h:8, 18:30 → h:18.
+  for (const m of text.matchAll(/\b([01]?\d|2[0-3]):[0-5]\d\b/g)) out.add(`h:${Number(m[1])}`);
+  return out;
 }
 
 /**
  * Prices, percents, installments, deadlines, dates and giveaways in
- * `reply` that the trusted texts (knowledge snippets + instructions) do
- * not state. A claim is grounded only by the same normalized token
- * ("money:99,90", "%:20", "h:24", "x:12") — never by bare digits.
+ * `reply` that the trusted texts (knowledge snippets + instructions +
+ * business hours) do not state. A claim is grounded only by the same
+ * normalized token ("money:99,90", "%:20", "h:24", "x:12") — never by
+ * bare digits. "Até amanhã" alone is a goodbye, not a claim.
  */
 export function unverifiedCommercialTerms(reply: string, ground: readonly string[]): string[] {
   const g = groundTokens(ground);
-  return commercialTokens(reply).filter((k) => !g.has(k));
+  const tokens = commercialTokens(reply);
+  const offers = tokens.some((k) => OFFER_KEY.test(k));
+  return tokens.filter((k) => !g.has(k) && (offers || !k.startsWith('w:ate ')));
 }
 
-/** The reply quotes ≥ `span` characters of the (trusted) instructions verbatim. */
-export function leaksInstructions(reply: string, instructions: string | null | undefined, span = 40): boolean {
+/** The agent's business hours as trusted text ("das 8h às 18h") for the ground list. */
+export function businessHoursGround(bh: AgentBusinessHours | null | undefined): string {
+  if (!bh?.enabled) return '';
+  const h = (t: string) => `${Number(t.slice(0, 2))}h${t.slice(3) === '00' ? '' : t.slice(3)}`;
+  return `Horário de atendimento: das ${h(bh.start)} às ${h(bh.end)} (${bh.start} às ${bh.end}).`;
+}
+
+/** Lines that are just public business info (address, phone, hours): copying them is fine. */
+const PUBLIC_LINE =
+  /\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}|\b\d{1,2}(?::\d{2}|h)\b|\b(?:rua|avenida|av\.|endereco|cep|horario|telefone|whatsapp|fone|funcionamos|atendemos)\b/;
+
+/**
+ * The reply quotes ≥ `span` characters of the (trusted) instructions
+ * verbatim. Address / phone / opening-hours lines don't count.
+ */
+export function leaksInstructions(reply: string, instructions: string | null | undefined, span = 80): boolean {
   const r = fold(reply);
-  const src = fold(instructions ?? '').trim();
-  if (src.length < span || r.length < span) return false;
-  for (let i = 0; i + span <= src.length; i += 5) {
-    if (r.includes(src.slice(i, i + span))) return true;
+  if (r.length < span) return false;
+  for (const line of (instructions ?? '').split(/\n+/)) {
+    const src = fold(line).trim();
+    if (src.length < span || PUBLIC_LINE.test(src)) continue;
+    for (let i = 0; i + span <= src.length; i += 5) {
+      if (r.includes(src.slice(i, i + span))) return true;
+    }
   }
   return false;
 }

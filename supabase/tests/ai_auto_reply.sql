@@ -124,8 +124,32 @@ UPDATE ai_reply_jobs SET updated_at = now() - interval '3 minutes', attempts = 3
 SET session_replication_role = origin;
 SELECT pg_temp.assert_true((SELECT count(*) = 1 AND min(attempts) = 4 FROM ai_reply_claim(10)), 'stale job requeued and reclaimed (attempts 4 → runtime hands over)');
 
+-- ---- D3: enqueue vs a job that already has a generated reply --------
+DELETE FROM ai_reply_jobs;
+INSERT INTO ai_reply_jobs(account_id, conversation_id, contact_id, status, inbound_message_ids, reply_parts, reply_message_ids, sent_parts)
+SELECT acc_a, conv_a, contact_a, 'queued', ARRAY[msg_1], ARRAY['a', 'b'], ARRAY[msg_1], 0 FROM ids;
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_2], 8) FROM ids;
+SELECT pg_temp.assert_true((SELECT reply_parts IS NULL AND reply_message_ids IS NULL AND cardinality(inbound_message_ids) = 2 FROM ai_reply_jobs), 'nothing sent yet: reply discarded, regenerated with the new message');
+UPDATE ai_reply_jobs SET reply_parts = ARRAY['a', 'b'], reply_message_ids = ARRAY[(SELECT msg_1 FROM ids)], sent_parts = 1, inbound_message_ids = ARRAY[(SELECT msg_1 FROM ids)];
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_2], 8) FROM ids;
+SELECT pg_temp.assert_true((SELECT reply_parts = ARRAY['a', 'b'] AND reply_message_ids = ARRAY[i.msg_1] AND inbound_message_ids = ARRAY[i.msg_1, i.msg_2] FROM ai_reply_jobs, ids i), 'bubbles already out: the reply in flight is kept, new id attached for a follow-up job');
+
+-- reaper: stale job with bubbles out + a queued sibling → the stale job resumes, sibling merged into it
+DELETE FROM ai_reply_jobs;
+INSERT INTO ai_reply_jobs(id, account_id, conversation_id, contact_id, status, inbound_message_ids, reply_parts, reply_message_ids, sent_parts, attempts)
+SELECT '66000000-0000-4000-8000-0000000000a1', acc_a, conv_a, contact_a, 'running', ARRAY[msg_1], ARRAY['a', 'b'], ARRAY[msg_1], 1, 1 FROM ids;
+INSERT INTO ai_reply_jobs(id, account_id, conversation_id, contact_id, status, inbound_message_ids, run_after)
+SELECT '66000000-0000-4000-8000-0000000000a2', acc_a, conv_a, contact_a, 'queued', ARRAY[msg_2], now() - interval '1 second' FROM ids;
+SET session_replication_role = replica;
+UPDATE ai_reply_jobs SET updated_at = now() - interval '3 minutes' WHERE status = 'running';
+SET session_replication_role = origin;
+SELECT pg_temp.assert_true((SELECT count(*) = 1 AND bool_and(id = '66000000-0000-4000-8000-0000000000a1' AND reply_parts = ARRAY['a', 'b'] AND sent_parts = 1 AND inbound_message_ids = ARRAY[i.msg_1, i.msg_2] AND reply_message_ids = ARRAY[i.msg_1]) FROM ai_reply_claim(10), ids i), 'stale job with bubbles out resumes; queued sibling merged into it');
+SELECT pg_temp.assert_true((SELECT skip_reason = 'merged' FROM ai_reply_jobs WHERE id = '66000000-0000-4000-8000-0000000000a2'), 'sibling marked merged');
+DELETE FROM ai_reply_jobs;
+
 -- ---- account B data for RLS -----------------------------------
 SELECT ai_reply_enqueue(acc_b, conv_b, contact_b, NULL, ARRAY[msg_1], 8) FROM ids;
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_1], 8) FROM ids;
 INSERT INTO ai_handoffs(account_id, conversation_id, contact_id, reason)
 SELECT acc_a, conv_a, contact_a, 'pediu atendente' FROM ids
 UNION ALL SELECT acc_b, conv_b, contact_b, 'b' FROM ids;

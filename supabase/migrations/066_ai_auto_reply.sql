@@ -86,7 +86,10 @@ CREATE TRIGGER messages_pause_ai_on_human_reply AFTER INSERT ON public.messages
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_origin_check;
 ALTER TABLE public.messages ADD CONSTRAINT messages_origin_check
   CHECK (origin IS NULL OR origin IN ('phone', 'automation', 'flow', 'system', 'ai')) NOT VALID;
--- NOT VALID + VALIDATE: the scan runs without blocking writes.
+-- Two steps: ADD ... NOT VALID is quick (no table scan); VALIDATE then scans
+-- under a lock that still lets writes through. (Inside this one migration
+-- transaction the first statement's lock is held until commit anyway, so
+-- this is about keeping each step light, not about avoiding the lock.)
 ALTER TABLE public.messages VALIDATE CONSTRAINT messages_origin_check;
 
 ALTER TABLE ai_usage DROP CONSTRAINT IF EXISTS ai_usage_feature_check;
@@ -156,6 +159,7 @@ CREATE TABLE IF NOT EXISTS ai_reply_jobs (
   inbound_message_ids  UUID[] NOT NULL DEFAULT '{}',
   reply_parts          TEXT[],
   sent_parts           INT NOT NULL DEFAULT 0,
+  reply_message_ids    UUID[],
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -186,6 +190,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_jobs_agent
   ON ai_reply_jobs(agent_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_reply_jobs_conversation
   ON ai_reply_jobs(conversation_id, created_at DESC);
+
+ALTER TABLE ai_reply_jobs ADD COLUMN IF NOT EXISTS reply_message_ids UUID[];
 
 DROP TRIGGER IF EXISTS set_updated_at ON ai_reply_jobs;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON ai_reply_jobs
@@ -268,6 +274,11 @@ AS $$
   ON CONFLICT (conversation_id) WHERE status = 'queued'
   DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
+    -- Nothing sent yet: the reply is written again with the new message in
+    -- context. Bubbles already out: keep the reply being delivered; the
+    -- runtime re-enqueues the ids it did not answer (reply_message_ids).
+    reply_parts = CASE WHEN ai_reply_jobs.sent_parts = 0 THEN NULL ELSE ai_reply_jobs.reply_parts END,
+    reply_message_ids = CASE WHEN ai_reply_jobs.sent_parts = 0 THEN NULL ELSE ai_reply_jobs.reply_message_ids END,
     inbound_message_ids = (
       SELECT coalesce(array_agg(m ORDER BY ord), '{}')
         FROM (
@@ -297,31 +308,50 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public
 AS $$
+DECLARE
+  v_stale ai_reply_jobs;
+  v_next ai_reply_jobs;
 BEGIN
-  WITH stale AS (
-    SELECT j.id, j.conversation_id, j.inbound_message_ids
-      FROM ai_reply_jobs j
+  FOR v_stale IN
+    SELECT * FROM ai_reply_jobs j
      WHERE j.status = 'running' AND j.updated_at < NOW() - INTERVAL '2 minutes'
-       AND EXISTS (SELECT 1 FROM ai_reply_jobs q WHERE q.conversation_id = j.conversation_id AND q.status = 'queued')
      FOR UPDATE SKIP LOCKED
-  ), merged AS (
-    UPDATE ai_reply_jobs q
-       SET inbound_message_ids = (
-             SELECT coalesce(array_agg(DISTINCT m), '{}') FROM unnest(s.inbound_message_ids || q.inbound_message_ids) m
-           )[1:200]
-      FROM stale s
-     WHERE q.conversation_id = s.conversation_id AND q.status = 'queued'
-    RETURNING s.id
-  )
-  UPDATE ai_reply_jobs j
-     SET status = 'skipped', skip_reason = 'merged', reply_parts = NULL,
-         last_error = 'stale: worker stopped while running'
-   WHERE j.id IN (SELECT id FROM merged);
-
-  UPDATE ai_reply_jobs j
-     SET status = 'queued', run_after = NOW(), last_error = 'stale: worker stopped while running'
-   WHERE j.status = 'running'
-     AND j.updated_at < NOW() - INTERVAL '2 minutes';
+  LOOP
+    SELECT * INTO v_next FROM ai_reply_jobs
+     WHERE conversation_id = v_stale.conversation_id AND status = 'queued'
+     FOR UPDATE;
+    IF NOT FOUND THEN
+      UPDATE ai_reply_jobs SET status = 'queued', run_after = NOW(),
+             last_error = 'stale: worker stopped while running'
+       WHERE id = v_stale.id;
+    ELSIF v_stale.sent_parts = 0 OR v_stale.reply_parts IS NULL THEN
+      -- Nothing went out: the newer job answers both sets of messages.
+      UPDATE ai_reply_jobs SET inbound_message_ids = (
+               SELECT coalesce(array_agg(m ORDER BY ord), '{}')
+                 FROM (SELECT DISTINCT ON (m) m, ord
+                         FROM unnest(v_stale.inbound_message_ids || v_next.inbound_message_ids) WITH ORDINALITY AS u(m, ord)
+                        ORDER BY m, ord) d
+             )[1:200]
+       WHERE id = v_next.id;
+      UPDATE ai_reply_jobs SET status = 'skipped', skip_reason = 'merged', reply_parts = NULL,
+             last_error = 'stale: worker stopped while running'
+       WHERE id = v_stale.id;
+    ELSE
+      -- Some bubbles already went out: the stale job must finish ITS reply
+      -- (never a second, different one). The queued job's messages move
+      -- onto it; the runtime re-enqueues whatever that reply did not answer.
+      UPDATE ai_reply_jobs SET status = 'skipped', skip_reason = 'merged' WHERE id = v_next.id;
+      UPDATE ai_reply_jobs SET status = 'queued', run_after = NOW(),
+             last_error = 'stale: worker stopped while running',
+             inbound_message_ids = (
+               SELECT coalesce(array_agg(m ORDER BY ord), '{}')
+                 FROM (SELECT DISTINCT ON (m) m, ord
+                         FROM unnest(v_stale.inbound_message_ids || v_next.inbound_message_ids) WITH ORDINALITY AS u(m, ord)
+                        ORDER BY m, ord) d
+             )[1:200]
+       WHERE id = v_stale.id;
+    END IF;
+  END LOOP;
 
   RETURN QUERY
   WITH picked AS (

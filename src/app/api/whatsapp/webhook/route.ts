@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl } from '@/lib/whatsapp/meta-api'
@@ -614,7 +614,15 @@ async function processMessage(
   // Automatic reply: this handler already runs detached from the
   // response (see POST), so the drain kick is fire-and-forget too; the
   // cron catches anything it misses.
-  if (ingested.aiReplyQueued) void kickAutoReplies()
+  if (ingested.aiReplyQueued) {
+    // Tracked by the framework (graceful stop waits for it) when we are
+    // still inside the request's scope; otherwise fire-and-forget.
+    try {
+      after(kickAutoReplies)
+    } catch {
+      void kickAutoReplies()
+    }
+  }
 }
 
 async function parseMessageContent(

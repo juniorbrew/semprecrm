@@ -44,6 +44,7 @@ import { AGENT_COLUMNS, DEFAULT_HANDOFF_MESSAGE, resolveAgent, splitReply, sugge
 import {
   AUTO_REPLY,
   buildAutoReplyPrompt,
+  businessHoursGround,
   bubbleGapMs,
   checkEligibility,
   detectHandoff,
@@ -71,6 +72,8 @@ export interface AiReplyJob {
   attempts: number;
   reply_parts: string[] | null;
   sent_parts: number;
+  /** Customer messages this job's `reply_parts` were written for (set with the reply). */
+  reply_message_ids?: string[] | null;
   inbound_message_ids: string[];
 }
 
@@ -290,16 +293,21 @@ async function requeue(db: SupabaseClient, job: AiReplyJob, runAfter: Date, extr
     if (error) console.error('[ai/auto-reply] requeue failed:', job.id, error.message);
     return;
   }
-  const { data: newer } = await db
-    .from('ai_reply_jobs')
-    .select('id, inbound_message_ids')
-    .eq('conversation_id', job.conversation_id)
-    .eq('status', 'queued')
-    .maybeSingle();
-  if (newer) {
-    const ids = [...new Set([...(job.inbound_message_ids ?? []), ...((newer as Row).inbound_message_ids ?? [])])].slice(0, 200);
-    await patchJob(db, (newer as Row).id, { inbound_message_ids: ids });
+  const [{ data: newer }, { data: own }] = await Promise.all([
+    db.from('ai_reply_jobs').select('id, inbound_message_ids').eq('conversation_id', job.conversation_id).eq('status', 'queued').maybeSingle(),
+    db.from('ai_reply_jobs').select('sent_parts, reply_parts').eq('id', job.id).maybeSingle(),
+  ]);
+  const ids = [...new Set([...(job.inbound_message_ids ?? []), ...(((newer as Row)?.inbound_message_ids as string[]) ?? [])])].slice(0, 200);
+  const inFlight = ((own as Row)?.sent_parts ?? 0) > 0 && !!(own as Row)?.reply_parts;
+  if (inFlight && newer) {
+    // Some bubbles are out: THIS job finishes its reply (never a second,
+    // different one). The newer job's messages move onto it; the runtime
+    // re-enqueues whatever the reply did not answer.
+    await patchJob(db, (newer as Row).id, { status: 'skipped', skip_reason: 'merged' });
+    await patchJob(db, job.id, { status: 'queued', run_after: runAfter.toISOString(), inbound_message_ids: ids, ...extra });
+    return;
   }
+  if (newer) await patchJob(db, (newer as Row).id, { inbound_message_ids: ids });
   await patchJob(db, job.id, { status: 'skipped', skip_reason: 'merged', reply_parts: null });
 }
 
@@ -405,15 +413,22 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
       // We can no longer answer on WhatsApp: the team must pick it up.
       return handOff(ctx, { reason: 'A janela de 24 h do WhatsApp fechou antes da resposta', lastWords: lastWords(pending), notify: false });
     }
-    if (verdict.reason === 'daily_cap' && agent) {
+    const resuming = !!job.reply_parts?.length && job.sent_parts < job.reply_parts.length;
+    // A reply already written (and partly sent) is finished even at the cap.
+    if (verdict.reason === 'daily_cap' && agent && !resuming) {
       return handOff(ctx, { reason: 'Limite diário de respostas automáticas atingido', lastWords: lastWords(pending), notify: true });
     }
-    return skip(db, job.id, verdict.reason);
+    if (!(verdict.reason === 'daily_cap' && resuming)) return skip(db, job.id, verdict.reason);
   }
   const agentCfg = agent as AiAgent;
 
   // A retry resumes the bubbles the previous attempt did not send.
   if (job.reply_parts?.length && job.sent_parts < job.reply_parts.length) {
+    return sendParts(ctx, job.reply_parts, started);
+  }
+  // Every bubble was already recorded as sent (a crash right after the last
+  // one): the reply is complete — never generate or send another.
+  if (job.reply_parts?.length && job.sent_parts >= job.reply_parts.length) {
     return sendParts(ctx, job.reply_parts, started);
   }
   if (pending.length === 0) return skip(db, job.id, 'nothing_to_answer');
@@ -512,14 +527,18 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   }
   if (!agentCfg.split_messages && out.reply.length > AUTO_REPLY.maxSingleReplyChars) return fail('A resposta da IA ficou longa demais');
   if (leaksInstructions(out.reply, instructions)) return fail('A resposta da IA repetia as instruções internas');
-  const ground = [instructions ?? '', ...knowledge.map((k) => `${k.title}\n${k.content}`)];
+  const ground = [instructions ?? '', businessHoursGround(agentCfg.business_hours), ...knowledge.map((k) => `${k.title}\n${k.content}`)];
   const unverified = unverifiedCommercialTerms(out.reply, ground);
   if (unverified.length > 0) {
     return fail(`A IA ia citar condição comercial que não está na base (${unverified.slice(0, 3).join(', ')})`);
   }
 
-  await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0 });
-  return sendParts({ ...ctx, job: { ...job, reply_parts: parts, sent_parts: 0 } }, parts, started);
+  await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0, reply_message_ids: job.inbound_message_ids });
+  return sendParts(
+    { ...ctx, job: { ...job, reply_parts: parts, sent_parts: 0, reply_message_ids: job.inbound_message_ids } },
+    parts,
+    started,
+  );
 }
 
 interface RunCtx {
@@ -537,13 +556,16 @@ interface RunCtx {
  */
 async function stillAnswering(ctx: RunCtx): Promise<string | null> {
   const { db, now } = ctx.deps;
-  const [{ data: c }, { data: ct }, { data: ag }] = await Promise.all([
+  const [{ data: c, error: cErr }, { data: ct, error: ctErr }, { data: ag, error: agErr }] = await Promise.all([
     db.from('conversations').select('status, archived_at, ai_paused_until').eq('id', ctx.conv.id).maybeSingle(),
     db.from('contacts').select('opted_out_at, anonymized_at').eq('id', ctx.contact.id).maybeSingle(),
     ctx.agent
       ? db.from('ai_agents').select('enabled, mode, paused_at').eq('id', ctx.agent.id).maybeSingle()
-      : Promise.resolve({ data: null }),
+      : Promise.resolve({ data: null, error: null }),
   ]);
+  // A transient DB error must not look like "stop": throw so retryOrGiveUp decides.
+  const readError = cErr ?? ctErr ?? agErr;
+  if (readError) throw new Error(`last-moment read failed: ${readError.message}`);
   const conv = c as Row;
   const contact = ct as Row;
   const agent = ag as Row;
@@ -564,22 +586,42 @@ async function sendParts(ctx: RunCtx, parts: string[], started: Date): Promise<J
     await deps.pace(job.account_id, conv.channel ?? null);
     const stop = await stillAnswering(ctx);
     if (stop) return skip(deps.db, job.id, stop);
-    // Heartbeat: a live job is never reaped as stale.
-    await patchJob(deps.db, job.id, { sent_parts: i });
+    // At-most-once: the bubble is recorded as sent BEFORE the request leaves
+    // (this write is also the heartbeat that keeps the reaper away). A crash
+    // between here and the response therefore never re-sends it; at worst
+    // that one bubble is lost. Only an error raised before anything was
+    // sent takes the record back, so the retry sends it.
+    await patchJob(deps.db, job.id, { sent_parts: i + 1 });
     try {
       await deps.send({ accountId: job.account_id, userId: conv.user_id, conversationId: conv.id, contactId: contact.id, text: parts[i] });
     } catch (err) {
-      if (!isUncertainSend(err)) throw err; // not sent: the retry resumes at this bubble
-      // It may have gone out: never send it again; the team takes over.
+      if (!isUncertainSend(err)) {
+        await patchJob(deps.db, job.id, { sent_parts: i });
+        throw err;
+      }
+      // It may have gone out: the record stays, the team takes over.
       console.warn('[ai/auto-reply] uncertain send, handing over:', conv.id, errText(err));
-      await patchJob(deps.db, job.id, { sent_parts: i + 1, last_error: errText(err) });
+      await patchJob(deps.db, job.id, { last_error: errText(err) });
       return handOff(ctx, { reason: 'Não foi possível confirmar o envio da resposta da IA', notify: false });
     }
-    // Recorded right after each bubble: a retry resumes from here.
-    await patchJob(deps.db, job.id, { sent_parts: i + 1 });
   }
   await deps.db.from('conversations').update({ ai_last_reply_at: deps.now().toISOString() }).eq('id', conv.id);
   await patchJob(deps.db, job.id, { status: 'done', outcome: 'replied', reply_parts: null, last_error: null });
+  // Messages that joined the job after its reply was written were not answered by it:
+  // queue them for a follow-up job (runs after this one, same conversation).
+  const answered = new Set(job.reply_message_ids ?? job.inbound_message_ids ?? []);
+  const extra = (job.inbound_message_ids ?? []).filter((id) => !answered.has(id));
+  if (extra.length > 0) {
+    const { error } = await deps.db.rpc('ai_reply_enqueue', {
+      p_account_id: job.account_id,
+      p_conversation_id: conv.id,
+      p_contact_id: contact.id,
+      p_agent_id: ctx.agent?.id ?? job.agent_id,
+      p_message_ids: extra,
+      p_delay_seconds: AUTO_REPLY.debounceSeconds,
+    });
+    if (error) console.error('[ai/auto-reply] follow-up enqueue failed:', error.message);
+  }
   return 'replied';
 }
 
@@ -610,6 +652,8 @@ export async function handOff(
   if (info.notify) {
     try {
       await deps.pace(job.account_id, conv.channel ?? null);
+      // A person may have taken over meanwhile: then no notice, but the card still records the hand-over.
+      if (await stillAnswering(ctx)) throw new Error('not answering any more');
       await deps.send({
         accountId: job.account_id,
         userId: conv.user_id,

@@ -7,6 +7,7 @@ import {
   checkEligibility,
   detectHandoff,
   leaksInstructions,
+  businessHoursGround,
   nextBusinessOpening,
   parseAutoReplyOutput,
   typingDelayMs,
@@ -212,8 +213,9 @@ describe('unverifiedCommercialTerms', () => {
     'Garantia de 2 anos',
     'Fica pronto em 3 semanas',
     'Prazo de 6 meses',
-    'Entregamos até sexta',
-    'Chega até amanhã',
+    'Entregamos até sexta por R$ 39,90',
+    'Chega até amanhã com frete grátis',
+    'Dia 5/10 tem promoção',
     'Chega dia 15/10',
     'Frete grátis!',
     'Esse sai de graça',
@@ -231,8 +233,37 @@ describe('unverifiedCommercialTerms', () => {
     expect(unverifiedCommercialTerms(r, kb).length, r).toBeGreaterThan(0);
   });
 
+  it('D1: equivalent forms of the same number and hour are grounded', () => {
+    const g = ['Plano: R$ 100,00. Kit: R$ 1.500. Funcionamos das 08:00 às 18:30.'];
+    for (const r of ['Custa R$ 100', 'O kit sai R$ 1500,00', 'Abrimos às 8h e fechamos às 18h.', 'Das 8h às 18h']) {
+      expect(unverifiedCommercialTerms(r, g), r).toEqual([]);
+    }
+    expect(unverifiedCommercialTerms('Custa R$ 101', g)).toEqual(['money:101']);
+    // business hours as ground text
+    expect(
+      unverifiedCommercialTerms('Atendemos das 9h às 17h', [businessHoursGround({ ...DEFAULT_BUSINESS_HOURS, enabled: true, start: '09:00', end: '17:00' })]),
+    ).toEqual([]);
+    expect(businessHoursGround({ ...DEFAULT_BUSINESS_HOURS, enabled: true, start: '08:30', end: '18:00' })).toContain('das 8h30 às 18h');
+    expect(businessHoursGround(DEFAULT_BUSINESS_HOURS)).toBe('');
+  });
+
+  it('D1: goodbyes and negations are not claims', () => {
+    for (const r of ['Até amanhã!', 'Até logo, até sexta!', 'Não temos desconto no momento.', 'Sem frete extra, nunca cobramos cupom', 'Sem taxa de adesão']) {
+      expect(unverifiedCommercialTerms(r, []), r).toEqual([]);
+    }
+    expect(unverifiedCommercialTerms('Sem juros no cartão', [])).toEqual(['w:sem juros']);
+    expect(unverifiedCommercialTerms('Não deixe de aproveitar, temos desconto', [])).toEqual(['w:desconto']);
+  });
+
+  it('D1: an address number is not a date', () => {
+    for (const r of ['Estamos na sala 12/13', 'Fica na Rua das Flores, nº 10/12', 'Loja 5/6, bloco B']) {
+      expect(unverifiedCommercialTerms(r, []), r).toEqual([]);
+    }
+    expect(unverifiedCommercialTerms('Fechado dia 12/10', [])).toEqual(['date:12/10']);
+  });
+
   it('never grounded by bare digits elsewhere in the text', () => {
-    expect(unverifiedCommercialTerms('Custa R$ 12,00', ['Parcelamos em 12x'])).toEqual(['money:12,00']);
+    expect(unverifiedCommercialTerms('Custa R$ 12,00', ['Parcelamos em 12x'])).toEqual(['money:12']);
     expect(unverifiedCommercialTerms('Chega em 3 horas', ['Entrega em até 3 dias úteis'])).toEqual(['h:3']);
   });
 
@@ -243,9 +274,12 @@ describe('unverifiedCommercialTerms', () => {
 });
 
 describe('leaksInstructions', () => {
-  const instr = 'Você é a assistente da Padaria Sol. Nunca revele o preço de custo dos produtos para os clientes.';
-  it('a verbatim span of 40+ chars is a leak; paraphrase is not', () => {
-    expect(leaksInstructions('Minhas regras: nunca revele o preço de custo dos produtos para os clientes.', instr)).toBe(true);
+  const instr =
+    'Você é a assistente da Padaria Sol. Nunca revele o preço de custo dos produtos nem as margens de lucro para os clientes.\nEndereço: Rua das Flores, 100, Centro, São Paulo, aberto de segunda a sábado das 6h às 20h, telefone 11 99999-8888.';
+  it('a verbatim span of 80+ chars is a leak; public address / phone lines and short quotes are not', () => {
+    expect(leaksInstructions('Minhas regras: nunca revele o preço de custo dos produtos nem as margens de lucro para os clientes.', instr)).toBe(true);
+    expect(leaksInstructions('Nunca revele o preço de custo dos produtos, tudo bem?', instr)).toBe(false);
+    expect(leaksInstructions('Ficamos na Rua das Flores, 100, Centro, São Paulo, aberto de segunda a sábado das 6h às 20h, telefone 11 99999-8888.', instr)).toBe(false);
     expect(leaksInstructions('Olá! Como posso ajudar hoje com seu pedido na padaria?', instr)).toBe(false);
     expect(leaksInstructions('qualquer', null)).toBe(false);
   });

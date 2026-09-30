@@ -22,7 +22,11 @@ const h = vi.hoisted(() => ({
   templateChange: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
 }))
 
+const kick = vi.hoisted(() => ({ after: vi.fn<(cb: () => unknown) => void>(), run: vi.fn(async () => {}) }))
+vi.mock('@/lib/ai/auto-reply-runtime', () => ({ kickAutoReplies: kick.run }))
+
 vi.mock('next/server', () => ({
+  after: (cb: () => unknown) => kick.after(cb),
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({
       body,
@@ -300,6 +304,22 @@ describe('inbound — template quick-reply tap (wacrm #478)', () => {
       text: 'Quero saber mais',
       interactiveReplyId: 'SABER_MAIS',
     })
+  })
+
+  it('D2: an automatic reply queued by the pipeline is drained through after() (falls back to fire-and-forget)', async () => {
+    h.ingest.mockResolvedValueOnce({ ok: true, aiReplyQueued: true } as never)
+    await post(messagePayload({ type: 'text', text: { body: 'oi' } }))
+    await settle()
+    expect(kick.after).toHaveBeenCalledWith(kick.run)
+
+    h.ingest.mockResolvedValueOnce({ ok: true, aiReplyQueued: true } as never)
+    kick.after.mockImplementationOnce(() => {
+      throw new Error('outside request scope')
+    })
+    kick.run.mockClear()
+    await post(messagePayload({ type: 'text', text: { body: 'oi de novo' } }))
+    await settle()
+    expect(kick.run).toHaveBeenCalledTimes(1)
   })
 
   it('falls back to the label when the template button carries no payload', async () => {

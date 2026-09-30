@@ -302,7 +302,7 @@ describe('runAutoReplyJob — stay out / hand over', () => {
   it.each([
     ['invalid output', 'Claro, abrimos às 8h'],
     ['invented price', reply('Custa R$ 99,00 com 20% de desconto')],
-    ['instruction leak', reply('Minhas regras: ajude os clientes da padaria com educação e sempre confirme o pedido.')],
+    ['instruction leak', reply('Minhas regras: Ajude os clientes da padaria com educação e sempre confirme o pedido antes de encerrar.')],
     ['model hand-over', JSON.stringify({ reply: null, handoff: true, reason: 'Sem informação', customer_wants: 'Saber o preço' })],
   ])('%s → hand-over, only the notice is sent', async (_label, text) => {
     modelText = text;
@@ -348,6 +348,131 @@ describe('runAutoReplyJob — stay out / hand over', () => {
     db.seed('ai_reply_jobs', [{ id: 'old', conversation_id: 'conv', status: 'done', outcome: 'replied', updated_at: '2026-09-29T13:00:00Z' }]);
     await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
     expect(prompts).toHaveLength(0);
+  });
+});
+
+describe('round 2', () => {
+  it('D3: messages that joined after the reply was written get a follow-up job; bubbles are not regenerated', async () => {
+    const rpcCalls: Row[] = [];
+    db.rpcHandler = (fn, args) => {
+      rpcCalls.push({ fn, args });
+      return { data: null, error: null };
+    };
+    const parts = ['Parte 1', 'Parte 2'];
+    await runAutoReplyJob(
+      job({ reply_parts: parts, sent_parts: 1, attempts: 2, inbound_message_ids: ['m1', 'm2'], reply_message_ids: ['m1'] }),
+      deps(),
+    );
+    expect(sent).toEqual(['Parte 2']);
+    expect(prompts).toHaveLength(0);
+    expect(rpcCalls).toEqual([
+      { fn: 'ai_reply_enqueue', args: expect.objectContaining({ p_message_ids: ['m2'], p_conversation_id: 'conv' }) },
+    ]);
+  });
+
+  it('D3: a fresh reply records which messages it answers, so nothing extra is queued', async () => {
+    const rpcCalls: string[] = [];
+    db.rpcHandler = (fn) => {
+      rpcCalls.push(fn);
+      return { data: null, error: null };
+    };
+    await runAutoReplyJob(job(), deps());
+    expect(jobRow().reply_message_ids).toEqual(['m1']);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('D3: a requeue conflict with bubbles already out keeps THIS job and merges the newer one into it', async () => {
+    agentRow().business_hours = { ...DEFAULT_BUSINESS_HOURS, enabled: true, start: '13:00' };
+    Object.assign(jobRow(), { reply_parts: ['a', 'b'], sent_parts: 1 });
+    db.seed('ai_reply_jobs', [{ id: 'job-2', conversation_id: 'conv', status: 'queued', inbound_message_ids: ['m9'] }]);
+    const client = db.client();
+    let conflicts = 1;
+    const unique = {
+      rpc: client.rpc,
+      from: (t: string) => {
+        const q = client.from(t) as unknown as { update: (p: Row) => unknown };
+        if (t !== 'ai_reply_jobs') return q;
+        const update = q.update.bind(q);
+        q.update = (p: Row) =>
+          p.status === 'queued' && p.run_after && conflicts-- > 0
+            ? { eq: async () => ({ error: { code: '23505', message: 'duplicate' } }) }
+            : update(p);
+        return q;
+      },
+    } as unknown as SupabaseClient;
+    await runAutoReplyJob(job({ reply_parts: ['a', 'b'], sent_parts: 1 }), deps({ db: unique }));
+    expect(jobRow()).toMatchObject({ status: 'queued', reply_parts: ['a', 'b'], sent_parts: 1, inbound_message_ids: ['m1', 'm9'] });
+    expect(jobRow('job-2')).toMatchObject({ status: 'skipped', skip_reason: 'merged' });
+  });
+
+  it('at-most-once: the bubble is recorded as sent before the request leaves (a crash never re-sends it)', async () => {
+    let recordedDuringSend = -1;
+    await runAutoReplyJob(
+      job(),
+      deps({
+        send: async (a) => {
+          recordedDuringSend = jobRow().sent_parts as number;
+          sent.push(a.text);
+        },
+      }),
+    );
+    expect(recordedDuringSend).toBe(1);
+    // crash after the last bubble was recorded: complete, nothing generated or sent again
+    sent = [];
+    prompts = [];
+    Object.assign(jobRow(), { status: 'running', reply_parts: ['x'], sent_parts: 1 });
+    await expect(runAutoReplyJob(job({ reply_parts: ['x'], sent_parts: 1, attempts: 2 }), deps())).resolves.toBe('replied');
+    expect(sent).toEqual([]);
+    expect(prompts).toHaveLength(0);
+  });
+
+  it('daily cap does not stop a reply already written and partly sent', async () => {
+    agentRow().max_auto_replies_per_day = 1;
+    db.seed('ai_reply_jobs', [{ id: 'old', conversation_id: 'conv', status: 'done', outcome: 'replied', updated_at: '2026-09-29T13:00:00Z' }]);
+    await expect(runAutoReplyJob(job({ reply_parts: ['a', 'b'], sent_parts: 1, attempts: 2 }), deps())).resolves.toBe('replied');
+    expect(sent).toEqual(['b']);
+  });
+
+  it('D4: hand-over notice is skipped when a person took over meanwhile, the card is still recorded', async () => {
+    modelText = JSON.stringify({ reply: null, handoff: true, reason: 'Sem informação' });
+    await runAutoReplyJob(job(), deps({ pace: async () => void (conv().ai_paused_until = '2026-09-29T15:30:00Z') }));
+    expect(sent).toEqual([]);
+    expect(db.table('ai_handoffs')[0]).toMatchObject({ notified: false, reason: 'Sem informação' });
+    expect(conv().ai_paused_until).toBe('infinity');
+  });
+
+  it('D5: a transient read error in the last-moment check is thrown (retried), not treated as "stop"', async () => {
+    const client = db.client();
+    let contactReads = 0;
+    const flaky = {
+      rpc: client.rpc,
+      from: (t: string) => {
+        const q = client.from(t) as unknown as { select: (c: string) => unknown };
+        if (t !== 'contacts') return q;
+        const select = q.select.bind(q);
+        q.select = (c: string) => {
+          // 1st read = job start; 2nd = the last-moment check
+          if (c === 'opted_out_at, anonymized_at' && ++contactReads === 1) {
+            return { eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: 'connection reset' } }) }) };
+          }
+          return select(c);
+        };
+        return q;
+      },
+    } as unknown as SupabaseClient;
+    await expect(runAutoReplyJob(job(), deps({ db: flaky }))).rejects.toThrow('last-moment read failed');
+    expect(sent).toEqual([]);
+    expect(jobRow()).toMatchObject({ status: 'running', sent_parts: 0 });
+  });
+
+  it('D1: business hours are trusted ground; "Até amanhã" is a goodbye', async () => {
+    agentRow().business_hours = { ...DEFAULT_BUSINESS_HOURS, enabled: true, start: '08:00', end: '23:59', days: [0, 1, 2, 3, 4, 5, 6] };
+    db.table('ai_settings')[0].instructions = 'Seja simpático.';
+    modelText = reply('Atendemos das 8h às 23h59. Até amanhã!');
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+    modelText = reply('Atendemos até as 22h.');
+    Object.assign(jobRow(), { status: 'running', reply_parts: null, sent_parts: 0 });
+    await expect(runAutoReplyJob(job({ id: 'job-1' }), deps())).resolves.toBe('handoff');
   });
 });
 

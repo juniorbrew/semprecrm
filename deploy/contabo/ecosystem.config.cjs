@@ -11,6 +11,10 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       max_memory_restart: "768M",
+      // Respostas automáticas da IA rodam em after() (digitando + várias
+      // mensagens): o PM2 espera até 60 s no reload/stop antes de matar o
+      // processo, para o Next terminar os callbacks em andamento.
+      kill_timeout: 60000,
       env: { NODE_ENV: "production", PORT: "3000" },
       // Real secrets live in /var/www/semprecrm/.env.production (chmod 600),
       // which Next reads on `next start`. Nothing sensitive goes in this file.
@@ -42,7 +46,8 @@ module.exports = {
     },
     {
       // Agendador interno (scripts/cron-tick.mjs): a cada minuto chama
-      // /api/automations/cron e /api/flows/cron no próprio app, por loopback.
+      // /api/automations/cron, /api/flows/cron e /api/ai/auto-reply/cron (respostas
+      // automáticas da IA) no próprio app, por loopback.
       // Sem ele as etapas "Aguardar", os gatilhos por horário/inatividade e os
       // timeouts dos flows não andam. Lê AUTOMATION_CRON_SECRET do mesmo
       // .env.production do app; APP_URL aponta para a porta local do Next.
