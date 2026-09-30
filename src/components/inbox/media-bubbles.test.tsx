@@ -4,7 +4,7 @@ import { renderToString } from 'react-dom/server';
 import type { Message } from '@/types';
 import { translateLiteral } from '@/lib/i18n';
 import { isStickerMedia } from '@/lib/inbox/sticker';
-import { buildVCards, isVCardText, parseVCards, vcardPreview } from '@/lib/inbox/vcard';
+import { plainMessageText, buildVCards, isVCardText, parseVCards, vcardPreview } from '@/lib/inbox/vcard';
 import { previewText } from '@/lib/whatsapp/inbound';
 import { MessageBubble } from './message-bubble';
 
@@ -122,3 +122,15 @@ describe('MessageBubble — voice message', () => {
     expect(html).toContain('unavailable');
   });
 });
+
+describe('vCard is neutral for automations / AI', () => {
+  it('becomes a placeholder; other text is untouched', () => {
+    expect(plainMessageText(VCARD)).toBe('[Contato compartilhado: Ana Souza]')
+    expect(plainMessageText('BEGIN:VCARD' + String.fromCharCode(10) + 'END:VCARD')).toBe('[Contato compartilhado]')
+    expect(plainMessageText('oi')).toBe('oi')
+    expect(plainMessageText(null)).toBe('')
+  })
+  it('parse is memoized per text', () => {
+    expect(parseVCards(VCARD)).toBe(parseVCards(VCARD))
+  })
+})

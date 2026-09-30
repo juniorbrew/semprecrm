@@ -28,7 +28,11 @@ export interface ContactExport {
     opted_out_at: unknown
     anonymized_at: unknown
   }
-  conversations: (Record<string, unknown> & { messages: Record<string, unknown>[] })[]
+  conversations: (Record<string, unknown> & {
+    messages: Record<string, unknown>[]
+    /** Activity log (assignments incl. transfer reasons, status changes, labels). */
+    events: Record<string, unknown>[]
+  })[]
   notes: Record<string, unknown>[]
   deals: Record<string, unknown>[]
   tasks: Record<string, unknown>[]
@@ -169,6 +173,21 @@ export async function buildContactExport(
         .order('created_at', { ascending: true }),
     )
   }
+  let eventRows: Row[] = []
+  if (conversationIds.length > 0) {
+    eventRows = await load('conversation_events', () =>
+      db
+        .from('conversation_events')
+        .select('id, conversation_id, event_type, actor_user_id, payload, created_at')
+        .in('conversation_id', conversationIds)
+        .order('created_at', { ascending: true }),
+    )
+  }
+  const eventsByConversation = new Map<string, Row[]>()
+  for (const e of eventRows) {
+    const key = e.conversation_id as string
+    eventsByConversation.set(key, [...(eventsByConversation.get(key) ?? []), e])
+  }
   const byConversation = new Map<string, Row[]>()
   for (const m of messageRows) {
     const key = m.conversation_id as string
@@ -211,6 +230,7 @@ export async function buildContactExport(
     conversations: convRows.map((conv) => ({
       ...conv,
       messages: byConversation.get(conv.id as string) ?? [],
+      events: eventsByConversation.get(conv.id as string) ?? [],
     })),
     notes: noteRows,
     deals: dealRows,

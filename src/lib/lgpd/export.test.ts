@@ -49,3 +49,21 @@ describe('buildContactExport — AI contact memory (064)', () => {
     expect(out.warnings).toEqual([])
   })
 })
+
+describe('buildContactExport — conversation events', () => {
+  it('includes the activity log, transfer reasons included, under each conversation', async () => {
+    const { db } = makeDb({
+      contacts: [{ id: 'c1', name: 'Maria' }],
+      conversations: [{ id: 'conv1' }],
+      conversation_events: [
+        { id: 'e1', conversation_id: 'conv1', event_type: 'assigned', payload: { reason: 'boleto vencido' } },
+        { id: 'e2', conversation_id: 'other', event_type: 'assigned', payload: {} },
+      ],
+    })
+    const out = await buildContactExport(db, 'acc', 'c1')
+    expect(out.conversations[0].events).toEqual([
+      { id: 'e1', conversation_id: 'conv1', event_type: 'assigned', payload: { reason: 'boleto vencido' } },
+    ])
+    expect(out.warnings).toEqual([])
+  })
+})

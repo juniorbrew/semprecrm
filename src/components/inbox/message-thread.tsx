@@ -1182,15 +1182,20 @@ export function MessageThread({
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
   // as "still open" for this toggle, so the button always resolves
   // unless the thread is already closed.
-  const handleResolveToggle = useCallback(async () => {
+  const handleResolveToggle = useCallback(async (withUndo = false) => {
     if (!conversation) return;
     const next: ConversationStatus =
       conversation.status === "closed" ? "open" : "closed";
     if (!(await handleStatusChange(next))) return;
-    toast.success(
-      next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast
-    );
-  }, [conversation, handleStatusChange, statusCopy]);
+    const message = next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast;
+    if (withUndo && next === "closed") {
+      toast.success(message, {
+        action: { label: t("Undo"), onClick: () => void handleStatusChange("open") },
+      });
+    } else {
+      toast.success(message);
+    }
+  }, [conversation, handleStatusChange, statusCopy, t]);
 
   // ---- Internal notes ----------------------------------------------
 
@@ -1521,7 +1526,7 @@ export function MessageThread({
       });
       if (action === "claim" && allowed.claim.enabled) void st.handleClaim();
       if (action === "resolve" && allowed.close.enabled && st.conversation.status !== "closed") {
-        void st.handleResolveToggle();
+        void st.handleResolveToggle(true);
       }
     };
     window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
@@ -1877,7 +1882,7 @@ export function MessageThread({
           >
             <button
               type="button"
-              onClick={handleResolveToggle}
+              onClick={() => void handleResolveToggle()}
               disabled={!actions.close.enabled}
               aria-label={isResolved ? statusCopy.reopen : statusCopy.resolve}
               title={

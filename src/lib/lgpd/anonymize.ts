@@ -171,6 +171,22 @@ export async function anonymizeContact(
       .in('conversation_id', conversationIds)
       .eq('event_type', 'ai_handoff')
     if (evErr) warnings.push(`ai_handoff events: ${evErr.message}`)
+
+    // Transfer pills (`assigned`) may carry a free-text reason that names the
+    // customer: drop only that key, the who-assigned-to-whom stays.
+    const { data: transfers, error: trErr } = await admin
+      .from('conversation_events')
+      .select('id, payload')
+      .in('conversation_id', conversationIds)
+      .eq('event_type', 'assigned')
+    if (trErr) warnings.push(`assigned events: ${trErr.message}`)
+    for (const row of (transfers ?? []) as { id: string; payload: Record<string, unknown> | null }[]) {
+      if (!row.payload || !('reason' in row.payload)) continue
+      const { reason: _dropped, ...rest } = row.payload
+      void _dropped
+      const { error } = await admin.from('conversation_events').update({ payload: rest }).eq('id', row.id)
+      if (error) warnings.push(`assigned event ${row.id}: ${error.message}`)
+    }
   }
 
   // 2. Notes + custom field values.

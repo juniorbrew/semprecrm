@@ -58,9 +58,12 @@ export function TransferDialog({ targetName, onCancel, onConfirm, busy }: Transf
             placeholder={t("Context for the new owner…")}
             data-no-translate
           />
-          <span className="self-end text-[11px] tabular-nums text-muted-foreground" data-no-translate>
-            {reason.length}/{MAX_TRANSFER_REASON}
-          </span>
+          <div className="flex items-start justify-between gap-2 text-[11px] text-muted-foreground">
+            <span>{t("Do not include sensitive personal data in the reason.")}</span>
+            <span className="shrink-0 tabular-nums" data-no-translate>
+              {reason.length}/{MAX_TRANSFER_REASON}
+            </span>
+          </div>
         </div>
         <DialogFooter>
           <Button

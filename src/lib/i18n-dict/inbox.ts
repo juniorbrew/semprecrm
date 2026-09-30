@@ -140,12 +140,15 @@ export const DICT_INBOX: Record<string, string> = {
   'Search conversations': 'Buscar conversas',
   'Leave the field': 'Sair do campo',
 
+  Undo: 'Desfazer',
+
   // ---- Transfer with a reason ----
   'Transfer conversation': 'Transferir conversa',
   To: 'Para',
   'Reason (optional)': 'Motivo (opcional)',
   'Context for the new owner…': 'Contexto para quem vai assumir…',
   Transfer: 'Transferir',
+  'Do not include sensitive personal data in the reason.': 'Não inclua dados pessoais sensíveis no motivo.',
 
   // ---- Voice player, contact card ----
   Play: 'Reproduzir',

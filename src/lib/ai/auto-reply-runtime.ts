@@ -58,6 +58,7 @@ import { AiError, type AiErrorCode } from './errors';
 import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from './knowledge';
 import { runModelCall } from './run-model-call';
 import { MEMORY_PROMPT_MAX_FACTS, type SuggestMessage } from './suggest-reply';
+import { plainMessageText } from '@/lib/inbox/vcard';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any;
@@ -351,7 +352,7 @@ async function loadJobMessages(db: SupabaseClient, job: AiReplyJob, conversation
 
 const lastWords = (msgs: Msg[]) =>
   msgs
-    .map((m) => m.content_text ?? '')
+    .map((m) => plainMessageText(m.content_text))
     .filter((t) => t.trim())
     .slice(-3)
     .join('\n');
@@ -451,7 +452,7 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     .eq('status', 'active');
   if ((activeFlows ?? 0) > 0) return skip(db, job.id, 'flow_active');
 
-  const texts = pending.map((m) => m.content_text ?? '').filter((t) => t.trim());
+  const texts = pending.map((m) => plainMessageText(m.content_text)).filter((t) => t.trim());
   const words = lastWords(pending);
   if (agentCfg.handoff_enabled && detectHandoff(texts, agentCfg.handoff_keywords)) {
     return handOff(ctx, { reason: 'O cliente pediu para falar com uma pessoa', customerWants: 'Falar com uma pessoa da equipe', lastWords: words, notify: true });

@@ -50,4 +50,12 @@ describe('transferEventPayload + pill', () => {
     const plain = eventFromRecord({ ...row, payload: { assignee_user_id: 'u2', self_assigned: false } }, (id) => ({ u1: 'Ana', u2: 'Bruno' })[id])
     expect(formatConversationEvent(plain, 'pt-BR')).toBe('Ana atribuiu para Bruno')
   })
+
+  it('bounds a stored reason again on read (foreign writers)', () => {
+    const row = {
+      id: 'e', account_id: 'a', conversation_id: 'c', actor_user_id: 'u1', event_type: 'assigned',
+      payload: { assignee_user_id: 'u2', reason: 'x'.repeat(900) }, created_at: '2026-09-12T10:00:00Z',
+    } as ConversationEventRecord
+    expect(eventFromRecord(row).reason).toHaveLength(MAX_TRANSFER_REASON)
+  })
 })

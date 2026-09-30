@@ -329,9 +329,17 @@ export function ConversationList({
   // the tab / live filter.
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [channelFilter, setChannelFilter] = useState<WhatsAppChannel | null>(null);
-  const { tags: facetTags, hasBothChannels } = useInboxFacets(accountId);
+  const { tags: facetTags, hasBothChannels, loaded: facetsLoaded } = useInboxFacets(accountId);
   // A saved channel filter is meaningless (and invisible) without both channels.
   const channel = hasBothChannels ? channelFilter : null;
+  // A saved tag that no longer exists must not filter (or show a chip).
+  const validTagIds = useMemo(
+    () => (facetsLoaded ? tagIds.filter((id) => facetTags.some((t) => t.id === id)) : tagIds),
+    [tagIds, facetTags, facetsLoaded],
+  );
+  // With a saved facet filter, wait until the facets are known before the
+  // first fetch, so the list never loads unfiltered and then again filtered.
+  const facetsSettled = facetsLoaded || (!channelFilter && tagIds.length === 0);
   // View key of the last page that finished loading; `loading` is derived.
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   // Same, without the search text: a search that is still settling keeps the
@@ -443,6 +451,12 @@ export function ConversationList({
     [persistTriage, tab, liveFilter, tagIds]
   );
 
+  useEffect(() => {
+    if (facetsLoaded && validTagIds.length !== tagIds.length) {
+      setTagIds(validTagIds);
+      persistTriage({ tab, live: liveFilter, tagIds: validTagIds, channel: channelFilter });
+    }
+  }, [facetsLoaded, validTagIds, tagIds.length, persistTriage, tab, liveFilter, channelFilter]);
   // Ticks once a minute so the relative ages in the rows stay honest
   // without a refetch. Rows only render client-side (after the fetch),
   // so the initial Date.now() never reaches SSR markup.
@@ -478,10 +492,10 @@ export function ConversationList({
       unread: unreadOnly,
       radar,
       search: debouncedSearch,
-      tagIds,
+      tagIds: validTagIds,
       channel,
     }),
-    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, tagIds, channel],
+    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, validTagIds, channel],
   );
   const key = viewKey(view);
   const baseKey = viewKey({ ...view, search: "" });
@@ -511,7 +525,7 @@ export function ConversationList({
   // same view refetches as many rows as are loaded, so it never collapses
   // pages the agent already scrolled through.
   useEffect(() => {
-    if (!ready || !accountId) return;
+    if (!ready || !accountId || !facetsSettled) return;
     const supabase = createClient();
     let cancelled = false;
     const isResync = loadedKeyRef.current === key;
@@ -568,7 +582,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [ready, accountId, key, baseKey, view, resyncToken, retryTick, slaMinutes, coolingHours]);
+  }, [ready, accountId, facetsSettled, key, baseKey, view, resyncToken, retryTick, slaMinutes, coolingHours]);
 
   const loadMore = useCallback(async () => {
     const boundary = paging.boundary;
@@ -635,7 +649,7 @@ export function ConversationList({
     const { data, error } = await createClient().rpc(
       "inbox_counts",
       countsArgs(
-        { live: effectiveLive, unread: unreadOnly, radar, tagIds, channel },
+        { live: effectiveLive, unread: unreadOnly, radar, tagIds: validTagIds, channel },
         { accountId, prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours } },
       ),
     );
@@ -645,15 +659,15 @@ export function ConversationList({
       return;
     }
     setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
-  }, [accountId, effectiveLive, unreadOnly, radar, tagIds, channel, slaMinutes, coolingHours]);
+  }, [accountId, effectiveLive, unreadOnly, radar, validTagIds, channel, slaMinutes, coolingHours]);
   const fetchCountsRef = useRef(fetchCounts);
   useEffect(() => {
     fetchCountsRef.current = fetchCounts;
   });
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !facetsSettled) return;
     void fetchCounts();
-  }, [ready, fetchCounts, resyncToken]);
+  }, [ready, facetsSettled, fetchCounts, resyncToken]);
   const countsDebounce = useMemo(
     () => debounceWithMaxWait(() => void fetchCountsRef.current(), 300, 2000),
     [],
@@ -873,7 +887,7 @@ export function ConversationList({
   }, [accountId]);
   const showOwner = useMemo(() => showOwnerBadge(tab, filtered), [tab, filtered]);
 
-  const anyFilter = unreadOnly || !!radar || tagIds.length > 0 || !!channel;
+  const anyFilter = unreadOnly || !!radar || validTagIds.length > 0 || !!channel;
   const clearFilters = useCallback(() => {
     setUnreadOnly(false);
     if (radar) setRadar(null);
@@ -885,7 +899,14 @@ export function ConversationList({
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
-    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border bg-card lg:w-80">
+    <div
+      className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border bg-card lg:w-80"
+      data-inbox-cursor-pending={
+        cursorOverride && cursorId === cursorOverride && cursorId !== activeConversationId
+          ? ""
+          : undefined
+      }
+    >
       {/* Triage strip: title + live filter, search, tabs */}
       <div className="border-b border-border">
         <div
@@ -929,7 +950,7 @@ export function ConversationList({
             <FilterPopover
               tags={facetTags}
               hasBothChannels={hasBothChannels}
-              tagIds={tagIds}
+              tagIds={validTagIds}
               channel={channel}
               onTagsChange={handleTagsChange}
               onChannelChange={handleChannelChange}
@@ -982,7 +1003,7 @@ export function ConversationList({
 
         <FilterChips
           tags={facetTags}
-          tagIds={tagIds}
+          tagIds={validTagIds}
           channel={channel}
           onTagsChange={handleTagsChange}
           onChannelChange={handleChannelChange}

@@ -38,7 +38,9 @@ export function AudioPlayer({ src }: { src: string }) {
     if (!el) return;
     if (el.paused) {
       el.playbackRate = speed;
-      el.play().catch(() => setFailed(true));
+      // Only the element's `error` event means the source is unplayable; a
+      // rejected play() (AbortError / NotAllowedError) is just a refused start.
+      el.play().catch(() => undefined);
     } else {
       el.pause();
     }
@@ -54,6 +56,7 @@ export function AudioPlayer({ src }: { src: string }) {
     return <audio src={src} controls className="max-w-60" data-testid="audio-native" />;
   }
 
+  // WebM voice notes can report Infinity: no seeking, elapsed still shows.
   const known = Number.isFinite(duration) && duration > 0;
   const btn =
     "inline-flex shrink-0 items-center justify-center rounded-full bg-current/15 transition-colors hover:bg-current/25 focus-visible:outline-2 focus-visible:outline-offset-1";
@@ -67,7 +70,13 @@ export function AudioPlayer({ src }: { src: string }) {
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
         onDurationChange={(e) => setDuration(e.currentTarget.duration)}
         onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
-        onPlay={() => setPlaying(true)}
+        onPlay={(e) => {
+          setPlaying(true);
+          // One voice message at a time.
+          document.querySelectorAll("audio").forEach((other) => {
+            if (other !== e.currentTarget && !other.paused) other.pause();
+          });
+        }}
         onPause={() => setPlaying(false)}
         onEnded={() => {
           setPlaying(false);
@@ -101,7 +110,7 @@ export function AudioPlayer({ src }: { src: string }) {
           className="h-3 w-full cursor-pointer accent-current disabled:cursor-default"
         />
         <span className="text-[10px] tabular-nums opacity-80" data-no-translate>
-          {formatClock(current)} / {formatClock(duration)}
+          {known ? `${formatClock(current)} / ${formatClock(duration)}` : formatClock(current)}
         </span>
       </div>
       <button

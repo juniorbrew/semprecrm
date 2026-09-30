@@ -14,6 +14,9 @@ export interface VCardContact {
 }
 
 const MAX_CONTACTS = 10
+export const MAX_VCARD_CHARS = 8 * 1024
+
+const cache = new Map<string, VCardContact[] | null>()
 
 export function isVCardText(text: string | null | undefined): boolean {
   return !!text && /^\s*BEGIN:VCARD/i.test(text)
@@ -36,9 +39,18 @@ function unescapeValue(v: string): string {
 /** All cards in `text` (null when it is not a vCard); capped, never throws. */
 export function parseVCards(text: string | null | undefined): VCardContact[] | null {
   if (!isVCardText(text)) return null
+  const key = text as string
+  if (cache.has(key)) return cache.get(key) ?? null
+  const parsed = parseUncached(key)
+  if (cache.size > 200) cache.clear() // small memo: threads re-render often
+  cache.set(key, parsed)
+  return parsed
+}
+
+function parseUncached(text: string): VCardContact[] | null {
   const cards: VCardContact[] = []
   let cur: { fn: string; n: string; phones: string[]; digits: string[] } | null = null
-  for (const line of unfold(text as string)) {
+  for (const line of unfold(text)) {
     const upper = line.toUpperCase()
     if (upper.startsWith('BEGIN:VCARD')) {
       cur = { fn: '', n: '', phones: [], digits: [] }
@@ -110,4 +122,14 @@ export function buildVCards(
       return lines.join('\n')
     })
     .join('\n')
+}
+
+/**
+ * Text that automations, flows and the AI may read: a vCard (name + number
+ * of a third party) becomes a neutral placeholder, anything else is unchanged.
+ */
+export function plainMessageText(text: string | null | undefined): string {
+  if (!isVCardText(text)) return text ?? ''
+  const name = parseVCards(text)?.[0]?.name
+  return name ? `[Contato compartilhado: ${name}]` : '[Contato compartilhado]'
 }

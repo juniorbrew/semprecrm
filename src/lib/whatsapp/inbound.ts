@@ -30,7 +30,7 @@ import { isWithinBusinessHours, startOfLocalDay } from '@/lib/business-hours'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import { engineSendText } from '@/lib/automations/meta-send'
 import { canSendMessages, type AccountRole } from '@/lib/auth/roles'
-import { vcardPreview } from '@/lib/inbox/vcard'
+import { plainMessageText, vcardPreview } from '@/lib/inbox/vcard'
 import { notifyInboundMessage } from '@/lib/push/notify'
 import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { isPushConfigured } from '@/lib/push/send'
@@ -979,7 +979,8 @@ export async function ingestInboundMessage(
   // automation triggers are suppressed (the customer is navigating a
   // bot menu, not sending a trigger word). Relationship-level triggers
   // still fire. The runner never throws.
-  const inboundText = contentText ?? ''
+  // A shared contact card is third-party data: automations / flows only see a placeholder.
+  const inboundText = plainMessageText(contentText)
   const flowResult = await dispatchInboundToFlows({
     accountId,
     userId: ownerUserId,

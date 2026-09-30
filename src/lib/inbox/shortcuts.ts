@@ -36,6 +36,7 @@ export interface ShortcutKeyEvent {
   altKey?: boolean
   shiftKey?: boolean
   isComposing?: boolean
+  /** Key auto-repeat (held key): never triggers an action. */
   repeat?: boolean
   target: TargetKind
 }
@@ -52,7 +53,8 @@ export interface ShortcutContext {
 }
 
 const TYPING_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
-const INTERACTIVE_TAGS = new Set(['BUTTON', 'A', 'SUMMARY'])
+// AUDIO / VIDEO: a focused media element keeps Enter / arrows (seek, play).
+const INTERACTIVE_TAGS = new Set(['BUTTON', 'A', 'SUMMARY', 'AUDIO', 'VIDEO'])
 const INTERACTIVE_ROLES = new Set([
   'button',
   'link',
@@ -81,7 +83,7 @@ export function classifyTarget(
 }
 
 export function resolveShortcut(e: ShortcutKeyEvent, ctx: ShortcutContext): ShortcutAction | null {
-  if (e.isComposing) return null
+  if (e.isComposing || e.repeat) return null
   // Esc inside a field hands the keyboard back to the shortcuts.
   if (e.key === 'Escape') return e.target === 'typing' && !ctx.overlayOpen ? 'blur' : null
   if (e.ctrlKey || e.metaKey || e.altKey) return null
@@ -144,4 +146,46 @@ export const INBOX_SHORTCUT_EVENT = 'inbox:shortcut'
 export function dispatchInboxShortcut(action: ShortcutAction): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent<ShortcutAction>(INBOX_SHORTCUT_EVENT, { detail: action }))
+}
+
+/**
+ * "a" / "e" / "r" act on the OPEN conversation. While the j/k cursor sits on
+ * a different row (`cursorPending`), the first press opens that row instead
+ * (Enter semantics), so the key never hits a conversation the agent is not
+ * looking at.
+ */
+export function redirectForPendingCursor(action: ShortcutAction, cursorPending: boolean): ShortcutAction {
+  return cursorPending && (action === 'claim' || action === 'resolve' || action === 'focusComposer')
+    ? 'open'
+    : action
+}
+
+/** Agents can turn the single-key shortcuts off (WCAG 2.1.4); device-scoped. */
+export const SHORTCUTS_ENABLED_KEY = 'wacrm:inbox:shortcuts-enabled'
+
+type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
+
+function defaultStorage(): StorageLike | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage
+  } catch {
+    return null
+  }
+}
+
+/** On unless the agent turned them off. */
+export function readShortcutsEnabled(storage: StorageLike | null = defaultStorage()): boolean {
+  try {
+    return storage?.getItem(SHORTCUTS_ENABLED_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+export function writeShortcutsEnabled(enabled: boolean, storage: StorageLike | null = defaultStorage()): void {
+  try {
+    storage?.setItem(SHORTCUTS_ENABLED_KEY, String(enabled))
+  } catch {
+    // best-effort
+  }
 }

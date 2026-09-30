@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import {
   classifyTarget,
+  redirectForPendingCursor,
   dispatchInboxShortcut,
   resolveShortcut,
   type ShortcutContext,
@@ -20,17 +21,20 @@ const OVERLAY_SELECTOR =
 export function useInboxShortcuts(
   ctx: Omit<ShortcutContext, "overlayOpen">,
   onHelp: () => void,
+  enabled = true,
 ) {
+  const enabledRef = useRef(enabled);
   const ctxRef = useRef(ctx);
   const helpRef = useRef(onHelp);
   useEffect(() => {
     ctxRef.current = ctx;
     helpRef.current = onHelp;
+    enabledRef.current = enabled;
   });
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
+      if (e.defaultPrevented || !enabledRef.current) return;
       const action = resolveShortcut(
         {
           key: e.key,
@@ -39,13 +43,15 @@ export function useInboxShortcuts(
           altKey: e.altKey,
           shiftKey: e.shiftKey,
           isComposing: e.isComposing,
+          repeat: e.repeat,
           target: classifyTarget(e.target as Element | null),
         },
         { ...ctxRef.current, overlayOpen: !!document.querySelector(OVERLAY_SELECTOR) },
       );
       if (!action) return;
       e.preventDefault();
-      switch (action) {
+      const pending = !!document.querySelector("[data-inbox-cursor-pending]");
+      switch (redirectForPendingCursor(action, pending)) {
         case "help":
           helpRef.current();
           break;
@@ -57,6 +63,9 @@ export function useInboxShortcuts(
           break;
         case "focusComposer":
           document.querySelector<HTMLElement>("[data-inbox-composer]")?.focus();
+          break;
+        case "open":
+          dispatchInboxShortcut("open");
           break;
         default:
           dispatchInboxShortcut(action);

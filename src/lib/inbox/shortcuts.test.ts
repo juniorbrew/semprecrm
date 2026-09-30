@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyTarget, resolveShortcut, stepIndex, type ShortcutContext, type ShortcutKeyEvent } from './shortcuts'
+import { classifyTarget, readShortcutsEnabled, redirectForPendingCursor, resolveShortcut, stepIndex, writeShortcutsEnabled, SHORTCUTS_ENABLED_KEY, type ShortcutContext, type ShortcutKeyEvent } from './shortcuts'
 
 const ctx: ShortcutContext = { overlayOpen: false, hasActive: true, canClaim: true, canResolve: true }
 const key = (k: string, over: Partial<ShortcutKeyEvent> = {}): ShortcutKeyEvent => ({ key: k, target: 'other', ...over })
@@ -72,5 +72,36 @@ describe('stepIndex', () => {
     expect(stepIndex(0, -1, 5)).toBe(0)
     expect(stepIndex(2, 1, 5)).toBe(3)
     expect(stepIndex(0, 1, 0)).toBe(-1)
+  })
+})
+
+describe('review fixes', () => {
+  it('ignores key auto-repeat', () => {
+    expect(resolveShortcut(key('e', { repeat: true }), ctx)).toBeNull()
+    expect(resolveShortcut(key('j', { repeat: true }), ctx)).toBeNull()
+  })
+
+  it('a focused audio / video keeps Enter and the arrows', () => {
+    expect(classifyTarget({ tagName: 'AUDIO' })).toBe('interactive')
+    expect(resolveShortcut(key('Enter', { target: classifyTarget({ tagName: 'AUDIO' }) }), ctx)).toBeNull()
+    expect(resolveShortcut(key('ArrowUp', { target: 'interactive' }), ctx)).toBeNull()
+  })
+
+  it('a / e / r open the highlighted row first when the cursor is not on the open thread', () => {
+    expect(redirectForPendingCursor('claim', true)).toBe('open')
+    expect(redirectForPendingCursor('resolve', true)).toBe('open')
+    expect(redirectForPendingCursor('focusComposer', true)).toBe('open')
+    expect(redirectForPendingCursor('claim', false)).toBe('claim')
+    expect(redirectForPendingCursor('next', true)).toBe('next')
+  })
+
+  it('the on/off preference persists and defaults to on', () => {
+    const data: Record<string, string> = {}
+    const st = { getItem: (k: string) => data[k] ?? null, setItem: (k: string, v: string) => void (data[k] = v) }
+    expect(readShortcutsEnabled(st)).toBe(true)
+    writeShortcutsEnabled(false, st)
+    expect(data[SHORTCUTS_ENABLED_KEY]).toBe('false')
+    expect(readShortcutsEnabled(st)).toBe(false)
+    expect(readShortcutsEnabled(null)).toBe(true)
   })
 })

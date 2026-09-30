@@ -18,6 +18,7 @@ import type {
   ConversationStatus,
 } from '@/types'
 import type { Language } from '@/lib/i18n'
+import { normalizeTransferReason } from './transfer-reason'
 
 export type { ConversationEventType } from '@/types'
 
@@ -111,7 +112,8 @@ export function eventFromRecord(
     tag_name: payload.tag_name,
     note_id: payload.note_id,
     keyword: payload.keyword,
-    reason: row.event_type === 'assigned' ? payload.reason : undefined,
+    reason:
+      row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
 }
 

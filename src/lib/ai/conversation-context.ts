@@ -13,6 +13,7 @@ import { kbQueryFromMessages, KB_LIMITS, selectKbHits } from './knowledge';
 import { AI_LIMITS } from './providers';
 import { searchKnowledge } from './store';
 import { isPromptableMessage, type SuggestMessage } from './suggest-reply';
+import { plainMessageText } from '@/lib/inbox/vcard';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -80,7 +81,8 @@ export async function loadPromptMessages(
   const messages = ((rows ?? []) as SuggestMessage[])
     .filter(isPromptableMessage)
     .slice(0, historyLimit)
-    .reverse();
+    .reverse()
+    .map((m) => ({ ...m, content_text: m.content_text ? plainMessageText(m.content_text) : m.content_text }));
   return { instructions: (settings.instructions as string | null) ?? null, messages };
 }
 

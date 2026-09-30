@@ -23,6 +23,7 @@ export interface FacetTag {
 export function useInboxFacets(accountId: string | null) {
   const [tags, setTags] = useState<FacetTag[]>([]);
   const [hasBothChannels, setHasBothChannels] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!accountId) return;
@@ -37,13 +38,14 @@ export function useInboxFacets(accountId: string | null) {
       if (cancelled) return;
       if (!tagRes.error) setTags((tagRes.data ?? []) as FacetTag[]);
       setHasBothChannels(!!official.data && !!qr.data);
+      setLoaded(true);
     })();
     return () => {
       cancelled = true;
     };
   }, [accountId]);
 
-  return { tags, hasBothChannels };
+  return { tags, hasBothChannels, loaded };
 }
 
 const CHANNELS: WhatsAppChannel[] = ["official", "qr"];

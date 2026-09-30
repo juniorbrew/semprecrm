@@ -18,6 +18,7 @@ import { shouldInsertUnknown, type InboxListState } from "@/lib/inbox/list-query
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ShortcutsHelpDialog } from "@/components/inbox/shortcuts-help-dialog";
 import { useInboxShortcuts } from "@/hooks/use-inbox-shortcuts";
+import { readShortcutsEnabled, writeShortcutsEnabled } from "@/lib/inbox/shortcuts";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
@@ -74,6 +75,12 @@ export default function InboxPage() {
   // Keyboard shortcuts (lib/inbox/shortcuts). "a" / "e" follow the thread
   // header's own rules: same role check, and Resolver only while not resolved.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcutsOn, setShortcutsOn] = useState(true);
+  useEffect(() => setShortcutsOn(readShortcutsEnabled()), []);
+  const handleShortcutsOn = useCallback((on: boolean) => {
+    setShortcutsOn(on);
+    writeShortcutsEnabled(on);
+  }, []);
   const headerActions = activeConversation
     ? conversationHeaderActions({
         role: accountRole,
@@ -89,6 +96,7 @@ export default function InboxPage() {
       canResolve: !!headerActions?.close.enabled && activeConversation?.status !== "closed",
     },
     () => setShortcutsOpen(true),
+    shortcutsOn,
   );
   /**
    * The list's active view + loaded window (lib/inbox/list-query). The list
@@ -918,7 +926,12 @@ export default function InboxPage() {
           </div>
         )}
       </div>
-      <ShortcutsHelpDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <ShortcutsHelpDialog
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        enabled={shortcutsOn}
+        onEnabledChange={handleShortcutsOn}
+      />
     </div>
   );
 }

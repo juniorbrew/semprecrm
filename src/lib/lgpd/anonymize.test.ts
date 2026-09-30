@@ -29,6 +29,7 @@ function makeDb(state: {
   notesCount?: number
   customCount?: number
   memoriesCount?: number
+  assignedEvents?: { id: string; payload: Record<string, unknown> }[]
   updateErrors?: ({ code?: string; message: string } | null)[]
 }) {
   const calls: Call[] = []
@@ -91,6 +92,9 @@ function makeDb(state: {
           const n = state.messagesCount ?? 0
           return { data: Array.from({ length: n }, (_, i) => ({ id: `m${i}` })), error: null }
         }
+      }
+      if (table === 'conversation_events' && call.op === 'select') {
+        return { data: state.assignedEvents ?? [], error: null }
       }
       if (table === 'contact_notes') {
         const n = state.notesCount ?? 0
@@ -284,5 +288,25 @@ describe('anonymizeContact', () => {
     await expect(anonymizeContact(failing.db, 'acc', 'c1', { now })).rejects.toMatchObject({
       code: 'db_error',
     })
+  })
+})
+
+describe('anonymizeContact — transfer reasons', () => {
+  it('removes only the reason key from assigned events', async () => {
+    const { db, calls } = makeDb({
+      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
+      conversations: [{ id: 'conv1' }],
+      assignedEvents: [
+        { id: 'e1', payload: { assignee_user_id: 'u2', assignee_name: 'Bruno', reason: 'cliente Ana quer boleto' } },
+        { id: 'e2', payload: { assignee_user_id: 'u2' } },
+      ],
+    })
+    await anonymizeContact(db, 'acc', 'c1', { now: () => new Date('2026-09-13T12:00:00.000Z'), randomHex: () => 'deadbeef' })
+    const updates = calls.filter((c) => c.table === 'conversation_events' && c.op === 'update')
+    const scrub = updates.find((c) => c.filters.some((f) => f[1] === 'id'))!
+    expect(scrub.payload).toEqual({ payload: { assignee_user_id: 'u2', assignee_name: 'Bruno' } })
+    expect(scrub.filters).toContainEqual(['eq', 'id', ['e1']])
+    // The event without a reason is left alone.
+    expect(updates.filter((c) => c.filters.some((f) => f[1] === 'id'))).toHaveLength(1)
   })
 })
