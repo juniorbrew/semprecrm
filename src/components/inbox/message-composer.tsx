@@ -73,6 +73,7 @@ import {
   deleteAccountMedia,
   MEDIA_MAX_BYTES_BY_KIND,
 } from "@/lib/storage/upload-media";
+import { resolvePastedImage } from "@/lib/inbox/paste-image";
 import { ReplyQuote } from "./reply-quote";
 import {
   SuggestReplyButton,
@@ -218,6 +219,9 @@ const COMPOSER_COPY: Record<
     fileTooLarge: (sizeMb: string, kind: string, limitMb: number) => string;
     mediaKind: Record<ComposerMediaKind, string>;
     recordingTooLong: string;
+    /** Pasting an image (Ctrl+V) that cannot be attached. */
+    pasteExpired: string;
+    pasteUnsupported: string;
     /** "Sugerir resposta" (AI, migration 058). */
     suggestReply: string;
     suggestCancel: string;
@@ -275,6 +279,8 @@ const COMPOSER_COPY: Record<
       `O arquivo possui ${sizeMb} MB — o limite para ${kind} é ${limitMb} MB.`,
     mediaKind: { image: "imagem", video: "vídeo", document: "documento", audio: "áudio" },
     recordingTooLong: "A gravação é longa demais (mais de 16 MB).",
+    pasteExpired: "A janela de 24 h fechou — envie um modelo antes de anexar imagens.",
+    pasteUnsupported: "Só é possível colar imagens JPEG ou PNG.",
     suggestReply: "Sugerir resposta",
     suggestCancel: "Cancelar sugestão",
     suggestBlocked: {
@@ -337,6 +343,8 @@ const COMPOSER_COPY: Record<
       `File is ${sizeMb} MB — ${kind} limit is ${limitMb} MB.`,
     mediaKind: { image: "image", video: "video", document: "document", audio: "audio" },
     recordingTooLong: "Recording is too long (over 16 MB).",
+    pasteExpired: "The 24-hour window is closed — send a template before attaching images.",
+    pasteUnsupported: "Only JPEG or PNG images can be pasted.",
     suggestReply: "Suggest reply",
     suggestCancel: "Cancel suggestion",
     suggestBlocked: {
@@ -877,6 +885,33 @@ export function MessageComposer({
     [removeStaged, copy],
   );
 
+  // Ctrl+V with an image on the clipboard: same staging flow as the photo
+  // button (lib/inbox/paste-image decides what is allowed).
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const outcome = resolvePastedImage(e.clipboardData, {
+        replyMode: !isNote,
+        readOnly,
+        sessionExpired,
+        busy,
+        maxBytes: MEDIA_MAX_BYTES_BY_KIND.image,
+      });
+      if (outcome.kind === "none") return;
+      e.preventDefault();
+      if (outcome.kind === "file") {
+        void stageUpload("image", outcome.file);
+      } else if (outcome.kind === "error") {
+        if (outcome.reason === "expired") toast.error(copy.pasteExpired);
+        else if (outcome.reason === "unsupported") toast.error(copy.pasteUnsupported);
+        else
+          toast.error(
+            copy.fileTooLarge(outcome.sizeMb ?? "?", copy.mediaKind.image, outcome.limitMb ?? 5),
+          );
+      }
+    },
+    [isNote, readOnly, sessionExpired, busy, stageUpload, copy],
+  );
+
   const handlePicked = useCallback(
     (kind: "image" | "video" | "document", file: File | undefined) => {
       if (file) void stageUpload(kind, file);
@@ -1250,6 +1285,7 @@ export function MessageComposer({
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={placeholder}
             disabled={textDisabled}
             rows={1}
