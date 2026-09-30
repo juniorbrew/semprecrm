@@ -42,6 +42,7 @@ export const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
   out_of_hours_message: DEFAULT_OUT_OF_HOURS_MESSAGE,
   auto_assign_enabled: false,
   require_mfa_admins: false,
+  sla_count_only_business_hours: true,
 }
 
 /** Bounds the settings form and the parser agree on. */
@@ -182,6 +183,10 @@ export function parseAccountPreferences(raw: unknown): AccountPreferences {
     out_of_hours_message: messageText(obj.out_of_hours_message) ?? d.out_of_hours_message,
     auto_assign_enabled: booleanOr(obj.auto_assign_enabled, d.auto_assign_enabled),
     require_mfa_admins: booleanOr(obj.require_mfa_admins, d.require_mfa_admins),
+    sla_count_only_business_hours: booleanOr(
+      obj.sla_count_only_business_hours,
+      d.sla_count_only_business_hours,
+    ),
   }
 }
 
@@ -211,5 +216,7 @@ export function mergeAccountPreferences(
     base.auto_assign_enabled = parsed.auto_assign_enabled
   if (patch.require_mfa_admins !== undefined)
     base.require_mfa_admins = parsed.require_mfa_admins
+  if (patch.sla_count_only_business_hours !== undefined)
+    base.sla_count_only_business_hours = parsed.sla_count_only_business_hours
   return base
 }

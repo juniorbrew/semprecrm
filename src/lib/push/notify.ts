@@ -18,6 +18,8 @@
 //                                     agenda reminders, migration 040
 //   (g) notifyTaskReminders         — /api/automations/cron
 //                                     inbox "Lembrar", migration 057
+//   (h) notifySlaBreached           — /api/support/sla/cron
+//                                     SLA target missed, migration 072
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -645,4 +647,55 @@ async function actorName(admin: SupabaseClient, userId: string): Promise<string 
     .maybeSingle()
   const name = (data as { full_name?: string | null } | null)?.full_name?.trim()
   return name || null
+}
+
+// ------------------------------------------------------------
+// (h) SLA target missed (cron)
+// ------------------------------------------------------------
+
+export interface SlaBreachNotice {
+  accountId: string
+  conversationId: string
+  assigneeUserId: string | null
+  kind: 'first_response' | 'resolution'
+}
+
+/**
+ * Assigned → the assignee. Unassigned → the account's owners and admins.
+ * One push per breach event (the cron only hands over events it just
+ * created, so a conversation is never notified twice for the same target).
+ */
+export async function notifySlaBreached(
+  admin: SupabaseClient,
+  notice: SlaBreachNotice,
+): Promise<SendPushResult> {
+  try {
+    const profiles = notice.assigneeUserId
+      ? await loadProfiles(admin, notice.accountId, [notice.assigneeUserId])
+      : (await loadProfiles(admin, notice.accountId, null)).filter((p) =>
+          ['owner', 'admin'].includes(p.account_role),
+        )
+    const recipients = allowed(profiles, 'sla_breached')
+    if (recipients.length === 0) return { ...NOOP }
+
+    const { data: conv } = await admin
+      .from('conversations')
+      .select('contact:contacts(name, phone)')
+      .eq('id', notice.conversationId)
+      .eq('account_id', notice.accountId)
+      .maybeSingle()
+    const contactRaw = Array.isArray(conv?.contact) ? conv?.contact[0] : conv?.contact
+    const contact = contactRaw as { name?: string | null; phone?: string | null } | null
+    const who = contact?.name || contact?.phone || tr('Conversation')
+    const target = tr(notice.kind === 'first_response' ? 'first response' : 'resolution')
+    return await sendPushToUsers(admin, recipients, {
+      title: tr('Deadline missed'),
+      body: `${who} · ${target}`,
+      url: conversationUrl(notice.conversationId),
+      tag: `sla:${notice.conversationId}:${notice.kind}`,
+    })
+  } catch (err) {
+    console.error('[push] notifySlaBreached threw:', err)
+    return { ...NOOP }
+  }
 }

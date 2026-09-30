@@ -137,3 +137,18 @@ describe('require_mfa_admins (round 2 spec, section 7)', () => {
     })
   })
 })
+
+describe('sla_count_only_business_hours (migration 072)', () => {
+  it('defaults to true (business hours only) and ignores non-booleans', () => {
+    expect(parseAccountPreferences({}).sla_count_only_business_hours).toBe(true)
+    expect(parseAccountPreferences({ sla_count_only_business_hours: 'no' }).sla_count_only_business_hours).toBe(true)
+    expect(parseAccountPreferences({ sla_count_only_business_hours: false }).sla_count_only_business_hours).toBe(false)
+  })
+
+  it('merges under the exact key the database trigger reads', () => {
+    expect(mergeAccountPreferences({ cooling_hours: 5 }, { sla_count_only_business_hours: false })).toEqual({
+      cooling_hours: 5,
+      sla_count_only_business_hours: false,
+    })
+  })
+})

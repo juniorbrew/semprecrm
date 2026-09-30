@@ -41,6 +41,8 @@ import { CalendarToday } from '@/components/dashboard/calendar-today'
 import { RadarCard } from '@/components/dashboard/radar-card'
 import { TeamMetrics } from '@/components/dashboard/team-metrics'
 import { ResolutionTimeCard } from '@/components/dashboard/resolution-time-card'
+import { SlaComplianceCard } from '@/components/dashboard/sla-compliance-card'
+import { useSlaPolicies } from '@/hooks/use-sla-policies'
 import { cn } from '@/lib/utils'
 
 type RangeDays = 7 | 30 | 90
@@ -86,6 +88,7 @@ export default function DashboardPage() {
   // The tasks card owns its fetch (it is realtime-driven); the refresh
   // button just bumps this so it re-reads with everything else.
   const [tasksRefreshToken, setTasksRefreshToken] = useState(0)
+  const { hasPolicies: hasSlaPolicies } = useSlaPolicies()
 
   const loadAll = useCallback((seriesRange: RangeDays) => {
     const db = createClient()
@@ -302,7 +305,10 @@ export default function DashboardPage() {
         <div className="xl:col-span-2">
           <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
         </div>
-        <ResolutionTimeCard refreshToken={tasksRefreshToken} />
+        <div className="flex flex-col gap-4">
+          <ResolutionTimeCard refreshToken={tasksRefreshToken} />
+          {hasSlaPolicies && <SlaComplianceCard refreshToken={tasksRefreshToken} />}
+        </div>
       </div>
 
       {/* Team — per-member numbers (admin+ sees everyone, agents their own row). */}
