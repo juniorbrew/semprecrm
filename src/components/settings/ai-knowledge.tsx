@@ -2,21 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  BookOpen,
-  FileText,
-  FileUp,
-  Loader2,
-  MessageCircleQuestion,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-} from "lucide-react";
+import { Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import { useLanguage } from "@/hooks/use-language";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -37,7 +26,7 @@ import {
   type KbKind,
   type KbSearchHit,
 } from "@/lib/ai/knowledge";
-import { SettingsChip } from "./settings-chip";
+import { SettingsGroup } from "./settings-group";
 
 /** An API failure whose message is an (English) key for t(); empty = use the caller's fallback. */
 class ApiError extends Error {}
@@ -59,12 +48,6 @@ interface Draft {
   question: string;
   content: string;
 }
-
-const KIND_ICON: Record<KbKind, typeof FileText> = {
-  faq: MessageCircleQuestion,
-  text: FileText,
-  file: FileUp,
-};
 
 /**
  * Settings → Inteligência Artificial → Base de conhecimento (admin+).
@@ -228,26 +211,20 @@ export function AiKnowledge() {
     (draft.kind === "faq" ? draft.question.trim().length > 0 : draft.title.trim().length > 0);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
-          <BookOpen className="size-4 text-primary" />
-          {t("Knowledge base")}
-        </CardTitle>
-        <CardDescription className="text-muted-foreground">
-          {t(
-            "Questions and answers, texts and files the assistant looks up before suggesting a reply — prices, opening hours, policies. Only the snippets that match the customer's latest messages are sent to the AI provider.",
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
+    <SettingsGroup
+      title={t("Knowledge base")}
+      description={t(
+        "Questions and answers, texts and files the assistant looks up before suggesting a reply — prices, opening hours, policies. Only the snippets that match the customer's latest messages are sent to the AI provider.",
+      )}
+    >
+      <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="outline"
             onClick={() => setDraft({ id: null, kind: "faq", title: "", question: "", content: "" })}
           >
-            <Plus className="mr-1.5 size-3.5" />
+            <Plus className="size-3.5" />
             {t("Add question")}
           </Button>
           <Button
@@ -255,11 +232,11 @@ export function AiKnowledge() {
             variant="outline"
             onClick={() => setDraft({ id: null, kind: "text", title: "", question: "", content: "" })}
           >
-            <Plus className="mr-1.5 size-3.5" />
+            <Plus className="size-3.5" />
             {t("Add text")}
           </Button>
           <Button size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
-            {uploading ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <FileUp className="mr-1.5 size-3.5" />}
+            {uploading ? <Loader2 className="size-3.5 animate-spin" /> : null}
             {uploading ? t("Reading file…") : t("Upload file")}
           </Button>
           <input
@@ -272,151 +249,144 @@ export function AiKnowledge() {
               if (f) void upload(f);
             }}
           />
-          <p className="w-full text-xs text-muted-foreground">
-            {t("Files: .txt, .md, .csv or .pdf with text (scanned PDFs are not read), up to 5 MB.")}
-          </p>
         </div>
+        <p className="text-sm text-muted-foreground">
+          {t("Files: .txt, .md, .csv or .pdf with text (scanned PDFs are not read), up to 5 MB.")}
+        </p>
+      </div>
 
-        {loadError ? (
-          <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-sm text-muted-foreground">
-            {t("Could not load the knowledge base")}
-            <Button size="sm" variant="outline" onClick={() => void load()}>
-              {t("Try again")}
-            </Button>
-          </div>
-        ) : items === null ? (
-          <div className="space-y-2">
-            {[1, 2].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
-            ))}
-          </div>
-        ) : items.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-            {t("The knowledge base is empty. Add your most frequent questions first.")}
-          </p>
-        ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border bg-card">
-            {items.map((item) => {
-              const Icon = KIND_ICON[item.kind];
-              return (
-                <li key={item.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center">
-                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                    <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground" data-no-translate>
-                        {item.title}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                        <SettingsChip variant="muted">{kindLabel[item.kind]}</SettingsChip>
-                        <span>
-                          {num.format(item.content_chars)} {t("characters")}
-                        </span>
-                        {item.source_filename ? (
-                          <span className="truncate" data-no-translate>
-                            · {item.source_filename}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
+      {loadError ? (
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          {t("Could not load the knowledge base")}
+          <Button size="sm" variant="outline" onClick={() => void load()}>
+            {t("Try again")}
+          </Button>
+        </div>
+      ) : items === null ? (
+        <div className="space-y-2">
+          {[1, 2].map((i) => (
+            <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {t("The knowledge base is empty. Add your most frequent questions first.")}
+        </p>
+      ) : (
+        <ul className="divide-y divide-border border-y border-border">
+          {items.map((item) => (
+            <li key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-foreground" data-no-translate>
+                  {item.title}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                  <span>{kindLabel[item.kind]}</span>
+                  <span>
+                    · {num.format(item.content_chars)} {t("characters")}
+                  </span>
+                  {item.source_filename ? (
+                    <span className="truncate" data-no-translate>
+                      · {item.source_filename}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Switch
+                  checked={item.enabled}
+                  disabled={busyId === item.id}
+                  onCheckedChange={(v) => void toggle(item, v)}
+                  aria-label={`${t("Use in suggestions")}: ${item.title}`}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busyId === item.id}
+                  onClick={() => void openEdit(item)}
+                  aria-label={`${t("Edit")}: ${item.title}`}
+                >
+                  <Pencil className="size-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busyId === item.id}
+                  onClick={() => void remove(item)}
+                  aria-label={`${t("Delete")}: ${item.title}`}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Test the search */}
+      <div className="space-y-2 pt-2">
+        <Label htmlFor="kb-test">{t("Test the search")}</Label>
+        <form
+          className="flex flex-col gap-2 sm:flex-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void search();
+          }}
+        >
+          <Input
+            id="kb-test"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            maxLength={KB_LIMITS.searchQueryMaxChars}
+            placeholder={t("Type a question as a customer would, e.g.: how much is delivery?")}
+          />
+          <Button type="submit" variant="outline" disabled={searching || !query.trim()}>
+            {searching ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+            {t("Search")}
+          </Button>
+        </form>
+        <p className="text-sm text-muted-foreground">
+          {t("Shows the snippets that would go to the AI with this question. Nothing is sent to the provider here.")}
+        </p>
+        {hits !== null ? (
+          hits.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {t("Nothing found — the suggestion would rely only on the instructions and the conversation.")}
+            </p>
+          ) : (
+            <ol className="divide-y divide-border border-y border-border">
+              {hits.map((hit) => (
+                <li key={hit.chunk_id} className="py-3">
+                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span className="truncate text-sm font-medium text-foreground" data-no-translate>
+                      {hit.title}
+                    </span>
+                    <span data-no-translate className="tabular-nums">
+                      {hit.rank.toFixed(2)}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <Switch
-                      checked={item.enabled}
-                      disabled={busyId === item.id}
-                      onCheckedChange={(v) => void toggle(item, v)}
-                      aria-label={`${t("Use in suggestions")}: ${item.title}`}
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busyId === item.id}
-                      onClick={() => void openEdit(item)}
-                      aria-label={`${t("Edit")}: ${item.title}`}
-                    >
-                      <Pencil className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busyId === item.id}
-                      onClick={() => void remove(item)}
-                      aria-label={`${t("Delete")}: ${item.title}`}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </div>
+                  <p className="mt-1 line-clamp-4 whitespace-pre-line text-sm text-muted-foreground" data-no-translate>
+                    {hit.content}
+                  </p>
                 </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {/* Test the search */}
-        <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
-          <Label htmlFor="kb-test" className="text-foreground">
-            {t("Test the search")}
-          </Label>
-          <form
-            className="flex flex-col gap-2 sm:flex-row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void search();
-            }}
-          >
-            <Input
-              id="kb-test"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              maxLength={KB_LIMITS.searchQueryMaxChars}
-              placeholder={t("Type a question as a customer would, e.g.: how much is delivery?")}
-              className="bg-card text-foreground"
-            />
-            <Button type="submit" size="sm" className="h-9" disabled={searching || !query.trim()}>
-              {searching ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Search className="mr-1.5 size-3.5" />}
-              {t("Search")}
-            </Button>
-          </form>
-          <p className="text-xs text-muted-foreground">
-            {t("Shows the snippets that would go to the AI with this question. Nothing is sent to the provider here.")}
-          </p>
-          {hits !== null ? (
-            hits.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {t("Nothing found — the suggestion would rely only on the instructions and the conversation.")}
-              </p>
-            ) : (
-              <ol className="space-y-2">
-                {hits.map((hit) => (
-                  <li key={hit.chunk_id} className="rounded-md border border-border bg-card px-3 py-2">
-                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span className="truncate font-medium text-foreground" data-no-translate>
-                        {hit.title}
-                      </span>
-                      <span data-no-translate>{hit.rank.toFixed(2)}</span>
-                    </div>
-                    <p className="mt-1 line-clamp-4 whitespace-pre-line text-sm text-muted-foreground" data-no-translate>
-                      {hit.content}
-                    </p>
-                  </li>
-                ))}
-              </ol>
-            )
-          ) : null}
-        </div>
-      </CardContent>
+              ))}
+            </ol>
+          )
+        ) : null}
+      </div>
 
       <Dialog open={draft !== null} onOpenChange={(open) => (!open && !saving ? setDraft(null) : undefined)}>
-        <DialogContent className="border-border bg-popover sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-popover-foreground">
+            <DialogTitle>
               {draft?.id
                 ? t("Edit knowledge item")
                 : draft?.kind === "faq"
                   ? t("New question")
                   : t("New text")}
             </DialogTitle>
-            <DialogDescription className="text-muted-foreground">
+            <DialogDescription>
               {draft?.kind === "faq"
                 ? t("Write the question the way customers ask it, and the answer the assistant should use.")
                 : t("Short, factual texts work best: one subject per item.")}
@@ -426,7 +396,7 @@ export function AiKnowledge() {
             <div className="space-y-4">
               {draft.kind === "faq" ? (
                 <div className="space-y-2">
-                  <Label htmlFor="kb-question" className="text-foreground">
+                  <Label htmlFor="kb-question">
                     {t("Question")}
                   </Label>
                   <Input
@@ -435,12 +405,11 @@ export function AiKnowledge() {
                     maxLength={KB_LIMITS.questionMaxChars}
                     onChange={(e) => setDraft({ ...draft, question: e.target.value })}
                     placeholder={t("E.g.: Do you deliver on Sundays?")}
-                    className="bg-card text-foreground"
                   />
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <Label htmlFor="kb-title" className="text-foreground">
+                  <Label htmlFor="kb-title">
                     {t("Title")}
                   </Label>
                   <Input
@@ -449,12 +418,11 @@ export function AiKnowledge() {
                     maxLength={KB_LIMITS.titleMaxChars}
                     onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                     placeholder={t("E.g.: Delivery policy")}
-                    className="bg-card text-foreground"
                   />
                 </div>
               )}
               <div className="space-y-2">
-                <Label htmlFor="kb-content" className="text-foreground">
+                <Label htmlFor="kb-content">
                   {draft.kind === "faq" ? t("Answer") : t("Content")}
                 </Label>
                 <Textarea
@@ -463,7 +431,7 @@ export function AiKnowledge() {
                   rows={draft.kind === "faq" ? 5 : 10}
                   maxLength={contentMax}
                   onChange={(e) => setDraft({ ...draft, content: e.target.value })}
-                  className="max-h-[50vh] bg-card text-foreground"
+                  className="max-h-[50vh]"
                 />
                 <p className="text-xs text-muted-foreground" data-no-translate>
                   {num.format(draft.content.length)}/{num.format(contentMax)}
@@ -476,12 +444,12 @@ export function AiKnowledge() {
               {t("Cancel")}
             </Button>
             <Button disabled={saving || !draftValid} onClick={() => void saveDraft()}>
-              {saving ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : null}
+              {saving ? <Loader2 className="size-4 animate-spin" /> : null}
               {t("Save")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </SettingsGroup>
   );
 }
