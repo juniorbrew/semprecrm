@@ -43,6 +43,8 @@ interface SendTextArgs {
   conversationId: string
   contactId: string
   text: string
+  /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
+  origin?: 'automation' | 'ai'
 }
 
 interface SendTemplateArgs {
@@ -98,7 +100,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
     }
     return engineSendViaQr(db, {
-      origin: 'automation',
+      origin: input.origin ?? 'automation',
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -218,7 +220,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',
-    origin: 'automation',
+    origin: (input.kind === 'text' && input.origin) || 'automation',
     content_type,
     content_text,
     template_name,

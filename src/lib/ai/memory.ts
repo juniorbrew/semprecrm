@@ -172,7 +172,7 @@ export function parseManualFact(raw: unknown): ManualFactParse {
 }
 
 /** The first balanced `{…}` / `[…]` in `text` (string-aware), or null. */
-function firstJsonValue(text: string): string | null {
+export function firstJsonValue(text: string): string | null {
   const start = text.search(/[{[]/);
   if (start < 0) return null;
   const stack: string[] = [];

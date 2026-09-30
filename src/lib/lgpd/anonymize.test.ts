@@ -223,6 +223,10 @@ describe('anonymizeContact', () => {
     expect(memDelete.op).toBe('delete')
     expect(memDelete.filters).toContainEqual(['eq', 'contact_id', ['c1']])
     expect(memDelete.filters).toContainEqual(['eq', 'account_id', ['acc']])
+    // Automatic-reply hand-overs / jobs (migration 066) too.
+    for (const t of ['ai_handoffs', 'ai_reply_jobs']) {
+      expect(calls.find((c) => c.table === t)).toMatchObject({ op: 'delete' })
+    }
 
     const contactUpdate = calls.find((c) => c.table === 'contacts' && c.op === 'update')!
     expect(contactUpdate.payload).toEqual({
