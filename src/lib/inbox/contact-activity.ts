@@ -134,6 +134,7 @@ export function describeActivity(row: ContactActivityRow, language: Language): A
     const event_type = row.type.slice(5) as ConversationEventType
     const event = eventFromRecord({
       id: row.id,
+      account_id: '',
       conversation_id: row.conversation_id ?? '',
       event_type,
       payload: {
