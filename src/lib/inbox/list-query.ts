@@ -12,7 +12,7 @@
  *   - everything else: last_message_at (created_at when there is none)
  *     newest first; ties on id.
  */
-import type { Conversation } from '@/types'
+import type { Conversation, WhatsAppChannel } from '@/types'
 import { matchesRadar, type RadarKey, type RadarPreferences } from '@/lib/radar/classify'
 import { isInQueue, queueWaitingSince } from '@/lib/radar/queue'
 import { tabConversations, type InboxTab, type LiveFilter } from './triage'
@@ -54,10 +54,30 @@ export interface InboxView {
   radar: RadarKey | null
   /** Normalised search text ('' = none). */
   search: string
+  /** Contact has ANY of these tags (migration 068); [] = no filter. */
+  tagIds: string[]
+  /** One WhatsApp transport (migration 068); null = both. */
+  channel: WhatsAppChannel | null
+}
+
+/** Trailing RPC arguments shared by the page, counts and search functions. */
+export function facetArgs(view: Pick<InboxView, 'tagIds' | 'channel'>): {
+  p_tag_ids: string[] | null
+  p_channel: WhatsAppChannel | null
+} {
+  return { p_tag_ids: view.tagIds.length ? view.tagIds : null, p_channel: view.channel }
 }
 
 export function viewKey(view: InboxView): string {
-  return [view.tab, view.live, view.unread ? 1 : 0, view.radar ?? '', view.search].join('|')
+  return [
+    view.tab,
+    view.live,
+    view.unread ? 1 : 0,
+    view.radar ?? '',
+    view.search,
+    [...view.tagIds].sort().join(','),
+    view.channel ?? '',
+  ].join('|')
 }
 
 export interface ListCursor {
@@ -113,12 +133,13 @@ export function pageArgs(
     p_cursor_ts: opts.cursor?.ts || null,
     p_cursor_id: opts.cursor?.id ?? null,
     p_limit: opts.limit ?? INBOX_PAGE_SIZE,
+    ...facetArgs(view),
   }
 }
 
 /** Arguments of `inbox_counts`. */
 export function countsArgs(
-  view: Pick<InboxView, 'live' | 'unread' | 'radar'>,
+  view: Pick<InboxView, 'live' | 'unread' | 'radar' | 'tagIds' | 'channel'>,
   opts: { accountId: string; prefs: RadarPreferences },
 ): Record<string, unknown> {
   return {
@@ -128,6 +149,7 @@ export function countsArgs(
     p_radar: view.radar,
     p_sla_minutes: opts.prefs.inbox_sla_minutes,
     p_cooling_hours: opts.prefs.cooling_hours,
+    ...facetArgs(view),
   }
 }
 
@@ -203,8 +225,9 @@ interface MatchCtx {
   now: number
 }
 
-/** Would this row be listed by `view` (tab + live + unread + radar)? Search is not evaluated. */
+/** Would this row be listed by `view` (tab + live + unread + radar + channel)? Search and tags are not evaluated. */
 export function matchesView(c: Conversation, view: InboxView, ctx: MatchCtx): boolean {
+  if (view.channel && (c.channel ?? 'official') !== view.channel) return false
   if (view.radar && !matchesRadar(c, view.radar, ctx.prefs, ctx.now)) return false
   if (view.unread && !(c.unread_count > 0)) return false
   if (view.tab === 'queue') return isInQueue(c, ctx.prefs, ctx.now)
@@ -226,8 +249,28 @@ export function shouldInsertUnknown(
   state: { hasMore: boolean; boundary: InboxRow | null },
   ctx: MatchCtx,
 ): boolean {
-  if (view.search) return false
+  // Tags live on the contact (not on the row), like the company names in a
+  // search: the next resync / "Carregar mais" picks such rows up.
+  if (view.search || view.tagIds.length) return false
   if (!matchesView(c, view, ctx)) return false
   if (!state.hasMore || !state.boundary) return true
   return compareForTab(view.tab)(c, state.boundary) <= 0
+}
+
+/**
+ * Owner badge on list rows: hidden on Minhas (everything is mine), always
+ * on Todas, and elsewhere only when the rows really have different owners.
+ */
+export function showOwnerBadge(
+  tab: InboxTab,
+  rows: readonly { assigned_agent_id?: string | null }[],
+): boolean {
+  if (tab === 'mine') return false
+  if (tab === 'all') return true
+  const owners = new Set<string>()
+  for (const r of rows) {
+    if (r.assigned_agent_id) owners.add(r.assigned_agent_id)
+    if (owners.size > 1) return true
+  }
+  return false
 }

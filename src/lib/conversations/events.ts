@@ -50,6 +50,8 @@ export interface ConversationEvent {
   note_id?: string
   /** `contact_opted_out`: the normalised stop word the customer sent. */
   keyword?: string
+  /** `assigned`: the optional note that came with a transfer. */
+  reason?: string
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -109,6 +111,7 @@ export function eventFromRecord(
     tag_name: payload.tag_name,
     note_id: payload.note_id,
     keyword: payload.keyword,
+    reason: row.event_type === 'assigned' ? payload.reason : undefined,
   }
 }
 
@@ -261,6 +264,11 @@ export function formatConversationEvent(
       const who = event.assignee_name
       if (actor && event.self_assigned) {
         return pt ? `${actor} atribuiu para si` : `${actor} self-assigned`
+      }
+      if (actor && who && event.reason) {
+        return pt
+          ? `Transferida por ${actor} para ${who} — ${event.reason}`
+          : `Transferred by ${actor} to ${who} — ${event.reason}`
       }
       if (actor && who) {
         return pt ? `${actor} atribuiu para ${who}` : `${actor} assigned to ${who}`

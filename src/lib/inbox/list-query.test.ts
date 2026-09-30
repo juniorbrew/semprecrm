@@ -14,6 +14,7 @@ import {
   parseCounts,
   queueGroup,
   shouldInsertUnknown,
+  showOwnerBadge,
   viewKey,
   type InboxRow,
   type InboxView,
@@ -161,7 +162,7 @@ describe('keyset pagination', () => {
   })
 
   it('pageArgs maps the view and cursor to the RPC parameters', () => {
-    const view: InboxView = { tab: 'mine', live: 'open', unread: true, radar: 'waiting', search: 'ana' }
+    const view: InboxView = { tab: 'mine', live: 'open', unread: true, radar: 'waiting', search: 'ana', tagIds: ['t1', 't2'], channel: 'qr' }
     const args = pageArgs(view, {
       accountId: 'acc',
       prefs,
@@ -182,14 +183,23 @@ describe('keyset pagination', () => {
       p_cursor_ts: 'T',
       p_cursor_id: 'I',
       p_limit: 20,
+      p_tag_ids: ['t1', 't2'],
+      p_channel: 'qr',
     })
     const first = pageArgs({ ...view, radar: null, search: '' }, { accountId: 'acc', prefs, pattern: null })
+    // No tags / channel -> NULL parameters (backwards compatible with 067 callers).
+    expect(first.p_tag_ids).toEqual(['t1', 't2'])
+    expect(first.p_channel).toBe('qr')
+    expect(pageArgs({ ...view, tagIds: [], channel: null }, { accountId: 'acc', prefs, pattern: null })).toMatchObject({
+      p_tag_ids: null,
+      p_channel: null,
+    })
     expect(first.p_cursor_id).toBeNull()
     expect(first.p_limit).toBe(50)
   })
 
   it('viewKey changes with every filter that changes the rows', () => {
-    const base: InboxView = { tab: 'all', live: 'live', unread: false, radar: null, search: '' }
+    const base: InboxView = { tab: 'all', live: 'live', unread: false, radar: null, search: '', tagIds: [], channel: null }
     const keys = new Set([
       viewKey(base),
       viewKey({ ...base, tab: 'queue' }),
@@ -197,8 +207,12 @@ describe('keyset pagination', () => {
       viewKey({ ...base, unread: true }),
       viewKey({ ...base, radar: 'cooling' }),
       viewKey({ ...base, search: 'x' }),
+      viewKey({ ...base, tagIds: ['a'] }),
+      viewKey({ ...base, channel: 'qr' }),
     ])
-    expect(keys.size).toBe(6)
+    expect(keys.size).toBe(8)
+    // Tag order does not matter.
+    expect(viewKey({ ...base, tagIds: ['b', 'a'] })).toBe(viewKey({ ...base, tagIds: ['a', 'b'] }))
   })
 })
 
@@ -245,14 +259,23 @@ describe('counts parity', () => {
   })
 
   it('countsArgs carries the filters and the SLA', () => {
-    expect(countsArgs({ live: 'open', unread: false, radar: null }, { accountId: 'a', prefs })).toEqual({
+    expect(
+      countsArgs({ live: 'open', unread: false, radar: null, tagIds: [], channel: null }, { accountId: 'a', prefs }),
+    ).toEqual({
       p_account_id: 'a',
       p_live: 'open',
       p_unread: false,
       p_radar: null,
       p_sla_minutes: 15,
       p_cooling_hours: 24,
+      p_tag_ids: null,
+      p_channel: null,
     })
+    // Counts and list receive the same facet arguments (parity with 068).
+    const facets = { tagIds: ['t1'], channel: 'official' as const }
+    const list = pageArgs({ tab: 'all', live: 'live', unread: false, radar: null, search: '', ...facets }, { accountId: 'a', prefs, pattern: null })
+    const counts = countsArgs({ live: 'live', unread: false, radar: null, ...facets }, { accountId: 'a', prefs })
+    expect([counts.p_tag_ids, counts.p_channel]).toEqual([list.p_tag_ids, list.p_channel])
   })
 })
 
@@ -274,6 +297,8 @@ describe('realtime merge rules', () => {
     unread: false,
     radar: null,
     search: '',
+    tagIds: [],
+    channel: null,
     ...over,
   })
   const boundary = (c: Conversation): InboxRow => c
@@ -311,9 +336,33 @@ describe('realtime merge rules', () => {
     expect(shouldInsertUnknown(conv('n'), view({ search: 'ana' }), { hasMore: false, boundary: null }, ctx)).toBe(false)
   })
 
+  it('a tag filter defers unknown rows to the server; a channel filter is checked locally', () => {
+    const st = { hasMore: false, boundary: null }
+    expect(shouldInsertUnknown(conv('n'), view({ tagIds: ['t'] }), st, ctx)).toBe(false)
+    expect(shouldInsertUnknown(conv('n', { channel: 'qr' }), view({ channel: 'qr' }), st, ctx)).toBe(true)
+    expect(shouldInsertUnknown(conv('n', { channel: 'official' }), view({ channel: 'qr' }), st, ctx)).toBe(false)
+    expect(shouldInsertUnknown(conv('n'), view({ channel: 'official' }), st, ctx)).toBe(true)
+  })
+
   it('matchesView honours the Radar bucket', () => {
     const waiting = conv('w', { last_customer_message_at: iso(120) })
     expect(matchesView(waiting, view({ radar: 'waiting' }), ctx)).toBe(true)
     expect(matchesView(conv('f', { last_customer_message_at: iso(1) }), view({ radar: 'waiting' }), ctx)).toBe(false)
+  })
+})
+
+describe('showOwnerBadge', () => {
+  const a = { assigned_agent_id: 'a' }
+  const b = { assigned_agent_id: 'b' }
+  const none = { assigned_agent_id: null }
+  it('hidden on Minhas, always on Todas', () => {
+    expect(showOwnerBadge('mine', [a, b])).toBe(false)
+    expect(showOwnerBadge('all', [a])).toBe(true)
+    expect(showOwnerBadge('all', [])).toBe(true)
+  })
+  it('elsewhere only with mixed owners', () => {
+    expect(showOwnerBadge('closed', [a, a, none])).toBe(false)
+    expect(showOwnerBadge('closed', [a, none, b])).toBe(true)
+    expect(showOwnerBadge('queue', [none, none])).toBe(false)
   })
 })

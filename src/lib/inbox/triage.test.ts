@@ -86,19 +86,30 @@ describe('tabForConversation', () => {
 
 describe('migrateTriage', () => {
   it('maps the legacy status chip', () => {
-    expect(migrateTriage({ tab: 'mine', status: 'closed' })).toEqual({ tab: 'closed', live: 'live' })
-    expect(migrateTriage({ tab: 'all', status: 'archived' })).toEqual({ tab: 'archived', live: 'live' })
-    expect(migrateTriage({ tab: 'mine', status: 'all' })).toEqual({ tab: 'mine', live: 'live' })
-    expect(migrateTriage({ tab: 'mine', status: 'open' })).toEqual({ tab: 'mine', live: 'open' })
-    expect(migrateTriage({ tab: 'all', status: 'pending' })).toEqual({ tab: 'all', live: 'pending' })
-    expect(migrateTriage({ tab: 'queue', status: 'closed' })).toEqual({ tab: 'queue', live: 'live' })
-    expect(migrateTriage({ tab: 'unassigned', status: 'open' })).toEqual({ tab: 'queue', live: 'open' })
+    expect(migrateTriage({ tab: 'mine', status: 'closed' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'closed', live: 'live' })
+    expect(migrateTriage({ tab: 'all', status: 'archived' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'archived', live: 'live' })
+    expect(migrateTriage({ tab: 'mine', status: 'all' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'mine', live: 'live' })
+    expect(migrateTriage({ tab: 'mine', status: 'open' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'mine', live: 'open' })
+    expect(migrateTriage({ tab: 'all', status: 'pending' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'all', live: 'pending' })
+    expect(migrateTriage({ tab: 'queue', status: 'closed' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'queue', live: 'live' })
+    expect(migrateTriage({ tab: 'unassigned', status: 'open' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'queue', live: 'open' })
   })
 
   it('keeps the new shape and falls back on garbage', () => {
-    expect(migrateTriage({ tab: 'closed', live: 'pending' })).toEqual({ tab: 'closed', live: 'pending' })
+    expect(migrateTriage({ tab: 'closed', live: 'pending' })).toEqual({ ...DEFAULT_TRIAGE, tab: 'closed', live: 'pending' })
     expect(migrateTriage({ tab: 'nope', live: 'nope' })).toEqual(DEFAULT_TRIAGE)
     expect(migrateTriage(null)).toEqual(DEFAULT_TRIAGE)
+    expect(migrateTriage({ tab: 'all', live: 'live' })).toEqual(DEFAULT_TRIAGE)
     expect(migrateTriage('x')).toEqual(DEFAULT_TRIAGE)
+  })
+
+  it('persists tag and channel filters, dropping anything malformed', () => {
+    const id = '11111111-1111-4111-8111-111111111111'
+    expect(migrateTriage({ tab: 'all', live: 'live', tagIds: [id, id, 'x', 5], channel: 'qr' })).toEqual({
+      ...DEFAULT_TRIAGE,
+      tagIds: [id],
+      channel: 'qr',
+    })
+    expect(migrateTriage({ tab: 'all', live: 'live', tagIds: 'nope', channel: 'sms' })).toEqual(DEFAULT_TRIAGE)
   })
 })

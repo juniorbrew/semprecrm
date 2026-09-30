@@ -24,6 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { eventHref } from '@/lib/calendar/links'
 import { asChatAttachment, attachmentPreview } from '@/lib/chat/attachments'
+import { normalizeTransferReason } from '@/lib/conversations/transfer-reason'
 import { DEFAULT_LANGUAGE, translateLiteral } from '@/lib/i18n'
 
 import { isFocusedOn, isFocusedOnChatThread } from './focus'
@@ -385,6 +386,8 @@ export interface ConversationAssignedNotice {
   accountId: string
   conversationId: string
   actorUserId: string
+  /** Optional transfer note; normalised again here (it comes from the client). */
+  reason?: unknown
 }
 
 export async function notifyConversationAssigned(
@@ -412,9 +415,11 @@ export async function notifyConversationAssigned(
     ])
     const recipients = allowed(profiles, 'conversation_assigned')
     if (recipients.length === 0) return { ...NOOP }
+    const reason = normalizeTransferReason(notice.reason)
+    const base = actor ? `${who} · ${tr('by')} ${actor}` : who
     return await sendPushToUsers(admin, recipients, {
       title: tr('Conversation assigned to you'),
-      body: actor ? `${who} · ${tr('by')} ${actor}` : who,
+      body: reason ? `${base} — ${reason}` : base,
       url: conversationUrl(notice.conversationId),
       tag: `conversation:${notice.conversationId}`,
     })

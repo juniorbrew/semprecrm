@@ -61,6 +61,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
+import { INBOX_SHORTCUT_EVENT, type ShortcutAction } from "@/lib/inbox/shortcuts";
 import { updateConversationAssignee } from "@/lib/conversations/assign";
 import {
   conversationContinuity,
@@ -1492,6 +1493,32 @@ export function MessageThread({
     const outcome = await handleAssignChange(user.id, { expectCurrent: true });
     if (outcome === "ok") toast.success(statusCopy.claimedToast);
   }, [handleAssignChange, user?.id, statusCopy]);
+
+  // Keyboard shortcuts "a" (Assumir) / "e" (Resolver): the page already
+  // applied the header rules; re-check them here against this thread's state.
+  const shortcutRef = useRef({ handleClaim, handleResolveToggle, conversation, accountRole, userId: user?.id });
+  useEffect(() => {
+    shortcutRef.current = { handleClaim, handleResolveToggle, conversation, accountRole, userId: user?.id };
+  });
+  useEffect(() => {
+    const onShortcut = (e: Event) => {
+      const action = (e as CustomEvent<ShortcutAction>).detail;
+      const st = shortcutRef.current;
+      if (!st.conversation || (action !== "claim" && action !== "resolve")) return;
+      const allowed = conversationHeaderActions({
+        role: st.accountRole,
+        userId: st.userId,
+        conversation: st.conversation,
+        tasksEnabled: false,
+      });
+      if (action === "claim" && allowed.claim.enabled) void st.handleClaim();
+      if (action === "resolve" && allowed.close.enabled && st.conversation.status !== "closed") {
+        void st.handleResolveToggle();
+      }
+    };
+    window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+    return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+  }, []);
 
   // Arquivar = resolve + `archived_at` (migration 056); Desarquivar only
   // clears `archived_at` (the thread stays resolved). The DB trigger

@@ -4,7 +4,7 @@
  * archived ones (migration 056) to Arquivadas, so a just-resolved thread
  * leaves the working lists instead of lingering behind a status chip.
  */
-import type { ConversationStatus } from '@/types'
+import type { ConversationStatus, WhatsAppChannel } from '@/types'
 
 export type InboxTab = 'queue' | 'mine' | 'all' | 'closed' | 'archived'
 /** Narrows the live tabs (Minhas / Todas) only. */
@@ -87,9 +87,16 @@ export function tabForConversation(c: Row): InboxTab | null {
 export interface TriageState {
   tab: InboxTab
   live: LiveFilter
+  /** Contact-tag filter (any of); [] = none. */
+  tagIds: string[]
+  /** WhatsApp transport filter; null = both. */
+  channel: WhatsAppChannel | null
 }
 
-export const DEFAULT_TRIAGE: TriageState = { tab: 'all', live: 'live' }
+export const DEFAULT_TRIAGE: TriageState = { tab: 'all', live: 'live', tagIds: [], channel: null }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const MAX_TAG_FILTER = 20
 
 /**
  * Reads the persisted `{ tab, status }` / `{ tab, live }` blob. Old shapes:
@@ -98,7 +105,13 @@ export const DEFAULT_TRIAGE: TriageState = { tab: 'all', live: 'live' }
  */
 export function migrateTriage(raw: unknown): TriageState {
   if (!raw || typeof raw !== 'object') return DEFAULT_TRIAGE
-  const stored = raw as { tab?: unknown; status?: unknown; live?: unknown }
+  const stored = raw as {
+    tab?: unknown
+    status?: unknown
+    live?: unknown
+    tagIds?: unknown
+    channel?: unknown
+  }
   let tab: InboxTab =
     stored.tab === 'unassigned'
       ? 'queue'
@@ -118,5 +131,13 @@ export function migrateTriage(raw: unknown): TriageState {
       tab = stored.status
     }
   }
-  return { tab, live }
+  // Stored ids are untrusted (localStorage): keep only well-formed uuids.
+  const tagIds = Array.isArray(stored.tagIds)
+    ? Array.from(
+        new Set(stored.tagIds.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))),
+      ).slice(0, MAX_TAG_FILTER)
+    : []
+  const channel: WhatsAppChannel | null =
+    stored.channel === 'official' || stored.channel === 'qr' ? stored.channel : null
+  return { tab, live, tagIds, channel }
 }

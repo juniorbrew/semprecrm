@@ -76,7 +76,7 @@ export function SystemEventPill({ event, language, now }: SystemEventPillProps) 
         <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-background/60 text-foreground/70">
           <EventIcon event={event} />
         </span>
-        <span className="truncate font-medium text-foreground/80">{text}</span>
+        <span className={cn("font-medium text-foreground/80", event.reason ? "line-clamp-3 break-words" : "truncate")}>{text}</span>
         {age && (
           <span className="shrink-0 text-muted-foreground/80">· {age}</span>
         )}

@@ -122,4 +122,21 @@ export const DICT_INBOX: Record<string, string> = {
   'Load failed': 'Falha de conexão. Verifique sua internet e tente novamente.',
   'NetworkError when attempting to fetch resource.':
     'Falha de conexão. Verifique sua internet e tente novamente.',
+
+  // ---- List filters, keyboard shortcuts (agilidade) ----
+  Filters: 'Filtros',
+  Tag: 'Etiqueta',
+  Both: 'Ambos',
+  Official: 'Oficial',
+  QR: 'QR',
+  'Clear filters': 'Limpar filtros',
+  'Remove filter': 'Remover filtro',
+  'Keyboard shortcuts': 'Atalhos do teclado',
+  'Next conversation': 'Próxima conversa',
+  'Previous conversation': 'Conversa anterior',
+  'Open conversation': 'Abrir conversa',
+  'Take the conversation': 'Assumir a conversa',
+  Resolve: 'Resolver',
+  'Search conversations': 'Buscar conversas',
+  'Leave the field': 'Sair do campo',
 };

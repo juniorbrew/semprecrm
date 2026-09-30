@@ -16,6 +16,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { shouldInsertUnknown, type InboxListState } from "@/lib/inbox/list-query";
 import { MessageThread } from "@/components/inbox/message-thread";
+import { ShortcutsHelpDialog } from "@/components/inbox/shortcuts-help-dialog";
+import { useInboxShortcuts } from "@/hooks/use-inbox-shortcuts";
+import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -66,7 +69,27 @@ export default function InboxPage() {
   const [countsToken, setCountsToken] = useState(0);
   const bumpCounts = useCallback(() => setCountsToken((n) => n + 1), []);
 
-  const { accountId, user, preferences } = useAuth();
+  const { accountId, user, preferences, accountRole } = useAuth();
+
+  // Keyboard shortcuts (lib/inbox/shortcuts). "a" / "e" follow the thread
+  // header's own rules: same role check, and Resolver only while not resolved.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const headerActions = activeConversation
+    ? conversationHeaderActions({
+        role: accountRole,
+        userId: user?.id,
+        conversation: activeConversation,
+        tasksEnabled: false,
+      })
+    : null;
+  useInboxShortcuts(
+    {
+      hasActive: !!activeConversation,
+      canClaim: !!headerActions?.claim.enabled,
+      canResolve: !!headerActions?.close.enabled && activeConversation?.status !== "closed",
+    },
+    () => setShortcutsOpen(true),
+  );
   /**
    * The list's active view + loaded window (lib/inbox/list-query). The list
    * only holds the pages the agent loaded, so a realtime row that is not in
@@ -838,6 +861,7 @@ export default function InboxPage() {
             resyncToken={resyncToken}
             countsToken={countsToken}
             onListStateChange={handleListState}
+            onShowShortcuts={() => setShortcutsOpen(true)}
           />
         </div>
 
@@ -894,6 +918,7 @@ export default function InboxPage() {
           </div>
         )}
       </div>
+      <ShortcutsHelpDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );
 }

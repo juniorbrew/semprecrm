@@ -191,7 +191,7 @@ export function reportChatThreadFocus(threadId: string | null): void {
 export function notifyPushEvent(
   event:
     | { kind: 'task_assigned'; task_id: string }
-    | { kind: 'conversation_assigned'; conversation_id: string }
+    | { kind: 'conversation_assigned'; conversation_id: string; reason?: string }
     | { kind: 'chat_message'; message_id: string },
 ): void {
   if (typeof window === 'undefined') return;

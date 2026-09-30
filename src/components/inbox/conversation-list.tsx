@@ -36,6 +36,7 @@ import {
   tabForConversation,
   type InboxTab,
   type LiveFilter,
+  type TriageState,
 } from "@/lib/inbox/triage";
 import {
   compareForTab,
@@ -47,6 +48,7 @@ import {
   mergePage,
   pageArgs,
   parseCounts,
+  showOwnerBadge,
   viewKey,
   type InboxCounts,
   type InboxListState,
@@ -55,6 +57,11 @@ import {
 } from "@/lib/inbox/list-query";
 import { buildSearchPattern, normalizeSearch } from "@/lib/inbox/search";
 import { debounceWithMaxWait } from "@/lib/inbox/throttle";
+import {
+  INBOX_SHORTCUT_EVENT,
+  stepIndex,
+  type ShortcutAction,
+} from "@/lib/inbox/shortcuts";
 import { findConversationById } from "@/lib/conversations/find-by-contact";
 import {
   Search,
@@ -68,6 +75,7 @@ import {
   Snowflake,
   Building2,
   RefreshCw,
+  Keyboard,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -77,7 +85,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ContactAvatar } from "./contact-avatar";
+import { ContactAvatar, avatarInitial } from "./contact-avatar";
+import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filters";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -101,6 +110,8 @@ interface ConversationListProps {
    * realtime rows belong in the loaded list (lib/inbox/list-query).
    */
   onListStateChange?: (state: InboxListState) => void;
+  /** Opens the shortcut help (the "?" button in the header). */
+  onShowShortcuts?: () => void;
 }
 
 /**
@@ -145,6 +156,11 @@ const STRIP_COPY: Record<
     loadMore: string;
     loadError: string;
     retry: string;
+    /** Empty state when filters (tags / channel / unread / radar) hide everything. */
+    clearFilters: string;
+    filteredEmpty: string;
+    shortcuts: string;
+    ownerTitle: (name: string) => string;
   }
 > = {
   "pt-BR": {
@@ -173,6 +189,10 @@ const STRIP_COPY: Record<
     loadMore: "Carregar mais",
     loadError: "Não foi possível carregar as conversas.",
     retry: "Tentar de novo",
+    clearFilters: "Limpar filtros",
+    filteredEmpty: "Nenhuma conversa com esses filtros",
+    shortcuts: "Atalhos do teclado (?)",
+    ownerTitle: (name) => `Responsável: ${name}`,
   },
   "en-US": {
     title: "Conversations",
@@ -200,6 +220,10 @@ const STRIP_COPY: Record<
     loadMore: "Load more",
     loadError: "Could not load conversations.",
     retry: "Try again",
+    clearFilters: "Clear filters",
+    filteredEmpty: "No conversations match these filters",
+    shortcuts: "Keyboard shortcuts (?)",
+    ownerTitle: (name) => `Owner: ${name}`,
   },
 };
 
@@ -267,6 +291,7 @@ export function ConversationList({
   resyncToken = 0,
   countsToken = 0,
   onListStateChange,
+  onShowShortcuts,
 }: ConversationListProps) {
   const { user, preferences, accountId } = useAuth();
   const { language } = useLanguage();
@@ -300,6 +325,13 @@ export function ConversationList({
   const [tab, setTab] = useState<InboxTab>("all");
   const [liveFilter, setLiveFilter] = useState<LiveFilter>("live");
   const [unreadOnly, setUnreadOnly] = useState(false);
+  // Contact-tag and WhatsApp-channel filters (migration 068), persisted with
+  // the tab / live filter.
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [channelFilter, setChannelFilter] = useState<WhatsAppChannel | null>(null);
+  const { tags: facetTags, hasBothChannels } = useInboxFacets(accountId);
+  // A saved channel filter is meaningless (and invisible) without both channels.
+  const channel = hasBothChannels ? channelFilter : null;
   // View key of the last page that finished loading; `loading` is derived.
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   // Same, without the search text: a search that is still settling keeps the
@@ -351,6 +383,8 @@ export function ConversationList({
           const stored = migrateTriage(JSON.parse(raw));
           setTab(stored.tab);
           setLiveFilter(stored.live);
+          setTagIds(stored.tagIds);
+          setChannelFilter(stored.channel);
         }
       } catch {
         // localStorage can throw in private-browsing / sandboxed contexts.
@@ -369,7 +403,7 @@ export function ConversationList({
     };
   }, []);
 
-  const persistTriage = useCallback((next: { tab: InboxTab; live: LiveFilter }) => {
+  const persistTriage = useCallback((next: TriageState) => {
     try {
       localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify(next));
     } catch {
@@ -380,17 +414,33 @@ export function ConversationList({
   const handleTabChange = useCallback(
     (next: InboxTab) => {
       setTab(next);
-      persistTriage({ tab: next, live: liveFilter });
+      persistTriage({ tab: next, live: liveFilter, tagIds, channel: channelFilter });
     },
-    [persistTriage, liveFilter]
+    [persistTriage, liveFilter, tagIds, channelFilter]
   );
 
   const handleLiveChange = useCallback(
     (next: LiveFilter) => {
       setLiveFilter(next);
-      persistTriage({ tab, live: next });
+      persistTriage({ tab, live: next, tagIds, channel: channelFilter });
     },
-    [persistTriage, tab]
+    [persistTriage, tab, tagIds, channelFilter]
+  );
+
+  const handleTagsChange = useCallback(
+    (next: string[]) => {
+      setTagIds(next);
+      persistTriage({ tab, live: liveFilter, tagIds: next, channel: channelFilter });
+    },
+    [persistTriage, tab, liveFilter, channelFilter]
+  );
+
+  const handleChannelChange = useCallback(
+    (next: WhatsAppChannel | null) => {
+      setChannelFilter(next);
+      persistTriage({ tab, live: liveFilter, tagIds, channel: next });
+    },
+    [persistTriage, tab, liveFilter, tagIds]
   );
 
   // Ticks once a minute so the relative ages in the rows stay honest
@@ -422,8 +472,16 @@ export function ConversationList({
   // Radar buckets replace the live filter (the bucket fixes the status).
   const effectiveLive: LiveFilter = radar ? "live" : liveFilter;
   const view = useMemo<InboxView>(
-    () => ({ tab, live: effectiveLive, unread: unreadOnly, radar, search: debouncedSearch }),
-    [tab, effectiveLive, unreadOnly, radar, debouncedSearch],
+    () => ({
+      tab,
+      live: effectiveLive,
+      unread: unreadOnly,
+      radar,
+      search: debouncedSearch,
+      tagIds,
+      channel,
+    }),
+    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, tagIds, channel],
   );
   const key = viewKey(view);
   const baseKey = viewKey({ ...view, search: "" });
@@ -577,7 +635,7 @@ export function ConversationList({
     const { data, error } = await createClient().rpc(
       "inbox_counts",
       countsArgs(
-        { live: effectiveLive, unread: unreadOnly, radar },
+        { live: effectiveLive, unread: unreadOnly, radar, tagIds, channel },
         { accountId, prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours } },
       ),
     );
@@ -587,7 +645,7 @@ export function ConversationList({
       return;
     }
     setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
-  }, [accountId, effectiveLive, unreadOnly, radar, slaMinutes, coolingHours]);
+  }, [accountId, effectiveLive, unreadOnly, radar, tagIds, channel, slaMinutes, coolingHours]);
   const fetchCountsRef = useRef(fetchCounts);
   useEffect(() => {
     fetchCountsRef.current = fetchCounts;
@@ -693,8 +751,12 @@ export function ConversationList({
     if (unreadOnly) {
       result = result.filter((c) => c.unread_count > 0);
     }
+    if (channel) {
+      // Realtime patches keep rows in the list; the server already filtered.
+      result = result.filter((c) => (c.channel ?? "official") === channel);
+    }
     return result;
-  }, [conversations, unreadOnly, radar, preferences, now]);
+  }, [conversations, unreadOnly, radar, channel, preferences, now]);
 
   const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
@@ -738,12 +800,86 @@ export function ConversationList({
     []
   );
 
+  // Keyboard cursor (j / k). It follows the open conversation until the agent
+  // moves it; Enter / o opens the highlighted row. Reset by any selection.
+  const [cursorOverride, setCursorOverride] = useState<string | null>(null);
+  const cursorId =
+    cursorOverride && filtered.some((c) => c.id === cursorOverride)
+      ? cursorOverride
+      : activeConversationId;
+
   const handleSelect = useCallback(
     (conv: Conversation) => {
+      setCursorOverride(null);
       onSelect(conv);
     },
     [onSelect]
   );
+
+  // Shortcuts dispatched by useInboxShortcuts (lib/inbox/shortcuts).
+  const shortcutRef = useRef({ filtered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore });
+  useEffect(() => {
+    shortcutRef.current = { filtered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore };
+  });
+  useEffect(() => {
+    const onShortcut = (e: Event) => {
+      const action = (e as CustomEvent<ShortcutAction>).detail;
+      const st = shortcutRef.current;
+      if (action === "next" || action === "prev") {
+        const at = st.filtered.findIndex((c) => c.id === st.cursorId);
+        const idx = stepIndex(at, action === "next" ? 1 : -1, st.filtered.length);
+        const row = st.filtered[idx];
+        if (!row) return;
+        setCursorOverride(row.id);
+        // Near the end of the loaded window: fetch the next page.
+        if (st.hasMore && idx >= st.filtered.length - 3) void st.loadMore();
+        requestAnimationFrame(() =>
+          document
+            .querySelector(`[data-conv-id="${row.id}"]`)
+            ?.scrollIntoView({ block: "nearest" }),
+        );
+      } else if (action === "open") {
+        const row = st.filtered.find((c) => c.id === st.cursorId);
+        if (row) st.handleSelect(row);
+      }
+    };
+    window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+    return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+  }, []);
+
+  // Team members, for the owner badge on rows (RLS scopes them to the account).
+  const [owners, setOwners] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    createClient()
+      .from("profiles")
+      .select("user_id, full_name")
+      .eq("account_id", accountId)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setOwners(
+          new Map(
+            (data as { user_id: string; full_name: string | null }[]).map((p) => [
+              p.user_id,
+              p.full_name || "?",
+            ]),
+          ),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+  const showOwner = useMemo(() => showOwnerBadge(tab, filtered), [tab, filtered]);
+
+  const anyFilter = unreadOnly || !!radar || tagIds.length > 0 || !!channel;
+  const clearFilters = useCallback(() => {
+    setUnreadOnly(false);
+    if (radar) setRadar(null);
+    handleTagsChange([]);
+    handleChannelChange(null);
+  }, [radar, setRadar, handleTagsChange, handleChannelChange]);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -790,6 +926,15 @@ export function ConversationList({
               </DropdownMenuContent>
             </DropdownMenu>
 
+            <FilterPopover
+              tags={facetTags}
+              hasBothChannels={hasBothChannels}
+              tagIds={tagIds}
+              channel={channel}
+              onTagsChange={handleTagsChange}
+              onChannelChange={handleChannelChange}
+            />
+
             {/* Unread-only toggle */}
             <button
               type="button"
@@ -806,6 +951,19 @@ export function ConversationList({
             >
               <MailOpen className="h-3.5 w-3.5" />
             </button>
+
+            {onShowShortcuts && (
+              <button
+                type="button"
+                onClick={onShowShortcuts}
+                aria-label={copy.shortcuts}
+                title={copy.shortcuts}
+                data-testid="shortcuts-button"
+                className="hidden h-7 w-7 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:inline-flex"
+              >
+                <Keyboard className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -815,11 +973,20 @@ export function ConversationList({
             <Input
               value={search}
               onChange={handleSearchChange}
+              data-inbox-search
               placeholder="Search conversations..."
               className="h-8 border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
             />
           </div>
         </div>
+
+        <FilterChips
+          tags={facetTags}
+          tagIds={tagIds}
+          channel={channel}
+          onTagsChange={handleTagsChange}
+          onChannelChange={handleChannelChange}
+        />
 
         {/* Radar chips (spec §3): waiting past SLA · open without owner ·
             cooling after our last message. Bound to ?radar=; clicking the
@@ -936,6 +1103,18 @@ export function ConversationList({
               <p className="text-sm text-muted-foreground">{copy.queueEmpty}</p>
               <p className="mt-1 text-xs text-muted-foreground/80">{copy.queueEmptyHint}</p>
             </div>
+          ) : anyFilter ? (
+            <div className="px-4 py-12 text-center" data-no-translate>
+              <p className="text-sm text-muted-foreground">{copy.filteredEmpty}</p>
+              <button
+                type="button"
+                onClick={clearFilters}
+                data-testid="clear-filters"
+                className="mt-3 inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                {copy.clearFilters}
+              </button>
+            </div>
           ) : (
             <div className="px-4 py-12 text-center">
               <p className="text-sm text-muted-foreground">No conversations found</p>
@@ -954,6 +1133,13 @@ export function ConversationList({
                 key={conv.id}
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
+                isCursor={conv.id === cursorId && conv.id !== activeConversationId}
+                ownerName={
+                  showOwner && conv.assigned_agent_id
+                    ? (owners.get(conv.assigned_agent_id) ?? null)
+                    : null
+                }
+                ownerTitle={copy.ownerTitle}
                 onSelect={handleSelect}
                 age={formatAge(conv.last_message_at, language, now)}
                 tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
@@ -1048,6 +1234,11 @@ function queueBadgeFor(
 interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
+  /** Keyboard cursor (j / k) is here. */
+  isCursor: boolean;
+  /** Assigned agent's name when the owner badge is shown for this row. */
+  ownerName: string | null;
+  ownerTitle: (name: string) => string;
   onSelect: (conversation: Conversation) => void;
   age: string;
   tags: RowTag[];
@@ -1067,6 +1258,9 @@ interface ConversationItemProps {
 function ConversationItem({
   conversation,
   isActive,
+  isCursor,
+  ownerName,
+  ownerTitle,
   onSelect,
   age,
   tags,
@@ -1106,9 +1300,11 @@ function ConversationItem({
     <button
       onClick={handleClick}
       aria-current={isActive ? "true" : undefined}
+      data-conv-id={conversation.id}
       className={cn(
         "flex w-full min-w-0 items-start gap-2.5 border-b border-border/60 px-3 py-2 text-left transition-colors hover:bg-muted/50",
-        isActive && "bg-muted/70 shadow-[inset_2px_0_0_var(--color-primary)]"
+        isActive && "bg-muted/70 shadow-[inset_2px_0_0_var(--color-primary)]",
+        isCursor && "bg-muted/50 ring-1 ring-inset ring-primary/40"
       )}
     >
       {/* Avatar + channel badge */}
@@ -1164,6 +1360,17 @@ function ConversationItem({
             </span>
           )}
           <span className="flex-1" />
+          {ownerName && (
+            <span
+              data-no-translate
+              data-testid="owner-badge"
+              title={ownerTitle(ownerName)}
+              aria-label={ownerTitle(ownerName)}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[9px] font-semibold leading-none text-primary"
+            >
+              {avatarInitial(ownerName)}
+            </span>
+          )}
           <span
             data-no-translate
             className={cn(
