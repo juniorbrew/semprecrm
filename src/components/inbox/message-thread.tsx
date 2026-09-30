@@ -1800,8 +1800,8 @@ export function MessageThread({
           (Resolver / Reabrir, a split button whose chevron opens the full
           status picker); assignee, refresh and the panel toggle are
           ghost buttons so the primary action is unmistakable. */}
-      <div className="group/header flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2.5 sm:px-4">
-        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+      <div className="group/header flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border bg-card px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-[10rem] flex-1 items-center gap-2 sm:gap-3">
           {/* Back-to-list button — mobile only. Hidden on lg+ where the
               conversation list is always visible next to the thread. */}
           {onBack && (
@@ -1832,7 +1832,7 @@ export function MessageThread({
                 onSave={(subject) => void handleTriageChange({ subject })}
               />
             )}
-            <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-4 text-muted-foreground">
               {/* Phone truncates on phones; the status + window badges
                   are the parts that must stay visible. */}
               <p
@@ -1884,27 +1884,10 @@ export function MessageThread({
                 </Badge>
               )}
             </div>
-            {supportMode && (
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <TriageChips
-                  conversation={conversation}
-                  categories={activeCategories}
-                  byId={categoryById}
-                  canEdit={canTriage}
-                  onCategory={(id) => void handleTriageChange({ category_id: id })}
-                  onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
-                />
-                {resolutionLabel && (
-                  <span data-no-translate className="truncate text-xs text-muted-foreground">
-                    {resolutionLabel}
-                  </span>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {/* Assumir — outline, one click to own the thread. Once it is
               mine, a static "✓ Sua" takes its place; hidden when resolved;
               disabled for viewers. */}
@@ -2238,6 +2221,26 @@ export function MessageThread({
             </button>
           )}
         </div>
+
+        {/* Triage chips: own full-width row under name + actions, so they
+            never share a line (or get covered by) the action buttons. */}
+        {supportMode && (
+          <div className="flex w-full basis-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <TriageChips
+              conversation={conversation}
+              categories={activeCategories}
+              byId={categoryById}
+              canEdit={canTriage}
+              onCategory={(id) => void handleTriageChange({ category_id: id })}
+              onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
+            />
+            {resolutionLabel && (
+              <span data-no-translate className="truncate text-xs text-muted-foreground">
+                {resolutionLabel}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <TransferDialog

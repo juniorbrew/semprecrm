@@ -37,7 +37,9 @@ export function useConversationCategories() {
     if (!accountId) return;
     const supabase = createClient();
     const channel = supabase
-      .channel(`conversation-categories:${accountId}`)
+      // Unique topic per mount: several components use this hook at once and
+      // `supabase.channel()` returns the already-subscribed one for a shared topic.
+      .channel(`conversation-categories:${accountId}:${Math.random().toString(36).slice(2)}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "conversation_categories", filter: `account_id=eq.${accountId}` },
