@@ -36,7 +36,7 @@ export interface MoveDealInput {
   actorName?: string;
 }
 
-/** Persists the move and logs it; throws when the UPDATE fails. */
+/** Persists the move and logs it; throws when the UPDATE fails or matches no row. */
 export async function moveDealToStage(
   supabase: SupabaseClient,
   input: MoveDealInput,
@@ -46,11 +46,15 @@ export async function moveDealToStage(
   const to = input.stages.find((s) => s.id === input.toStageId)!;
   const from = input.stages.find((s) => s.id === input.deal.stage_id);
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('deals')
     .update({ stage_id: to.id, updated_at: new Date().toISOString() })
-    .eq('id', input.deal.id);
+    .eq('id', input.deal.id)
+    .select('id');
   if (error) throw error;
+  // RLS filters a row the caller may not update out silently: zero rows
+  // back means nothing persisted, so no success toast and no event.
+  if (!data || data.length === 0) throw new Error('deal move not persisted');
 
   if (input.conversationId && input.accountId) {
     // Best effort, like every other panel event: the move already stuck.

@@ -338,9 +338,16 @@ export function formatConversationEvent(
           ? 'Contato reativado'
           : 'Contact reactivated'
     case 'deal_stage_changed': {
-      const base = pt
-        ? `Negócio ${event.deal_title ?? ''} movido de ${event.from_stage_name ?? '—'} para ${event.to_stage_name ?? '—'}`
-        : `Deal ${event.deal_title ?? ''} moved from ${event.from_stage_name ?? '—'} to ${event.to_stage_name ?? '—'}`
+      // Anonymisation empties the payload: fall back to a generic sentence.
+      const hasStages = !!event.from_stage_name || !!event.to_stage_name
+      const title = event.deal_title ? ` ${event.deal_title}` : ''
+      const base = !hasStages
+        ? pt
+          ? `Negócio${title} movido de etapa`
+          : `Deal${title} moved to another stage`
+        : pt
+          ? `Negócio${title} movido de ${event.from_stage_name ?? '—'} para ${event.to_stage_name ?? '—'}`
+          : `Deal${title} moved from ${event.from_stage_name ?? '—'} to ${event.to_stage_name ?? '—'}`
       return actor ? (pt ? `${base} por ${actor}` : `${base} by ${actor}`) : base
     }
     case 'ai_handoff':

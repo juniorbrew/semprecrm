@@ -39,6 +39,8 @@ import {
   CalendarPlus,
   UserRound,
   Brain,
+  CalendarDays,
+  Activity,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { listConversationsByContact } from "@/lib/conversations/find-by-contact";
@@ -676,6 +678,7 @@ export function ContactSidebar({
   }
 
   const panelLoaded = loadedFor === contact.id;
+  const activityLabel = language === "pt-BR" ? "Atividade" : "Activity";
   const displayName = contact.name || contact.phone;
   const otherConversations = previous.filter((c) => c.id !== conversationId);
   const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
@@ -832,6 +835,7 @@ export function ContactSidebar({
               usage={tagUsage}
               loaded={panelLoaded}
               canWrite={canWrite}
+              canCreate={canDefineFields}
               busyId={tagBusy}
               creating={creatingTag}
               onToggle={(tag) => void toggleTag(tag)}
@@ -1016,7 +1020,7 @@ export function ContactSidebar({
 
               {/* Agenda: the contact's next appointments; "+" reveals the
                   inline title + when creator linked to the contact and thread. */}
-              <PanelSection id="agenda">
+              <PanelSection id="agenda" lazyHeader={<SectionHeader icon={CalendarDays} label={t("Calendar")} />}>
                 <LinkedEvents
                   key={`${contact.id}:${eventsVersion}`}
                   contactId={contact.id}
@@ -1080,7 +1084,7 @@ export function ContactSidebar({
           <div className="my-4 border-t border-border" />
 
           {/* Activity: merged feed (contact_activity RPC, migration 070). */}
-          <PanelSection id="activity">
+          <PanelSection id="activity" lazyHeader={<SectionHeader icon={Activity} label={activityLabel} />}>
             <PanelActivity contactId={contact.id} refreshKey={activityVersion} />
           </PanelSection>
 
@@ -1088,7 +1092,7 @@ export function ContactSidebar({
           {aiEnabled && (
             <>
               <div className="my-4 border-t border-border" />
-              <PanelSection id="memory">
+              <PanelSection id="memory" lazyHeader={<SectionHeader icon={Brain} label={t("Contact memory")} />}>
                 <ContactMemorySection
                   contactId={contact.id}
                   conversationId={conversationId}
@@ -1167,7 +1171,7 @@ export function ContactSidebar({
           <div className="my-4 border-t border-border" />
 
           {/* Privacy (LGPD, migration 035): consent, export, anonymise. */}
-          <PanelSection id="privacy" defaultOpen={false}>
+          <PanelSection id="privacy" defaultOpen={false} lazyHeader={<SectionHeader icon={ShieldCheck} label={t("Privacy")} />}>
             <div>
               <SectionHeader icon={ShieldCheck} label={t("Privacy")} />
               <ContactPrivacySection

@@ -18,12 +18,15 @@ SELECT (SELECT account_id FROM profiles WHERE user_id = '70000000-0000-4000-8000
        (SELECT account_id FROM profiles WHERE user_id = '70000000-0000-4000-8000-00000000000b') AS acc_b,
        '70000000-0000-4000-8000-0000000000c1'::uuid AS c1,
        '70000000-0000-4000-8000-0000000000c2'::uuid AS c2,
+       '70000000-0000-4000-8000-0000000000c3'::uuid AS c3,
        '70000000-0000-4000-8000-0000000000e1'::uuid AS conv1;
 GRANT SELECT ON ids TO authenticated;
 
 INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
  ('70000000-0000-4000-8000-0000000000c1', '70000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511900070001', 'Ana'),
  ('70000000-0000-4000-8000-0000000000c2', '70000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ids), '5511900070002', 'Outro');
+INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
+ ('70000000-0000-4000-8000-0000000000c3', '70000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511900070003', 'Empate');
 INSERT INTO conversations(id, user_id, account_id, contact_id, status) VALUES
  ('70000000-0000-4000-8000-0000000000e1', '70000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), (SELECT c1 FROM ids), 'open');
 
@@ -63,6 +66,11 @@ INSERT INTO broadcast_recipients(broadcast_id, contact_id, status, sent_at) VALU
  ('70000000-0000-4000-8000-0000000000f5', (SELECT c1 FROM ids), 'failed', NULL),
  ('70000000-0000-4000-8000-0000000000f5', (SELECT c1 FROM ids), 'pending', NULL);
 
+-- c3: 25 tasks sharing one created_at.
+INSERT INTO tasks(account_id, status_id, title, contact_id, created_at)
+SELECT (SELECT acc_a FROM ids), '70000000-0000-4000-8000-0000000000f3', 'T' || g, (SELECT c3 FROM ids), '2026-01-01T10:00:00Z'
+  FROM generate_series(1, 25) g;
+
 -- Foreign tenant data on c2 must never leak to A.
 INSERT INTO contact_notes(contact_id, user_id, account_id, note_text) VALUES
  ((SELECT c2 FROM ids), '70000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ids), 'segredo B');
@@ -79,7 +87,31 @@ SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c
 SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c1 FROM ids), 50) WHERE type = 'note' AND actor_name = 'Owner A'), 1, 'note actor resolved');
 -- limit + keyset paging by `at`.
 SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c1 FROM ids), 3)), 3, 'limit honoured');
-SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c1 FROM ids), 50, now() - interval '5 minutes')), 4, 'p_before pages older rows');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c1 FROM ids), 50, now() - interval '5 minutes')), 4, 'p_before without an id is inclusive of that instant');
+-- Won time is closed_at (stamped when status changes), not updated_at.
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c1 FROM ids), 50) WHERE type = 'deal_won' AND at >= now() - interval '1 minute'), 1, 'deal_won uses closed_at');
+-- Keyset paging reaches every row of a 25-way timestamp tie.
+CREATE FUNCTION pg_temp.walk(p_contact uuid, p_page int) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE seen text[] := '{}'; r record; last_at timestamptz; last_cur uuid; n int;
+BEGIN
+  LOOP
+    n := 0;
+    FOR r IN SELECT * FROM public.contact_activity(p_contact, p_page, last_at, last_cur) LOOP
+      seen := seen || r.id; last_at := r.at; last_cur := r.cursor; n := n + 1;
+    END LOOP;
+    EXIT WHEN n < p_page;
+  END LOOP;
+  RETURN (SELECT count(DISTINCT x) FROM unnest(seen) x) * 1000 + array_length(seen, 1);
+END $$;
+GRANT EXECUTE ON FUNCTION pg_temp.walk(uuid, int) TO authenticated;
+SELECT pg_temp.assert_eq(pg_temp.walk((SELECT c3 FROM ids), 10), 50 * 1000 + 50, '25 tasks x (created + done) at identical timestamps: all 50 reachable, none repeated');
+SELECT pg_temp.assert_eq(pg_temp.walk((SELECT c1 FROM ids), 4), 11 * 1000 + 11, 'paged walk over c1 sees all 11 rows once');
+
+-- Grants: anon cannot execute the RPCs.
+SELECT pg_temp.assert_eq(has_function_privilege('anon', 'public.contact_activity(uuid,integer,timestamptz,uuid)', 'EXECUTE')::int, 0, 'anon cannot run contact_activity');
+SELECT pg_temp.assert_eq(has_function_privilege('anon', 'public.account_tag_usage()', 'EXECUTE')::int, 0, 'anon cannot run account_tag_usage');
+SELECT pg_temp.assert_eq(has_function_privilege('authenticated', 'public.contact_activity(uuid,integer,timestamptz,uuid)', 'EXECUTE')::int, 1, 'authenticated can run contact_activity');
+
 -- Foreign contact returns nothing for A.
 SELECT pg_temp.assert_eq((SELECT count(*) FROM public.contact_activity((SELECT c2 FROM ids), 50)), 0, 'A cannot read B contact activity');
 

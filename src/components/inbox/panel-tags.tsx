@@ -29,6 +29,7 @@ const COPY: Record<
     create: string;
     color: (c: string) => string;
     loading: string;
+    askAdmin: string;
   }
 > = {
   "pt-BR": {
@@ -43,6 +44,7 @@ const COPY: Record<
     create: "Criar",
     color: (c) => `Cor ${c}`,
     loading: "Carregando etiquetas",
+    askAdmin: "Peça a um administrador para criar novas etiquetas.",
   },
   "en-US": {
     title: "Labels",
@@ -56,6 +58,7 @@ const COPY: Record<
     create: "Create",
     color: (c) => `Color ${c}`,
     loading: "Loading labels",
+    askAdmin: "Ask an administrator to create new labels.",
   },
 };
 
@@ -66,6 +69,8 @@ interface PanelTagsProps {
   usage: Record<string, number>;
   loaded: boolean;
   canWrite: boolean;
+  /** Creating a tag needs admin+ (tags_insert RLS); agents only pick existing ones. */
+  canCreate: boolean;
   busyId: string | null;
   creating: boolean;
   onToggle: (tag: Tag) => void;
@@ -78,6 +83,7 @@ export function PanelTags({
   usage,
   loaded,
   canWrite,
+  canCreate,
   busyId,
   creating,
   onToggle,
@@ -141,6 +147,11 @@ export function PanelTags({
                     })}
                   </ul>
                 )}
+                {!canCreate ? (
+                  <p className="mt-1 border-t border-border px-2 pt-1.5 text-[11px] text-muted-foreground">
+                    {copy.askAdmin}
+                  </p>
+                ) : (
                 <form
                   className="mt-1 space-y-1.5 border-t border-border pt-1.5"
                   onSubmit={(e) => {
@@ -188,6 +199,7 @@ export function PanelTags({
                     ))}
                   </div>
                 </form>
+                )}
               </PopoverContent>
             </Popover>
           ) : undefined

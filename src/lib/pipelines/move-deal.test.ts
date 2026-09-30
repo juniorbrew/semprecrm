@@ -14,8 +14,9 @@ const stage = (id: string, name: string, pipeline_id = "p1"): PipelineStage => (
 const stages = [stage("s1", "Novo"), stage("s2", "Proposta"), stage("x1", "Outro funil", "p2")]
 const deal = { id: "d1", title: "Deal X", stage_id: "s1", pipeline_id: "p1" }
 
-function fakeClient(updateError: unknown = null) {
-  const eq = vi.fn().mockResolvedValue({ error: updateError })
+function fakeClient(updateError: unknown = null, rows: unknown[] = [{ id: "d1" }]) {
+  const select = vi.fn().mockResolvedValue({ data: updateError ? null : rows, error: updateError })
+  const eq = vi.fn().mockReturnValue({ select })
   const update = vi.fn().mockReturnValue({ eq })
   const single = vi.fn().mockResolvedValue({ data: { id: "e1" }, error: null })
   const insert = vi.fn().mockReturnValue({ select: () => ({ single }) })
@@ -62,6 +63,12 @@ describe("moveDealToStage", () => {
     await expect(moveDealToStage(client, { ...base, toStageId: "x1" })).rejects.toThrow(/foreign-stage/)
     await expect(moveDealToStage(client, { ...base, toStageId: "s1" })).rejects.toThrow(/same-stage/)
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it("treats an update that matched no row (RLS) as a failure: no event", async () => {
+    const { client, insert } = fakeClient(null, [])
+    await expect(moveDealToStage(client, { ...base, toStageId: "s2" })).rejects.toThrow(/not persisted/)
+    expect(insert).not.toHaveBeenCalled()
   })
 
   it("throws and logs nothing when the update fails", async () => {

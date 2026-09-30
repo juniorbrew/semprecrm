@@ -172,6 +172,14 @@ export async function anonymizeContact(
       .eq('event_type', 'ai_handoff')
     if (evErr) warnings.push(`ai_handoff events: ${evErr.message}`)
 
+    // Deal-move pills (070) carry the deal title, which can name the customer.
+    const { error: dealEvErr } = await admin
+      .from('conversation_events')
+      .update({ payload: {} })
+      .in('conversation_id', conversationIds)
+      .eq('event_type', 'deal_stage_changed')
+    if (dealEvErr) warnings.push(`deal_stage_changed events: ${dealEvErr.message}`)
+
     // Transfer pills (`assigned`) may carry a free-text reason that names the
     // customer: drop only that key, the who-assigned-to-whom stays.
     const { data: transfers, error: trErr } = await admin

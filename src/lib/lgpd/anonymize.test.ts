@@ -291,6 +291,24 @@ describe('anonymizeContact', () => {
   })
 })
 
+describe('anonymizeContact — deal move pills', () => {
+  it('empties the payload of deal_stage_changed events (deal title)', async () => {
+    const { db, calls } = makeDb({
+      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
+      conversations: [{ id: 'conv1' }],
+    })
+    await anonymizeContact(db, 'acc', 'c1', { now: () => new Date('2026-09-13T12:00:00.000Z'), randomHex: () => 'deadbeef' })
+    const scrub = calls.find(
+      (c) =>
+        c.table === 'conversation_events' &&
+        c.op === 'update' &&
+        c.filters.some((f) => f[1] === 'event_type' && (f[2] as unknown[])[0] === 'deal_stage_changed'),
+    )!
+    expect(scrub.payload).toEqual({ payload: {} })
+    expect(scrub.filters).toContainEqual(['in', 'conversation_id', [['conv1']]])
+  })
+})
+
 describe('anonymizeContact — transfer reasons', () => {
   it('removes only the reason key from assigned events', async () => {
     const { db, calls } = makeDb({

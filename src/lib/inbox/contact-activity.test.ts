@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
-import { describeActivity, fetchContactActivity, type ContactActivityRow } from "./contact-activity"
+import { describeActivity, fetchContactActivity, hasMorePages, type ContactActivityRow } from "./contact-activity"
 
 const row = (over: Partial<ContactActivityRow>): ContactActivityRow => ({
   id: "r1",
@@ -12,6 +12,7 @@ const row = (over: Partial<ContactActivityRow>): ContactActivityRow => ({
   link_kind: "note",
   link_id: null,
   conversation_id: null,
+  cursor: "k1",
   ...over,
 })
 
@@ -49,11 +50,25 @@ describe("describeActivity", () => {
   })
 })
 
+describe("hasMorePages", () => {
+  it("counts raw rows, including ones describeActivity drops", () => {
+    const raw = Array.from({ length: 20 }, (_, i) => row({ id: `r${i}`, type: i < 15 ? "mystery" : "note" }))
+    expect(raw.filter((r) => describeActivity(r, "pt-BR")).length).toBe(5)
+    expect(hasMorePages(raw)).toBe(true)
+    expect(hasMorePages(raw.slice(0, 19))).toBe(false)
+  })
+})
+
 describe("fetchContactActivity", () => {
   it("calls the RPC with paging args and throws on error", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [row({})], error: null })
-    await fetchContactActivity({ rpc } as never, "c1", { before: "2026-01-01T00:00:00Z" })
-    expect(rpc).toHaveBeenCalledWith("contact_activity", { p_contact_id: "c1", p_limit: 20, p_before: "2026-01-01T00:00:00Z" })
+    await fetchContactActivity({ rpc } as never, "c1", { before: "2026-01-01T00:00:00Z", beforeId: "k9" })
+    expect(rpc).toHaveBeenCalledWith("contact_activity", {
+      p_contact_id: "c1",
+      p_limit: 20,
+      p_before: "2026-01-01T00:00:00Z",
+      p_before_id: "k9",
+    })
     rpc.mockResolvedValue({ data: null, error: new Error("x") })
     await expect(fetchContactActivity({ rpc } as never, "c1")).rejects.toThrow("x")
   })

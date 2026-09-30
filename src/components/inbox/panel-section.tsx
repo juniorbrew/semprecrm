@@ -44,26 +44,34 @@ function writeSectionOpen(id: string, open: boolean): void {
 export function PanelSection({
   id,
   defaultOpen = true,
+  lazyHeader,
   children,
 }: {
   id: string;
   defaultOpen?: boolean;
+  /**
+   * Lazy mode: while the section has never been open only this header
+   * (a `SectionHeader`) is rendered, so the section's own queries do not
+   * fire until the first expand. Once opened the children stay mounted.
+   */
+  lazyHeader?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(() => readSectionOpen(id, defaultOpen));
+  const [opened, setOpened] = useState(open);
   const toggle = useCallback(() => {
-    setOpen((prev) => {
-      writeSectionOpen(id, !prev);
-      return !prev;
-    });
-  }, [id]);
+    const next = !open;
+    setOpen(next);
+    if (next) setOpened(true);
+    writeSectionOpen(id, next);
+  }, [id, open]);
   return (
     <SectionContext.Provider value={{ open, toggle }}>
       <div
         data-collapsed={!open}
         className="[&[data-collapsed=true]>*>*:not(:first-child)]:hidden"
       >
-        {children}
+        {opened || !lazyHeader ? children : <div>{lazyHeader}</div>}
       </div>
     </SectionContext.Provider>
   );

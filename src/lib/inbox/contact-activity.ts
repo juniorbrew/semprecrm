@@ -23,6 +23,8 @@ export interface ContactActivityRow {
   link_kind: 'conversation' | 'deal' | 'task' | 'event' | 'note' | 'company' | 'broadcast'
   link_id: string | null
   conversation_id: string | null
+  /** Keyset tie-breaker: page with (at, cursor) of the last raw row. */
+  cursor: string
 }
 
 export type ActivityIcon =
@@ -45,16 +47,22 @@ export interface ActivityView {
   href: string | null
 }
 
-/** One page of the feed, newest first; `before` = `at` of the last row seen. */
+/** More pages exist when the RAW page was full (rows the UI cannot render still count). */
+export function hasMorePages(rawRows: readonly unknown[], limit: number = ACTIVITY_PAGE_SIZE): boolean {
+  return rawRows.length >= limit
+}
+
+/** One page of the feed, newest first; pass `at` + `cursor` of the last row seen. */
 export async function fetchContactActivity(
   supabase: Pick<SupabaseClient, 'rpc'>,
   contactId: string,
-  opts: { limit?: number; before?: string | null } = {},
+  opts: { limit?: number; before?: string | null; beforeId?: string | null } = {},
 ): Promise<ContactActivityRow[]> {
   const { data, error } = await supabase.rpc('contact_activity', {
     p_contact_id: contactId,
     p_limit: opts.limit ?? ACTIVITY_PAGE_SIZE,
     p_before: opts.before ?? null,
+    p_before_id: opts.beforeId ?? null,
   })
   if (error) throw error
   return (data ?? []) as ContactActivityRow[]

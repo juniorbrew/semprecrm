@@ -54,6 +54,21 @@ describe("PanelSection", () => {
     expect(readSectionOpen("other", true)).toBe(true)
   })
 
+  it("lazy sections render only their header until first opened (children never mount, so no queries)", () => {
+    const lazy = (defaultOpen: boolean) =>
+      renderToString(
+        <PanelSection id="lz" defaultOpen={defaultOpen} lazyHeader={<SectionHeader icon={Building2} label="Atividade" />}>
+          <div>
+            <SectionHeader icon={Building2} label="Atividade" />
+            <p>corpo-carregado</p>
+          </div>
+        </PanelSection>,
+      )
+    expect(lazy(false)).not.toContain("corpo-carregado")
+    expect(lazy(false)).toContain("Atividade")
+    expect(lazy(true)).toContain("corpo-carregado")
+  })
+
   it("survives blocked or corrupt storage", () => {
     vi.stubGlobal("window", {
       localStorage: {
@@ -107,6 +122,7 @@ describe("PanelTags", () => {
     allTags: [tag("a", "VIP"), tag("b", "Lead"), tag("c", "Cliente")],
     usage: { b: 3, c: 9 },
     loaded: true,
+    canCreate: true,
     creating: false,
     busyId: null,
     onToggle: () => {},

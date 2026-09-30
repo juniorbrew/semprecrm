@@ -23,9 +23,9 @@ import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { formatEventAge } from "@/lib/conversations/events";
 import {
-  ACTIVITY_PAGE_SIZE,
   describeActivity,
   fetchContactActivity,
+  hasMorePages,
   type ActivityIcon,
   type ContactActivityRow,
 } from "@/lib/inbox/contact-activity";
@@ -88,7 +88,7 @@ export function PanelActivity({
     let cancelled = false;
     fetchContactActivity(createClient(), contactId)
       .then((rows) => {
-        if (!cancelled) setFeed({ contactId, rows, hasMore: rows.length >= ACTIVITY_PAGE_SIZE, error: false });
+        if (!cancelled) setFeed({ contactId, rows, hasMore: hasMorePages(rows), error: false });
       })
       .catch((err) => {
         console.error("Failed to load contact activity:", err);
@@ -105,12 +105,15 @@ export function PanelActivity({
     if (!current || paging) return;
     setPaging(true);
     try {
-      const before = current.rows[current.rows.length - 1]?.at ?? null;
-      const rows = await fetchContactActivity(createClient(), contactId, { before });
+      const last = current.rows[current.rows.length - 1];
+      const rows = await fetchContactActivity(createClient(), contactId, {
+        before: last?.at ?? null,
+        beforeId: last?.cursor ?? null,
+      });
       setFeed({
         contactId,
         rows: [...current.rows, ...rows],
-        hasMore: rows.length >= ACTIVITY_PAGE_SIZE,
+        hasMore: hasMorePages(rows),
         error: false,
       });
     } catch (err) {

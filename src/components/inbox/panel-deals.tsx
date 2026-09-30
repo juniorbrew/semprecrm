@@ -11,7 +11,12 @@ import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/currency";
 import { moveDealToStage } from "@/lib/pipelines/move-deal";
-import { validateDealFields, type DealFieldError } from "@/lib/pipelines/deal-fields";
+import {
+  validateDealFields,
+  type DealFieldDraft,
+  type DealFieldError,
+  type DealFieldKey,
+} from "@/lib/pipelines/deal-fields";
 import type { Deal, PipelineStage } from "@/types";
 import { SectionHeader } from "./panel-section";
 
@@ -56,6 +61,7 @@ const COPY: Record<
     moveFailed: "Não foi possível mover o negócio",
     invalid: {
       value: "Valor inválido (ex.: 1.500,00)",
+      "value-max": "Valor acima do máximo permitido (9.999.999.999,99)",
       date: "Data inválida",
       notes: "Notas longas demais (máx. 2000)",
     },
@@ -79,6 +85,7 @@ const COPY: Record<
     moveFailed: "Could not move the deal",
     invalid: {
       value: "Invalid value (e.g. 1,500.00)",
+      "value-max": "Value above the maximum allowed (9,999,999,999.99)",
       date: "Invalid date",
       notes: "Notes too long (max 2000)",
     },
@@ -280,7 +287,15 @@ function DealRow({
         <ChevronDown className={cn("h-3 w-3 transition-transform", !expanded && "-rotate-90")} aria-hidden />
         {copy.fields}
       </button>
-      {expanded && <DealFields deal={deal} canWrite={canWrite} onPatch={onPatch} />}
+      {expanded && (
+        <DealFields
+          // Remount (resync the draft) whenever the saved values change underneath.
+          key={`${deal.value}|${deal.expected_close_date ?? ""}|${deal.notes ?? ""}`}
+          deal={deal}
+          canWrite={canWrite}
+          onPatch={onPatch}
+        />
+      )}
     </div>
   );
 }
@@ -296,31 +311,44 @@ function DealFields({
 }) {
   const { language } = useLanguage();
   const copy = COPY[language] ?? COPY["pt-BR"];
-  const [value, setValue] = useState(String(deal.value ?? 0).replace(".", ","));
-  const [date, setDate] = useState(deal.expected_close_date?.slice(0, 10) ?? "");
-  const [notes, setNotes] = useState(deal.notes ?? "");
+  const initial = {
+    value: String(deal.value ?? 0).replace(".", ","),
+    expected_close_date: deal.expected_close_date?.slice(0, 10) ?? "",
+    notes: deal.notes ?? "",
+  };
+  const [draft, setDraft] = useState<DealFieldDraft>(initial);
   const [errors, setErrors] = useState<DealFieldError[]>([]);
   const [saving, setSaving] = useState(false);
+  const dirty: Record<DealFieldKey, boolean> = {
+    value: draft.value !== initial.value,
+    expected_close_date: draft.expected_close_date !== initial.expected_close_date,
+    notes: draft.notes !== initial.notes,
+  };
+  const anyDirty = dirty.value || dirty.expected_close_date || dirty.notes;
+  const edit = (key: DealFieldKey, v: string) => setDraft((d) => ({ ...d, [key]: v }));
 
   async function save() {
-    const result = validateDealFields({ value, expected_close_date: date, notes });
+    const result = validateDealFields(draft, dirty);
     if (!result.ok) {
       setErrors(result.errors);
       return;
     }
     setErrors([]);
+    if (Object.keys(result.patch).length === 0) return;
     setSaving(true);
     try {
-      const { error } = await createClient()
+      const { data, error } = await createClient()
         .from("deals")
         .update({ ...result.patch, updated_at: new Date().toISOString() })
-        .eq("id", deal.id);
+        .eq("id", deal.id)
+        .select("id");
       if (error) throw error;
-      onPatch(deal.id, {
-        value: result.patch.value,
-        expected_close_date: result.patch.expected_close_date ?? undefined,
-        notes: result.patch.notes ?? undefined,
-      });
+      if (!data || data.length === 0) throw new Error("deal update not persisted");
+      const local: Partial<Deal> = {};
+      if ("value" in result.patch) local.value = result.patch.value as number;
+      if ("expected_close_date" in result.patch) local.expected_close_date = result.patch.expected_close_date ?? undefined;
+      if ("notes" in result.patch) local.notes = result.patch.notes ?? undefined;
+      onPatch(deal.id, local);
       toast.success(copy.saved);
     } catch (err) {
       console.error("Failed to save deal fields:", err);
@@ -332,12 +360,14 @@ function DealFields({
 
   const input =
     "mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60";
-  const err = (key: DealFieldError) =>
-    errors.includes(key) ? (
+  const err = (...keys: DealFieldError[]) => {
+    const hit = keys.find((k) => errors.includes(k));
+    return hit ? (
       <span role="alert" className="mt-0.5 block text-[10px] text-red-600 dark:text-red-400">
-        {copy.invalid[key]}
+        {copy.invalid[hit]}
       </span>
     ) : null;
+  };
 
   return (
     <form
@@ -350,21 +380,21 @@ function DealFields({
       <label className="block text-[10px] font-medium text-muted-foreground">
         {copy.value}
         <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
+          value={draft.value}
+          onChange={(e) => edit("value", e.target.value)}
           inputMode="decimal"
           disabled={!canWrite || saving}
-          aria-invalid={errors.includes("value")}
+          aria-invalid={errors.includes("value") || errors.includes("value-max")}
           className={input}
         />
-        {err("value")}
+        {err("value", "value-max")}
       </label>
       <label className="block text-[10px] font-medium text-muted-foreground">
         {copy.date}
         <input
           type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
+          value={draft.expected_close_date}
+          onChange={(e) => edit("expected_close_date", e.target.value)}
           disabled={!canWrite || saving}
           aria-invalid={errors.includes("date")}
           className={input}
@@ -374,8 +404,8 @@ function DealFields({
       <label className="block text-[10px] font-medium text-muted-foreground">
         {copy.notes}
         <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          value={draft.notes}
+          onChange={(e) => edit("notes", e.target.value)}
           rows={2}
           disabled={!canWrite || saving}
           aria-invalid={errors.includes("notes")}
@@ -386,7 +416,7 @@ function DealFields({
       {canWrite && (
         <button
           type="submit"
-          disabled={saving}
+          disabled={saving || !anyDirty}
           className="inline-flex h-7 items-center rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : copy.save}
