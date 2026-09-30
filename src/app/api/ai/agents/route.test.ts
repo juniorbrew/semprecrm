@@ -55,7 +55,7 @@ vi.mock('@/lib/auth/account', async (importOriginal) => {
 import { __resetRateLimitForTests } from '@/lib/rate-limit';
 import { AGENT_ERRORS } from '@/lib/ai/agents';
 import { GET, POST } from './route';
-import { DELETE, PATCH } from './[id]/route';
+import { DELETE, GET as GET_ONE, PATCH } from './[id]/route';
 import { POST as TEST } from './[id]/test/route';
 
 const AG_A = '11111111-1111-4111-8111-111111111111';
@@ -79,20 +79,30 @@ beforeEach(() => {
   h.runModelCall.mockReset();
   h.rpcError = null;
   h.tables = {
-    ai_settings: [{ account_id: 'acc-a', provider: 'openai', instructions: 'INSTRUÇÕES GERAIS' }],
+    ai_settings: [{ account_id: 'acc-a', provider: 'openai', model: null, instructions: 'INSTRUÇÕES GERAIS' }],
+    ai_knowledge_items: [
+      { id: 'k1', account_id: 'acc-a', enabled: true },
+      { id: 'k2', account_id: 'acc-a', enabled: false },
+      { id: 'k3', account_id: 'acc-b', enabled: true },
+    ],
     ai_agents: [
       { id: AG_A, account_id: 'acc-a', name: 'Vendas', instructions: 'Venda', tone: null, model: null, knowledge_enabled: false, is_default: true, enabled: true, channels: [], tag_ids: [], created_at: '1' },
-      { id: AG_A2, account_id: 'acc-a', name: 'Suporte', instructions: 'Ajude', tone: 'calmo', model: 'gpt-4.1', knowledge_enabled: true, is_default: false, enabled: true, channels: ['qr'], tag_ids: [], created_at: '2' },
+      { id: AG_A2, account_id: 'acc-a', name: 'Suporte', instructions: 'Ajude', tone: 'calmo', model: 'gpt-4.1', knowledge_enabled: true, is_default: false, enabled: true, channels: ['qr'], tag_ids: [], created_at: '2', split_messages: true, max_chars_per_message: 80, max_messages_per_turn: 3 },
       { id: AG_B, account_id: 'acc-b', name: 'B', instructions: 'SEGREDO B', is_default: true, enabled: true, channels: [], tag_ids: [], created_at: '0' },
     ],
   };
 });
 
 describe('auth', () => {
-  it('agents and viewers are refused (403); no session 401; no module 403', async () => {
+  it('agents may read; agents and viewers cannot write or test (403); viewers cannot read', async () => {
+    h.role = 'agent';
+    expect((await GET()).status).toBe(200);
+    expect((await GET_ONE(req(undefined, 'GET'), p(AG_A))).status).toBe(200);
+    h.role = 'viewer';
+    expect((await GET()).status).toBe(403);
+    expect((await GET_ONE(req(undefined, 'GET'), p(AG_A))).status).toBe(403);
     for (const role of ['agent', 'viewer']) {
       h.role = role;
-      expect((await GET()).status).toBe(403);
       expect((await POST(req({ name: 'x', instructions: 'y' }))).status).toBe(403);
       expect((await PATCH(req({ enabled: false }, 'PATCH'), p(AG_A))).status).toBe(403);
       expect((await DELETE(req(undefined, 'DELETE'), p(AG_A))).status).toBe(403);
@@ -108,9 +118,34 @@ describe('auth', () => {
 });
 
 describe('CRUD', () => {
-  it('lists only the account agents, oldest first', async () => {
-    const { agents } = await (await GET()).json();
-    expect(agents.map((a: Row) => a.id)).toEqual([AG_A, AG_A2]);
+  it('lists only the account agents, oldest first, with the account provider and model', async () => {
+    const body = await (await GET()).json();
+    expect(body.agents.map((a: Row) => a.id)).toEqual([AG_A, AG_A2]);
+    expect(body).toMatchObject({ provider: 'openai', account_model: 'gpt-4.1-mini' });
+  });
+
+  it('GET one: the agent, provider and enabled knowledge items (admins only); foreign agent 404', async () => {
+    const body = await (await GET_ONE(req(undefined, 'GET'), p(AG_A2))).json();
+    expect(body).toMatchObject({ agent: { id: AG_A2, name: 'Suporte' }, provider: 'openai', knowledge_items: 1 });
+    h.role = 'agent';
+    expect((await (await GET_ONE(req(undefined, 'GET'), p(AG_A2))).json()).knowledge_items).toBeNull();
+    expect((await GET_ONE(req(undefined, 'GET'), p(AG_B))).status).toBe(404);
+    expect((await GET_ONE(req(undefined, 'GET'), p('nope'))).status).toBe(404);
+  });
+
+  it('PATCH stores the automatic-reply settings and stamps the pause server-side', async () => {
+    const res = await PATCH(
+      req({ mode: 'auto', paused: true, max_messages_per_turn: 2, handoff_keywords: ['humano'], business_hours: { enabled: true, timezone: 'America/Sao_Paulo', start: '09:00', end: '18:00', days: [1, 2] } }, 'PATCH'),
+      p(AG_A),
+    );
+    expect(res.status).toBe(200);
+    expect(agent(AG_A)).toMatchObject({ mode: 'auto', max_messages_per_turn: 2, handoff_keywords: ['humano'], business_hours: { days: [1, 2] } });
+    expect(typeof agent(AG_A)?.paused_at).toBe('string');
+    await PATCH(req({ paused: false }, 'PATCH'), p(AG_A));
+    expect(agent(AG_A)?.paused_at).toBeNull();
+    const bad = await PATCH(req({ max_chars_per_message: 5000 }, 'PATCH'), p(AG_A));
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toBe(AGENT_ERRORS.maxChars);
   });
 
   it('creates an agent; a new default clears the previous one of THIS account only', async () => {
@@ -167,9 +202,21 @@ describe('CRUD', () => {
 
 describe('POST /api/ai/agents/:id/test', () => {
   it('one budgeted model call with the agent instructions, tone and model', async () => {
-    h.runModelCall.mockResolvedValue({ text: 'Olá! Posso ajudar?' });
-    const res = await TEST(req({ message: 'Vocês abrem domingo?' }), p(AG_A2));
-    expect(await res.json()).toEqual({ text: 'Olá! Posso ajudar?' });
+    const text = 'Olá! Posso ajudar?\n\nAbrimos aos domingos das 9h às 13h. Quer que eu reserve um horário para você?';
+    h.runModelCall.mockResolvedValue({ text, model: 'gpt-4.1', inputTokens: 120, outputTokens: 30, costCents: 0.2 });
+    const res = await TEST(req({ message: 'Vocês abrem domingo?', customer_name: 'Ana' }), p(AG_A2));
+    const body = await res.json();
+    expect(body).toMatchObject({
+      text,
+      // split like an automatic reply: one message per paragraph
+      parts: ['Olá! Posso ajudar?', 'Abrimos aos domingos das 9h às 13h. Quer que eu reserve um horário para você?'],
+      model: 'gpt-4.1',
+      input_tokens: 120,
+      output_tokens: 30,
+      cost_cents: 0.2,
+      knowledge: [],
+    });
+    expect(typeof body.latency_ms).toBe('number');
     const input = h.runModelCall.mock.calls[0][0];
     expect(input).toMatchObject({ accountId: 'acc-a', feature: 'agent_test', conversationId: null, model: 'gpt-4.1' });
     expect(input.system).toContain('INSTRUÇÕES GERAIS');
@@ -177,6 +224,7 @@ describe('POST /api/ai/agents/:id/test', () => {
     expect(input.system.indexOf('INSTRUÇÕES GERAIS')).toBeLessThan(input.system.indexOf('Ajude'));
     expect(input.system).toContain('Tom de voz: calmo');
     expect(input.prompt).toContain('{"de":"cliente","texto":"Vocês abrem domingo?"}');
+    expect(input.prompt).toContain('Ana');
   });
 
   it('refuses an empty message and a foreign agent', async () => {

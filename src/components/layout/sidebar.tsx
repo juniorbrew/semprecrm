@@ -28,6 +28,7 @@ import {
   User,
   UserCog,
   Users,
+  Bot,
   Building2,
   UsersRound,
   Workflow,
@@ -116,6 +117,8 @@ const navItems: NavItem[] = [
   { href: "/broadcasts", label: "Disparos", icon: Radio, module: "broadcasts" },
   { href: "/automations", label: "Automações", icon: Zap, module: "automations" },
   { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows" },
+  // AI agents (migrations 064/065) — agent+ view, admin+ edit.
+  { href: "/ai/agents", label: "Agentes de IA", icon: Bot, module: "ai" },
 ];
 
 const bottomNavItems = [

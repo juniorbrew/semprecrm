@@ -1,10 +1,9 @@
 // ============================================================
-// /api/ai/agents — Settings → Inteligência Artificial → Agentes (064).
-// Admin+ and plan module `ai`.
+// /api/ai/agents — the "Agentes de IA" page (064, 065). Plan module `ai`.
 //
-// GET  → the account's agents (oldest first)
-// POST → create { name, instructions, tone?, model?, knowledge_enabled?,
-//        is_default?, enabled?, channels?, tag_ids? }
+// GET  (agent+) → { agents (oldest first), provider, account_model }
+// POST (admin+) → create; body = any field parseAgentInput accepts
+//        (name + instructions required)
 //
 // Caller's RLS client, account from the session. "Default" is unique
 // per account: it is set by the `ai_agents_set_default` RPC (one
@@ -18,14 +17,14 @@ import { audit } from '@/lib/audit-server';
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { AGENT_COLUMNS, AGENT_ERRORS, AGENT_LIMITS, parseAgentInput, type AiAgent } from '@/lib/ai/agents';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { checkAgentModel, setDefaultAgent } from '@/lib/ai/agents-store';
+import { checkAgentModel, loadAgentAccountAi, setDefaultAgent } from '@/lib/ai/agents-store';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const ctx = await requireRole('admin');
+    const ctx = await requireRole('agent');
     await requireModule(ctx, 'ai');
     const { data, error } = await ctx.supabase
       .from('ai_agents')
@@ -33,7 +32,7 @@ export async function GET() {
       .eq('account_id', ctx.accountId)
       .order('created_at', { ascending: true });
     if (error) throw new Error(`ai agents read failed: ${error.message}`);
-    return NextResponse.json({ agents: (data ?? []) as AiAgent[] });
+    return NextResponse.json({ agents: (data ?? []) as AiAgent[], ...(await loadAgentAccountAi(ctx)) });
   } catch (err) {
     return aiErrorResponse(err);
   }

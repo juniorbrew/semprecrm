@@ -1,8 +1,12 @@
 // ============================================================
-// /api/ai/agents/:id — one AI agent (064). Admin+ and module `ai`.
+// /api/ai/agents/:id — one AI agent (064, 065). Plan module `ai`.
 //
-// PATCH  → any subset of the fields POST accepts
-// DELETE → removes it (suggestions fall back to the next rule)
+// GET    (agent+) → { agent, provider, account_model, knowledge_items }
+//          knowledge_items = enabled knowledge-base items (only admins
+//          can read them — null for agents)
+// PATCH  (admin+) → any subset of the fields POST accepts, plus
+//          `paused: boolean` (stamps paused_at)
+// DELETE (admin+) → removes it (suggestions fall back to the next rule)
 //
 // Caller's RLS client, filtered by the session account: another
 // account's agent is a plain 404.
@@ -13,8 +17,9 @@ import { NextResponse } from 'next/server';
 import { AUDIT_ACTIONS } from '@/lib/audit';
 import { audit } from '@/lib/audit-server';
 import { requireModule, requireRole } from '@/lib/auth/account';
+import { hasMinRole } from '@/lib/auth/roles';
 import { AGENT_COLUMNS, AGENT_ERRORS, parseAgentInput, type AiAgent } from '@/lib/ai/agents';
-import { checkAgentModel, setDefaultAgent } from '@/lib/ai/agents-store';
+import { checkAgentModel, loadAgentAccountAi, setDefaultAgent } from '@/lib/ai/agents-store';
 import { aiErrorResponse } from '@/lib/ai/http';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
@@ -30,6 +35,40 @@ async function context(params: Params['params']) {
   await requireModule(ctx, 'ai');
   const limit = checkRateLimit(`admin:ai-agents:${ctx.userId}`, RATE_LIMITS.adminAction);
   return { ctx, id, limit };
+}
+
+export async function GET(_request: Request, { params }: Params) {
+  try {
+    const { id } = await params;
+    const ctx = await requireRole('agent');
+    await requireModule(ctx, 'ai');
+    if (!UUID_RE.test(id)) return notFound();
+    const { data, error } = await ctx.supabase
+      .from('ai_agents')
+      .select(AGENT_COLUMNS)
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .maybeSingle();
+    if (error) throw new Error(`ai agent read failed: ${error.message}`);
+    if (!data) return notFound();
+
+    let knowledgeItems: number | null = null;
+    if (hasMinRole(ctx.role, 'admin')) {
+      const { count, error: kbErr } = await ctx.supabase
+        .from('ai_knowledge_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', ctx.accountId)
+        .eq('enabled', true);
+      if (!kbErr) knowledgeItems = count ?? 0;
+    }
+    return NextResponse.json({
+      agent: data as AiAgent,
+      ...(await loadAgentAccountAi(ctx)),
+      knowledge_items: knowledgeItems,
+    });
+  } catch (err) {
+    return aiErrorResponse(err);
+  }
 }
 
 export async function PATCH(request: Request, { params }: Params) {

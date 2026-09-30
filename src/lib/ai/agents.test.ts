@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_ERRORS, agentInstructions, parseAgentInput, resolveAgent, suggestionInstructions } from './agents';
+import {
+  AGENT_ERRORS,
+  agentInstructions,
+  agentStatus,
+  DEFAULT_BUSINESS_HOURS,
+  parseAgentInput,
+  resolveAgent,
+  splitReply,
+  suggestionInstructions,
+} from './agents';
+import { AGENT_PRESETS } from './agent-presets';
 
 const TAG = '11111111-1111-4111-8111-111111111111';
 type Ch = 'official' | 'qr';
@@ -82,5 +92,115 @@ describe('suggestionInstructions', () => {
     expect(suggestionInstructions('  ', null)).toBeNull();
     expect(suggestionInstructions(null, agent)).toBe('Trate bem.');
     expect(suggestionInstructions('Geral.', agent)).toBe('Geral.\n\nInstruções do agente "VIP":\nTrate bem.');
+  });
+});
+
+describe('parseAgentInput — automatic-reply settings (065)', () => {
+  const bad = (body: Record<string, unknown>, error: string) =>
+    expect(parseAgentInput(body, true)).toEqual({ ok: false, error });
+
+  it('mode, pause, description', () => {
+    expect(parseAgentInput({ mode: 'auto', description: ' Vende ' }, true)).toEqual({
+      ok: true,
+      write: { mode: 'auto', description: 'Vende' },
+    });
+    bad({ mode: 'robot' }, AGENT_ERRORS.mode);
+    bad({ description: 'x'.repeat(301) }, AGENT_ERRORS.description);
+    const paused = parseAgentInput({ paused: true }, true);
+    expect(paused.ok && typeof paused.write.paused_at).toBe('string');
+    expect(parseAgentInput({ paused: false }, true)).toEqual({ ok: true, write: { paused_at: null } });
+    bad({ paused: 'yes' }, AGENT_ERRORS.flag);
+    // paused_at itself is never taken from the client
+    expect(parseAgentInput({ paused_at: '2020-01-01' }, true)).toEqual({ ok: true, write: {} });
+  });
+
+  it('business hours: shape, time zone, times and days', () => {
+    const ok = parseAgentInput({ business_hours: { ...DEFAULT_BUSINESS_HOURS, days: [5, 1, 1] } }, true);
+    expect(ok).toEqual({ ok: true, write: { business_hours: { ...DEFAULT_BUSINESS_HOURS, days: [1, 5] } } });
+    for (const over of [
+      { timezone: 'Mars/Olympus' },
+      { timezone: '' },
+      { start: '24:00' },
+      { end: '8:00' },
+      { days: [] },
+      { days: [7] },
+      { days: ['1'] },
+      { enabled: 'yes' },
+    ]) {
+      bad({ business_hours: { ...DEFAULT_BUSINESS_HOURS, ...over } }, AGENT_ERRORS.businessHours);
+    }
+    bad({ business_hours: null }, AGENT_ERRORS.businessHours);
+  });
+
+  it('numeric limits', () => {
+    expect(parseAgentInput({ max_chars_per_message: 80, max_messages_per_turn: 5, max_auto_replies_per_day: 200 }, true).ok).toBe(true);
+    bad({ max_chars_per_message: 79 }, AGENT_ERRORS.maxChars);
+    bad({ max_chars_per_message: 1001 }, AGENT_ERRORS.maxChars);
+    bad({ max_chars_per_message: 400.5 }, AGENT_ERRORS.maxChars);
+    bad({ max_messages_per_turn: 0 }, AGENT_ERRORS.maxMessages);
+    bad({ max_messages_per_turn: 6 }, AGENT_ERRORS.maxMessages);
+    bad({ max_auto_replies_per_day: 0 }, AGENT_ERRORS.maxReplies);
+    bad({ max_auto_replies_per_day: null }, AGENT_ERRORS.maxReplies);
+  });
+
+  it('hand-over words: trimmed, de-duplicated case-insensitively, capped', () => {
+    expect(parseAgentInput({ handoff_keywords: [' Atendente ', 'atendente', '', 'humano'] }, true)).toEqual({
+      ok: true,
+      write: { handoff_keywords: ['Atendente', 'humano'] },
+    });
+    bad({ handoff_keywords: Array.from({ length: 21 }, (_, i) => `k${i}`) }, AGENT_ERRORS.handoffKeywords);
+    bad({ handoff_keywords: ['x'.repeat(61)] }, AGENT_ERRORS.handoffKeywords);
+    bad({ handoff_keywords: 'atendente' }, AGENT_ERRORS.handoffKeywords);
+    bad({ handoff_message: 'x'.repeat(501) }, AGENT_ERRORS.handoffMessage);
+    expect(parseAgentInput({ handoff_message: '', ignore_groups: false }, true)).toEqual({
+      ok: true,
+      write: { handoff_message: null, ignore_groups: false },
+    });
+  });
+});
+
+describe('agentStatus', () => {
+  it('disabled > paused (auto only) > active', () => {
+    expect(agentStatus({ enabled: false, mode: 'auto', paused_at: 'x' })).toBe('disabled');
+    expect(agentStatus({ enabled: true, mode: 'auto', paused_at: 'x' })).toBe('paused');
+    expect(agentStatus({ enabled: true, mode: 'suggest', paused_at: 'x' })).toBe('active');
+    expect(agentStatus({ enabled: true, mode: 'auto', paused_at: null })).toBe('active');
+  });
+});
+
+describe('splitReply', () => {
+  it('one message per paragraph; long paragraphs cut at sentence ends', () => {
+    expect(splitReply('Oi!\n\nTudo bem?', 400, 3)).toEqual(['Oi!', 'Tudo bem?']);
+    const long = 'Primeira frase aqui. Segunda frase aqui. Terceira frase aqui.';
+    expect(splitReply(long, 45, 5)).toEqual(['Primeira frase aqui. Segunda frase aqui.', 'Terceira frase aqui.']);
+    for (const p of splitReply(long, 45, 5)) expect(p.length).toBeLessThanOrEqual(45);
+  });
+
+  it('never more than maxParts: the rest goes into the last message', () => {
+    expect(splitReply('a\n\nb\n\nc\n\nd', 400, 2)).toEqual(['a', 'b\n\nc\n\nd']);
+    expect(splitReply('  ', 400, 3)).toEqual([]);
+  });
+});
+
+describe('AGENT_PRESETS', () => {
+  it('every template except "blank" is a valid agent with pt-BR copy', () => {
+    for (const p of AGENT_PRESETS.filter((x) => x.id !== 'blank')) {
+      const parsed = parseAgentInput(
+        { name: p.name, description: p.description, tone: p.tone, instructions: p.instructions },
+        false,
+      );
+      expect(parsed.ok, p.id).toBe(true);
+      expect(p.instructions).toMatch(/Nunca|Não invente/);
+    }
+    expect(AGENT_PRESETS.map((p) => p.id)).toEqual(['sales', 'support', 'general', 'blank']);
+  });
+
+  it('sales never invents prices', () => {
+    expect(AGENT_PRESETS[0].instructions).toContain('Nunca invente preços');
+  });
+
+  it('"blank" needs the user to write name and instructions', () => {
+    const blank = AGENT_PRESETS.find((p) => p.id === 'blank')!;
+    expect(parseAgentInput({ name: blank.name, instructions: blank.instructions }, false).ok).toBe(false);
   });
 });
