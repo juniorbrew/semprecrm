@@ -15,6 +15,7 @@
 import type { Conversation, ConversationPriority, WhatsAppChannel } from '@/types'
 import { matchesRadar, type RadarKey, type RadarPreferences } from '@/lib/radar/classify'
 import { isInQueue, queueWaitingSince } from '@/lib/radar/queue'
+import { isSlaBreached } from '@/lib/support/sla'
 import { tabConversations, type InboxTab, type LiveFilter } from './triage'
 
 export const INBOX_PAGE_SIZE = 50
@@ -62,20 +63,30 @@ export interface InboxView {
   categoryId?: string | null
   /** Support priority (migration 071); null / absent = any. */
   priority?: ConversationPriority | null
+  /** Team (migration 073); null / absent = any. */
+  teamId?: string | null
+  /** Only conversations past a pending SLA target (migration 072). */
+  slaBreached?: boolean
 }
 
 /** Trailing RPC arguments shared by the page, counts and search functions. */
-export function facetArgs(view: Pick<InboxView, 'tagIds' | 'channel' | 'categoryId' | 'priority'>): {
+export function facetArgs(
+  view: Pick<InboxView, 'tagIds' | 'channel' | 'categoryId' | 'priority' | 'teamId' | 'slaBreached'>,
+): {
   p_tag_ids: string[] | null
   p_channel: WhatsAppChannel | null
   p_category_id: string | null
   p_priority: ConversationPriority | null
+  p_team_id: string | null
+  p_sla_breached: boolean
 } {
   return {
     p_tag_ids: view.tagIds.length ? view.tagIds : null,
     p_channel: view.channel,
     p_category_id: view.categoryId ?? null,
     p_priority: view.priority ?? null,
+    p_team_id: view.teamId ?? null,
+    p_sla_breached: view.slaBreached === true,
   }
 }
 
@@ -90,6 +101,8 @@ export function viewKey(view: InboxView): string {
     view.channel ?? '',
     view.categoryId ?? '',
     view.priority ?? '',
+    view.teamId ?? '',
+    view.slaBreached ? 1 : 0,
   ].join('|')
 }
 
@@ -152,7 +165,7 @@ export function pageArgs(
 
 /** Arguments of `inbox_counts`. */
 export function countsArgs(
-  view: Pick<InboxView, 'live' | 'unread' | 'radar' | 'tagIds' | 'channel' | 'categoryId' | 'priority'>,
+  view: Pick<InboxView, 'live' | 'unread' | 'radar' | 'tagIds' | 'channel' | 'categoryId' | 'priority' | 'teamId' | 'slaBreached'>,
   opts: { accountId: string; prefs: RadarPreferences },
 ): Record<string, unknown> {
   return {
@@ -169,11 +182,14 @@ export function countsArgs(
 export interface InboxCounts {
   tabs: Record<InboxTab, number>
   radar: Record<RadarKey, number>
+  /** "Estourados" chip (migration 072). */
+  slaBreached: number
 }
 
 export const EMPTY_COUNTS: InboxCounts = {
   tabs: { queue: 0, mine: 0, all: 0, closed: 0, archived: 0 },
   radar: { waiting: 0, unassigned: 0, cooling: 0 },
+  slaBreached: 0,
 }
 
 /** Row of `inbox_counts` (bigints may arrive as strings) -> UI shape. */
@@ -196,6 +212,7 @@ export function parseCounts(row: Record<string, unknown> | null | undefined): In
       unassigned: n('radar_unassigned'),
       cooling: n('radar_cooling'),
     },
+    slaBreached: n('radar_sla_breached'),
   }
 }
 
@@ -243,6 +260,8 @@ export function matchesView(c: Conversation, view: InboxView, ctx: MatchCtx): bo
   if (view.channel && (c.channel ?? 'official') !== view.channel) return false
   if (view.categoryId && (c.category_id ?? null) !== view.categoryId) return false
   if (view.priority && (c.priority ?? 'normal') !== view.priority) return false
+  if (view.teamId && (c.team_id ?? null) !== view.teamId) return false
+  if (view.slaBreached && !isSlaBreached(c, ctx.now)) return false
   if (view.radar && !matchesRadar(c, view.radar, ctx.prefs, ctx.now)) return false
   if (view.unread && !(c.unread_count > 0)) return false
   if (view.tab === 'queue') return isInQueue(c, ctx.prefs, ctx.now)

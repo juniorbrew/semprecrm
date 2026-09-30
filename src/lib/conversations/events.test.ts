@@ -309,3 +309,28 @@ describe('one pill per resolve action', () => {
     expect(formatConversationEvent({ ...base, resolution: 'expired' }, 'en-US')).toBe('Resolved as: no reply from customer')
   })
 })
+
+describe('support events (migrations 072-073)', () => {
+  const fmt = (type: ConversationEventRecord['event_type'], payload = {}, over: Partial<ConversationEventRecord> = {}, lang: 'pt-BR' | 'en-US' = 'pt-BR') =>
+    formatConversationEvent(eventFromRecord(record({ event_type: type, actor_user_id: null, payload, ...over }), names), lang)
+
+  it('sla_warning / sla_breached name the target', () => {
+    expect(fmt('sla_warning', { kind: 'first_response' })).toBe('Prazo de primeira resposta perto de vencer')
+    expect(fmt('sla_breached', { kind: 'resolution' })).toBe('Prazo de resolução estourado')
+    expect(fmt('sla_breached', { kind: 'first_response' }, {}, 'en-US')).toBe('First response deadline breached')
+  })
+
+  it('team_changed reads for a person, a routing rule and a removal', () => {
+    expect(fmt('team_changed', { team_name: 'Financeiro' })).toBe('Equipe definida: Financeiro')
+    expect(fmt('team_changed', { team_name: 'Financeiro' }, { actor_user_id: 'u1' })).toBe('Ana definiu a equipe Financeiro')
+    expect(fmt('team_changed', { team_name: 'Financeiro', source: 'routing' })).toBe('Encaminhada para a equipe Financeiro')
+    expect(fmt('team_changed', { team_name: null }, { actor_user_id: 'u1' })).toBe('Ana removeu a equipe')
+    expect(fmt('team_changed', { team_name: 'Billing', source: 'routing' }, {}, 'en-US')).toBe('Routed to the Billing team')
+  })
+
+  it('every new type is visible in the thread', () => {
+    for (const type of ['sla_warning', 'sla_breached', 'team_changed'] as const) {
+      expect(isVisibleEvent({ type })).toBe(true)
+    }
+  })
+})

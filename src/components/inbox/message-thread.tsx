@@ -10,7 +10,13 @@ import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TaskDrawer } from "@/components/tasks";
 import { SubjectLine, TriageChips } from "@/components/inbox/triage-chips";
+import { SlaLine } from "@/components/inbox/sla-indicator";
+import { TeamChip } from "@/components/inbox/team-chip";
 import { useConversationCategories } from "@/hooks/use-conversation-categories";
+import { useSlaPolicies } from "@/hooks/use-sla-policies";
+import { useTeams } from "@/hooks/use-teams";
+import { teamCopy } from "@/lib/support/teams";
+import { activeSlaTarget } from "@/lib/support/sla";
 import { useTriageSettings } from "@/hooks/use-triage-settings";
 import { DEFAULT_RESOLUTION, RESOLVE_AS_OPTIONS, resolutionNote, supportCopy } from "@/lib/support/model";
 import { manualTriagePatch, triageEvents, type TriageChange } from "@/lib/support/triage-fields";
@@ -462,6 +468,9 @@ export function MessageThread({
   // Support triage (migration 071): categories, the "Classificar" action.
   const support = supportCopy(language);
   const { active: activeCategories, byId: categoryById } = useConversationCategories();
+  const { active: activeTeams, byId: teamById } = useTeams();
+  const { hasPolicies } = useSlaPolicies();
+  const teams = teamCopy(language);
   const triageSettings = useTriageSettings();
   const [classifying, setClassifying] = useState(false);
   const [reclassifyOpen, setReclassifyOpen] = useState(false);
@@ -1269,8 +1278,66 @@ export function MessageThread({
         categoryById,
       );
       for (const e of events) void logEvent(e);
+      // A category may have a routing rule: the server applies it (team and,
+      // when nobody owns the conversation, an available member) and answers
+      // with the result so the header updates at once.
+      if (change.category_id) {
+        void fetch("/api/support/routing", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ conversationId: conversation.id }),
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((out: { routed?: boolean; team_id?: string; assigned_agent_id?: string | null } | null) => {
+            if (!out?.routed) return;
+            onConversationPatch?.(conversation.id, { team_id: out.team_id ?? null });
+            if (out.assigned_agent_id) onAssignChange(conversation.id, out.assigned_agent_id);
+          })
+          .catch(() => undefined);
+      }
     },
-    [conversation, categoryById, logEvent, onConversationPatch, support.saveFailed],
+    [conversation, categoryById, logEvent, onConversationPatch, onAssignChange, support.saveFailed],
+  );
+
+  // The team chip: a person's choice (team_source 'manual'); it moves no owner.
+  const handleTeamChange = useCallback(
+    async (teamId: string | null) => {
+      if (!conversation) return;
+      const { error } = await createClient().from("conversations").update({ team_id: teamId }).eq("id", conversation.id);
+      if (error) {
+        console.error("Failed to update team:", error);
+        toast.error(support.saveFailed);
+        return;
+      }
+      onConversationPatch?.(conversation.id, { team_id: teamId, team_source: teamId ? "manual" : null });
+      void logEvent({
+        event_type: "team_changed",
+        payload: { team_id: teamId, team_name: teamId ? (teamById.get(teamId)?.name ?? null) : null },
+      });
+    },
+    [conversation, teamById, logEvent, onConversationPatch, support.saveFailed],
+  );
+
+  // "Transferir para equipe": the server picks an available member round-robin.
+  const handleTransferToTeam = useCallback(
+    async (teamId: string) => {
+      if (!conversation) return;
+      try {
+        const res = await fetch("/api/support/routing", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ conversationId: conversation.id, teamId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const out = (await res.json()) as { team_id: string; assigned_agent_id: string | null };
+        onConversationPatch?.(conversation.id, { team_id: out.team_id, team_source: "manual" });
+        onAssignChange(conversation.id, out.assigned_agent_id);
+      } catch (err) {
+        console.error("Failed to transfer to team:", err);
+        toast.error(support.saveFailed);
+      }
+    },
+    [conversation, onAssignChange, onConversationPatch, support.saveFailed],
   );
 
   const handleClassify = useCallback(async (force = false) => {
@@ -1779,6 +1846,8 @@ export function MessageThread({
     (!entitlementsReady || modules.ai) &&
     triageSettings.aiEnabled &&
     triageSettings.triageEnabled;
+  const showTeamChip = activeTeams.length > 0 || !!conversation.team_id;
+  const showSla = hasPolicies || !!activeSlaTarget(conversation);
   const resolutionNoteKey = resolutionNote(status, conversation.resolution);
   const resolutionLabel = resolutionNoteKey ? support.resolutions[resolutionNoteKey] : null;
 
@@ -1983,6 +2052,25 @@ export function MessageThread({
                     </DropdownMenuItem>
                   );
                 })
+              )}
+              {activeTeams.length > 0 && (
+                <>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel data-no-translate>{teams.transferToTeam}</DropdownMenuLabel>
+                  </DropdownMenuGroup>
+                  {activeTeams.map((team) => (
+                    <DropdownMenuItem
+                      key={team.id}
+                      data-no-translate
+                      onClick={() => void handleTransferToTeam(team.id)}
+                      className="text-sm text-popover-foreground"
+                    >
+                      <span className="flex-1">{team.name}</span>
+                      {team.id === conversation.team_id && <Check className="ml-2 h-3 w-3" />}
+                    </DropdownMenuItem>
+                  ))}
+                </>
               )}
               {assignedAgentId && (
                 <>
@@ -2224,16 +2312,28 @@ export function MessageThread({
 
         {/* Triage chips: own full-width row under name + actions, so they
             never share a line (or get covered by) the action buttons. */}
-        {supportMode && (
+        {(supportMode || showTeamChip || showSla) && (
           <div className="flex w-full basis-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <TriageChips
-              conversation={conversation}
-              categories={activeCategories}
-              byId={categoryById}
-              canEdit={canTriage}
-              onCategory={(id) => void handleTriageChange({ category_id: id })}
-              onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
-            />
+            {supportMode && (
+              <TriageChips
+                conversation={conversation}
+                categories={activeCategories}
+                byId={categoryById}
+                canEdit={canTriage}
+                onCategory={(id) => void handleTriageChange({ category_id: id })}
+                onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
+              />
+            )}
+            {showTeamChip && (
+              <TeamChip
+                teamId={conversation.team_id}
+                teams={activeTeams}
+                byId={teamById}
+                canEdit={canTriage}
+                onChange={(id) => void handleTeamChange(id)}
+              />
+            )}
+            {showSla && <SlaLine conversation={conversation} />}
             {resolutionLabel && (
               <span data-no-translate className="truncate text-xs text-muted-foreground">
                 {resolutionLabel}

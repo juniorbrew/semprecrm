@@ -95,6 +95,10 @@ export interface TriageState {
   categoryId?: string | null
   /** Support priority filter (migration 071); null = any. */
   priority?: ConversationPriority | null
+  /** Team filter (migration 073); null = any. */
+  teamId?: string | null
+  /** Only conversations past a pending SLA target (migration 072). */
+  slaBreached?: boolean
 }
 
 export const DEFAULT_TRIAGE: TriageState = {
@@ -104,6 +108,8 @@ export const DEFAULT_TRIAGE: TriageState = {
   channel: null,
   categoryId: null,
   priority: null,
+  teamId: null,
+  slaBreached: false,
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -124,6 +130,8 @@ export function migrateTriage(raw: unknown): TriageState {
     channel?: unknown
     categoryId?: unknown
     priority?: unknown
+    teamId?: unknown
+    slaBreached?: unknown
   }
   let tab: InboxTab =
     stored.tab === 'unassigned'
@@ -158,5 +166,6 @@ export function migrateTriage(raw: unknown): TriageState {
     stored.priority === 'low' || stored.priority === 'normal' || stored.priority === 'high' || stored.priority === 'urgent'
       ? stored.priority
       : null
-  return { tab, live, tagIds, channel, categoryId, priority }
+  const teamId = typeof stored.teamId === 'string' && UUID_RE.test(stored.teamId) ? stored.teamId : null
+  return { tab, live, tagIds, channel, categoryId, priority, teamId, slaBreached: stored.slaBreached === true }
 }

@@ -187,6 +187,8 @@ describe('keyset pagination', () => {
       p_channel: 'qr',
       p_category_id: null,
       p_priority: null,
+      p_team_id: null,
+      p_sla_breached: false,
     })
     const first = pageArgs({ ...view, radar: null, search: '' }, { accountId: 'acc', prefs, pattern: null })
     // No tags / channel -> NULL parameters (backwards compatible with 067 callers).
@@ -273,6 +275,25 @@ describe('counts parity', () => {
     })
   })
 
+  it('team and SLA breached map to p_team_id / p_sla_breached for list and counts (072, 073)', () => {
+    const facets = { tagIds: [], channel: null, teamId: 'team-1', slaBreached: true }
+    const list = pageArgs({ tab: 'all', live: 'live', unread: false, radar: null, search: '', ...facets }, { accountId: 'a', prefs, pattern: null })
+    const counts = countsArgs({ live: 'live', unread: false, radar: null, ...facets }, { accountId: 'a', prefs })
+    expect(list).toMatchObject({ p_team_id: 'team-1', p_sla_breached: true })
+    expect(counts).toMatchObject({ p_team_id: 'team-1', p_sla_breached: true })
+  })
+
+  it('parseCounts reads the Estourados chip and defaults it to 0', () => {
+    expect(parseCounts({ radar_sla_breached: '4' }).slaBreached).toBe(4)
+    expect(parseCounts({}).slaBreached).toBe(0)
+    expect(parseCounts(null).slaBreached).toBe(0)
+  })
+
+  it('viewKey changes with team and SLA breached', () => {
+    const base: InboxView = { tab: 'all', live: 'live', unread: false, radar: null, search: '', tagIds: [], channel: null }
+    expect(new Set([viewKey(base), viewKey({ ...base, teamId: 't' }), viewKey({ ...base, slaBreached: true })]).size).toBe(3)
+  })
+
   it('viewKey changes with category and priority', () => {
     const base: InboxView = { tab: 'all', live: 'live', unread: false, radar: null, search: '', tagIds: [], channel: null }
     const keys = new Set([viewKey(base), viewKey({ ...base, categoryId: 'c' }), viewKey({ ...base, priority: 'high' })])
@@ -293,6 +314,8 @@ describe('counts parity', () => {
       p_channel: null,
       p_category_id: null,
       p_priority: null,
+      p_team_id: null,
+      p_sla_breached: false,
     })
     // Counts and list receive the same facet arguments (parity with 068).
     const facets = { tagIds: ['t1'], channel: 'official' as const }
@@ -337,6 +360,19 @@ describe('realtime merge rules', () => {
     expect(shouldInsertUnknown(conv('u'), view({ tab: 'mine' }), { hasMore: false, boundary: null }, ctx)).toBe(false)
     expect(shouldInsertUnknown(conv('u', { assigned_agent_id: ME }), view({ tab: 'mine' }), { hasMore: false, boundary: null }, ctx)).toBe(true)
     expect(shouldInsertUnknown(conv('u'), view({ unread: true }), { hasMore: false, boundary: null }, ctx)).toBe(false)
+  })
+
+  it('team and SLA breached filters apply to rows arriving through realtime', () => {
+    const st = { hasMore: false, boundary: null }
+    expect(shouldInsertUnknown(conv('n', { team_id: 't1' }), view({ teamId: 't1' }), st, ctx)).toBe(true)
+    expect(shouldInsertUnknown(conv('n', { team_id: 't2' }), view({ teamId: 't1' }), st, ctx)).toBe(false)
+    expect(shouldInsertUnknown(conv('n'), view({ teamId: 't1' }), st, ctx)).toBe(false)
+    const overdue = conv('o', { first_response_due_at: iso(5) })
+    expect(shouldInsertUnknown(overdue, view({ slaBreached: true }), st, ctx)).toBe(true)
+    expect(shouldInsertUnknown(conv('f', { first_response_due_at: iso(-5) }), view({ slaBreached: true }), st, ctx)).toBe(false)
+    expect(shouldInsertUnknown(conv('p'), view({ slaBreached: true }), st, ctx)).toBe(false)
+    // Answered: the first-response target is over, only a resolution deadline can breach.
+    expect(shouldInsertUnknown(conv('a', { first_response_due_at: iso(5), first_response_at: iso(10) }), view({ slaBreached: true }), st, ctx)).toBe(false)
   })
 
   it('a row older than the loaded window waits for "Carregar mais"', () => {

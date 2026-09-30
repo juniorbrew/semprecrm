@@ -68,6 +68,11 @@ export function selectRoundRobin(
 export interface PickRoundRobinOptions {
   /** Injected clock for tests. */
   now?: Date
+  /**
+   * Only these users may be picked (a team's members, migration 073).
+   * Workload still counts every open conversation of the account.
+   */
+  memberIds?: readonly string[]
 }
 
 /**
@@ -82,11 +87,14 @@ export async function pickRoundRobinAssignee(
   opts: PickRoundRobinOptions = {},
 ): Promise<string | null> {
   try {
-    const { data: members, error: membersErr } = await db
+    if (opts.memberIds && opts.memberIds.length === 0) return null
+    let membersQuery = db
       .from('profiles')
       .select('user_id, account_role, availability, last_assigned_at')
       .eq('account_id', accountId)
       .eq('availability', 'available')
+    if (opts.memberIds) membersQuery = membersQuery.in('user_id', [...opts.memberIds])
+    const { data: members, error: membersErr } = await membersQuery
     if (membersErr) {
       console.error('[round-robin] members lookup failed:', membersErr)
       return null

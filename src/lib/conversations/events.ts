@@ -20,6 +20,8 @@ import type {
   ConversationStatus,
 } from '@/types'
 import { supportCopy } from '@/lib/support/model'
+import { slaCopy } from '@/lib/support/sla'
+import { teamCopy } from '@/lib/support/teams'
 import type { Language } from '@/lib/i18n'
 import { normalizeTransferReason } from './transfer-reason'
 
@@ -67,8 +69,12 @@ export interface ConversationEvent {
   priority?: ConversationPriority
   /** `resolution_set` */
   resolution?: ConversationResolution
-  /** 'ai' when the automatic triage wrote it (no human actor). */
-  source?: 'ai'
+  /** 'ai' when the automatic triage wrote it; 'routing' / 'automation' for rules. */
+  source?: 'ai' | 'routing' | 'automation'
+  /** `sla_warning` / `sla_breached`: which target. */
+  kind?: 'first_response' | 'resolution'
+  /** `team_changed`: null = team removed. */
+  team_name?: string | null
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -136,6 +142,8 @@ export function eventFromRecord(
     priority: payload.priority,
     resolution: payload.resolution,
     source: payload.source,
+    kind: payload.kind,
+    team_name: payload.team_name,
     reason:
       row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
@@ -431,6 +439,22 @@ export function formatConversationEvent(
           ? `${actor} resolveu como: ${label.toLowerCase()}`
           : `${actor} resolved as: ${label.toLowerCase()}`
         : s.eventResolution(label)
+    }
+    case 'sla_warning':
+      return slaCopy(language).warning(event.kind ?? 'first_response')
+    case 'sla_breached':
+      return slaCopy(language).breached(event.kind ?? 'first_response')
+    case 'team_changed': {
+      const tc = teamCopy(language)
+      if (event.source === 'routing') return event.team_name ? tc.eventRouted(event.team_name) : tc.eventTeamCleared
+      if (!event.team_name) {
+        return actor ? (pt ? `${actor} removeu a equipe` : `${actor} removed the team`) : tc.eventTeamCleared
+      }
+      return actor
+        ? pt
+          ? `${actor} definiu a equipe ${event.team_name}`
+          : `${actor} set the team to ${event.team_name}`
+        : tc.eventTeamSet(event.team_name)
     }
     default:
       return ''
