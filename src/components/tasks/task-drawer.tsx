@@ -27,8 +27,13 @@ import {
   addTaskComment,
   attachAuthors,
   completeTask,
+  buildDrawerTaskInput,
   createTask,
   deleteTask,
+  isDueInPast,
+  resolveTaskReminder,
+  validateReminderTime,
+  type TaskReminderMode,
   fromDateTimeLocal,
   isTaskDone,
   listTaskComments,
@@ -89,6 +94,8 @@ export interface TaskDrawerProps {
   onCreated?: (task: Task) => void;
   onUpdated?: (task: Task) => void;
   onDeleted?: (taskId: string) => void;
+  /** Create mode: the contact is fixed (inbox panel) — no unlink/replace. */
+  lockContact?: boolean;
 }
 
 /**
@@ -107,6 +114,7 @@ export function TaskDrawer({
   onCreated,
   onUpdated,
   onDeleted,
+  lockContact,
 }: TaskDrawerProps) {
   const own = useTaskStatuses({ enabled: !statusesProp && open });
   const ownMembers = useTaskMembers({ enabled: !membersProp && open });
@@ -131,6 +139,7 @@ export function TaskDrawer({
           onCreated={onCreated}
           onUpdated={onUpdated}
           onDeleted={onDeleted}
+          lockContact={lockContact}
         />
       </SheetContent>
     </Sheet>
@@ -150,6 +159,7 @@ interface BodyProps {
   onCreated?: (task: Task) => void;
   onUpdated?: (task: Task) => void;
   onDeleted?: (taskId: string) => void;
+  lockContact?: boolean;
 }
 
 function TaskDrawerBody({
@@ -161,6 +171,7 @@ function TaskDrawerBody({
   onCreated,
   onUpdated,
   onDeleted,
+  lockContact,
 }: BodyProps) {
   const supabase = useMemo(() => createClient(), []);
   const { t, language } = useLanguage();
@@ -195,6 +206,11 @@ function TaskDrawerBody({
   const [conversationId, setConversationId] = useState(
     task?.conversation_id ?? defaults?.conversation_id ?? "",
   );
+
+  // Create mode only: optional reminder (migration 057 `remind_at`).
+  const [remindMode, setRemindMode] = useState<TaskReminderMode>("none");
+  const [remindLocal, setRemindLocal] = useState("");
+  const defaultConversationId = defaults?.conversation_id ?? "";
 
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<"complete" | "reopen" | "delete" | null>(null);
@@ -278,22 +294,29 @@ function TaskDrawerBody({
       toast.error(t("Your profile is not linked to an account."));
       return;
     }
+    const dueIso = fromDateTimeLocal(dueLocal);
+    const remindIso = resolveTaskReminder(remindMode, dueIso, remindLocal);
+    if (remindMode !== "none" && (!remindIso || validateReminderTime(new Date(remindIso)))) {
+      toast.error(t("Pick a reminder time in the future"));
+      return;
+    }
     setSaving(true);
     try {
       const created = await createTask(
         supabase,
         { accountId, userId: user?.id ?? null, statuses },
-        {
+        buildDrawerTaskInput({
           title: trimmed,
           description,
           priority,
-          status_id: statusId || null,
-          assignee_user_id: assignee || null,
-          contact_id: contactId || null,
-          conversation_id: conversationId || null,
-          deal_id: dealId || null,
-          due_at: fromDateTimeLocal(dueLocal),
-        },
+          statusId,
+          assignee,
+          contactId,
+          conversationId,
+          dealId,
+          dueIso,
+          remindIso,
+        }),
       );
       toast.success(t("Task created"));
       if (created.assignee_user_id) {
@@ -389,8 +412,9 @@ function TaskDrawerBody({
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         {/* Title */}
         <div className="grid gap-1.5">
-          <Label className="text-muted-foreground">{t("Title")}</Label>
+          <Label htmlFor="task-title" className="text-muted-foreground">{t("Title")}</Label>
           <Input
+            id="task-title"
             value={title}
             disabled={readOnly}
             autoFocus={!isEdit}
@@ -512,8 +536,47 @@ function TaskDrawerBody({
               }}
               className="border-border bg-muted text-foreground"
             />
+            {!isEdit && isDueInPast(fromDateTimeLocal(dueLocal)) && (
+              <p role="alert" className="flex items-center gap-1 text-xs text-amber-500">
+                <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
+                {t("This due date is in the past")}
+              </p>
+            )}
           </div>
         </div>
+
+        {/* Reminder (create only) */}
+        {!isEdit && (
+          <div className="grid gap-1.5">
+            <Label htmlFor="task-remind" className="text-muted-foreground">
+              {t("Reminder")}
+            </Label>
+            <select
+              id="task-remind"
+              value={remindMode}
+              onChange={(e) => setRemindMode(e.target.value as TaskReminderMode)}
+              className={SELECT_CLASS}
+            >
+              <option value="none">{t("No reminder")}</option>
+              <option value="at_due" disabled={!dueLocal}>
+                {t("At due time")}
+              </option>
+              <option value="hour_before" disabled={!dueLocal}>
+                {t("1 hour before")}
+              </option>
+              <option value="custom">{t("Custom time")}</option>
+            </select>
+            {remindMode === "custom" && (
+              <Input
+                type="datetime-local"
+                aria-label={t("Reminder")}
+                value={remindLocal}
+                onChange={(e) => setRemindLocal(e.target.value)}
+                className="border-border bg-muted text-foreground"
+              />
+            )}
+          </div>
+        )}
 
         {/* Links */}
         <div className="grid gap-3 rounded-lg border border-border/60 p-3">
@@ -524,7 +587,7 @@ function TaskDrawerBody({
             <Label className="text-muted-foreground">{t("Contact")}</Label>
             <ContactPicker
               contact={contact}
-              disabled={readOnly}
+              disabled={readOnly || lockContact}
               onChange={(next) => {
                 setContact(next);
                 const nextId = next?.id ?? "";
@@ -574,7 +637,18 @@ function TaskDrawerBody({
               </div>
             </div>
           )}
-          {conversationId && (
+          {!isEdit && defaultConversationId && (
+            <label className="flex items-center gap-2 text-xs text-foreground">
+              <input
+                type="checkbox"
+                checked={!!conversationId}
+                onChange={(e) => setConversationId(e.target.checked ? defaultConversationId : "")}
+                className="h-3.5 w-3.5 accent-primary"
+              />
+              {t("Link to the current conversation")}
+            </label>
+          )}
+          {isEdit && conversationId && (
             <div className="flex items-center justify-between gap-2 text-xs">
               <Link
                 href={inboxConversationHref(conversationId)}

@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   REMINDER_MAX_AHEAD_MS,
+  buildDrawerTaskInput,
+  isDueInPast,
+  resolveTaskReminder,
   buildReminderTask,
   canSaveReminder,
   formatReminderWhen,
@@ -102,5 +105,52 @@ describe('canSaveReminder', () => {
     expect(canSaveReminder({ saving: false, statusesLoaded: 0 })).toBe(false);
     expect(canSaveReminder({ saving: true, statusesLoaded: 3 })).toBe(false);
     expect(canSaveReminder({ saving: false, statusesLoaded: 3 })).toBe(true);
+  });
+});
+
+describe('task drawer helpers', () => {
+  const due = new Date(2026, 8, 20, 15, 0, 0).toISOString();
+
+  it('resolves the reminder modes', () => {
+    expect(resolveTaskReminder('none', due, '')).toBeNull();
+    expect(resolveTaskReminder('at_due', due, '')).toBe(due);
+    expect(resolveTaskReminder('hour_before', due, '')).toBe(new Date(2026, 8, 20, 14, 0, 0).toISOString());
+    expect(resolveTaskReminder('at_due', null, '')).toBeNull();
+    expect(resolveTaskReminder('custom', null, '2026-09-21T09:30')).toBe(new Date(2026, 8, 21, 9, 30).toISOString());
+    expect(resolveTaskReminder('custom', null, '')).toBeNull();
+  });
+
+  it('flags a past due date', () => {
+    expect(isDueInPast(due, now)).toBe(false);
+    expect(isDueInPast(new Date(now - 1000).toISOString(), now)).toBe(true);
+    expect(isDueInPast(null, now)).toBe(false);
+  });
+
+  it('builds the create payload with contact, conversation, assignee and remind_at', () => {
+    expect(
+      buildDrawerTaskInput({
+        title: '  Ligar  ',
+        description: '',
+        priority: 'high',
+        statusId: '',
+        assignee: 'u-1',
+        contactId: 'c-1',
+        conversationId: 'conv-1',
+        dealId: '',
+        dueIso: due,
+        remindIso: due,
+      }),
+    ).toEqual({
+      title: 'Ligar',
+      description: '',
+      priority: 'high',
+      status_id: null,
+      assignee_user_id: 'u-1',
+      contact_id: 'c-1',
+      conversation_id: 'conv-1',
+      deal_id: null,
+      due_at: due,
+      remind_at: due,
+    });
   });
 });
