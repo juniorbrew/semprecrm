@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import Link from "next/link";
 import {
+  ArrowRight,
   BarChart3,
+  Bot,
   Check,
   ExternalLink,
   KeyRound,
@@ -37,7 +40,6 @@ import {
   type AiProvider,
 } from "@/lib/ai/providers";
 import { cn } from "@/lib/utils";
-import { AiAgents } from "./ai-agents";
 import { AiKnowledge } from "./ai-knowledge";
 import { SettingsChip } from "./settings-chip";
 import { SettingsPanelHead } from "./settings-panel-head";
@@ -723,8 +725,24 @@ export function AiSettings() {
           </CardContent>
         </Card>
 
-        {/* Agents (migration 064) */}
-        <AiAgents provider={state.settings.provider} />
+        {/* Agents (064/065) have their own page. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-foreground">
+              <Bot className="size-4 text-primary" />
+              {t("AI agents")}
+            </CardTitle>
+            <CardDescription className="text-muted-foreground">
+              {t("Different instructions per team, number or tag, with suggestion or automatic mode. Managed on their own page.")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/ai/agents" className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
+              {t("Open AI agents")}
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </CardContent>
+        </Card>
 
         {/* Knowledge base (migration 063) */}
         <AiKnowledge />
