@@ -90,7 +90,8 @@ describe('support actions of the automation engine', () => {
   it('set_category logs the change and runs the category routing rule', async () => {
     await runSupportStep(step('set_category', { category_id: 'cat' }), args())
     expect(h.inserts[0].payload).toMatchObject({ event_type: 'category_changed', payload: { category_id: 'cat', category_name: 'Cobrança', source: 'automation' } })
-    expect(h.routing).toHaveBeenCalledWith(expect.anything(), 'c1', { accountId: 'acc' })
+    // The routing it triggers is one level deeper than the run (loop protection).
+    expect(h.routing).toHaveBeenCalledWith(expect.anything(), 'c1', { accountId: 'acc', depth: 2, origin: 'auto-1' })
   })
 
   it('assign_team logs team_changed with the team name', async () => {

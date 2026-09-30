@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     if (typeof teamId === 'string') {
       const out = await transferToTeam(admin, { accountId: ctx.accountId, conversationId, teamId, actorUserId: ctx.userId })
       if (out.status === 'failed') {
-        const status = out.reason === 'write_failed' ? 500 : out.reason === 'closed' ? 409 : 404
+        const status = out.reason === 'write_failed' ? 500 : out.reason === 'closed' || out.reason === 'changed_meanwhile' ? 409 : 404
         return NextResponse.json({ error: out.reason }, { status })
       }
       return NextResponse.json({ routed: true, team_id: out.teamId, assigned_agent_id: out.assigneeId })

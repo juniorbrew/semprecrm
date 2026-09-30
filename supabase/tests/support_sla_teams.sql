@@ -95,7 +95,12 @@ INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
  ('72000000-0000-4000-8000-0000000000d2', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000002', 'Bruno'),
  ('72000000-0000-4000-8000-0000000000d3', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000003', 'Carla'),
  ('72000000-0000-4000-8000-0000000000d4', '72000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ids), '5511972000004', 'Outro'),
- ('72000000-0000-4000-8000-0000000000d5', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000005', 'Dora');
+ ('72000000-0000-4000-8000-0000000000d5', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000005', 'Dora'),
+ ('72000000-0000-4000-8000-0000000000d6', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000006', 'C6'),
+ ('72000000-0000-4000-8000-0000000000d7', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000007', 'C7'),
+ ('72000000-0000-4000-8000-0000000000d8', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000008', 'C8'),
+ ('72000000-0000-4000-8000-0000000000d9', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000009', 'C9'),
+ ('72000000-0000-4000-8000-0000000000da', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '5511972000010', 'C10');
 
 INSERT INTO conversation_categories(id, account_id, name) VALUES
  ((SELECT cat_a FROM ids), (SELECT acc_a FROM ids), 'Cobrança'),
@@ -285,9 +290,33 @@ UPDATE conversations SET assigned_agent_id = '72000000-0000-4000-8000-0000000000
 UPDATE conversations SET team_id = (SELECT team_a2 FROM ids) WHERE id = (SELECT conv_1 FROM ids);
 RESET ROLE;
 SELECT pg_temp.assert_true((SELECT assignment_source = 'manual' AND team_source = 'manual' FROM conversations WHERE id = (SELECT conv_1 FROM ids)), 'a person claiming / choosing the team is manual');
--- An explicit value in the same UPDATE wins (server route for "transfer to team").
-UPDATE conversations SET assigned_agent_id = '72000000-0000-4000-8000-00000000000d', assignment_source = 'manual' WHERE id = (SELECT conv_1 FROM ids);
-SELECT pg_temp.assert_true((SELECT assignment_source = 'manual' FROM conversations WHERE id = (SELECT conv_1 FROM ids)), 'explicit provenance is kept');
+-- A service-side write on a person's behalf (the RPC with an actor) is manual even
+-- without a JWT subject; provenance is never guessed by comparing with OLD.
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_true(public.support_set_conversation_team((SELECT conv_1 FROM ids), (SELECT acc_a FROM ids), (SELECT team_a FROM ids), true, NULL, false, '72000000-0000-4000-8000-00000000000e'),
+  'transfer RPC writes');
+SELECT pg_temp.assert_true((SELECT team_id = (SELECT team_a FROM ids) AND team_source = 'manual' AND assignment_source = 'manual' AND assigned_agent_id = '72000000-0000-4000-8000-00000000000e' FROM conversations WHERE id = (SELECT conv_1 FROM ids)),
+  'reviewer scenario: claimed by a person, transferred to team A: team manual, owner untouched and still manual');
+SELECT pg_temp.assert_true(public.support_set_conversation_team((SELECT conv_1 FROM ids), (SELECT acc_a FROM ids), (SELECT team_a2 FROM ids), true, NULL, false, '72000000-0000-4000-8000-00000000000e'), 'second transfer');
+SELECT pg_temp.assert_true((SELECT team_id = (SELECT team_a2 FROM ids) AND team_source = 'manual' AND assignment_source = 'manual' FROM conversations WHERE id = (SELECT conv_1 FROM ids)),
+  'transferred to team B: still manual');
+-- A routing write (no actor, require_auto) can neither take the team nor the owner.
+SELECT pg_temp.assert_true(NOT public.support_set_conversation_team((SELECT conv_1 FROM ids), (SELECT acc_a FROM ids), (SELECT team_a FROM ids), true, '72000000-0000-4000-8000-00000000000d', true, NULL, false, NULL, true),
+  'routing cannot override a manual team / owner');
+SELECT pg_temp.assert_true((SELECT team_id = (SELECT team_a2 FROM ids) AND assigned_agent_id = '72000000-0000-4000-8000-00000000000e' FROM conversations WHERE id = (SELECT conv_1 FROM ids)), 'nothing changed');
+-- Compare-and-set on the assignee the caller saw.
+SELECT pg_temp.assert_true(NOT public.support_set_conversation_team((SELECT conv_1 FROM ids), (SELECT acc_a FROM ids), (SELECT team_a FROM ids), true, NULL, false, NULL, true, '72000000-0000-4000-8000-00000000000d', false),
+  'stale expected assignee: no write');
+-- Cross-account guards and privileges.
+SELECT pg_temp.assert_fails(format('SELECT public.support_set_conversation_team(%L, %L, NULL, false, %L, true)', (SELECT conv_1 FROM ids), (SELECT acc_a FROM ids), '72000000-0000-4000-8000-00000000000b'), 'assignee of another account');
+SELECT pg_temp.assert_fails(format('SELECT public.support_set_conversation_team(%L, %L, %L, true, NULL, false)', (SELECT conv_1 FROM ids), (SELECT acc_a FROM ids), (SELECT team_b FROM ids)), 'team of another account');
+SELECT pg_temp.assert_true(NOT public.support_set_conversation_team((SELECT conv_1 FROM ids), (SELECT acc_b FROM ids), (SELECT team_b FROM ids), true, NULL, false), 'conversation of another account is untouched');
+SET ROLE authenticated;
+SELECT pg_temp.assert_fails(format('SELECT public.support_set_conversation_team(%L, %L, NULL, false, NULL, false)', (SELECT conv_1 FROM ids), (SELECT acc_a FROM ids)), 'users cannot call the team RPC');
+RESET ROLE;
+-- The actor does not leak into later writes of the same transaction.
+UPDATE conversations SET assigned_agent_id = '72000000-0000-4000-8000-00000000000d' WHERE id = (SELECT conv_1 FROM ids);
+SELECT pg_temp.assert_true((SELECT assignment_source = 'auto' FROM conversations WHERE id = (SELECT conv_1 FROM ids)), 'actor is transaction-local and cleared after the RPC');
 UPDATE conversations SET assigned_agent_id = NULL WHERE id = (SELECT conv_1 FROM ids);
 SELECT pg_temp.assert_true((SELECT assignment_source IS NULL FROM conversations WHERE id = (SELECT conv_1 FROM ids)), 'unassigning clears provenance');
 -- Deleting a team detaches its conversations.
@@ -330,6 +359,196 @@ RESET ROLE;
 SET ROLE anon;
 SELECT pg_temp.assert_fails(format('SELECT * FROM public.inbox_counts(p_account_id => %L)', (SELECT acc_a FROM ids)), 'anon cannot call inbox_counts');
 RESET ROLE;
+
+-- ============================================================
+-- Review round: robustness, windows, pushes, compliance, parity
+-- ============================================================
+
+-- ---- the stamp trigger never blocks a write (junk preferences) -----------
+-- Tenant A on the default business hours; the boolean setting is junk.
+DO $$
+DECLARE v text; p text; n integer := 0;
+BEGIN
+  FOREACH v IN ARRAY ARRAY['"abc"', '5', '{"a":1}', '"no"', 'null', '[]'] LOOP
+    UPDATE accounts SET preferences = jsonb_build_object('sla_count_only_business_hours', v::jsonb) WHERE id = (SELECT acc_a FROM ids);
+    FOREACH p IN ARRAY ARRAY['low', 'normal', 'high', 'urgent'] LOOP
+      INSERT INTO conversations(user_id, account_id, contact_id, status, priority, last_customer_message_at)
+      VALUES ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d1', 'closed', p, now());
+      n := n + 1;
+    END LOOP;
+  END LOOP;
+  IF n <> 24 THEN RAISE EXCEPTION 'FAIL: junk preferences inserts (got %)', n; END IF;
+END $$;
+-- Junk business hours too: the insert succeeds and the math falls back to elapsed minutes.
+UPDATE accounts SET preferences = jsonb_build_object('business_hours', '"x"'::jsonb) WHERE id = (SELECT acc_a FROM ids);
+INSERT INTO conversations(id, user_id, account_id, contact_id, status, priority, last_customer_message_at)
+VALUES ('72000000-0000-4000-8000-0000000000f6', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d6', 'open', 'normal', now());
+SELECT pg_temp.assert_near((SELECT first_response_due_at FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f6'), now() + interval '60 minutes', 'junk business_hours: elapsed minutes');
+-- "no" (a string) is not a boolean: default true on both sides (TS parser agrees).
+UPDATE accounts SET preferences = jsonb_build_object('sla_count_only_business_hours', '"no"'::jsonb) WHERE id = (SELECT acc_a FROM ids);
+INSERT INTO conversations(id, user_id, account_id, contact_id, status, priority, last_customer_message_at)
+VALUES ('72000000-0000-4000-8000-0000000000f7', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d7', 'open', 'normal', now());
+SELECT pg_temp.assert_ts((SELECT first_response_due_at FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f7'),
+  public.sla_add_business_minutes((SELECT last_customer_message_at FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f7'), 60,
+    '{"timezone":"America/Sao_Paulo","days":{"mon":[{"start":"09:00","end":"18:00"}],"tue":[{"start":"09:00","end":"18:00"}],"wed":[{"start":"09:00","end":"18:00"}],"thu":[{"start":"09:00","end":"18:00"}],"fri":[{"start":"09:00","end":"18:00"}],"sat":[],"sun":[]}}'::jsonb),
+  '"no" reads as the default (business hours on)');
+UPDATE accounts SET preferences = jsonb_build_object('sla_count_only_business_hours', false) WHERE id = (SELECT acc_a FROM ids);
+
+-- ---- first response starts when the CUSTOMER first writes -------------------
+INSERT INTO conversations(id, user_id, account_id, contact_id, status, priority)
+VALUES ('72000000-0000-4000-8000-0000000000f8', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d8', 'open', 'normal');
+SELECT pg_temp.assert_true((SELECT first_response_due_at IS NULL AND first_response_warn_at IS NULL AND resolution_due_at IS NOT NULL FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f8'),
+  'agent-started conversation: no first-response deadline, the resolution clock runs');
+-- Even with a past due date planted, nothing breaches before the customer writes.
+UPDATE conversations SET first_response_due_at = now() - interval '2 hours', first_response_warn_at = now() - interval '3 hours' WHERE id = '72000000-0000-4000-8000-0000000000f8';
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_tick() WHERE conversation_id = '72000000-0000-4000-8000-0000000000f8' AND kind = 'first_response'), 0, 'tick: no first-response breach without a customer message');
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '72000000-0000-4000-8000-00000000000a', true);
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.inbox_conversation_page(p_account_id => (SELECT acc_a FROM ids), p_tab => 'all', p_sla_breached => true)
+  WHERE id = '72000000-0000-4000-8000-0000000000f8'), 0, 'SLA filter: not without a customer message');
+SELECT pg_temp.assert_true((SELECT radar_sla_breached FROM public.inbox_counts(p_account_id => (SELECT acc_a FROM ids))) = (SELECT count(*) FROM public.inbox_conversation_page(p_account_id => (SELECT acc_a FROM ids), p_tab => 'all', p_sla_breached => true)),
+  'Estourados chip agrees with the filter');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+UPDATE conversations SET first_response_due_at = NULL, first_response_warn_at = NULL WHERE id = '72000000-0000-4000-8000-0000000000f8';
+-- The customer's first message starts the clock (once).
+UPDATE conversations SET last_customer_message_at = now() WHERE id = '72000000-0000-4000-8000-0000000000f8';
+SELECT pg_temp.assert_near((SELECT first_response_due_at FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f8'), now() + interval '60 minutes', 'first customer message starts the first-response clock');
+UPDATE conversations SET first_response_due_at = now() + interval '3 hours' WHERE id = '72000000-0000-4000-8000-0000000000f8';
+UPDATE conversations SET last_customer_message_at = now() + interval '1 minute' WHERE id = '72000000-0000-4000-8000-0000000000f8';
+SELECT pg_temp.assert_near((SELECT first_response_due_at FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f8'), now() + interval '3 hours', 'later customer messages do not move the deadline');
+
+-- ---- a new window can warn / breach again; breach mark resets ---------------
+-- f7 (normal, 60 min first response, customer wrote): breach, then a priority change starts a new window.
+UPDATE conversations SET first_response_due_at = now() - interval '5 minutes', first_response_warn_at = now() - interval '20 minutes' WHERE id = '72000000-0000-4000-8000-0000000000f7';
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_tick() WHERE conversation_id = '72000000-0000-4000-8000-0000000000f7' AND stage = 'breached'), 1, 'window 1: breach');
+SELECT pg_temp.assert_true((SELECT sla_breached_at IS NOT NULL FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f7'), 'window 1: breach stamped');
+UPDATE conversations SET priority = 'urgent' WHERE id = '72000000-0000-4000-8000-0000000000f7';
+SELECT pg_temp.assert_true((SELECT sla_breached_at IS NULL FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f7'), 'a new window clears the breach mark');
+UPDATE conversations SET first_response_due_at = now() - interval '1 minute', first_response_warn_at = now() - interval '10 minutes' WHERE id = '72000000-0000-4000-8000-0000000000f7';
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_tick() WHERE conversation_id = '72000000-0000-4000-8000-0000000000f7' AND stage = 'breached' AND kind = 'first_response'), 1, 'window 2: breaches again');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_tick() WHERE conversation_id = '72000000-0000-4000-8000-0000000000f7'), 0, 'window 2: not repeated');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM conversation_events WHERE conversation_id = '72000000-0000-4000-8000-0000000000f7' AND event_type = 'sla_breached' AND payload->>'kind' = 'first_response'), 2, 'one breach event per window');
+SELECT pg_temp.assert_true((SELECT sla_breached_at IS NOT NULL FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f7'), 'window 2: breach stamped again');
+-- Reopening a resolved conversation: fresh resolution window, resolution can breach again.
+UPDATE conversations SET status = 'closed' WHERE id = '72000000-0000-4000-8000-0000000000f7';
+UPDATE conversations SET status = 'open' WHERE id = '72000000-0000-4000-8000-0000000000f7';
+SELECT pg_temp.assert_near((SELECT resolution_due_at FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f7'), now() + interval '120 minutes', 'reopen: new resolution window');
+
+-- ---- sla_tick: a bad row does not poison the batch; updated_at untouched -----
+INSERT INTO conversations(id, user_id, account_id, contact_id, status, priority, last_customer_message_at)
+VALUES ('72000000-0000-4000-8000-0000000000fa', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d9', 'open', 'normal', now()),
+       ('72000000-0000-4000-8000-0000000000fb', '72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000da', 'open', 'normal', now());
+UPDATE conversations SET first_response_due_at = now() - interval '3 minutes', first_response_warn_at = now() - interval '30 minutes', resolution_due_at = NULL, resolution_warn_at = NULL
+ WHERE id IN ('72000000-0000-4000-8000-0000000000fa', '72000000-0000-4000-8000-0000000000fb');
+ALTER TABLE conversations DISABLE TRIGGER set_updated_at;
+UPDATE conversations SET updated_at = '2020-01-01T00:00:00Z' WHERE id IN ('72000000-0000-4000-8000-0000000000fa', '72000000-0000-4000-8000-0000000000fb');
+ALTER TABLE conversations ENABLE TRIGGER set_updated_at;
+CREATE TEMP TABLE upd_before AS SELECT id, updated_at FROM conversations WHERE id IN ('72000000-0000-4000-8000-0000000000fa', '72000000-0000-4000-8000-0000000000fb');
+CREATE FUNCTION public.sla_test_poison() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.conversation_id = '72000000-0000-4000-8000-0000000000fa' AND NEW.event_type = 'sla_breached' THEN RAISE EXCEPTION 'poisoned row'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER sla_test_poison BEFORE INSERT ON conversation_events FOR EACH ROW EXECUTE FUNCTION public.sla_test_poison();
+CREATE TEMP TABLE tick_out AS SELECT * FROM sla_tick();
+SELECT pg_temp.assert_eq((SELECT count(*) FROM tick_out WHERE conversation_id = '72000000-0000-4000-8000-0000000000fa' AND stage = 'error'), 1, 'tick: the poisoned row is reported as an error');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM tick_out WHERE conversation_id = '72000000-0000-4000-8000-0000000000fb' AND stage = 'breached'), 1, 'tick: the next row still processed');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM conversation_events WHERE conversation_id = '72000000-0000-4000-8000-0000000000fa' AND event_type = 'sla_breached'), 0, 'tick: the failed row left no half-written event');
+DROP TRIGGER sla_test_poison ON conversation_events;
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_tick() WHERE conversation_id = '72000000-0000-4000-8000-0000000000fa' AND stage = 'breached'), 1, 'tick: the failed row is retried next tick');
+SELECT pg_temp.assert_true((SELECT bool_and(c.updated_at = b.updated_at) FROM conversations c JOIN upd_before b USING (id)), 'stamping sla_breached_at does not bump updated_at');
+SELECT pg_temp.assert_true((SELECT sla_breached_at IS NOT NULL FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000fb'), 'sla_breached_at stamped');
+-- Ordinary writes still bump updated_at.
+UPDATE conversations SET subject = 'x' WHERE id = '72000000-0000-4000-8000-0000000000fb';
+SELECT pg_temp.assert_true((SELECT c.updated_at > b.updated_at FROM conversations c JOIN upd_before b USING (id) WHERE id = '72000000-0000-4000-8000-0000000000fb'), 'other updates still bump updated_at');
+
+-- ---- pushes are retryable ------------------------------------------------------
+SELECT pg_temp.assert_true((SELECT count(*) >= 2 FROM sla_pending_push()), 'breach events wait for their push');
+SELECT pg_temp.assert_eq(sla_mark_pushed(ARRAY(SELECT event_id FROM sla_pending_push() WHERE conversation_id = '72000000-0000-4000-8000-0000000000fb')), 1, 'mark pushed');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_pending_push() WHERE conversation_id = '72000000-0000-4000-8000-0000000000fb'), 0, 'a pushed event is not offered again');
+SELECT pg_temp.assert_eq(sla_mark_pushed(ARRAY(SELECT event_id FROM sla_pending_push() WHERE conversation_id = '72000000-0000-4000-8000-0000000000fb')), 0, 'marking twice is a no-op');
+UPDATE conversations SET status = 'closed' WHERE id = '72000000-0000-4000-8000-0000000000fa';
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sla_pending_push() WHERE conversation_id = '72000000-0000-4000-8000-0000000000fa'), 0, 'no push owed for a closed conversation');
+SET ROLE authenticated;
+SELECT pg_temp.assert_fails('SELECT * FROM public.sla_pending_push()', 'users cannot read the push queue');
+SELECT pg_temp.assert_fails('SELECT public.sla_mark_pushed(ARRAY[]::uuid[])', 'users cannot mark pushes');
+RESET ROLE;
+
+-- ---- loop protection: events raised by rule writes carry the run depth ---------
+INSERT INTO automations(user_id, account_id, name, trigger_type, is_active)
+VALUES ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), 'ping-pong', 'team_changed', true);
+INSERT INTO teams(id, account_id, name) VALUES ('72000000-0000-4000-8000-0000000000e4', (SELECT acc_a FROM ids), 'Loop');
+DELETE FROM automation_event_queue WHERE account_id = (SELECT acc_a FROM ids);
+SELECT pg_temp.assert_true(public.support_set_conversation_team('72000000-0000-4000-8000-0000000000f8', (SELECT acc_a FROM ids), (SELECT team_a FROM ids), true, NULL, false, NULL, false, NULL, false, 0, NULL), 'first team change');
+DO $$
+DECLARE d integer; n integer := 0; cur uuid;
+BEGIN
+  LOOP
+    SELECT q.depth INTO d FROM automation_event_queue q WHERE q.processed_at IS NULL AND q.trigger_type = 'team_changed' ORDER BY q.id LIMIT 1;
+    EXIT WHEN d IS NULL;
+    UPDATE automation_event_queue SET processed_at = now() WHERE processed_at IS NULL;
+    SELECT team_id INTO cur FROM conversations WHERE id = '72000000-0000-4000-8000-0000000000f8';
+    -- the rule "team changed -> assign the other team", one level deeper than the event
+    PERFORM public.automation_set_conversation((SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000f8', NULL, NULL,
+      CASE WHEN cur = (SELECT team_a FROM ids) THEN '72000000-0000-4000-8000-0000000000e4'::uuid ELSE (SELECT team_a FROM ids) END, d + 1, NULL);
+    n := n + 1;
+    IF n > 20 THEN RAISE EXCEPTION 'FAIL: ping-pong did not terminate'; END IF;
+  END LOOP;
+  IF n <> 4 THEN RAISE EXCEPTION 'FAIL: expected the chain to stop after 4 actions, got %', n; END IF;
+END $$;
+SELECT pg_temp.assert_eq((SELECT count(*) FROM automation_event_queue WHERE account_id = (SELECT acc_a FROM ids) AND trigger_type = 'team_changed'), 4, 'ping-pong: 4 events, then the depth cap drops the next');
+SELECT pg_temp.assert_eq((SELECT max(depth) FROM automation_event_queue WHERE account_id = (SELECT acc_a FROM ids) AND trigger_type = 'team_changed'), 3, 'ping-pong: deepest queued event is level 3');
+-- The same cap applies to the routing / transfer RPC when an automation drives it.
+SELECT pg_temp.assert_true(public.support_set_conversation_team('72000000-0000-4000-8000-0000000000f8', (SELECT acc_a FROM ids), (SELECT team_a FROM ids), true, NULL, false, NULL, false, NULL, false, 4, NULL), 'team change at depth 4');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM automation_event_queue WHERE account_id = (SELECT acc_a FROM ids) AND trigger_type = 'team_changed'), 4, 'depth 4: no further event is queued');
+
+-- ---- sla_compliance: exact counts, tenant-safe ---------------------------------
+-- Fresh tenant-A conversations with known verdicts inside the last 30 days.
+DELETE FROM conversations WHERE account_id = (SELECT acc_a FROM ids);
+ALTER TABLE conversations DISABLE TRIGGER conversations_sla_stamp;
+INSERT INTO conversations(user_id, account_id, contact_id, status, priority, last_customer_message_at, first_response_at, first_response_due_at, resolution_due_at, resolved_at) VALUES
+ ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d1', 'closed', 'low', now() - interval '5 hours', now() - interval '4 hours', now() - interval '3 hours', now() - interval '1 hour', now() - interval '2 hours'),   -- met + met
+ ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d2', 'closed', 'low', now() - interval '5 hours', now() - interval '3 hours', now() - interval '4 hours', now() - interval '3 hours', now() - interval '1 hour'),   -- late + late
+ ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d3', 'open', 'low', now() - interval '5 hours', NULL, now() - interval '2 hours', now() - interval '1 hour', NULL),                                            -- missed + missed
+ ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d5', 'open', 'low', now() - interval '5 hours', NULL, now() + interval '1 hour', now() + interval '2 hours', NULL),                                            -- pending: not judged
+ ('72000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '72000000-0000-4000-8000-0000000000d1', 'open', 'low', NULL, NULL, now() - interval '2 hours', NULL, NULL);                                                                                          -- agent-started: not judged
+ALTER TABLE conversations ENABLE TRIGGER conversations_sla_stamp;
+-- The resolved_at trigger stamps NOW() on insert; plant the verdict times afterwards.
+UPDATE conversations SET resolved_at = CASE contact_id WHEN '72000000-0000-4000-8000-0000000000d1' THEN now() - interval '2 hours' ELSE now() - interval '1 hour' END
+ WHERE account_id = (SELECT acc_a FROM ids) AND status = 'closed';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '72000000-0000-4000-8000-00000000000a', true);
+SELECT pg_temp.assert_true((SELECT met = 2 AND missed = 4 FROM public.sla_compliance((SELECT acc_a FROM ids), now() - interval '30 days')), 'compliance: met / missed counts');
+SELECT pg_temp.assert_true((SELECT met = 0 AND missed = 0 FROM public.sla_compliance((SELECT acc_a FROM ids), now() + interval '1 day')), 'compliance: nothing judged after the period start');
+RESET ROLE;
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '72000000-0000-4000-8000-00000000000b', true);
+SELECT pg_temp.assert_true((SELECT met = 0 AND missed = 0 FROM public.sla_compliance((SELECT acc_a FROM ids), now() - interval '30 days')), 'compliance: another tenant sees nothing');
+RESET ROLE;
+SET ROLE anon;
+SELECT pg_temp.assert_fails(format('SELECT * FROM public.sla_compliance(%L, now())', (SELECT acc_a FROM ids)), 'anon cannot call sla_compliance');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+
+-- ---- business-hours parity: malformed ranges, DST boundaries -------------------
+CREATE TEMP TABLE hrs2 AS SELECT
+  '{"timezone":"UTC","days":{"mon":[{"start":"25:99","end":"26:00"},{"start":"9","end":"18:00"},{"start":"09:00","end":"10:00"}],"tue":[],"wed":[],"thu":[],"fri":[],"sat":[],"sun":[]}}'::jsonb AS malformed,
+  '{"timezone":"America/New_York","days":{"sun":[{"start":"02:30","end":"04:00"}],"mon":[],"tue":[],"wed":[],"thu":[],"fri":[],"sat":[]}}'::jsonb AS gap,
+  '{"timezone":"America/New_York","days":{"sun":[{"start":"01:30","end":"03:00"}],"mon":[],"tue":[],"wed":[],"thu":[],"fri":[],"sat":[]}}'::jsonb AS ambiguous,
+  '{"timezone":"UTC","days":{"mon":[{"start":"9","end":"18:00"}],"tue":[],"wed":[],"thu":[],"fri":[],"sat":[],"sun":[]}}'::jsonb AS only_bad;
+-- Only the valid range counts; the malformed ones are skipped one by one.
+SELECT pg_temp.assert_ts(pg_temp.bh('2026-03-02T08:00:00Z', 30, (SELECT malformed FROM hrs2)), '2026-03-02T09:30:00Z', 'malformed ranges are skipped individually');
+SELECT pg_temp.assert_ts(pg_temp.bh('2026-03-02T08:00:00Z', 90, (SELECT malformed FROM hrs2)), '2026-03-09T09:30:00Z', 'malformed ranges: the rest spills to next Monday');
+SELECT pg_temp.assert_ts(pg_temp.bh('2026-03-02T08:00:00Z', 90, (SELECT only_bad FROM hrs2)), '2026-03-02T09:30:00Z', 'only malformed ranges: elapsed minutes');
+-- Nonexistent local time (02:30 on the spring-forward Sunday) starts at 03:00 EDT = 07:00Z.
+SELECT pg_temp.assert_ts(pg_temp.bh('2026-03-08T05:00:00Z', 30, (SELECT gap FROM hrs2)), '2026-03-08T07:30:00Z', 'DST gap: range starts at the first valid instant');
+SELECT pg_temp.assert_ts(pg_temp.bh('2026-03-08T05:00:00Z', 61, (SELECT gap FROM hrs2)), '2026-03-15T06:31:00Z', 'DST gap: 60 real minutes, then next Sunday');
+-- Ambiguous local time (01:30 on the fall-back Sunday) is its first occurrence: 05:30Z (EDT).
+SELECT pg_temp.assert_ts(pg_temp.bh('2026-11-01T00:00:00Z', 60, (SELECT ambiguous FROM hrs2)), '2026-11-01T06:30:00Z', 'DST overlap: first occurrence');
+SELECT pg_temp.assert_ts(public.sla_local_to_instant('2026-03-08 02:30', 'America/New_York'), '2026-03-08T07:00:00Z', 'local_to_instant: gap -> transition instant');
+SELECT pg_temp.assert_ts(public.sla_local_to_instant('2026-11-01 01:30', 'America/New_York'), '2026-11-01T05:30:00Z', 'local_to_instant: overlap -> first occurrence');
+SELECT pg_temp.assert_ts(public.sla_local_to_instant('2026-07-01 12:00', 'America/Sao_Paulo'), '2026-07-01T15:00:00Z', 'local_to_instant: ordinary');
 
 ROLLBACK;
 \echo 'support_sla_teams.sql: all assertions passed'

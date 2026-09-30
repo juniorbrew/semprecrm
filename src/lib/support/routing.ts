@@ -33,6 +33,8 @@ export interface RoutingConversation {
   team_source: 'auto' | 'manual' | null
   assigned_agent_id: string | null
   assignment_source: 'auto' | 'manual' | null
+  /** The automatic assignee has sent a message here (set by applyRouting). */
+  assignee_engaged?: boolean
 }
 
 export interface RoutingRuleInput {
@@ -64,7 +66,8 @@ export type RoutingDecision =
  *   - closed / archived conversations are never routed;
  *   - a team a person chose by hand stays (the whole routing is skipped);
  *   - an assignee a person claimed or was handed (assignment_source
- *     'manual', or unknown = NULL, rows that predate 073) is never replaced;
+ *     'manual', or unknown = NULL, rows that predate 073), or an automatic
+ *     one who has already written in the conversation, is never replaced;
  *   - an automatic assignee who already belongs to the team stays, which
  *     also makes a repeated category set a no-op;
  *   - otherwise (nobody, or an automatic assignee outside the team) a
@@ -87,7 +90,7 @@ export function decideRouting(
     return { action: 'skip', reason: 'manual_team' }
   }
 
-  const humanOwned = !!conv.assigned_agent_id && conv.assignment_source !== 'auto'
+  const humanOwned = !!conv.assigned_agent_id && (conv.assignment_source !== 'auto' || !!conv.assignee_engaged)
   const inTeam = !!conv.assigned_agent_id && memberIds.includes(conv.assigned_agent_id)
   return {
     action: 'route',
@@ -119,7 +122,12 @@ function asConversation(c: Row): RoutingConversation {
 export async function applyRouting(
   db: SupabaseClient,
   conversationId: string,
-  opts: { accountId?: string } = {},
+  opts: {
+    accountId?: string
+    /** Automation chain depth / origin when an automation drives it (loop protection). */
+    depth?: number
+    origin?: string | null
+  } = {},
 ): Promise<RoutingOutcome> {
   try {
     let q = db
@@ -133,6 +141,17 @@ export async function applyRouting(
     const accountId = c.account_id as string
     const conv = asConversation(c)
     if (!conv.category_id) return { status: 'skipped', reason: 'no_category' }
+    // An automatic assignee who already wrote in this conversation is a
+    // person at work: treated like a manual assignment.
+    if (conv.assigned_agent_id && conv.assignment_source === 'auto') {
+      const { data: spoke } = await db
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('sender_id', conv.assigned_agent_id)
+        .limit(1)
+      conv.assignee_engaged = ((spoke ?? []) as unknown[]).length > 0
+    }
 
     const { data: ruleRow } = await db
       .from('routing_rules')
@@ -162,25 +181,29 @@ export async function applyRouting(
       : null
     if (!decision.changeTeam && !assigneeId) return { status: 'skipped', reason: 'nothing_to_do' }
 
-    const patch: Record<string, unknown> = {}
-    if (decision.changeTeam) patch.team_id = decision.teamId
-    if (assigneeId) patch.assigned_agent_id = assigneeId
-
-    // Compare-and-set: only while nobody (or the same automatic assignee)
-    // holds it and nobody chose the team by hand in the meantime.
-    let write = db.from('conversations').update(patch).eq('id', conversationId).eq('account_id', accountId).neq('status', 'closed')
-    if (assigneeId) {
-      write = conv.assigned_agent_id
-        ? write.eq('assigned_agent_id', conv.assigned_agent_id).eq('assignment_source', 'auto')
-        : write.is('assigned_agent_id', null)
-    }
-    if (decision.changeTeam) write = write.or('team_source.is.null,team_source.eq.auto')
-    const { data: written, error } = await write.select('id')
+    // One write path (migration 073): compare-and-set on the assignee we saw,
+    // guarded by the provenance columns (a person's team / owner is never
+    // replaced), carrying the automation depth so the events it raises stay
+    // inside the loop cap.
+    const { data: wrote, error } = await db.rpc('support_set_conversation_team', {
+      p_conversation: conversationId,
+      p_account: accountId,
+      p_team: decision.teamId,
+      p_change_team: decision.changeTeam,
+      p_assignee: assigneeId,
+      p_change_assignee: !!assigneeId,
+      p_actor_user: null,
+      p_check_assignee: !!assigneeId,
+      p_expect_assignee: conv.assigned_agent_id,
+      p_require_auto: true,
+      p_depth: opts.depth ?? 0,
+      p_origin: opts.origin ?? null,
+    })
     if (error) {
       console.error('[routing] write failed:', error.message)
       return { status: 'skipped', reason: 'changed_meanwhile' }
     }
-    if (!written?.length) return { status: 'skipped', reason: 'changed_meanwhile' }
+    if (!wrote) return { status: 'skipped', reason: 'changed_meanwhile' }
 
     const events: { event_type: string; payload: Record<string, unknown> }[] = []
     if (decision.changeTeam) {
@@ -207,14 +230,18 @@ export async function applyRouting(
 
 export type TransferOutcome =
   | { status: 'ok'; teamId: string; assigneeId: string | null }
-  | { status: 'failed'; reason: 'not_found' | 'team_not_found' | 'closed' | 'write_failed' }
+  | { status: 'failed'; reason: 'not_found' | 'team_not_found' | 'closed' | 'write_failed' | 'changed_meanwhile' }
 
 /**
  * "Transferir para equipe": a person hands the conversation to a team. The
- * team is theirs (team_source 'manual'), the owner becomes an available
- * member picked round-robin (assignment_source 'manual': routing never
- * touches it afterwards) or nobody when the whole team is away, in which
- * case the conversation waits in that team's queue.
+ * team is theirs (team_source 'manual'). The owner stays when they already
+ * belong to the team; otherwise an available member is picked round-robin
+ * (assignment_source 'manual': routing never touches it afterwards); when
+ * nobody in the team is available the current owner is NOT dropped, only the
+ * team changes (an unassigned conversation then waits in that team's queue).
+ * The write goes through the RPC with the person as actor, so the provenance
+ * is 'manual' even though the service client makes it, and it is a
+ * compare-and-set on the owner the person saw.
  */
 export async function transferToTeam(
   db: SupabaseClient,
@@ -237,40 +264,44 @@ export async function transferToTeam(
     .maybeSingle()
   if (!team || (team as Row).archived_at) return { status: 'failed', reason: 'team_not_found' }
 
+  const current = ((conv as Row).assigned_agent_id as string | null) ?? null
+  const teamChanged = (conv as Row).team_id !== teamId
   const { data: memberRows } = await db.from('team_members').select('user_id').eq('team_id', teamId).eq('account_id', accountId)
   const memberIds = ((memberRows ?? []) as { user_id: string }[]).map((m) => m.user_id)
-  const assigneeId = await pickRoundRobinAssignee(db, accountId, { memberIds })
-  const previous = ((conv as Row).assigned_agent_id as string | null) ?? null
+  const picked = current && memberIds.includes(current) ? null : await pickRoundRobinAssignee(db, accountId, { memberIds })
+  if (!teamChanged && !picked) return { status: 'ok', teamId, assigneeId: current }
 
-  const { error } = await db
-    .from('conversations')
-    .update({
-      team_id: teamId,
-      team_source: 'manual',
-      assigned_agent_id: assigneeId,
-      assignment_source: assigneeId ? 'manual' : null,
-    })
-    .eq('id', conversationId)
-    .eq('account_id', accountId)
+  const { data: wrote, error } = await db.rpc('support_set_conversation_team', {
+    p_conversation: conversationId,
+    p_account: accountId,
+    p_team: teamId,
+    p_change_team: teamChanged,
+    p_assignee: picked,
+    p_change_assignee: !!picked,
+    p_actor_user: actorUserId,
+    p_check_assignee: true,
+    p_expect_assignee: current,
+    p_require_auto: false,
+    p_depth: 0,
+    p_origin: null,
+  })
   if (error) {
     console.error('[routing] transfer failed:', error.message)
     return { status: 'failed', reason: 'write_failed' }
   }
+  if (!wrote) return { status: 'failed', reason: 'changed_meanwhile' }
 
   const events: { event_type: string; payload: Record<string, unknown> }[] = []
-  if ((conv as Row).team_id !== teamId) {
-    events.push({ event_type: 'team_changed', payload: { team_id: teamId, team_name: (team as Row).name } })
-  }
-  if (assigneeId) events.push({ event_type: 'assigned', payload: { assignee_user_id: assigneeId } })
-  else if (previous) events.push({ event_type: 'unassigned', payload: {} })
+  if (teamChanged) events.push({ event_type: 'team_changed', payload: { team_id: teamId, team_name: (team as Row).name } })
+  if (picked) events.push({ event_type: 'assigned', payload: { assignee_user_id: picked } })
   if (events.length) {
     const { error: evErr } = await db.from('conversation_events').insert(
       events.map((e) => ({ account_id: accountId, conversation_id: conversationId, actor_user_id: actorUserId, ...e })),
     )
     if (evErr) console.error('[routing] transfer event insert failed:', evErr.message)
   }
-  if (assigneeId && assigneeId !== actorUserId) {
+  if (picked && picked !== actorUserId) {
     void notifyConversationAssigned(db, { accountId, conversationId, actorUserId }).catch(() => undefined)
   }
-  return { status: 'ok', teamId, assigneeId }
+  return { status: 'ok', teamId, assigneeId: picked ?? current }
 }

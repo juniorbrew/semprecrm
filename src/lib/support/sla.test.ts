@@ -16,6 +16,7 @@ const at = (minFromNow: number) => new Date(NOW + minFromNow * 60_000).toISOStri
 
 const fresh = (over: Partial<SlaFields> = {}): SlaFields => ({
   status: 'open',
+  last_customer_message_at: at(-10),
   first_response_at: null,
   first_response_due_at: at(60),
   first_response_warn_at: at(48),
@@ -71,6 +72,11 @@ describe('isSlaBreached (mirror of the SQL filter)', () => {
   it('an answered conversation only breaches through the resolution target', () => {
     expect(isSlaBreached(fresh({ first_response_at: at(-30), first_response_due_at: at(-10) }), NOW)).toBe(false)
     expect(isSlaBreached(fresh({ first_response_at: at(-30), first_response_due_at: at(-10), resolution_due_at: at(-1) }), NOW)).toBe(true)
+  })
+  it('an agent-started conversation cannot breach the first response before the customer writes', () => {
+    expect(isSlaBreached(fresh({ last_customer_message_at: null, first_response_due_at: at(-100) }), NOW)).toBe(false)
+    // ...but its resolution deadline still can.
+    expect(isSlaBreached(fresh({ last_customer_message_at: null, first_response_due_at: at(-100), resolution_due_at: at(-1) }), NOW)).toBe(true)
   })
   it('closed conversations never count', () => {
     expect(isSlaBreached(fresh({ status: 'closed', first_response_due_at: at(-100), resolution_due_at: at(-100) }), NOW)).toBe(false)

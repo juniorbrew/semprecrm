@@ -11,7 +11,11 @@
 //   - a range is half-open, `start <= t < end`;
 //   - a range whose end <= start runs overnight into the next day;
 //   - days without ranges are closed;
-//   - no open range at all, or an invalid timezone: plain elapsed time.
+//   - a range with a malformed "HH:MM" is skipped on its own;
+//   - no valid range at all, or an invalid timezone: plain elapsed time;
+//   - a local time that happens twice (clocks go back) is its FIRST
+//     occurrence; one that never happens (clocks go forward) is the first
+//     valid instant after it (the moment the clocks jump).
 // ============================================================
 
 import type { BusinessHours, Weekday } from '@/types'
@@ -48,10 +52,35 @@ function wallAsUtc(t: number, tz: string): { wall: number; y: number; m: number;
   return { wall, y, m, d }
 }
 
-/** Instant whose wall clock in `tz` reads `naiveUtc` (a UTC-based timestamp). */
+const DAY = 86_400_000
+
+/** Offset of `tz` at instant `t` (ms): wall clock minus UTC. */
+function offsetAt(t: number, tz: string): number {
+  return wallAsUtc(t, tz).wall - Math.floor(t / 1000) * 1000
+}
+
+/**
+ * Instant whose wall clock in `tz` reads `naiveUtc` (a UTC-based timestamp).
+ * Twin of the SQL `sla_local_to_instant`: candidates use the offsets a day
+ * before and a day after; both valid = ambiguous (first wins), none valid =
+ * inside a gap (bisect to the first instant whose wall clock reaches it).
+ */
 function wallToInstant(naiveUtc: number, tz: string): number {
-  const first = naiveUtc - (wallAsUtc(naiveUtc, tz).wall - naiveUtc)
-  return naiveUtc - (wallAsUtc(first, tz).wall - first)
+  const t1 = naiveUtc - offsetAt(naiveUtc - DAY, tz)
+  const t2 = naiveUtc - offsetAt(naiveUtc + DAY, tz)
+  const ok1 = wallAsUtc(t1, tz).wall === naiveUtc
+  const ok2 = wallAsUtc(t2, tz).wall === naiveUtc
+  if (ok1 && ok2) return Math.min(t1, t2)
+  if (ok1) return t1
+  if (ok2) return t2
+  let lo = Math.floor(Math.min(t1, t2) / 1000)
+  let hi = Math.floor(Math.max(t1, t2) / 1000)
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (wallAsUtc(mid * 1000, tz).wall >= naiveUtc) hi = mid
+    else lo = mid
+  }
+  return hi * 1000
 }
 
 interface Range {
@@ -61,7 +90,8 @@ interface Range {
 
 function dayRanges(days: BusinessHours['days'], weekday: Weekday): Range[] {
   const out: Range[] = []
-  for (const r of days?.[weekday] ?? []) {
+  const list = days?.[weekday]
+  for (const r of Array.isArray(list) ? list : []) {
     const start = timeToMinutes(r?.start)
     const end = timeToMinutes(r?.end)
     if (start === null || end === null) continue

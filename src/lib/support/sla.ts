@@ -22,6 +22,7 @@ export const SLA_LIMITS = { first_response_minutes: 43_200, resolution_minutes: 
 export type SlaFields = Pick<
   Conversation,
   | 'status'
+  | 'last_customer_message_at'
   | 'first_response_at'
   | 'first_response_due_at'
   | 'first_response_warn_at'
@@ -68,7 +69,8 @@ export function slaLevel(target: SlaTarget, now: number): SlaLevel {
 export function isSlaBreached(c: SlaFields, now: number): boolean {
   if (c.status === 'closed') return false
   const first = stamp(c.first_response_due_at)
-  if (first !== null && !c.first_response_at && first <= now) return true
+  // First-response deadlines only run once the customer has written.
+  if (first !== null && !c.first_response_at && c.last_customer_message_at && first <= now) return true
   const res = stamp(c.resolution_due_at)
   return res !== null && res <= now
 }

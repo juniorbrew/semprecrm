@@ -371,6 +371,8 @@ describe('realtime merge rules', () => {
     expect(shouldInsertUnknown(overdue, view({ slaBreached: true }), st, ctx)).toBe(true)
     expect(shouldInsertUnknown(conv('f', { first_response_due_at: iso(-5) }), view({ slaBreached: true }), st, ctx)).toBe(false)
     expect(shouldInsertUnknown(conv('p'), view({ slaBreached: true }), st, ctx)).toBe(false)
+    // Agent-started (the customer has not written): no first-response breach yet.
+    expect(shouldInsertUnknown(conv('g', { first_response_due_at: iso(5), last_customer_message_at: null }), view({ slaBreached: true }), st, ctx)).toBe(false)
     // Answered: the first-response target is over, only a resolution deadline can breach.
     expect(shouldInsertUnknown(conv('a', { first_response_due_at: iso(5), first_response_at: iso(10) }), view({ slaBreached: true }), st, ctx)).toBe(false)
   })

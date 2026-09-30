@@ -193,20 +193,21 @@ LANGUAGE plpgsql
 SET search_path = public
 AS $$
 DECLARE
-  v_who text := CASE WHEN auth.uid() IS NOT NULL THEN 'manual' ELSE 'auto' END;
+  -- Who is acting: the signed-in user, or (service-role writes made on a
+  -- person's behalf, e.g. "Transferir para equipe") the transaction-local
+  -- actor support_set_conversation_team() sets. Nobody = an automatic write.
+  v_actor uuid := COALESCE(auth.uid(), NULLIF(current_setting('app.actor_user', true), '')::uuid);
+  v_who   text := CASE WHEN v_actor IS NOT NULL THEN 'manual' ELSE 'auto' END;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.assigned_agent_id IS NOT NULL AND NEW.assignment_source IS NULL THEN NEW.assignment_source := v_who; END IF;
     IF NEW.team_id IS NOT NULL AND NEW.team_source IS NULL THEN NEW.team_source := v_who; END IF;
     RETURN NEW;
   END IF;
-  -- An explicit value in the same UPDATE wins (the transfer-to-team route).
-  IF NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id
-     AND NEW.assignment_source IS NOT DISTINCT FROM OLD.assignment_source THEN
+  IF NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id THEN
     NEW.assignment_source := CASE WHEN NEW.assigned_agent_id IS NULL THEN NULL ELSE v_who END;
   END IF;
-  IF NEW.team_id IS DISTINCT FROM OLD.team_id
-     AND NEW.team_source IS NOT DISTINCT FROM OLD.team_source THEN
+  IF NEW.team_id IS DISTINCT FROM OLD.team_id THEN
     NEW.team_source := CASE WHEN NEW.team_id IS NULL THEN NULL ELSE v_who END;
   END IF;
   RETURN NEW;
@@ -310,8 +311,7 @@ BEGIN
   UPDATE public.conversations c
      SET category_id = COALESCE(p_category_id, c.category_id),
          priority    = COALESCE(p_priority, c.priority),
-         team_id     = COALESCE(p_team_id, c.team_id),
-         team_source = CASE WHEN p_team_id IS NOT NULL AND p_team_id IS DISTINCT FROM c.team_id THEN 'auto' ELSE c.team_source END
+         team_id     = COALESCE(p_team_id, c.team_id)
    WHERE c.id = p_conversation_id AND c.account_id = p_account_id
   RETURNING c.id INTO v_id;
   RETURN v_id IS NOT NULL;
@@ -319,6 +319,61 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.automation_set_conversation(uuid, uuid, uuid, text, uuid, integer, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.automation_set_conversation(uuid, uuid, uuid, text, uuid, integer, uuid) TO service_role;
+
+-- The one write path for team / assignee changes made by the routing rules
+-- and by "Transferir para equipe" (service role). `p_actor_user` is the
+-- person on whose behalf it runs (NULL = automatic): it is set as a
+-- transaction-local actor so conversations_stamp_sources() records
+-- 'manual' vs 'auto' correctly, without the caller ever writing the
+-- provenance columns. depth/origin carry the automation loop protection
+-- (events raised by this update are one level deeper than the run).
+--   p_check_assignee  compare-and-set on the assignee the caller last saw
+--   p_require_auto    routing mode: never replace a person's assignment or
+--                     a team a person chose (guards read the provenance)
+-- Returns false when a guard stopped the write (nothing changed).
+CREATE OR REPLACE FUNCTION public.support_set_conversation_team(
+  p_conversation    uuid,
+  p_account         uuid,
+  p_team            uuid,
+  p_change_team     boolean,
+  p_assignee        uuid,
+  p_change_assignee boolean,
+  p_actor_user      uuid    DEFAULT NULL,
+  p_check_assignee  boolean DEFAULT false,
+  p_expect_assignee uuid    DEFAULT NULL,
+  p_require_auto    boolean DEFAULT false,
+  p_depth           integer DEFAULT 0,
+  p_origin          uuid    DEFAULT NULL
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  IF p_assignee IS NOT NULL AND p_change_assignee AND NOT EXISTS (
+    SELECT 1 FROM public.profiles p WHERE p.user_id = p_assignee AND p.account_id = p_account
+  ) THEN
+    RAISE EXCEPTION 'assignee is not a member of this account' USING ERRCODE = '23503';
+  END IF;
+  PERFORM set_config('app.actor_user', COALESCE(p_actor_user::text, ''), true);
+  PERFORM set_config('app.automation_depth', COALESCE(p_depth, 0)::text, true);
+  PERFORM set_config('app.automation_origin', COALESCE(p_origin::text, ''), true);
+  UPDATE public.conversations c
+     SET team_id           = CASE WHEN p_change_team THEN p_team ELSE c.team_id END,
+         assigned_agent_id = CASE WHEN p_change_assignee THEN p_assignee ELSE c.assigned_agent_id END
+   WHERE c.id = p_conversation AND c.account_id = p_account
+     AND c.status <> 'closed' AND c.archived_at IS NULL
+     AND (NOT p_check_assignee OR c.assigned_agent_id IS NOT DISTINCT FROM p_expect_assignee)
+     AND (NOT p_require_auto OR NOT p_change_team OR c.team_source IS NULL OR c.team_source = 'auto')
+     AND (NOT p_require_auto OR NOT p_change_assignee OR c.assigned_agent_id IS NULL OR c.assignment_source = 'auto')
+  RETURNING c.id INTO v_id;
+  PERFORM set_config('app.actor_user', '', true);
+  RETURN v_id IS NOT NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.support_set_conversation_team(uuid, uuid, uuid, boolean, uuid, boolean, uuid, boolean, uuid, boolean, integer, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.support_set_conversation_team(uuid, uuid, uuid, boolean, uuid, boolean, uuid, boolean, uuid, boolean, integer, uuid) TO service_role;
 
 -- ---- inbox RPCs: + p_team_id ----------------------------------------
 DROP FUNCTION IF EXISTS public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer, uuid[], text, uuid, text, boolean);
@@ -414,7 +469,7 @@ BEGIN
     v_where := v_where || ' AND c.team_id = $14';
   END IF;
   IF p_sla_breached IS TRUE THEN
-    v_where := v_where || ' AND c.status <> ''closed'' AND ((c.first_response_at IS NULL AND c.first_response_due_at <= now()) OR c.resolution_due_at <= now())';
+    v_where := v_where || ' AND c.status <> ''closed'' AND ((c.first_response_at IS NULL AND c.last_customer_message_at IS NOT NULL AND c.first_response_due_at <= now()) OR c.resolution_due_at <= now())';
   END IF;
 
   -- Search: contact name / phone / subject, last message preview,
@@ -475,7 +530,7 @@ AS $$
   WITH c AS (
     SELECT
       x.status, x.archived_at, x.assigned_agent_id,
-      (x.status <> 'closed' AND ((x.first_response_at IS NULL AND x.first_response_due_at <= now()) OR x.resolution_due_at <= now())) AS breached,
+      (x.status <> 'closed' AND ((x.first_response_at IS NULL AND x.last_customer_message_at IS NOT NULL AND x.first_response_due_at <= now()) OR x.resolution_due_at <= now())) AS breached,
       x.last_customer_message_at AS cust, x.last_agent_message_at AS agent,
       (
         (COALESCE(cardinality(p_tag_ids), 0) = 0 OR EXISTS (
@@ -540,6 +595,7 @@ BEGIN
   END LOOP;
   FOREACH f IN ARRAY ARRAY[
     'public.automation_set_conversation(uuid, uuid, uuid, text, uuid, integer, uuid)',
+    'public.support_set_conversation_team(uuid, uuid, uuid, boolean, uuid, boolean, uuid, boolean, uuid, boolean, integer, uuid)',
     'public.conversations_check_team()',
     'public.conversations_enqueue_support_events()',
     'public.team_members_check()',

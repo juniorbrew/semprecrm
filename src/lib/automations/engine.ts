@@ -927,7 +927,7 @@ export async function runSupportStep(step: AutomationStep, args: ExecuteArgs): P
     const { data: cat } = await db.from('conversation_categories').select('name').eq('id', categoryId).eq('account_id', accountId).maybeSingle()
     await event('category_changed', { category_id: categoryId, category_name: (cat as { name?: string } | null)?.name ?? null })
     // The new category may have a routing rule (team + available member).
-    await applyRouting(db, conversationId, { accountId })
+    await applyRouting(db, conversationId, { accountId, depth: args.depth + 1, origin: args.automation.id })
     return `category ${categoryId} set`
   }
   if (priority) {

@@ -81,7 +81,7 @@ function summarise(body) {
     if (i.errors) parts.push(`inactive_errors=${i.errors}`)
   }
   if (body.lead_events_purged != null) parts.push(`lead_events_purged=${body.lead_events_purged}`)
-  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'warnings', 'breaches', 'notified']) {
+  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'warnings', 'breaches', 'notified', 'attempted']) {
     if (k in body) parts.push(`${k}=${body[k]}`)
   }
   return parts.join(' ')

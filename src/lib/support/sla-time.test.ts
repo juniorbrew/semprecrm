@@ -57,6 +57,42 @@ describe('addBusinessMinutes', () => {
     })
   })
 
+  describe('DST boundaries (same fixtures as the SQL smoke)', () => {
+    const gap: BusinessHours['days'] = { ...none, sun: [{ start: '02:30', end: '04:00' }] }
+    const overlap: BusinessHours['days'] = { ...none, sun: [{ start: '01:30', end: '03:00' }] }
+    it('a nonexistent start is the first valid instant after it', () => {
+      // 02:30 does not exist on 2026-03-08 (NY): the range opens at 03:00 EDT = 07:00Z.
+      expect(add('2026-03-08T05:00:00Z', 30, gap, 'America/New_York')).toBe('2026-03-08T07:30:00Z')
+      expect(add('2026-03-08T05:00:00Z', 61, gap, 'America/New_York')).toBe('2026-03-15T06:31:00Z')
+    })
+    it('an ambiguous start is its first occurrence', () => {
+      // 01:30 happens twice on 2026-11-01 (NY): the first one is 05:30Z (EDT).
+      expect(add('2026-11-01T00:00:00Z', 60, overlap, 'America/New_York')).toBe('2026-11-01T06:30:00Z')
+    })
+  })
+
+  describe('malformed ranges', () => {
+    const mixed: BusinessHours['days'] = {
+      ...none,
+      mon: [
+        { start: '25:99', end: '26:00' },
+        { start: '9', end: '18:00' },
+        { start: '09:00', end: '10:00' },
+      ],
+    }
+    it('are skipped one by one, the valid range still counts', () => {
+      expect(add('2026-03-02T08:00:00Z', 30, mixed, 'UTC')).toBe('2026-03-02T09:30:00Z')
+      expect(add('2026-03-02T08:00:00Z', 90, mixed, 'UTC')).toBe('2026-03-09T09:30:00Z')
+    })
+    it('a schedule of only malformed ranges is elapsed time', () => {
+      expect(add('2026-03-02T08:00:00Z', 90, { ...none, mon: [{ start: '9', end: '18:00' }] }, 'UTC')).toBe('2026-03-02T09:30:00Z')
+    })
+    it('a day that is not a list is treated as closed, never throws', () => {
+      const weird = { ...none, mon: 'nope', tue: [{ start: '09:00', end: '10:00' }] } as unknown as BusinessHours['days']
+      expect(add('2026-03-02T08:00:00Z', 30, weird, 'UTC')).toBe('2026-03-03T09:30:00Z')
+    })
+  })
+
   describe('degenerate input', () => {
     it('falls back to elapsed time when the account is never open', () => {
       expect(add('2026-03-02T13:00:00Z', 90, none, 'UTC')).toBe('2026-03-02T14:30:00Z')

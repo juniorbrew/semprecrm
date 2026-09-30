@@ -71,11 +71,33 @@ describe('decideRouting', () => {
 
 type Row = Record<string, unknown>
 interface Store {
+  messages: Row[]
+  rpcCalls: Row[]
   conversations: Row[]
   routing_rules: Row[]
   teams: Row[]
   team_members: Row[]
   conversation_events: Row[]
+}
+
+/** Mirror of support_set_conversation_team() + conversations_stamp_sources() (migration 073). */
+function fakeRpc(store: Store, args: Row) {
+  store.rpcCalls.push(args)
+  const c = store.conversations.find((r) => r.id === args.p_conversation && r.account_id === args.p_account)
+  if (!c || c.status === 'closed' || c.archived_at) return { data: false, error: null }
+  if (args.p_check_assignee && (c.assigned_agent_id ?? null) !== (args.p_expect_assignee ?? null)) return { data: false, error: null }
+  if (args.p_require_auto && args.p_change_team && c.team_source === 'manual') return { data: false, error: null }
+  if (args.p_require_auto && args.p_change_assignee && c.assigned_agent_id && c.assignment_source !== 'auto') return { data: false, error: null }
+  const who = args.p_actor_user ? 'manual' : 'auto'
+  if (args.p_change_team && c.team_id !== args.p_team) {
+    c.team_id = args.p_team
+    c.team_source = args.p_team ? who : null
+  }
+  if (args.p_change_assignee && (c.assigned_agent_id ?? null) !== (args.p_assignee ?? null)) {
+    c.assigned_agent_id = args.p_assignee
+    c.assignment_source = args.p_assignee ? who : null
+  }
+  return { data: true, error: null }
 }
 
 function fakeDb(store: Store) {
@@ -93,13 +115,6 @@ function fakeDb(store: Store) {
       const hit = rows.filter((r) => filters.every((f) => f(r)))
       if (mode === 'update') {
         for (const r of hit) Object.assign(r, payload)
-        // The provenance trigger: server writes are 'auto' unless given.
-        if (table === 'conversations') {
-          for (const r of hit) {
-            if ('assigned_agent_id' in (payload as Row) && !('assignment_source' in (payload as Row))) r.assignment_source = 'auto'
-            if ('team_id' in (payload as Row) && !('team_source' in (payload as Row))) r.team_source = 'auto'
-          }
-        }
       }
       // Copies, like a real round trip: later writes must not change what was read.
       return { data: hit.map((r) => ({ ...r })), error: null }
@@ -116,12 +131,16 @@ function fakeDb(store: Store) {
       },
       update: (p: Row) => ((mode = 'update'), (payload = p), b),
       insert: (p: Row[]) => ((mode = 'insert'), (payload = p), b),
+      limit: () => b,
       maybeSingle: () => Promise.resolve({ data: run().data?.[0] ?? null, error: null }),
       then: (ok: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => Promise.resolve(run()).then(ok, bad),
     })
     return b
   }
-  return { from: (t: string) => query(t as keyof Store) } as never
+  return {
+    from: (t: string) => query(t as keyof Store),
+    rpc: async (name: string, args: Row) => (name === 'support_set_conversation_team' ? fakeRpc(store, args) : { data: null, error: { message: name } }),
+  } as never
 }
 
 function seed(over: Partial<Row> = {}): Store {
@@ -136,6 +155,8 @@ function seed(over: Partial<Row> = {}): Store {
       { team_id: 'team', account_id: 'acc', user_id: 'u2' },
     ],
     conversation_events: [],
+    messages: [],
+    rpcCalls: [],
   }
 }
 
@@ -229,6 +250,91 @@ describe('applyRouting', () => {
   })
 })
 
+describe('applyRouting (review round)', () => {
+  beforeEach(() => {
+    h.pick.mockReset()
+    h.notify.mockClear()
+  })
+
+  it('carries the automation depth and origin into the single write path', async () => {
+    h.pick.mockResolvedValue('u1')
+    const store = seed()
+    await applyRouting(fakeDb(store), 'c1', { depth: 2, origin: 'auto-9' })
+    expect(store.rpcCalls).toHaveLength(1)
+    expect(store.rpcCalls[0]).toMatchObject({ p_depth: 2, p_origin: 'auto-9', p_require_auto: true, p_actor_user: null, p_check_assignee: true, p_expect_assignee: null })
+    await applyRouting(fakeDb(seed()), 'c1')
+    // Outside automations: depth 0, no origin.
+  })
+
+  it('an automatic assignee who already wrote in the conversation is treated as a person at work', async () => {
+    const store = seed({ assigned_agent_id: 'outsider', assignment_source: 'auto' })
+    store.messages.push({ conversation_id: 'c1', sender_id: 'outsider', sender_type: 'agent' })
+    const out = await applyRouting(fakeDb(store), 'c1')
+    expect(out).toMatchObject({ status: 'routed', assigneeId: null, teamChanged: true })
+    expect(h.pick).not.toHaveBeenCalled()
+    expect(store.conversations[0]).toMatchObject({ assigned_agent_id: 'outsider', team_id: 'team' })
+    // Without a message from them the same outsider would have been replaced.
+    h.pick.mockResolvedValue('u1')
+    const quiet = seed({ assigned_agent_id: 'outsider', assignment_source: 'auto' })
+    quiet.messages.push({ conversation_id: 'c1', sender_id: 'someone-else' })
+    expect(await applyRouting(fakeDb(quiet), 'c1')).toMatchObject({ assigneeId: 'u1' })
+  })
+
+  it('reviewer scenario: claimed by a person, transferred to team A then B, a category set never reroutes', async () => {
+    const store = seed({ assigned_agent_id: 'human', assignment_source: 'manual' })
+    store.teams.push({ id: 'teamB', account_id: 'acc', name: 'Comercial', archived_at: null })
+    store.team_members.push({ team_id: 'teamB', account_id: 'acc', user_id: 'u3' })
+    h.pick.mockResolvedValue(null)
+    const db = fakeDb(store)
+    const args = { accountId: 'acc', conversationId: 'c1', actorUserId: 'human' }
+    expect(await transferToTeam(db, { ...args, teamId: 'team' })).toMatchObject({ status: 'ok', teamId: 'team', assigneeId: 'human' })
+    expect(store.conversations[0]).toMatchObject({ team_id: 'team', team_source: 'manual', assigned_agent_id: 'human', assignment_source: 'manual' })
+    expect(await transferToTeam(db, { ...args, teamId: 'teamB' })).toMatchObject({ status: 'ok', teamId: 'teamB', assigneeId: 'human' })
+    expect(store.conversations[0]).toMatchObject({ team_id: 'teamB', team_source: 'manual', assigned_agent_id: 'human', assignment_source: 'manual' })
+    // The category rule points at team A: a human chose B, so routing stands aside entirely.
+    expect(await applyRouting(db, 'c1')).toEqual({ status: 'skipped', reason: 'manual_team' })
+    expect(store.conversations[0]).toMatchObject({ team_id: 'teamB', assigned_agent_id: 'human' })
+  })
+
+  it('ping-pong (category_set -> set the other category, alternating rules) stops at the depth cap', async () => {
+    // Model of the automation loop: every team_changed event runs "set the other
+    // category" one level deeper, which re-runs routing. The database drops an
+    // event raised at depth > 3 (automation_enqueue_event), so the chain ends.
+    const store = seed({ category_id: 'catA' })
+    store.teams.push({ id: 'teamB', account_id: 'acc', name: 'B', archived_at: null })
+    store.routing_rules = [
+      { account_id: 'acc', category_id: 'catA', team_id: 'team', priority_min: null },
+      { account_id: 'acc', category_id: 'catB', team_id: 'teamB', priority_min: null },
+    ]
+    h.pick.mockResolvedValue(null)
+    const queue: number[] = []
+    const base = fakeDb(store) as unknown as { from: unknown; rpc: (n: string, a: Row) => Promise<{ data: unknown }> }
+    const db = {
+      from: base.from,
+      rpc: async (n: string, a: Row) => {
+        const before = store.conversations[0].team_id
+        const out = await base.rpc(n, a)
+        if (store.conversations[0].team_id !== before && (a.p_depth as number) <= 3) queue.push(a.p_depth as number)
+        return out
+      },
+    } as never
+    let runs = 0
+    await applyRouting(db, 'c1')
+    runs += 1
+    while (queue.length && runs < 50) {
+      const depth = queue.shift()!
+      const conv = store.conversations[0]
+      conv.category_id = conv.category_id === 'catA' ? 'catB' : 'catA'
+      await applyRouting(db, 'c1', { depth: depth + 1, origin: 'auto-1' })
+      runs += 1
+    }
+    expect(runs).toBeLessThan(50)
+    // Events at depth 0..3 ran their action; the routing it caused at depth 4 changed the team but raised nothing.
+    expect(runs).toBe(5)
+    expect(store.rpcCalls.map((c) => c.p_depth)).toEqual([0, 1, 2, 3, 4])
+  })
+})
+
 describe('transferToTeam', () => {
   beforeEach(() => h.pick.mockReset())
 
@@ -241,13 +347,50 @@ describe('transferToTeam', () => {
     expect(store.conversation_events.map((e) => [e.event_type, e.actor_user_id])).toEqual([['team_changed', 'me'], ['assigned', 'me']])
   })
 
-  it('unassigns and leaves it in the team queue when the whole team is away', async () => {
+  it('keeps the current owner when they already belong to the team', async () => {
+    const store = seed({ assigned_agent_id: 'u1', assignment_source: 'manual' })
+    const out = await transferToTeam(fakeDb(store), { accountId: 'acc', conversationId: 'c1', teamId: 'team', actorUserId: 'me' })
+    expect(out).toEqual({ status: 'ok', teamId: 'team', assigneeId: 'u1' })
+    expect(h.pick).not.toHaveBeenCalled()
+    expect(store.conversations[0]).toMatchObject({ team_id: 'team', team_source: 'manual', assigned_agent_id: 'u1', assignment_source: 'manual' })
+    expect(store.rpcCalls[0]).toMatchObject({ p_change_assignee: false, p_actor_user: 'me' })
+    expect(store.conversation_events.map((e) => e.event_type)).toEqual(['team_changed'])
+  })
+
+  it('does not drop the current owner when the whole team is away: only the team changes', async () => {
     h.pick.mockResolvedValue(null)
     const store = seed({ assigned_agent_id: 'old', assignment_source: 'manual' })
     const out = await transferToTeam(fakeDb(store), { accountId: 'acc', conversationId: 'c1', teamId: 'team', actorUserId: 'me' })
-    expect(out).toEqual({ status: 'ok', teamId: 'team', assigneeId: null })
-    expect(store.conversations[0]).toMatchObject({ team_id: 'team', assigned_agent_id: null, assignment_source: null })
-    expect(store.conversation_events.map((e) => e.event_type)).toEqual(['team_changed', 'unassigned'])
+    expect(out).toEqual({ status: 'ok', teamId: 'team', assigneeId: 'old' })
+    expect(store.conversations[0]).toMatchObject({ team_id: 'team', team_source: 'manual', assigned_agent_id: 'old', assignment_source: 'manual' })
+    expect(store.conversation_events.map((e) => e.event_type)).toEqual(['team_changed'])
+  })
+
+  it('an unassigned conversation with nobody available waits in the team queue', async () => {
+    h.pick.mockResolvedValue(null)
+    const store = seed()
+    expect(await transferToTeam(fakeDb(store), { accountId: 'acc', conversationId: 'c1', teamId: 'team', actorUserId: 'me' })).toEqual({ status: 'ok', teamId: 'team', assigneeId: null })
+    expect(store.conversations[0]).toMatchObject({ team_id: 'team', assigned_agent_id: null })
+  })
+
+  it('is a compare-and-set on the owner the person saw', async () => {
+    const store = seed({ assigned_agent_id: 'old', assignment_source: 'manual' })
+    h.pick.mockImplementation(async () => {
+      // A teammate took it while the pick was running.
+      Object.assign(store.conversations[0], { assigned_agent_id: 'someone', assignment_source: 'manual' })
+      return 'u2'
+    })
+    const out = await transferToTeam(fakeDb(store), { accountId: 'acc', conversationId: 'c1', teamId: 'team', actorUserId: 'me' })
+    expect(out).toEqual({ status: 'failed', reason: 'changed_meanwhile' })
+    expect(store.conversations[0]).toMatchObject({ assigned_agent_id: 'someone', team_id: null })
+    expect(store.conversation_events).toHaveLength(0)
+  })
+
+  it('writing again to the same team with the same owner is a no-op', async () => {
+    const store = seed({ assigned_agent_id: 'u1', assignment_source: 'manual', team_id: 'team', team_source: 'manual' })
+    expect(await transferToTeam(fakeDb(store), { accountId: 'acc', conversationId: 'c1', teamId: 'team', actorUserId: 'me' })).toEqual({ status: 'ok', teamId: 'team', assigneeId: 'u1' })
+    expect(store.rpcCalls).toHaveLength(0)
+    expect(store.conversation_events).toHaveLength(0)
   })
 
   it('refuses archived / foreign teams and closed conversations', async () => {
