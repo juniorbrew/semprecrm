@@ -28,6 +28,12 @@ describe('inbox search pattern', () => {
     expect(normalizeSearch('x'.repeat(500))).toHaveLength(MAX_SEARCH_LENGTH)
   })
 
+  it('truncates by code points, never inside an emoji', () => {
+    const out = normalizeSearch('😀'.repeat(150))
+    expect(Array.from(out)).toHaveLength(MAX_SEARCH_LENGTH)
+    expect(out).toBe('😀'.repeat(MAX_SEARCH_LENGTH))
+  })
+
   it('keeps accents and phone punctuation', () => {
     expect(buildSearchPattern('João +55 (11) 9')).toBe('%João +55 (11) 9%')
   })

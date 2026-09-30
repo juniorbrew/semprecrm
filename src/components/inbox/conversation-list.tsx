@@ -54,6 +54,7 @@ import {
   type InboxView,
 } from "@/lib/inbox/list-query";
 import { buildSearchPattern, normalizeSearch } from "@/lib/inbox/search";
+import { debounceWithMaxWait } from "@/lib/inbox/throttle";
 import { findConversationById } from "@/lib/conversations/find-by-contact";
 import {
   Search,
@@ -66,6 +67,7 @@ import {
   UserX,
   Snowflake,
   Building2,
+  RefreshCw,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -141,6 +143,8 @@ const STRIP_COPY: Record<
     queueEmpty: string;
     queueEmptyHint: string;
     loadMore: string;
+    loadError: string;
+    retry: string;
   }
 > = {
   "pt-BR": {
@@ -167,6 +171,8 @@ const STRIP_COPY: Record<
     queueEmpty: "Ninguém na fila",
     queueEmptyHint: "Conversas abertas sem responsável aparecem aqui, a mais antiga primeiro.",
     loadMore: "Carregar mais",
+    loadError: "Não foi possível carregar as conversas.",
+    retry: "Tentar de novo",
   },
   "en-US": {
     title: "Conversations",
@@ -192,6 +198,8 @@ const STRIP_COPY: Record<
     queueEmpty: "Nobody in the queue",
     queueEmptyHint: "Open conversations with no owner show up here, oldest first.",
     loadMore: "Load more",
+    loadError: "Could not load conversations.",
+    retry: "Try again",
   },
 };
 
@@ -294,6 +302,12 @@ export function ConversationList({
   const [unreadOnly, setUnreadOnly] = useState(false);
   // View key of the last page that finished loading; `loading` is derived.
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  // Same, without the search text: a search that is still settling keeps the
+  // current rows on screen (dimmed) instead of swapping them for a spinner.
+  const [loadedBaseKey, setLoadedBaseKey] = useState<string | null>(null);
+  // View whose first page failed to load (shows an error state with retry).
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   // Edge of the loaded window (last row the server returned) + whether more
   // pages exist. The next-page cursor is derived from `boundary`.
@@ -412,13 +426,21 @@ export function ConversationList({
     [tab, effectiveLive, unreadOnly, radar, debouncedSearch],
   );
   const key = viewKey(view);
-  const loading = loadedKey !== key;
+  const baseKey = viewKey({ ...view, search: "" });
+  const loadFailed = errorKey === key;
+  const loading = loadedKey !== key && !loadFailed;
+  // Only the search text changed: keep showing the rows we have.
+  const softLoading = loading && loadedBaseKey === baseKey;
   const slaMinutes = preferences.inbox_sla_minutes;
   const coolingHours = preferences.cooling_hours;
 
   const conversationsRef = useRef(conversations);
   const loadedCountRef = useRef(0);
-  const lastKeyRef = useRef<string | null>(null);
+  const loadedKeyRef = useRef<string | null>(null);
+  // Bumped whenever a first-page fetch starts: a "Carregar mais" answer that
+  // was in flight across it is stale (its cursor predates the refreshed
+  // window) and is discarded.
+  const generationRef = useRef(0);
   const keyRef = useRef(key);
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -434,13 +456,14 @@ export function ConversationList({
     if (!ready || !accountId) return;
     const supabase = createClient();
     let cancelled = false;
-    const isResync = lastKeyRef.current === key;
-    lastKeyRef.current = key;
+    const isResync = loadedKeyRef.current === key;
+    generationRef.current += 1;
     const limit = isResync
       ? Math.min(Math.max(loadedCountRef.current, INBOX_PAGE_SIZE), INBOX_RESYNC_MAX)
       : INBOX_PAGE_SIZE;
 
     (async () => {
+      setErrorKey(null);
       // One extra row tells whether another page exists.
       const { data, error } = await supabase
         .rpc(
@@ -464,7 +487,9 @@ export function ConversationList({
           hint: error.hint,
           code: error.code,
         });
-        setLoadedKey(key);
+        // A failed background refresh keeps the rows already shown; a view
+        // that never loaded shows an error state (with retry), not stale rows.
+        if (!isResync) setErrorKey(key);
         return;
       }
 
@@ -474,7 +499,9 @@ export function ConversationList({
       loadedCountRef.current = page.length;
       setPaging({ hasMore, boundary: page[page.length - 1] ?? null });
       onConversationsLoadedRef.current(page);
+      loadedKeyRef.current = key;
       setLoadedKey(key);
+      setLoadedBaseKey(baseKey);
     })();
 
     return () => {
@@ -483,13 +510,14 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [ready, accountId, key, view, resyncToken, slaMinutes, coolingHours]);
+  }, [ready, accountId, key, baseKey, view, resyncToken, retryTick, slaMinutes, coolingHours]);
 
   const loadMore = useCallback(async () => {
     const boundary = paging.boundary;
     if (loadingMore || !paging.hasMore || !boundary || !accountId) return;
     setLoadingMore(true);
     const startKey = keyRef.current;
+    const startGeneration = generationRef.current;
     try {
       const { data, error } = await createClient()
         .rpc(
@@ -503,8 +531,9 @@ export function ConversationList({
           }),
         )
         .select("*, contact:contacts(*)");
-      // The view changed while the page was in flight: drop it.
-      if (keyRef.current !== startKey) return;
+      // The view changed, or a resync refreshed the window, while the page
+      // was in flight: drop it.
+      if (keyRef.current !== startKey || generationRef.current !== startGeneration) return;
       if (error) {
         console.error("Failed to load more conversations:", {
           message: error.message,
@@ -537,47 +566,47 @@ export function ConversationList({
     });
   }, [view, paging, loading, onListStateChange]);
 
-  // Tab badges + Radar chips: counted on the server over the same filters,
-  // refreshed (debounced) whenever the parent bumps `countsToken`.
-  const countsFirstRef = useRef(true);
+  // Tab badges + Radar chips: counted on the server over the same filters.
+  // A filter change / resync refetches at once; realtime events (the parent
+  // bumps `countsToken`) are debounced with a 2 s max wait, so a busy inbox
+  // still refreshes the badges instead of resetting the timer forever.
+  const countsSeqRef = useRef(0);
+  const fetchCounts = useCallback(async () => {
+    if (!accountId) return;
+    const seq = ++countsSeqRef.current;
+    const { data, error } = await createClient().rpc(
+      "inbox_counts",
+      countsArgs(
+        { live: effectiveLive, unread: unreadOnly, radar },
+        { accountId, prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours } },
+      ),
+    );
+    if (seq !== countsSeqRef.current) return;
+    if (error) {
+      console.error("Failed to fetch inbox counts:", error.message);
+      return;
+    }
+    setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
+  }, [accountId, effectiveLive, unreadOnly, radar, slaMinutes, coolingHours]);
+  const fetchCountsRef = useRef(fetchCounts);
   useEffect(() => {
-    if (!ready || !accountId) return;
-    let cancelled = false;
-    const delay = countsFirstRef.current ? 0 : 300;
-    countsFirstRef.current = false;
-    const id = setTimeout(async () => {
-      const { data, error } = await createClient().rpc(
-        "inbox_counts",
-        countsArgs(
-          { live: effectiveLive, unread: unreadOnly, radar },
-          {
-            accountId,
-            prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours },
-          },
-        ),
-      );
-      if (cancelled) return;
-      if (error) {
-        console.error("Failed to fetch inbox counts:", error.message);
-        return;
-      }
-      setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
-    }, delay);
-    return () => {
-      cancelled = true;
-      clearTimeout(id);
-    };
-  }, [
-    ready,
-    accountId,
-    effectiveLive,
-    unreadOnly,
-    radar,
-    slaMinutes,
-    coolingHours,
-    countsToken,
-    resyncToken,
-  ]);
+    fetchCountsRef.current = fetchCounts;
+  });
+  useEffect(() => {
+    if (!ready) return;
+    void fetchCounts();
+  }, [ready, fetchCounts, resyncToken]);
+  const countsDebounce = useMemo(
+    () => debounceWithMaxWait(() => void fetchCountsRef.current(), 300, 2000),
+    [],
+  );
+  const lastCountsTokenRef = useRef(countsToken);
+  useEffect(() => {
+    if (lastCountsTokenRef.current === countsToken) return;
+    lastCountsTokenRef.current = countsToken;
+    countsDebounce.call();
+  }, [countsToken, countsDebounce]);
+  useEffect(() => () => countsDebounce.cancel(), [countsDebounce]);
 
   // Label chips on rows: one batched contact_tags fetch for every contact
   // in the list. Keyed on the sorted id set so realtime preview / unread
@@ -689,7 +718,7 @@ export function ConversationList({
             compareForTab(tab),
           );
 
-    if (searchPending && search.trim()) {
+    if ((searchPending || softLoading) && search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
@@ -700,7 +729,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [basePool, queue, tab, effectiveLive, userId, search, searchPending]);
+  }, [basePool, queue, tab, effectiveLive, userId, search, searchPending, softLoading]);
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -885,7 +914,19 @@ export function ConversationList({
           space — the list then overflows and gets clipped by the
           parent's overflow-hidden with no scrollbar (issue #229). */}
       <ScrollArea className="min-h-0 flex-1">
-        {loading ? (
+        {loadFailed ? (
+          <div className="px-4 py-12 text-center" data-no-translate role="alert">
+            <p className="text-sm text-muted-foreground">{copy.loadError}</p>
+            <button
+              type="button"
+              onClick={() => setRetryTick((n) => n + 1)}
+              className="mt-3 inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden />
+              {copy.retry}
+            </button>
+          </div>
+        ) : loading && !(softLoading && filtered.length > 0) ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
@@ -904,7 +945,10 @@ export function ConversationList({
             </div>
           )
         ) : (
-          <div className="flex flex-col">
+          <div
+            className={cn("flex flex-col transition-opacity", softLoading && "opacity-50")}
+            aria-busy={softLoading}
+          >
             {filtered.map((conv) => (
               <ConversationItem
                 key={conv.id}

@@ -947,8 +947,10 @@ export function MessageThread({
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].sender_type === "customer") return messages[i].id;
     }
-    return null;
-  }, [messages]);
+    // Only the newest page is loaded: when it holds no customer message
+    // (long agent / bot tail) the conversation's own timestamp stands in.
+    return conversation?.last_customer_message_at ?? null;
+  }, [messages, conversation?.last_customer_message_at]);
   useEffect(() => {
     if (!conversationId || !lastCustomerMessageId) return;
     let timer: ReturnType<typeof setTimeout> | undefined;

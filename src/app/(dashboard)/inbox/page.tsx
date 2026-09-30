@@ -74,8 +74,15 @@ export default function InboxPage() {
    * window — see `shouldInsertUnknown`.
    */
   const listStateRef = useRef<InboxListState | null>(null);
-  const handleListState = useCallback((state: InboxListState) => {
-    listStateRef.current = state;
+  /**
+   * Conversation ids that had a realtime event while the list was loading a
+   * view. The load's answer can predate those events (or replace patches
+   * applied to the old rows), so once the list is ready they are refetched
+   * and reconciled instead of being dropped.
+   */
+  const pendingIdsRef = useRef<Set<string>>(new Set());
+  const noteDuringLoad = useCallback((convId: string) => {
+    if (!listStateRef.current?.ready) pendingIdsRef.current.add(convId);
   }, []);
   const canInsertUnknown = useCallback(
     (c: Conversation) => {
@@ -126,6 +133,7 @@ export default function InboxPage() {
   // back to the deep-linked conversation if they've already clicked
   // elsewhere.
   const autoSelectedForDeepLinkRef = useRef<string | null>(null);
+  const deepLinkFetchingRef = useRef(false);
 
   // Tracks conversations whose hydrate fetch is currently in flight. The
   // conv-INSERT and the first-message-INSERT events both call into
@@ -145,6 +153,7 @@ export default function InboxPage() {
    * realtime channel). The ref is kept in sync via the effect below.
    */
   const knownConvIdsRef = useRef<Set<string>>(new Set());
+  const activeIdRef = useRef<string | null>(null);
   useEffect(() => {
     const next = new Set<string>();
     for (const c of conversations) next.add(c.id);
@@ -159,7 +168,7 @@ export default function InboxPage() {
   // conversations stuck on "No messages yet" until the user reloaded.
   // Also self-heals if a realtime event was missed: callers can invoke
   // this whenever they reference a conversation id they don't recognise.
-  const hydrateConversation = useCallback(async (convId: string) => {
+  const hydrateConversation = useCallback(async (convId: string, refresh = false) => {
     if (hydratingConvIdsRef.current.has(convId)) return;
     hydratingConvIdsRef.current.add(convId);
     try {
@@ -192,10 +201,18 @@ export default function InboxPage() {
           // have landed while the fetch was in flight and patched
           // last_message_text / unread_count to fresher values than
           // the row we just read). Only backfill `contact`, which the
-          // realtime payloads never carry.
+          // realtime payloads never carry. `refresh` (reconciling events
+          // that arrived during a list load) takes the fetched row instead.
           return prev.map((c) =>
             c.id === fetched.id
-              ? { ...c, contact: c.contact ?? fetched.contact }
+              ? refresh
+                ? {
+                    ...c,
+                    ...fetched,
+                    contact: fetched.contact ?? c.contact,
+                    unread_count: activeIdRef.current === c.id ? 0 : fetched.unread_count,
+                  }
+                : { ...c, contact: c.contact ?? fetched.contact }
               : c,
           );
         }
@@ -205,6 +222,18 @@ export default function InboxPage() {
       hydratingConvIdsRef.current.delete(convId);
     }
   }, [canInsertUnknown]);
+
+  const handleListState = useCallback(
+    (state: InboxListState) => {
+      listStateRef.current = state;
+      if (state.ready && pendingIdsRef.current.size > 0) {
+        const ids = [...pendingIdsRef.current];
+        pendingIdsRef.current.clear();
+        for (const id of ids) void hydrateConversation(id, true);
+      }
+    },
+    [hydrateConversation],
+  );
 
   // Check WhatsApp connection status on mount
   useEffect(() => {
@@ -267,9 +296,11 @@ export default function InboxPage() {
   const handleMessageEvent = useCallback(
     (event: { eventType: string; new: Message; old: Partial<Message> }) => {
       const newMsg = event.new;
-      bumpCounts();
 
       if (event.eventType === "INSERT") {
+        // Only new messages move the counts (status ticks do not).
+        bumpCounts();
+        noteDuringLoad(newMsg.conversation_id);
         // Add to messages if it belongs to active conversation
         if (
           activeConversation &&
@@ -325,7 +356,7 @@ export default function InboxPage() {
         );
       }
     },
-    [activeConversation, bumpCounts]
+    [activeConversation, bumpCounts, noteDuringLoad]
   );
 
   // Handle realtime conversation events
@@ -336,7 +367,10 @@ export default function InboxPage() {
       old: Partial<Conversation>;
     }) => {
       const conv = event.new;
-      bumpCounts();
+      if (event.eventType === "INSERT" || event.eventType === "UPDATE") {
+        bumpCounts();
+        noteDuringLoad(conv.id);
+      }
 
       if (event.eventType === "INSERT") {
         // Prepend immediately for snappy UX so the new conv shows in the
@@ -389,7 +423,7 @@ export default function InboxPage() {
         }
       }
     },
-    [activeConversation, hydrateConversation, canInsertUnknown, bumpCounts]
+    [activeConversation, hydrateConversation, canInsertUnknown, bumpCounts, noteDuringLoad]
   );
 
   // Contact photo / name changes (the QR gateway fills avatar_url a few
@@ -487,6 +521,9 @@ export default function InboxPage() {
    */
   const activeConversationId = activeConversation?.id ?? null;
   useEffect(() => {
+    activeIdRef.current = activeConversationId;
+  });
+  useEffect(() => {
     if (!activeConversationId) {
       reportConversationFocus(null);
       return;
@@ -539,6 +576,25 @@ export default function InboxPage() {
         if (!fresh || fresh.updated_at === prev.updated_at) return prev;
         return { ...prev, ...fresh };
       });
+      // The open conversation can be outside the loaded pages (deep link to
+      // an old one): the list then cannot refresh its header on a resync,
+      // so refetch that single row.
+      if (activeId && !loaded.some((c) => c.id === activeId)) {
+        void createClient()
+          .from("conversations")
+          .select("*")
+          .eq("id", activeId)
+          .maybeSingle()
+          .then(({ data }) => {
+            const fresh = data as Conversation | null;
+            if (!fresh) return;
+            setActiveConversation((prev) =>
+              prev && prev.id === fresh.id && prev.updated_at !== fresh.updated_at
+                ? { ...prev, ...fresh }
+                : prev,
+            );
+          });
+      }
       // Resolve a pending deep-link here rather than in an effect — this
       // is an event handler, so the setState calls below are allowed by
       // react-hooks/set-state-in-effect. Runs once per ?c=<id> URL value
@@ -548,7 +604,6 @@ export default function InboxPage() {
         deepLinkConvId &&
         autoSelectedForDeepLinkRef.current !== deepLinkConvId
       ) {
-        autoSelectedForDeepLinkRef.current = deepLinkConvId;
         // If the deep-linked conversation is already the active one
         // (e.g. because the user clicked it in the list and we
         // router.replace()'d the URL, which made the ConversationList
@@ -558,7 +613,10 @@ export default function InboxPage() {
         // conversationId didn't change, MessageThread wouldn't
         // refetch. The thread would read "No messages yet" until a
         // full page reload rehydrated state from scratch.
-        if (activeConversation?.id === deepLinkConvId) return;
+        if (activeConversation?.id === deepLinkConvId) {
+          autoSelectedForDeepLinkRef.current = deepLinkConvId;
+          return;
+        }
         const selectDeepLink = (match: Conversation) => {
           setActiveConversation(match);
           setActiveContact(match.contact ?? null);
@@ -577,20 +635,27 @@ export default function InboxPage() {
         };
         const match = loaded.find((c) => c.id === deepLinkConvId);
         if (match) {
+          autoSelectedForDeepLinkRef.current = deepLinkConvId;
           selectDeepLink(match);
-        } else {
+        } else if (!deepLinkFetchingRef.current) {
           // The list only holds the first page: an old conversation opened
-          // from a link (dashboard, push, ?c=) is fetched on demand.
+          // from a link (dashboard, push, ?c=) is fetched on demand. The
+          // link counts as handled only once that succeeds, so a failed
+          // fetch is retried on the next list load (resync).
           const linkedId = deepLinkConvId;
+          deepLinkFetchingRef.current = true;
           void createClient()
             .from("conversations")
             .select("*, contact:contacts(*)")
             .eq("id", linkedId)
             .maybeSingle()
-            .then(({ data }) => {
-              if (data && autoSelectedForDeepLinkRef.current === linkedId) {
-                selectDeepLink(data as Conversation);
-              }
+            .then(({ data, error }) => {
+              deepLinkFetchingRef.current = false;
+              if (error) return;
+              // Something else was opened / closed meanwhile: leave it be.
+              if (autoSelectedForDeepLinkRef.current !== null) return;
+              autoSelectedForDeepLinkRef.current = linkedId;
+              if (data) selectDeepLink(data as Conversation);
             });
         }
       }

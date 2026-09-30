@@ -18,7 +18,7 @@ import { isInQueue, queueWaitingSince } from '@/lib/radar/queue'
 import { tabConversations, type InboxTab, type LiveFilter } from './triage'
 
 export const INBOX_PAGE_SIZE = 50
-/** A resync refetches as many rows as are loaded, capped (server caps at 500). */
+/** A resync refetches as many rows as are loaded, capped (the server's own cap is 1000). */
 export const INBOX_RESYNC_MAX = 500
 
 export type InboxRow = Pick<

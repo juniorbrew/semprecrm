@@ -260,14 +260,34 @@ AS $$
   FROM live;
 $$;
 
-REVOKE ALL ON FUNCTION public.inbox_radar_match(text, text, uuid, timestamptz, timestamptz, integer, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.inbox_search_ids(uuid, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.inbox_search_ids(uuid, text) TO authenticated, service_role;
-REVOKE ALL ON FUNCTION public.inbox_counts(uuid, text, boolean, text, integer, integer) FROM PUBLIC;
+-- Supabase's default privileges grant EXECUTE on new public functions to anon
+-- as well, so revoking PUBLIC alone is not enough: revoke anon explicitly.
+REVOKE ALL ON FUNCTION public.inbox_radar_match(text, text, uuid, timestamptz, timestamptz, integer, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.inbox_radar_match(text, text, uuid, timestamptz, timestamptz, integer, integer) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.inbox_search_ids(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.inbox_search_ids(uuid, text) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.inbox_counts(uuid, text, boolean, text, integer, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.inbox_counts(uuid, text, boolean, text, integer, integer) TO authenticated, service_role;
+
+-- Smoke check: signed-out callers must not reach any of them.
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY[
+    'public.inbox_radar_match(text, text, uuid, timestamptz, timestamptz, integer, integer)',
+    'public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer)',
+    'public.inbox_search_ids(uuid, text)',
+    'public.inbox_counts(uuid, text, boolean, text, integer, integer)'
+  ] LOOP
+    IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('public', f, 'EXECUTE')
+       OR NOT has_function_privilege('authenticated', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'unexpected EXECUTE privileges on %', f;
+    END IF;
+  END LOOP;
+END;
+$$;
 
 -- ------------------------------------------------------------
 -- 5. Indexes. Partial indexes mirror the tab predicates so each list

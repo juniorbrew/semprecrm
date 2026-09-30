@@ -8,7 +8,8 @@ export const MAX_SEARCH_LENGTH = 100
 
 /** Trim, collapse whitespace, cap the length. */
 export function normalizeSearch(raw: string): string {
-  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_SEARCH_LENGTH).trim()
+  // By code points, so an emoji is never cut in half (a lone surrogate breaks the RPC JSON).
+  return Array.from(raw.replace(/\s+/g, ' ').trim()).slice(0, MAX_SEARCH_LENGTH).join('').trim()
 }
 
 /** Escape `\`, `%` and `_` (Postgres' default LIKE escape is a backslash). */
