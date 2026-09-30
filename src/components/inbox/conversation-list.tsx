@@ -15,7 +15,6 @@ import {
 import { useLanguage } from "@/hooks/use-language";
 import {
   classifyConversation,
-  countRadar,
   formatWaitingAge,
   isRadarKey,
   matchesRadar,
@@ -34,11 +33,28 @@ import {
   LIVE_FILTERS,
   migrateTriage,
   tabConversations,
-  tabCounts,
   tabForConversation,
   type InboxTab,
   type LiveFilter,
 } from "@/lib/inbox/triage";
+import {
+  compareForTab,
+  countsArgs,
+  cursorFor,
+  EMPTY_COUNTS,
+  INBOX_PAGE_SIZE,
+  INBOX_RESYNC_MAX,
+  mergePage,
+  pageArgs,
+  parseCounts,
+  viewKey,
+  type InboxCounts,
+  type InboxListState,
+  type InboxRow,
+  type InboxView,
+} from "@/lib/inbox/list-query";
+import { buildSearchPattern, normalizeSearch } from "@/lib/inbox/search";
+import { findConversationById } from "@/lib/conversations/find-by-contact";
 import {
   Search,
   ChevronDown,
@@ -73,6 +89,16 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  /**
+   * Bumped by the parent (debounced) on every realtime message / conversation
+   * event so the server-side tab badges and Radar chips refresh.
+   */
+  countsToken?: number;
+  /**
+   * Reports the active view + paging window so the parent can decide which
+   * realtime rows belong in the loaded list (lib/inbox/list-query).
+   */
+  onListStateChange?: (state: InboxListState) => void;
 }
 
 /**
@@ -114,6 +140,7 @@ const STRIP_COPY: Record<
     queuePositionTitle: string;
     queueEmpty: string;
     queueEmptyHint: string;
+    loadMore: string;
   }
 > = {
   "pt-BR": {
@@ -139,6 +166,7 @@ const STRIP_COPY: Record<
     queuePositionTitle: "Posição na fila (maior espera primeiro)",
     queueEmpty: "Ninguém na fila",
     queueEmptyHint: "Conversas abertas sem responsável aparecem aqui, a mais antiga primeiro.",
+    loadMore: "Carregar mais",
   },
   "en-US": {
     title: "Conversations",
@@ -163,6 +191,7 @@ const STRIP_COPY: Record<
     queuePositionTitle: "Position in the queue (longest wait first)",
     queueEmpty: "Nobody in the queue",
     queueEmptyHint: "Open conversations with no owner show up here, oldest first.",
+    loadMore: "Load more",
   },
 };
 
@@ -228,8 +257,10 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  countsToken = 0,
+  onListStateChange,
 }: ConversationListProps) {
-  const { user, preferences } = useAuth();
+  const { user, preferences, accountId } = useAuth();
   const { language } = useLanguage();
   const copy = STRIP_COPY[language] ?? STRIP_COPY["pt-BR"];
   const userId = user?.id ?? null;
@@ -252,10 +283,25 @@ export function ConversationList({
   );
 
   const [search, setSearch] = useState("");
+  // The server query follows the box 300 ms after the last keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(normalizeSearch(search)), 300);
+    return () => clearTimeout(id);
+  }, [search]);
   const [tab, setTab] = useState<InboxTab>("all");
   const [liveFilter, setLiveFilter] = useState<LiveFilter>("live");
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // View key of the last page that finished loading; `loading` is derived.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Edge of the loaded window (last row the server returned) + whether more
+  // pages exist. The next-page cursor is derived from `boundary`.
+  const [paging, setPaging] = useState<{ hasMore: boolean; boundary: InboxRow | null }>({
+    hasMore: false,
+    boundary: null,
+  });
+  const [counts, setCounts] = useState<InboxCounts>(EMPTY_COUNTS);
   const [tagsByContact, setTagsByContact] = useState<Map<string, RowTag[]>>(
     () => new Map()
   );
@@ -270,38 +316,43 @@ export function ConversationList({
     []
   );
 
-  // The persisted queue view is restored inside the fetch effect below,
-  // right before the first batch of conversations lands — so tabs and
-  // rows appear in one paint, and the server-rendered defaults never
-  // disagree with the client (reading localStorage in the initializer
-  // would be a hydration mismatch). Once only, hence the ref.
-  const triageRestoredRef = useRef(false);
-  // A ?c= deep link to a resolved / archived conversation lands on the
-  // tab that lists it (first load only — later list refetches must not
-  // yank the agent off the tab they picked).
+  // The persisted queue view (and the tab a ?c= deep link to a resolved /
+  // archived conversation lives in) is restored once, before the first page
+  // is fetched — so the list opens on the right tab in one paint, and the
+  // server-rendered defaults never disagree with the client (reading
+  // localStorage in the initializer would be a hydration mismatch). Later
+  // refetches must not yank the agent off the tab they picked.
+  const [ready, setReady] = useState(false);
   const deepLinkId = searchParams.get("c");
   const deepLinkIdRef = useRef(deepLinkId);
   useEffect(() => {
     deepLinkIdRef.current = deepLinkId;
   });
-  const restorePersistedTriage = useCallback((loaded: Conversation[]) => {
-    if (triageRestoredRef.current) return;
-    triageRestoredRef.current = true;
-    try {
-      const raw = localStorage.getItem(TRIAGE_STORAGE_KEY);
-      if (raw) {
-        const stored = migrateTriage(JSON.parse(raw));
-        setTab(stored.tab);
-        setLiveFilter(stored.live);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = localStorage.getItem(TRIAGE_STORAGE_KEY);
+        if (raw) {
+          const stored = migrateTriage(JSON.parse(raw));
+          setTab(stored.tab);
+          setLiveFilter(stored.live);
+        }
+      } catch {
+        // localStorage can throw in private-browsing / sandboxed contexts.
       }
-    } catch {
-      // localStorage can throw in private-browsing / sandboxed contexts.
-    }
-    const linked = deepLinkIdRef.current
-      ? loaded.find((c) => c.id === deepLinkIdRef.current)
-      : undefined;
-    const linkedTab = linked ? tabForConversation(linked) : null;
-    if (linkedTab) setTab(linkedTab);
+      const linkedId = deepLinkIdRef.current;
+      if (linkedId) {
+        const linked = await findConversationById(createClient(), linkedId);
+        if (cancelled) return;
+        const linkedTab = linked ? tabForConversation(linked) : null;
+        if (linkedTab) setTab(linkedTab);
+      }
+      if (!cancelled) setReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const persistTriage = useCallback((next: { tab: InboxTab; live: LiveFilter }) => {
@@ -354,15 +405,54 @@ export function ConversationList({
     onConversationsLoadedRef.current = onConversationsLoaded;
   });
 
+  // Radar buckets replace the live filter (the bucket fixes the status).
+  const effectiveLive: LiveFilter = radar ? "live" : liveFilter;
+  const view = useMemo<InboxView>(
+    () => ({ tab, live: effectiveLive, unread: unreadOnly, radar, search: debouncedSearch }),
+    [tab, effectiveLive, unreadOnly, radar, debouncedSearch],
+  );
+  const key = viewKey(view);
+  const loading = loadedKey !== key;
+  const slaMinutes = preferences.inbox_sla_minutes;
+  const coolingHours = preferences.cooling_hours;
+
+  const conversationsRef = useRef(conversations);
+  const loadedCountRef = useRef(0);
+  const lastKeyRef = useRef<string | null>(null);
+  const keyRef = useRef(key);
   useEffect(() => {
+    conversationsRef.current = conversations;
+    keyRef.current = key;
+  });
+
+  // First page of the current view (and background refreshes of it). The
+  // server applies the tab / live / unread / Radar / search filters and the
+  // order (Fila: longest wait first) — see migration 067. A resync of the
+  // same view refetches as many rows as are loaded, so it never collapses
+  // pages the agent already scrolled through.
+  useEffect(() => {
+    if (!ready || !accountId) return;
     const supabase = createClient();
     let cancelled = false;
+    const isResync = lastKeyRef.current === key;
+    lastKeyRef.current = key;
+    const limit = isResync
+      ? Math.min(Math.max(loadedCountRef.current, INBOX_PAGE_SIZE), INBOX_RESYNC_MAX)
+      : INBOX_PAGE_SIZE;
 
     (async () => {
+      // One extra row tells whether another page exists.
       const { data, error } = await supabase
-        .from("conversations")
-        .select("*, contact:contacts(*)")
-        .order("last_message_at", { ascending: false });
+        .rpc(
+          "inbox_conversation_page",
+          pageArgs(view, {
+            accountId,
+            prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours },
+            pattern: buildSearchPattern(view.search),
+            limit: limit + 1,
+          }),
+        )
+        .select("*, contact:contacts(*)");
 
       if (cancelled) return;
 
@@ -374,13 +464,17 @@ export function ConversationList({
           hint: error.hint,
           code: error.code,
         });
-        setLoading(false);
+        setLoadedKey(key);
         return;
       }
 
-      restorePersistedTriage(data ?? []);
-      onConversationsLoadedRef.current(data ?? []);
-      setLoading(false);
+      const rows = (data ?? []) as Conversation[];
+      const hasMore = rows.length > limit;
+      const page = (hasMore ? rows.slice(0, limit) : rows).sort(compareForTab(view.tab));
+      loadedCountRef.current = page.length;
+      setPaging({ hasMore, boundary: page[page.length - 1] ?? null });
+      onConversationsLoadedRef.current(page);
+      setLoadedKey(key);
     })();
 
     return () => {
@@ -389,7 +483,101 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken, restorePersistedTriage]);
+  }, [ready, accountId, key, view, resyncToken, slaMinutes, coolingHours]);
+
+  const loadMore = useCallback(async () => {
+    const boundary = paging.boundary;
+    if (loadingMore || !paging.hasMore || !boundary || !accountId) return;
+    setLoadingMore(true);
+    const startKey = keyRef.current;
+    try {
+      const { data, error } = await createClient()
+        .rpc(
+          "inbox_conversation_page",
+          pageArgs(view, {
+            accountId,
+            prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours },
+            pattern: buildSearchPattern(view.search),
+            cursor: cursorFor(view.tab, boundary),
+            limit: INBOX_PAGE_SIZE + 1,
+          }),
+        )
+        .select("*, contact:contacts(*)");
+      // The view changed while the page was in flight: drop it.
+      if (keyRef.current !== startKey) return;
+      if (error) {
+        console.error("Failed to load more conversations:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        return;
+      }
+      const rows = (data ?? []) as Conversation[];
+      const hasMore = rows.length > INBOX_PAGE_SIZE;
+      const page = (hasMore ? rows.slice(0, INBOX_PAGE_SIZE) : rows).sort(
+        compareForTab(view.tab),
+      );
+      loadedCountRef.current += page.length;
+      setPaging({ hasMore, boundary: page[page.length - 1] ?? boundary });
+      onConversationsLoadedRef.current(mergePage(conversationsRef.current, page));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [paging, loadingMore, accountId, view, slaMinutes, coolingHours]);
+
+  // Tell the parent which view / window is on screen (realtime merge rules).
+  useEffect(() => {
+    onListStateChange?.({
+      view,
+      hasMore: paging.hasMore,
+      boundary: paging.boundary,
+      ready: !loading,
+    });
+  }, [view, paging, loading, onListStateChange]);
+
+  // Tab badges + Radar chips: counted on the server over the same filters,
+  // refreshed (debounced) whenever the parent bumps `countsToken`.
+  const countsFirstRef = useRef(true);
+  useEffect(() => {
+    if (!ready || !accountId) return;
+    let cancelled = false;
+    const delay = countsFirstRef.current ? 0 : 300;
+    countsFirstRef.current = false;
+    const id = setTimeout(async () => {
+      const { data, error } = await createClient().rpc(
+        "inbox_counts",
+        countsArgs(
+          { live: effectiveLive, unread: unreadOnly, radar },
+          {
+            accountId,
+            prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours },
+          },
+        ),
+      );
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed to fetch inbox counts:", error.message);
+        return;
+      }
+      setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
+    }, delay);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [
+    ready,
+    accountId,
+    effectiveLive,
+    unreadOnly,
+    radar,
+    slaMinutes,
+    coolingHours,
+    countsToken,
+    resyncToken,
+  ]);
 
   // Label chips on rows: one batched contact_tags fetch for every contact
   // in the list. Keyed on the sorted id set so realtime preview / unread
@@ -479,7 +667,6 @@ export function ConversationList({
     return result;
   }, [conversations, unreadOnly, radar, preferences, now]);
 
-  const effectiveLive: LiveFilter = radar ? "live" : liveFilter;
   const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
   // The queue, longest wait first, with 1-based positions.
@@ -489,29 +676,21 @@ export function ConversationList({
   );
   const queueById = useMemo(() => queueIndex(queue), [queue]);
 
-  // Radar counts are taken over every conversation the list knows — the
-  // same population the dashboard card counts — regardless of the
-  // status / unread / queue filters, so both surfaces show identical
-  // numbers.
-  const radarCounts = useMemo(
-    () => countRadar(conversations, preferences, now),
-    [conversations, preferences, now],
-  );
-
-  const counts = useMemo(
-    () =>
-      tabCounts(basePool, { live: effectiveLive, userId, queueLength: queue.length }),
-    [basePool, effectiveLive, userId, queue]
-  );
-
+  // Search: the server answers once the box settles; while the debounce is
+  // pending the loaded rows are narrowed locally so typing feels instant.
+  // (A settled server search must not be re-filtered here: it also matches
+  // company names, which the rows do not carry.)
+  const searchPending = normalizeSearch(search) !== debouncedSearch;
   const filtered = useMemo(() => {
     let result: Conversation[] =
       tab === "queue"
         ? queue.map((e) => e.conversation)
-        : tabConversations(basePool, tab, { live: effectiveLive, userId });
+        : tabConversations(basePool, tab, { live: effectiveLive, userId }).sort(
+            compareForTab(tab),
+          );
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if (searchPending && search.trim()) {
+      const q = search.trim().toLowerCase();
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
@@ -521,7 +700,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [basePool, queue, tab, effectiveLive, userId, search]);
+  }, [basePool, queue, tab, effectiveLive, userId, search, searchPending]);
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -627,7 +806,7 @@ export function ConversationList({
           </span>
           {RADAR_KEYS.map((key) => {
             const active = radar === key;
-            const count = radarCounts[key];
+            const count = counts.radar[key];
             const Icon = RADAR_ICON[key];
             return (
               <button
@@ -691,7 +870,7 @@ export function ConversationList({
                       : "bg-muted text-muted-foreground"
                   )}
                 >
-                  {counts[value]}
+                  {counts.tabs[value]}
                 </span>
               </button>
             );
@@ -743,11 +922,35 @@ export function ConversationList({
                 waitingTitle={copy.waitingTitle}
                 queue={
                   tab === "queue"
-                    ? queueBadgeFor(queueById.get(conv.id), preferences, now, language, copy.queuePositionTitle)
+                    ? queueBadgeFor(
+                        queueById.get(conv.id),
+                        preferences,
+                        now,
+                        language,
+                        copy.queuePositionTitle,
+                        // A search narrows the loaded rows, so their rank
+                        // among the results is not their place in the Fila.
+                        !debouncedSearch,
+                      )
                     : null
                 }
               />
             ))}
+            {paging.hasMore && (
+              <div className="flex justify-center px-3 py-3" data-no-translate>
+                <button
+                  type="button"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-muted/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {loadingMore && (
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  )}
+                  {copy.loadMore}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </ScrollArea>
@@ -785,11 +988,12 @@ function queueBadgeFor(
   now: number,
   language: Language,
   positionTitle: string,
+  showPosition = true,
 ): QueueBadge | null {
   if (!entry) return null;
   const since = entry.waitingSince;
   return {
-    position: formatQueuePosition(entry.position, language),
+    position: showPosition ? formatQueuePosition(entry.position, language) : "",
     positionTitle,
     wait: since ? formatQueueWait(since, now, language) : null,
     overdue:
@@ -976,13 +1180,15 @@ function ConversationItem({
         </div>
         {queue && (
           <div data-no-translate className="mt-1 flex min-w-0 items-center gap-1.5">
-            <span
-              title={queue.positionTitle}
-              aria-label={queue.positionTitle}
-              className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
-            >
-              {queue.position}
-            </span>
+            {queue.position && (
+              <span
+                title={queue.positionTitle}
+                aria-label={queue.positionTitle}
+                className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
+              >
+                {queue.position}
+              </span>
+            )}
             {queue.wait && (
               <span
                 title={queue.overdue ? waitingTitle : undefined}

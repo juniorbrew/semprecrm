@@ -14,6 +14,7 @@ import { useRealtime } from "@/hooks/use-realtime";
 import { applyContactUpdate, useContactUpdates } from "@/hooks/use-contact-updates";
 import { useAuth } from "@/hooks/use-auth";
 import { ConversationList } from "@/components/inbox/conversation-list";
+import { shouldInsertUnknown, type InboxListState } from "@/lib/inbox/list-query";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
@@ -58,6 +59,37 @@ export default function InboxPage() {
    * once on conversationId-change as usual.
    */
   const [resyncToken, setResyncToken] = useState(0);
+  /**
+   * Bumped on every realtime message / conversation event; the list turns it
+   * into a (debounced) refetch of the server-side tab badges + Radar chips.
+   */
+  const [countsToken, setCountsToken] = useState(0);
+  const bumpCounts = useCallback(() => setCountsToken((n) => n + 1), []);
+
+  const { accountId, user, preferences } = useAuth();
+  /**
+   * The list's active view + loaded window (lib/inbox/list-query). The list
+   * only holds the pages the agent loaded, so a realtime row that is not in
+   * it is merged only when it belongs to that view and sorts inside the
+   * window — see `shouldInsertUnknown`.
+   */
+  const listStateRef = useRef<InboxListState | null>(null);
+  const handleListState = useCallback((state: InboxListState) => {
+    listStateRef.current = state;
+  }, []);
+  const canInsertUnknown = useCallback(
+    (c: Conversation) => {
+      const st = listStateRef.current;
+      if (!st || !st.ready) return false;
+      return shouldInsertUnknown(
+        c,
+        st.view,
+        { hasMore: st.hasMore, boundary: st.boundary },
+        { userId: user?.id ?? null, prefs: preferences, now: Date.now() },
+      );
+    },
+    [user?.id, preferences],
+  );
 
   /**
    * Whether the desktop contact sidebar (tags / deals / notes) is shown.
@@ -150,6 +182,9 @@ export default function InboxPage() {
       }
       if (!data) return;
       const fetched = data as Conversation;
+      // A conversation that is not loaded joins the list only if it belongs
+      // to the view on screen (checked again on the fresh row).
+      const insertIfMissing = canInsertUnknown(fetched);
       setConversations((prev) => {
         const existing = prev.find((c) => c.id === fetched.id);
         if (existing) {
@@ -164,12 +199,12 @@ export default function InboxPage() {
               : c,
           );
         }
-        return [fetched, ...prev];
+        return insertIfMissing ? [fetched, ...prev] : prev;
       });
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, []);
+  }, [canInsertUnknown]);
 
   // Check WhatsApp connection status on mount
   useEffect(() => {
@@ -232,6 +267,7 @@ export default function InboxPage() {
   const handleMessageEvent = useCallback(
     (event: { eventType: string; new: Message; old: Partial<Message> }) => {
       const newMsg = event.new;
+      bumpCounts();
 
       if (event.eventType === "INSERT") {
         // Add to messages if it belongs to active conversation
@@ -275,14 +311,11 @@ export default function InboxPage() {
                 : c,
             ),
           );
-        } else {
-          // First time we're seeing this conv: the conv-INSERT event
-          // hasn't landed yet, or was missed. Hydrate from the DB so
-          // the row surfaces with its `contact` joined; the conv-UPDATE
-          // event the webhook emits right after the message INSERT will
-          // converge state when it arrives.
-          hydrateConversation(newMsg.conversation_id);
         }
+        // A conversation that is not in the loaded pages is left alone here:
+        // the conversations UPDATE the messages trigger emits right after
+        // carries the whole row, and decides (without a fetch) whether it
+        // belongs in the list.
       }
 
       if (event.eventType === "UPDATE") {
@@ -292,7 +325,7 @@ export default function InboxPage() {
         );
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, bumpCounts]
   );
 
   // Handle realtime conversation events
@@ -303,6 +336,7 @@ export default function InboxPage() {
       old: Partial<Conversation>;
     }) => {
       const conv = event.new;
+      bumpCounts();
 
       if (event.eventType === "INSERT") {
         // Prepend immediately for snappy UX so the new conv shows in the
@@ -310,7 +344,7 @@ export default function InboxPage() {
         // (realtime payloads never include joins). Skip both if we
         // already have the row — that shouldn't happen normally, but
         // out-of-order delivery would have us prepending a duplicate.
-        if (!knownConvIdsRef.current.has(conv.id)) {
+        if (!knownConvIdsRef.current.has(conv.id) && canInsertUnknown(conv)) {
           setConversations((prev) => {
             if (prev.some((c) => c.id === conv.id)) return prev;
             return [conv, ...prev];
@@ -338,11 +372,12 @@ export default function InboxPage() {
                 : c,
             ),
           );
-        } else {
-          // UPDATE arrived before the INSERT (or after a missed INSERT)
-          // — fetch the row so it surfaces with its contact joined. The
-          // patch contained in `conv` will already be reflected in what
-          // the hydrate fetch returns.
+        } else if (canInsertUnknown(conv)) {
+          // UPDATE arrived before the INSERT (or after a missed INSERT), or
+          // it is a conversation beyond the loaded pages that now belongs
+          // in the list — fetch the row so it surfaces with its contact
+          // joined. The patch contained in `conv` will already be
+          // reflected in what the hydrate fetch returns.
           hydrateConversation(conv.id);
         }
 
@@ -354,13 +389,12 @@ export default function InboxPage() {
         }
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, canInsertUnknown, bumpCounts]
   );
 
   // Contact photo / name changes (the QR gateway fills avatar_url a few
   // seconds after a message): patch the list, the open thread and the
   // panel in place — no refetch.
-  const { accountId } = useAuth();
   const handleContactUpdate = useCallback((updated: Contact) => {
     setConversations((prev) => applyContactUpdate(prev, updated));
     setActiveContact((prev) =>
@@ -512,8 +546,7 @@ export default function InboxPage() {
       // user back to the deep-linked thread after they've navigated.
       if (
         deepLinkConvId &&
-        autoSelectedForDeepLinkRef.current !== deepLinkConvId &&
-        loaded.length > 0
+        autoSelectedForDeepLinkRef.current !== deepLinkConvId
       ) {
         autoSelectedForDeepLinkRef.current = deepLinkConvId;
         // If the deep-linked conversation is already the active one
@@ -526,8 +559,7 @@ export default function InboxPage() {
         // refetch. The thread would read "No messages yet" until a
         // full page reload rehydrated state from scratch.
         if (activeConversation?.id === deepLinkConvId) return;
-        const match = loaded.find((c) => c.id === deepLinkConvId);
-        if (match) {
+        const selectDeepLink = (match: Conversation) => {
           setActiveConversation(match);
           setActiveContact(match.contact ?? null);
           setMessages([]);
@@ -542,6 +574,24 @@ export default function InboxPage() {
               ),
             );
           }
+        };
+        const match = loaded.find((c) => c.id === deepLinkConvId);
+        if (match) {
+          selectDeepLink(match);
+        } else {
+          // The list only holds the first page: an old conversation opened
+          // from a link (dashboard, push, ?c=) is fetched on demand.
+          const linkedId = deepLinkConvId;
+          void createClient()
+            .from("conversations")
+            .select("*, contact:contacts(*)")
+            .eq("id", linkedId)
+            .maybeSingle()
+            .then(({ data }) => {
+              if (data && autoSelectedForDeepLinkRef.current === linkedId) {
+                selectDeepLink(data as Conversation);
+              }
+            });
         }
       }
     },
@@ -721,6 +771,8 @@ export default function InboxPage() {
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
             resyncToken={resyncToken}
+            countsToken={countsToken}
+            onListStateChange={handleListState}
           />
         </div>
 
