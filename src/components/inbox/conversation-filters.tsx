@@ -5,7 +5,8 @@ import { ListFilter, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
-import type { WhatsAppChannel } from "@/types";
+import type { ConversationPriority, WhatsAppChannel } from "@/types";
+import { CATEGORY_DOT, PRIORITIES, PRIORITY_DOT, supportCopy, type ConversationCategory } from "@/lib/support/model";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -61,6 +62,12 @@ interface FilterPopoverProps {
   channel: WhatsAppChannel | null;
   onTagsChange: (ids: string[]) => void;
   onChannelChange: (channel: WhatsAppChannel | null) => void;
+  /** Support filters (migration 071); the sections show once the account has categories. */
+  categories?: ConversationCategory[];
+  categoryId?: string | null;
+  priority?: ConversationPriority | null;
+  onCategoryChange?: (id: string | null) => void;
+  onPriorityChange?: (priority: ConversationPriority | null) => void;
 }
 
 /** Header button + popover: multi-select tags and (when both exist) the channel. */
@@ -71,10 +78,17 @@ export function FilterPopover({
   channel,
   onTagsChange,
   onChannelChange,
+  categories = [],
+  categoryId = null,
+  priority = null,
+  onCategoryChange,
+  onPriorityChange,
 }: FilterPopoverProps) {
-  const { t } = useLanguage();
-  const active = tagIds.length + (channel ? 1 : 0);
-  if (tags.length === 0 && !hasBothChannels) return null;
+  const { t, language } = useLanguage();
+  const support = supportCopy(language);
+  const showSupport = categories.length > 0 && !!onCategoryChange && !!onPriorityChange;
+  const active = tagIds.length + (channel ? 1 : 0) + (categoryId ? 1 : 0) + (priority ? 1 : 0);
+  if (tags.length === 0 && !hasBothChannels && !showSupport) return null;
 
   const toggle = (id: string) =>
     onTagsChange(tagIds.includes(id) ? tagIds.filter((x) => x !== id) : [...tagIds, id]);
@@ -151,12 +165,60 @@ export function FilterPopover({
             </div>
           </div>
         )}
+        {showSupport && (
+          <div data-no-translate className="space-y-3">
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">{support.category}</p>
+              <div className="max-h-40 overflow-y-auto">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    aria-pressed={categoryId === cat.id}
+                    onClick={() => onCategoryChange?.(categoryId === cat.id ? null : cat.id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted",
+                      categoryId === cat.id && "text-primary",
+                    )}
+                  >
+                    <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", CATEGORY_DOT[cat.color])} aria-hidden />
+                    <span className="truncate">{cat.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">{support.priority}</p>
+              <div className="flex flex-wrap gap-1" role="group" aria-label={support.priority}>
+                {PRIORITIES.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={priority === value}
+                    onClick={() => onPriorityChange?.(priority === value ? null : value)}
+                    className={cn(
+                      "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
+                      priority === value
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border text-foreground hover:bg-muted",
+                    )}
+                  >
+                    <span className={cn("h-1.5 w-1.5 rounded-full", PRIORITY_DOT[value])} aria-hidden />
+                    {support.priorities[value]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         {active > 0 && (
           <button
             type="button"
             onClick={() => {
               onTagsChange([]);
               onChannelChange(null);
+              onCategoryChange?.(null);
+              onPriorityChange?.(null);
             }}
             className="self-start text-xs font-medium text-primary hover:underline"
           >
@@ -175,9 +237,28 @@ export function FilterChips({
   channel,
   onTagsChange,
   onChannelChange,
-}: Pick<FilterPopoverProps, "tags" | "tagIds" | "channel" | "onTagsChange" | "onChannelChange">) {
-  const { t } = useLanguage();
-  if (tagIds.length === 0 && !channel) return null;
+  categories = [],
+  categoryId = null,
+  priority = null,
+  onCategoryChange,
+  onPriorityChange,
+}: Pick<
+  FilterPopoverProps,
+  | "tags"
+  | "tagIds"
+  | "channel"
+  | "onTagsChange"
+  | "onChannelChange"
+  | "categories"
+  | "categoryId"
+  | "priority"
+  | "onCategoryChange"
+  | "onPriorityChange"
+>) {
+  const { t, language } = useLanguage();
+  const support = supportCopy(language);
+  const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
+  if (tagIds.length === 0 && !channel && !category && !priority) return null;
   const chip =
     "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 pl-2 pr-1 text-[11px] font-medium text-primary";
   return (
@@ -203,6 +284,32 @@ export function FilterChips({
           </span>
         );
       })}
+      {category && (
+        <span className={chip}>
+          <span className="max-w-24 truncate">{category.name}</span>
+          <button
+            type="button"
+            aria-label={`${t("Remove filter")}: ${category.name}`}
+            onClick={() => onCategoryChange?.(null)}
+            className="rounded-full p-0.5 hover:bg-primary/20"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      )}
+      {priority && (
+        <span className={chip}>
+          <span>{support.priorities[priority]}</span>
+          <button
+            type="button"
+            aria-label={`${t("Remove filter")}: ${support.priorities[priority]}`}
+            onClick={() => onPriorityChange?.(null)}
+            className="rounded-full p-0.5 hover:bg-primary/20"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      )}
       {channel && (
         <span className={chip}>
           <span>{channelLabel(channel, t)}</span>

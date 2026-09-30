@@ -9,6 +9,11 @@ import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TaskDrawer } from "@/components/tasks";
+import { SubjectLine, TriageChips } from "@/components/inbox/triage-chips";
+import { useConversationCategories } from "@/hooks/use-conversation-categories";
+import { useTriageSettings } from "@/hooks/use-triage-settings";
+import { DEFAULT_RESOLUTION, RESOLVE_AS_OPTIONS, resolutionNote, supportCopy } from "@/lib/support/model";
+import { manualTriagePatch, triageEvents, type TriageChange } from "@/lib/support/triage-fields";
 import { EventDrawer } from "@/components/calendar";
 import type {
   WhatsAppChannel,
@@ -17,6 +22,8 @@ import type {
   Message,
   MessageReaction,
   Contact,
+  ConversationPriority,
+  ConversationResolution,
   ConversationStatus,
   MessageTemplate,
   Profile,
@@ -39,6 +46,7 @@ import {
   UserCheck,
   Archive,
   ArchiveRestore,
+  ListChecks,
 } from "lucide-react";
 import { isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -199,6 +207,7 @@ function formatDayMonth(dateStr: string, language: Language): string {
 }
 
 const STATUS_ORDER: ConversationStatus[] = ["open", "pending", "closed"];
+
 
 const STATUS_COLOR: Record<ConversationStatus, string> = {
   open: "text-primary",
@@ -450,6 +459,12 @@ export function MessageThread({
     conversation?.id,
     resyncToken,
   );
+  // Support triage (migration 071): categories, the "Classificar" action.
+  const support = supportCopy(language);
+  const { active: activeCategories, byId: categoryById } = useConversationCategories();
+  const triageSettings = useTriageSettings();
+  const [classifying, setClassifying] = useState(false);
+  const [reclassifyOpen, setReclassifyOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -1129,7 +1144,7 @@ export function MessageThread({
 
   /** True when the status is now `status` (unchanged counts as success). */
   const handleStatusChange = useCallback(
-    async (status: ConversationStatus): Promise<boolean> => {
+    async (status: ConversationStatus, resolution?: ConversationResolution): Promise<boolean> => {
       if (!conversation) return false;
 
       if (conversation.status === status) return true;
@@ -1143,9 +1158,11 @@ export function MessageThread({
         notifyActiveOther(statusCopy.reopenBlocked, blocker.id);
         return false;
       }
+      // Closing records the outcome (a DB trigger defaults it to "resolved"
+      // and stamps resolved_at; leaving "closed" clears both).
       const { error } = await supabase
         .from("conversations")
-        .update({ status })
+        .update(status === "closed" && resolution ? { status, resolution } : { status })
         .eq("id", conversation.id);
 
       if (error && reopening && error.code === "23505") {
@@ -1165,14 +1182,26 @@ export function MessageThread({
       }
 
       onStatusChange(conversation.id, status);
+      onConversationPatch?.(
+        conversation.id,
+        status === "closed"
+          ? { resolution: resolution ?? DEFAULT_RESOLUTION, resolved_at: new Date().toISOString() }
+          : { resolution: null, resolved_at: null },
+      );
       // Leaving "closed" unarchives it in the DB (migration 056 trigger);
       // mirror that locally so the row leaves the Arquivadas view at once.
       if (status !== "closed" && conversation.archived_at) {
         onConversationPatch?.(conversation.id, { archived_at: null });
       }
+      // One pill per resolve action: a non-default outcome rides on the
+      // status event ("resolveu como: duplicada").
       void logEvent({
         event_type: "status_changed",
-        payload: { status, previous_status: conversation.status },
+        payload: {
+          status,
+          previous_status: conversation.status,
+          ...(status === "closed" && resolution && resolution !== DEFAULT_RESOLUTION ? { resolution } : {}),
+        },
       });
       return true;
     },
@@ -1196,6 +1225,82 @@ export function MessageThread({
       toast.success(message);
     }
   }, [conversation, handleStatusChange, statusCopy, t]);
+
+  // "Resolver como…": same as Resolver, with an explicit outcome.
+  const handleResolveAs = useCallback(
+    async (resolution: ConversationResolution) => {
+      if (!conversation) return;
+      if (conversation.status === "closed") {
+        // Already resolved: just change the outcome.
+        const { error } = await createClient()
+          .from("conversations")
+          .update({ resolution })
+          .eq("id", conversation.id);
+        if (error) {
+          toast.error(support.saveFailed);
+          return;
+        }
+        onConversationPatch?.(conversation.id, { resolution });
+        void logEvent({ event_type: "resolution_set", payload: { resolution } });
+        return;
+      }
+      if (await handleStatusChange("closed", resolution)) toast.success(statusCopy.resolvedToast);
+    },
+    [conversation, handleStatusChange, logEvent, onConversationPatch, statusCopy.resolvedToast, support.saveFailed],
+  );
+
+  // Category / priority / subject edited by an agent: a human decision, so
+  // the AI never overwrites it (triage_source = 'manual').
+  const handleTriageChange = useCallback(
+    async (change: TriageChange) => {
+      if (!conversation) return;
+      const category = change.category_id ? categoryById.get(change.category_id) : null;
+      const patch = manualTriagePatch(change, { current: conversation, category });
+      const { error } = await createClient().from("conversations").update(patch).eq("id", conversation.id);
+      if (error) {
+        console.error("Failed to update triage:", error);
+        toast.error(support.saveFailed);
+        return;
+      }
+      onConversationPatch?.(conversation.id, patch);
+      const events = triageEvents(
+        { category_id: conversation.category_id, priority: conversation.priority },
+        { category_id: patch.category_id, priority: patch.priority },
+        categoryById,
+      );
+      for (const e of events) void logEvent(e);
+    },
+    [conversation, categoryById, logEvent, onConversationPatch, support.saveFailed],
+  );
+
+  const handleClassify = useCallback(async (force = false) => {
+    if (!conversation || classifying) return;
+    setReclassifyOpen(false);
+    setClassifying(true);
+    try {
+      const res = await fetch(`/api/conversations/${conversation.id}/ai/triage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { applied?: boolean; reason?: string; error?: string };
+      if (!res.ok) {
+        toast.error(data.error ? t(data.error) : support.classifyFailed);
+      } else if (data.applied) {
+        toast.success(support.classified);
+        onRefresh?.();
+      } else if (data.reason === "manual") {
+        toast.message(support.classifyManual);
+      } else {
+        toast.message(support.classifyNothing);
+      }
+    } catch (err) {
+      console.error("Failed to classify:", err);
+      toast.error(support.classifyFailed);
+    } finally {
+      setClassifying(false);
+    }
+  }, [conversation, classifying, onRefresh, support, t]);
 
   // ---- Internal notes ----------------------------------------------
 
@@ -1565,7 +1670,14 @@ export function MessageThread({
           payload: { status: "closed", previous_status: conversation.status },
         });
       }
-      onConversationPatch?.(conversation.id, { archived_at: patch.archived_at ?? null });
+      // Archiving an open conversation is not a resolution (the DB trigger
+      // leaves resolved_at / resolution empty); mirror that locally.
+      onConversationPatch?.(
+        conversation.id,
+        archive && conversation.status !== "closed"
+          ? { archived_at: patch.archived_at ?? null, resolution: null, resolved_at: null }
+          : { archived_at: patch.archived_at ?? null },
+      );
       toast.success(archive ? statusCopy.archivedToast : statusCopy.unarchivedToast);
     },
     [conversation, onStatusChange, onConversationPatch, logEvent, statusCopy],
@@ -1657,6 +1769,18 @@ export function MessageThread({
     conversation,
     tasksEnabled,
   });
+  // Support triage UI shows up once the account has categories (or this
+  // conversation already carries one); accounts that only sell see no change.
+  const supportMode = activeCategories.length > 0 || !!conversation.category_id;
+  const canTriage = actions.canWrite;
+  const canClassify =
+    canTriage &&
+    supportMode &&
+    (!entitlementsReady || modules.ai) &&
+    triageSettings.aiEnabled &&
+    triageSettings.triageEnabled;
+  const resolutionNoteKey = resolutionNote(status, conversation.resolution);
+  const resolutionLabel = resolutionNoteKey ? support.resolutions[resolutionNoteKey] : null;
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the
@@ -1676,8 +1800,8 @@ export function MessageThread({
           (Resolver / Reabrir, a split button whose chevron opens the full
           status picker); assignee, refresh and the panel toggle are
           ghost buttons so the primary action is unmistakable. */}
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2.5 sm:px-4">
-        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+      <div className="group/header flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border bg-card px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-[10rem] flex-1 items-center gap-2 sm:gap-3">
           {/* Back-to-list button — mobile only. Hidden on lg+ where the
               conversation list is always visible next to the thread. */}
           {onBack && (
@@ -1701,7 +1825,14 @@ export function MessageThread({
             <h2 className="truncate text-sm font-semibold leading-5 text-foreground">
               {displayName}
             </h2>
-            <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+            {supportMode && (
+              <SubjectLine
+                subject={conversation.subject}
+                canEdit={canTriage}
+                onSave={(subject) => void handleTriageChange({ subject })}
+              />
+            )}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-4 text-muted-foreground">
               {/* Phone truncates on phones; the status + window badges
                   are the parts that must stay visible. */}
               <p
@@ -1756,7 +1887,7 @@ export function MessageThread({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {/* Assumir — outline, one click to own the thread. Once it is
               mine, a static "✓ Sua" takes its place; hidden when resolved;
               disabled for viewers. */}
@@ -1939,6 +2070,27 @@ export function MessageThread({
                     {status === value && <Check className="h-3 w-3" />}
                   </DropdownMenuItem>
                 ))}
+                {supportMode && (
+                  <>
+                    <DropdownMenuSeparator className="bg-border" />
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>{support.resolveAs}</DropdownMenuLabel>
+                    </DropdownMenuGroup>
+                    {RESOLVE_AS_OPTIONS.map((value) => (
+                      <DropdownMenuItem
+                        key={value}
+                        onClick={() => void handleResolveAs(value)}
+                        className={cn(
+                          "gap-2 text-sm",
+                          isResolved && conversation.resolution === value ? "text-primary" : "text-popover-foreground"
+                        )}
+                      >
+                        <span className="flex-1">{support.resolutions[value]}</span>
+                        {isResolved && conversation.resolution === value && <Check className="h-3 w-3" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -2005,7 +2157,20 @@ export function MessageThread({
                   {t("Schedule appointment")}
                 </DropdownMenuItem>
               )}
-              {(canCreateTask || canSchedule) && (
+              {canClassify && (
+                <DropdownMenuItem
+                  disabled={classifying || isResolved}
+                  onClick={() =>
+                    conversation.triage_source === "manual" ? setReclassifyOpen(true) : void handleClassify()
+                  }
+                  className="gap-2 text-sm text-popover-foreground"
+                  data-no-translate
+                >
+                  <ListChecks className="h-4 w-4" />
+                  {classifying ? support.classifying : support.classify}
+                </DropdownMenuItem>
+              )}
+              {(canCreateTask || canSchedule || canClassify) && (
                 <DropdownMenuSeparator className="bg-border" />
               )}
               {actions.archive.visible && (
@@ -2056,6 +2221,26 @@ export function MessageThread({
             </button>
           )}
         </div>
+
+        {/* Triage chips: own full-width row under name + actions, so they
+            never share a line (or get covered by) the action buttons. */}
+        {supportMode && (
+          <div className="flex w-full basis-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <TriageChips
+              conversation={conversation}
+              categories={activeCategories}
+              byId={categoryById}
+              canEdit={canTriage}
+              onCategory={(id) => void handleTriageChange({ category_id: id })}
+              onPriority={(priority: ConversationPriority) => void handleTriageChange({ priority })}
+            />
+            {resolutionLabel && (
+              <span data-no-translate className="truncate text-xs text-muted-foreground">
+                {resolutionLabel}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <TransferDialog
@@ -2067,6 +2252,21 @@ export function MessageThread({
           if (target) void handleAssignChange(target.user_id, { reason });
         }}
       />
+
+      <Dialog open={reclassifyOpen} onOpenChange={setReclassifyOpen}>
+        <DialogContent data-no-translate>
+          <DialogHeader>
+            <DialogTitle>{support.reclassify}</DialogTitle>
+            <DialogDescription>{support.reclassifyBody}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReclassifyOpen(false)}>
+              {statusCopy.cancel}
+            </Button>
+            <Button onClick={() => void handleClassify(true)}>{support.reclassify}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
         <DialogContent data-no-translate>

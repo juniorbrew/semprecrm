@@ -15,8 +15,11 @@ import type {
   ConversationEventPayload,
   ConversationEventRecord,
   ConversationEventType,
+  ConversationPriority,
+  ConversationResolution,
   ConversationStatus,
 } from '@/types'
+import { supportCopy } from '@/lib/support/model'
 import type { Language } from '@/lib/i18n'
 import { normalizeTransferReason } from './transfer-reason'
 
@@ -58,6 +61,14 @@ export interface ConversationEvent {
   deal_title?: string
   from_stage_name?: string
   to_stage_name?: string
+  /** `category_changed`: null = category removed. */
+  category_name?: string | null
+  /** `priority_changed` */
+  priority?: ConversationPriority
+  /** `resolution_set` */
+  resolution?: ConversationResolution
+  /** 'ai' when the automatic triage wrote it (no human actor). */
+  source?: 'ai'
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -121,6 +132,10 @@ export function eventFromRecord(
     deal_title: payload.deal_title,
     from_stage_name: payload.from_stage_name,
     to_stage_name: payload.to_stage_name,
+    category_name: payload.category_name,
+    priority: payload.priority,
+    resolution: payload.resolution,
+    source: payload.source,
     reason:
       row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
@@ -297,6 +312,16 @@ export function formatConversationEvent(
           : 'Conversation unassigned'
     case 'status_changed': {
       const status = event.status ?? 'open'
+      if (status === 'closed' && event.resolution && event.resolution !== 'resolved') {
+        const label = supportCopy(language).resolutions[event.resolution].toLowerCase()
+        return actor
+          ? pt
+            ? `${actor} resolveu como: ${label}`
+            : `${actor} resolved as: ${label}`
+          : pt
+            ? `Resolvida como: ${label}`
+            : `Resolved as: ${label}`
+      }
       if (actor) {
         if (pt) {
           if (status === 'closed') return `${actor} resolveu a conversa`
@@ -368,6 +393,45 @@ export function formatConversationEvent(
         : pt
           ? 'IA retomada nesta conversa'
           : 'AI resumed in this conversation'
+    case 'category_changed': {
+      const s = supportCopy(language)
+      if (event.source === 'ai') {
+        return event.category_name
+          ? `${s.autoClassified}: ${event.category_name}`
+          : s.autoClassified
+      }
+      if (event.category_name) {
+        return actor
+          ? pt
+            ? `${actor} definiu a categoria ${event.category_name}`
+            : `${actor} set the category to ${event.category_name}`
+          : s.eventCategorySet(event.category_name)
+      }
+      return actor
+        ? pt
+          ? `${actor} removeu a categoria`
+          : `${actor} removed the category`
+        : s.eventCategoryCleared
+    }
+    case 'priority_changed': {
+      const s = supportCopy(language)
+      const label = s.priorities[event.priority ?? 'normal']
+      if (event.source === 'ai') return `${s.autoClassified}: ${pt ? 'prioridade' : 'priority'} ${label.toLowerCase()}`
+      return actor
+        ? pt
+          ? `${actor} definiu a prioridade ${label.toLowerCase()}`
+          : `${actor} set the priority to ${label.toLowerCase()}`
+        : s.eventPriority(label)
+    }
+    case 'resolution_set': {
+      const s = supportCopy(language)
+      const label = s.resolutions[event.resolution ?? 'resolved']
+      return actor
+        ? pt
+          ? `${actor} resolveu como: ${label.toLowerCase()}`
+          : `${actor} resolved as: ${label.toLowerCase()}`
+        : s.eventResolution(label)
+    }
     default:
       return ''
   }

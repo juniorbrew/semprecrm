@@ -73,3 +73,19 @@ describe("fetchContactActivity", () => {
     await expect(fetchContactActivity({ rpc } as never, "c1")).rejects.toThrow("x")
   })
 })
+
+describe("describeActivity — support events (071)", () => {
+  it("shows category / priority / resolution events from the conversation log", () => {
+    const at = (type: string, payload: Record<string, unknown>, actor: string | null = "Ana") =>
+      describeActivity(row({ type, payload, actor_name: actor, link_kind: "conversation", link_id: "c1", conversation_id: "c1" }), "pt-BR")
+    expect(at("conv_category_changed", { category_name: "Cobrança" })).toEqual({
+      icon: "tag",
+      text: "Ana definiu a categoria Cobrança",
+      href: "/inbox?c=c1",
+    })
+    expect(at("conv_priority_changed", { priority: "high", source: "ai" }, null)?.text).toBe(
+      "Classificada automaticamente: prioridade alta",
+    )
+    expect(at("conv_resolution_set", { resolution: "not_applicable" })?.text).toBe("Ana resolveu como: não procede")
+  })
+})

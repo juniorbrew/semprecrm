@@ -356,4 +356,7 @@ export const DICT_SETTINGS: Record<string, string> = {
     'Criado direto na Meta e ainda não sincronizado — clique em "Sincronizar da Meta" para carregar o conteúdo. Até lá ele não pode ser enviado.',
   'The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it.':
     'A conta do WhatsApp Business não está inscrita neste app, então a Meta não entregará os webhooks de entrada. Informe o token de acesso de novo e salve para inscrevê-la.',
+  // ---- Support triage (migration 071) ----
+  'Conversation categories and triage': 'Categorias e classificação das conversas',
+  'Triage is not enabled for this account.': 'A classificação automática não está ativada nesta conta.',
 };

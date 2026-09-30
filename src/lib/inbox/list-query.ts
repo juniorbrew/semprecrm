@@ -12,7 +12,7 @@
  *   - everything else: last_message_at (created_at when there is none)
  *     newest first; ties on id.
  */
-import type { Conversation, WhatsAppChannel } from '@/types'
+import type { Conversation, ConversationPriority, WhatsAppChannel } from '@/types'
 import { matchesRadar, type RadarKey, type RadarPreferences } from '@/lib/radar/classify'
 import { isInQueue, queueWaitingSince } from '@/lib/radar/queue'
 import { tabConversations, type InboxTab, type LiveFilter } from './triage'
@@ -58,14 +58,25 @@ export interface InboxView {
   tagIds: string[]
   /** One WhatsApp transport (migration 068); null = both. */
   channel: WhatsAppChannel | null
+  /** Support category (migration 071); null / absent = any. */
+  categoryId?: string | null
+  /** Support priority (migration 071); null / absent = any. */
+  priority?: ConversationPriority | null
 }
 
 /** Trailing RPC arguments shared by the page, counts and search functions. */
-export function facetArgs(view: Pick<InboxView, 'tagIds' | 'channel'>): {
+export function facetArgs(view: Pick<InboxView, 'tagIds' | 'channel' | 'categoryId' | 'priority'>): {
   p_tag_ids: string[] | null
   p_channel: WhatsAppChannel | null
+  p_category_id: string | null
+  p_priority: ConversationPriority | null
 } {
-  return { p_tag_ids: view.tagIds.length ? view.tagIds : null, p_channel: view.channel }
+  return {
+    p_tag_ids: view.tagIds.length ? view.tagIds : null,
+    p_channel: view.channel,
+    p_category_id: view.categoryId ?? null,
+    p_priority: view.priority ?? null,
+  }
 }
 
 export function viewKey(view: InboxView): string {
@@ -77,6 +88,8 @@ export function viewKey(view: InboxView): string {
     view.search,
     [...view.tagIds].sort().join(','),
     view.channel ?? '',
+    view.categoryId ?? '',
+    view.priority ?? '',
   ].join('|')
 }
 
@@ -139,7 +152,7 @@ export function pageArgs(
 
 /** Arguments of `inbox_counts`. */
 export function countsArgs(
-  view: Pick<InboxView, 'live' | 'unread' | 'radar' | 'tagIds' | 'channel'>,
+  view: Pick<InboxView, 'live' | 'unread' | 'radar' | 'tagIds' | 'channel' | 'categoryId' | 'priority'>,
   opts: { accountId: string; prefs: RadarPreferences },
 ): Record<string, unknown> {
   return {
@@ -225,9 +238,11 @@ interface MatchCtx {
   now: number
 }
 
-/** Would this row be listed by `view` (tab + live + unread + radar + channel)? Search and tags are not evaluated. */
+/** Would this row be listed by `view` (tab + live + unread + radar + channel + category + priority)? Search and tags are not evaluated. */
 export function matchesView(c: Conversation, view: InboxView, ctx: MatchCtx): boolean {
   if (view.channel && (c.channel ?? 'official') !== view.channel) return false
+  if (view.categoryId && (c.category_id ?? null) !== view.categoryId) return false
+  if (view.priority && (c.priority ?? 'normal') !== view.priority) return false
   if (view.radar && !matchesRadar(c, view.radar, ctx.prefs, ctx.now)) return false
   if (view.unread && !(c.unread_count > 0)) return false
   if (view.tab === 'queue') return isInQueue(c, ctx.prefs, ctx.now)

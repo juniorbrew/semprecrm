@@ -19,6 +19,7 @@ import { TaskStatusesSettings } from '@/components/settings/task-statuses-settin
 import { QuickRepliesSettings } from '@/components/settings/quick-replies-settings';
 import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings';
 import { InboxSettings } from '@/components/settings/inbox-settings';
+import { SupportSettings } from '@/components/settings/support-settings';
 import { AuditLogSettings } from '@/components/settings/audit-log-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { CalendarSettings } from '@/components/settings/calendar-settings';
@@ -76,6 +77,7 @@ export default function SettingsPage() {
     tasks: <TaskStatusesSettings />,
     quick_replies: <QuickRepliesSettings />,
     inbox: <InboxSettings />,
+    support: <SupportSettings />,
     integrations: <LeadSourcesSettings />,
     audit: <AuditLogSettings />,
     branding: <BrandingSettings />,

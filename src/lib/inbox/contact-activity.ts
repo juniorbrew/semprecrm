@@ -90,7 +90,7 @@ function href(row: ContactActivityRow): string | null {
 }
 
 function conversationIcon(type: ConversationEventType): ActivityIcon {
-  if (type === 'label_added' || type === 'label_removed') return 'tag'
+  if (type === 'label_added' || type === 'label_removed' || type === 'category_changed') return 'tag'
   if (type === 'deal_stage_changed') return 'deal'
   if (type.startsWith('ai_')) return 'ai'
   return 'conversation'

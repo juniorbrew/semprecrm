@@ -11,6 +11,7 @@ import {
   listContactConversations,
 } from '@/lib/whatsapp/inbound'
 import { kickAutoReplies } from '@/lib/ai/auto-reply-runtime'
+import { scheduleTriageIfDue } from '@/lib/support/triage-trigger'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -628,6 +629,8 @@ async function processMessage(
       void kickAutoReplies()
     }
   }
+  // AI triage on the customer's 1st / 3rd message (opt-in, never blocks).
+  scheduleTriageIfDue(ingested, accountId)
 }
 
 async function parseMessageContent(

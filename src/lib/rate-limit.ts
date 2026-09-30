@@ -171,6 +171,8 @@ export const RATE_LIMITS = {
    *  provider credit; 10/min is plenty for an agent clicking the button
    *  and bounds a script hammering someone else's key. */
   aiSuggest: { limit: 10, windowMs: 60_000 },
+  /** "Classificar" (per user) — one small model call on the account's own key. */
+  aiTriage: { limit: 10, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
