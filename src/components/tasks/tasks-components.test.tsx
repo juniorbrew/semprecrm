@@ -3,6 +3,7 @@ import { renderToString } from "react-dom/server"
 
 import { TaskQuickCreate } from "./task-quick-create"
 import { TaskList } from "./task-list"
+import { addCreatedTask } from "./linked-tasks"
 import type { Task, TaskStatus } from "@/lib/tasks"
 
 // Client components rendered to a string: exercises the markup and the
@@ -98,5 +99,15 @@ describe("TaskList", () => {
       <TaskList tasks={[]} statuses={statuses} members={[]} onOpen={() => {}} onToggleDone={() => {}} />,
     )
     expect(empty).toContain("Nenhuma tarefa aqui")
+  })
+})
+
+describe("addCreatedTask (panel refresh after the drawer creates a task)", () => {
+  it("puts the new task in the list, replacing a same-id row", () => {
+    const old = task({ id: "t1", title: "velha" })
+    const created = task({ id: "t2", title: "nova" })
+    const next = addCreatedTask([old], created, statuses)
+    expect(next.map((t) => t.id).sort()).toEqual(["t1", "t2"])
+    expect(addCreatedTask(next, { ...created, title: "editada" }, statuses).filter((t) => t.id === "t2")).toHaveLength(1)
   })
 })

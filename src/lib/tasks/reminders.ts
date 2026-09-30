@@ -106,3 +106,61 @@ export function formatReminderWhen(when: Date, language: Language, now: number =
 export function canSaveReminder(state: { saving: boolean; statusesLoaded: number }): boolean {
   return !state.saving && state.statusesLoaded > 0;
 }
+
+// ------------------------------------------------------------
+// Task drawer ("Nova tarefa") — optional reminder + create payload.
+// ------------------------------------------------------------
+
+export type TaskReminderMode = 'none' | 'at_due' | 'hour_before' | 'custom';
+
+/**
+ * ISO `remind_at` for the drawer's reminder select. `at_due` / `hour_before`
+ * need a due date (null otherwise); `custom` reads a datetime-local value.
+ */
+export function resolveTaskReminder(
+  mode: TaskReminderMode,
+  dueIso: string | null,
+  customLocal: string,
+): string | null {
+  if (mode === 'none') return null;
+  if (mode === 'custom') {
+    const d = customLocal ? new Date(customLocal) : null;
+    return d && !Number.isNaN(d.getTime()) ? d.toISOString() : null;
+  }
+  if (!dueIso) return null;
+  const due = new Date(dueIso).getTime();
+  if (Number.isNaN(due)) return null;
+  return new Date(mode === 'hour_before' ? due - HOUR_MS : due).toISOString();
+}
+
+/** A due date already behind us — the drawer warns but still saves. */
+export function isDueInPast(dueIso: string | null, now: number = Date.now()): boolean {
+  return !!dueIso && new Date(dueIso).getTime() < now;
+}
+
+/** Payload handed to `createTask` by the drawer's create form. */
+export function buildDrawerTaskInput(form: {
+  title: string;
+  description: string;
+  priority: TaskInput['priority'];
+  statusId: string;
+  assignee: string;
+  contactId: string;
+  conversationId: string;
+  dealId: string;
+  dueIso: string | null;
+  remindIso: string | null;
+}): TaskInput {
+  return {
+    title: form.title.trim(),
+    description: form.description,
+    priority: form.priority,
+    status_id: form.statusId || null,
+    assignee_user_id: form.assignee || null,
+    contact_id: form.contactId || null,
+    conversation_id: form.conversationId || null,
+    deal_id: form.dealId || null,
+    due_at: form.dueIso,
+    remind_at: form.remindIso,
+  };
+}

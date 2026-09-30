@@ -47,6 +47,11 @@ export interface LinkedTasksState {
   remove: (taskId: string) => void;
 }
 
+/** The created row goes first; a same-id row is replaced. Pure, for tests. */
+export function addCreatedTask(prev: Task[], task: Task, statuses: TaskStatus[]): Task[] {
+  return sortTasks([task, ...prev.filter((x) => x.id !== task.id)], statuses);
+}
+
 export function useLinkedTasks({
   contactId,
   dealId,
@@ -97,7 +102,7 @@ export function useLinkedTasks({
 
   const add = useCallback(
     (task: Task) => {
-      setTasks((prev) => sortTasks([task, ...prev.filter((x) => x.id !== task.id)], statuses));
+      setTasks((prev) => addCreatedTask(prev, task, statuses));
     },
     [statuses],
   );

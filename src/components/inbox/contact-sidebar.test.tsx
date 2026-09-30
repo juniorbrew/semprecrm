@@ -38,6 +38,7 @@ describe("ContactSidebar — shortcuts and companies", () => {
     const tile = (label: string) => html.match(new RegExp(`<button[^>]*title="[^"]*"[^>]*>(?:(?!</button>).)*${label}`))?.[0] ?? ""
     expect(tile("Marcar compromisso")).toContain("disabled")
     expect(tile("Novo negócio")).toContain("disabled")
-    expect(html).toContain("Somente leitura — seu perfil não pode criar compromissos nem negócios")
+    expect(tile("Nova tarefa")).toContain("disabled")
+    expect(html).toContain("Somente leitura — seu perfil não pode criar compromissos, negócios nem tarefas")
   })
 })

@@ -99,6 +99,7 @@ const PANEL_COPY: Record<
     /** Shortcut row under the contact's reach (Deskcomm-style). */
     shortcuts: string;
     scheduleAppointment: string;
+    newTask: string;
     newDeal: string;
     viewContact: string;
     readOnly: string;
@@ -143,9 +144,10 @@ const PANEL_COPY: Record<
     companies: "Empresas",
     shortcuts: "Atalhos do contato",
     scheduleAppointment: "Marcar compromisso",
+    newTask: "Nova tarefa",
     newDeal: "Novo negócio",
     viewContact: "Ver contato",
-    readOnly: "Somente leitura — seu perfil não pode criar compromissos nem negócios",
+    readOnly: "Somente leitura — seu perfil não pode criar compromissos, negócios nem tarefas",
     serviceTitle: (name) => `Atendimento: ${name}`,
     customFields: "Campos personalizados",
     noCustomFields: "Nenhum campo personalizado definido",
@@ -185,9 +187,10 @@ const PANEL_COPY: Record<
     companies: "Companies",
     shortcuts: "Contact shortcuts",
     scheduleAppointment: "Book appointment",
+    newTask: "New task",
     newDeal: "New deal",
     viewContact: "View contact",
-    readOnly: "Read-only — your role can't create appointments or deals",
+    readOnly: "Read-only — your role can't create appointments, deals or tasks",
     serviceTitle: (name) => `Service: ${name}`,
     customFields: "Custom fields",
     noCustomFields: "No custom fields defined",
@@ -383,6 +386,8 @@ export function ContactSidebar({
   // with this contact + thread; bumping the key refreshes LinkedEvents.
   const [eventDrawerOpen, setEventDrawerOpen] = useState(false);
   const [eventsVersion, setEventsVersion] = useState(0);
+  // "Nova tarefa" shortcut: the full task drawer, contact locked.
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
 
   const contactId = contact?.id ?? null;
   const linkedTasks = useLinkedTasks({ contactId, enabled: tasksEnabled });
@@ -781,7 +786,7 @@ export function ContactSidebar({
           <div
             role="group"
             aria-label={copy.shortcuts}
-            className="mt-3 grid grid-cols-3 gap-1.5"
+            className="mt-3 grid grid-cols-2 gap-1.5"
           >
             <ShortcutButton
               icon={CalendarPlus}
@@ -790,6 +795,14 @@ export function ContactSidebar({
               disabled={!canWrite || !calendarEnabled}
               title={!canWrite ? copy.readOnly : copy.scheduleAppointment}
               hidden={!calendarEnabled}
+            />
+            <ShortcutButton
+              icon={CheckSquare}
+              label={copy.newTask}
+              onClick={() => setNewTaskOpen(true)}
+              disabled={!canWrite}
+              title={!canWrite ? copy.readOnly : copy.newTask}
+              hidden={!tasksEnabled}
             />
             <ShortcutButton
               icon={DollarSign}
@@ -809,6 +822,24 @@ export function ContactSidebar({
               {copy.viewContact}
             </Link>
           </div>
+          {tasksEnabled && canWrite && (
+            <TaskDrawer
+              open={newTaskOpen}
+              onOpenChange={setNewTaskOpen}
+              task={null}
+              lockContact
+              defaults={{
+                contact_id: contact.id,
+                conversation_id: conversationId ?? undefined,
+                assignee_user_id: user?.id,
+              }}
+              statuses={linkedTasks.statuses}
+              onCreated={(task) => {
+                linkedTasks.add(task);
+                void linkedTasks.refresh();
+              }}
+            />
+          )}
           {calendarEnabled && canWrite && (
             <EventDrawer
               open={eventDrawerOpen}
