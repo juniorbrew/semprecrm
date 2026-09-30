@@ -272,6 +272,15 @@ export type ConversationStatus = 'open' | 'pending' | 'closed';
  */
 export type WhatsAppChannel = 'official' | 'qr';
 
+export type ConversationPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type ConversationSentiment = 'negative' | 'neutral' | 'positive';
+export type ConversationResolution =
+  | 'resolved'
+  | 'not_applicable'
+  | 'closed_by_customer'
+  | 'expired'
+  | 'duplicate';
+
 export interface Conversation {
   id: string;
   user_id: string;
@@ -300,6 +309,15 @@ export interface Conversation {
    */
   ai_paused_until?: string | null;
   ai_last_reply_at?: string | null;
+  /** Support triage (migration 071). */
+  category_id?: string | null;
+  priority?: ConversationPriority;
+  subject?: string | null;
+  sentiment?: ConversationSentiment | null;
+  triage_source?: 'ai' | 'manual' | null;
+  triage_at?: string | null;
+  resolution?: ConversationResolution | null;
+  resolved_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
@@ -393,7 +411,11 @@ export type ConversationEventType =
   | 'ai_paused'
   | 'ai_resumed'
   /** Deal moved between stages from the inbox panel (migration 070). */
-  | 'deal_stage_changed';
+  | 'deal_stage_changed'
+  /** Support triage (migration 071). */
+  | 'category_changed'
+  | 'priority_changed'
+  | 'resolution_set';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -423,6 +445,16 @@ export interface ConversationEventPayload {
   deal_title?: string;
   from_stage_name?: string;
   to_stage_name?: string;
+  /** `category_changed` — name snapshot (null = category removed). */
+  category_id?: string | null;
+  category_name?: string | null;
+  /** `priority_changed` */
+  priority?: ConversationPriority;
+  previous_priority?: ConversationPriority;
+  /** `resolution_set` */
+  resolution?: ConversationResolution;
+  /** 'ai' when the automatic triage wrote it. */
+  source?: 'ai';
 }
 
 /** Row of `conversation_events` (migration 024). */

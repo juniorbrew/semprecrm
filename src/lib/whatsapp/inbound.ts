@@ -33,6 +33,7 @@ import { canSendMessages, type AccountRole } from '@/lib/auth/roles'
 import { plainMessageText, vcardPreview } from '@/lib/inbox/vcard'
 import { notifyInboundMessage } from '@/lib/push/notify'
 import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
+import { triageDueOnInbound } from '@/lib/support/ai-triage'
 import { isPushConfigured } from '@/lib/push/send'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
@@ -115,6 +116,12 @@ export interface IngestResult {
    * queued / extended. The transport route kicks the drain with `after()`.
    */
   aiReplyQueued?: boolean
+  /**
+   * This was the customer's 1st or 3rd message of the conversation: the
+   * transport route runs the AI triage (migration 071) with `after()`.
+   * Only a hint — `runTriageQuietly` re-checks every condition.
+   */
+  triageDue?: boolean
 }
 
 // ------------------------------------------------------------
@@ -1066,6 +1073,7 @@ export async function ingestInboundMessage(
     ...(reopened ? { reopened } : {}),
     ...(inheritedAssignee ? { inheritedAssignee } : {}),
     ...(aiReplyQueued ? { aiReplyQueued } : {}),
+    ...(triageDueOnInbound(priorCustomerMsgCount ?? 0) ? { triageDue: true } : {}),
     ...(newConversation && conversationOutcome.previous
       ? { previousConversationId: conversationOutcome.previous.id as string }
       : {}),

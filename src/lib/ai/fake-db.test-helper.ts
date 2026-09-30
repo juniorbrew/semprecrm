@@ -68,6 +68,18 @@ export function makeFakeDb(tables: Record<string, Row[]>, onRpc?: (fn: string, a
           filters.push((r) => r[col] !== val);
           return b;
         },
+        is: (col: string, val: unknown) => {
+          filters.push((r) => (r[col] ?? null) === val);
+          return b;
+        },
+        // `col.is.null,col.eq.value` — the only shapes the routes use.
+        or: (expr: string) => {
+          const conds = expr.split(',').map((c) => c.split('.'));
+          filters.push((r) =>
+            conds.some(([col, op, val]) => (op === 'is' ? (r[col] ?? null) === null : r[col] === val)),
+          );
+          return b;
+        },
         in: (col: string, vals: unknown[]) => {
           filters.push((r) => vals.includes(r[col]));
           return b;

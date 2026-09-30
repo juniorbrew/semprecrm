@@ -219,6 +219,12 @@ describe('anonymizeContact', () => {
 
     const convUpdate = calls.find((c) => c.table === 'conversations' && c.op === 'update')!
     expect(convUpdate.payload).toEqual({ last_message_text: REMOVED_CONTENT })
+    // Support triage (071): the free-text subject and the sentiment are cleared.
+    const triageUpdate = calls.find(
+      (c) => c.table === 'conversations' && c.op === 'update' && c !== convUpdate,
+    )!
+    expect(triageUpdate.payload).toEqual({ subject: null, sentiment: null })
+    expect(triageUpdate.filters).toContainEqual(['in', 'id', [['conv1', 'conv2']]])
 
     expect(calls.some((c) => c.table === 'contact_notes' && c.op === 'delete')).toBe(true)
     expect(calls.some((c) => c.table === 'contact_custom_values' && c.op === 'delete')).toBe(true)

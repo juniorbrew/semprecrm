@@ -7,6 +7,7 @@ import { refreshContactAvatar } from '@/lib/whatsapp/contact-avatar'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { parseQrMessageBody } from '@/lib/whatsapp/qr-inbound-body'
 import { kickAutoReplies } from '@/lib/ai/auto-reply-runtime'
+import { scheduleTriageIfDue } from '@/lib/support/triage-trigger'
 
 /**
  * POST /api/channels/qr/inbound  (gateway → app)
@@ -79,6 +80,8 @@ export async function POST(request: Request) {
   // Automatic reply: drain once the debounce window has passed (the
   // cron catches anything this misses).
   if (result.aiReplyQueued) after(kickAutoReplies)
+  // AI triage on the customer's 1st / 3rd message (opt-in, never blocks).
+  scheduleTriageIfDue(result, accountId)
   return NextResponse.json({
     ok: true,
     duplicate: result.reason === 'duplicate',

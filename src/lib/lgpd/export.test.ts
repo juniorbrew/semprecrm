@@ -67,3 +67,20 @@ describe('buildContactExport — conversation events', () => {
     expect(out.warnings).toEqual([])
   })
 })
+
+describe('buildContactExport — support triage (071)', () => {
+  it('exports the triage fields of each conversation (full row)', async () => {
+    const row = {
+      id: 'conv1',
+      subject: 'Boleto da Maria vencido',
+      sentiment: 'negative',
+      priority: 'high',
+      category_id: 'cat1',
+      triage_source: 'ai',
+      resolution: 'resolved',
+    }
+    const { db } = makeDb({ contacts: [{ id: 'c1', name: 'Maria' }], conversations: [row] })
+    const out = await buildContactExport(db, 'acc', 'c1')
+    expect(out.conversations[0]).toMatchObject(row)
+  })
+})

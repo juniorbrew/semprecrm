@@ -6,6 +6,7 @@
 //   1. Collects the contact's conversations; scrubs every message
 //      (content_text → "[conteúdo removido]", media_url → null) and
 //      removes the `chat-media` objects those URLs pointed at.
+//      The triage subject / sentiment (migration 071) are cleared too.
 //   2. Deletes contact_notes, contact_custom_values and the AI contact
 //      memory (`ai_contact_memories`, migration 064), the automatic-reply
 //      hand-overs and jobs (`ai_handoffs` / `ai_reply_jobs`, 066), and the stored
@@ -163,6 +164,16 @@ export async function anonymizeContact(
       .in('id', conversationIds)
       .not('last_message_text', 'is', null)
     if (convUpdErr) warnings.push(`conversations preview: ${convUpdErr.message}`)
+
+    // Support triage (migration 071): the subject is free text the AI or an
+    // agent wrote from the conversation and may name the customer; the
+    // sentiment is a judgement about a person. Category / priority /
+    // resolution are not personal and stay for the statistics.
+    const { error: triageErr } = await admin
+      .from('conversations')
+      .update({ subject: null, sentiment: null })
+      .in('id', conversationIds)
+    if (triageErr) warnings.push(`conversations triage: ${triageErr.message}`)
 
     // AI hand-over pills (066) carry the reason text, which can quote the customer.
     const { error: evErr } = await admin

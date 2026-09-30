@@ -325,6 +325,33 @@ describe('ingestInboundMessage', () => {
     })
   })
 
+  it('flags the 1st and the 3rd customer message for the AI triage (071), nothing else', async () => {
+    const seed = (customerMessages: number) => {
+      h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria' })
+      h.state.conversations.push({ id: 'conv-1', account_id: 'acct-1', contact_id: 'c-1' })
+      for (let i = 0; i < customerMessages; i++) {
+        h.state.messages.push({ id: `m-${i}`, conversation_id: 'conv-1', sender_type: 'customer', content_text: 'x' })
+      }
+    }
+    const db = makeDb()
+    expect((await ingestInboundMessage(BASE, db)).triageDue).toBe(true) // 1st
+    h.state.contacts.length = 0
+    h.state.conversations.length = 0
+    h.state.messages.length = 0
+    seed(1)
+    expect((await ingestInboundMessage({ ...BASE, messageId: 'w2' }, db)).triageDue).toBeUndefined() // 2nd
+    h.state.contacts.length = 0
+    h.state.conversations.length = 0
+    h.state.messages.length = 0
+    seed(2)
+    expect((await ingestInboundMessage({ ...BASE, messageId: 'w3' }, db)).triageDue).toBe(true) // 3rd
+    h.state.contacts.length = 0
+    h.state.conversations.length = 0
+    h.state.messages.length = 0
+    seed(3)
+    expect((await ingestInboundMessage({ ...BASE, messageId: 'w4' }, db)).triageDue).toBeUndefined() // 4th
+  })
+
   it('suppresses content triggers when a flow consumed the message', async () => {
     const db = makeDb()
     h.flows.consumed = true
