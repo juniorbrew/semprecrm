@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Sparkles, X } from "lucide-react";
+import { Loader2, MessageSquareText, X } from "lucide-react";
 
 import type { AiStatus } from "@/hooks/use-ai-status";
 import { cn } from "@/lib/utils";
@@ -50,7 +50,7 @@ export interface SuggestReplyButtonProps {
   onCancel: () => void;
 }
 
-/** ✨ toolbar button: suggest → (spinner + ✕ to cancel) → idle. */
+/** Plain composer action: suggest → (spinner + ✕ to cancel) → idle. */
 export function SuggestReplyButton({ loading, block, labels, onSuggest, onCancel }: SuggestReplyButtonProps) {
   const disabled = !loading && block !== null;
   const title = loading ? labels.cancel : block ? labels.blocked[block] : labels.suggest;
@@ -77,7 +77,7 @@ export function SuggestReplyButton({ loading, block, labels, onSuggest, onCancel
           <X className="hidden h-4 w-4 group-hover:block" aria-hidden />
         </>
       ) : (
-        <Sparkles className="h-4 w-4" aria-hidden />
+        <MessageSquareText className="h-4 w-4" aria-hidden />
       )}
       <span className="hidden text-xs lg:inline">{loading ? labels.cancel : labels.suggest}</span>
     </button>

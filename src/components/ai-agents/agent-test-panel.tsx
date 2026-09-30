@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, FlaskConical, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,16 +33,16 @@ export function AgentTestResultView({ result }: { result: AgentTestResult }) {
     { label: "Model", value: result.model },
   ];
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mb-2 text-sm font-medium text-foreground">
           {t("Message that WOULD be sent")}
         </p>
-        <div className="space-y-1.5 rounded-lg bg-muted/40 p-3">
+        <div className="space-y-1.5">
           {result.parts.map((p, i) => (
             <p
               key={i}
-              className="ml-auto w-fit max-w-[85%] whitespace-pre-line rounded-lg rounded-tr-sm bg-primary-soft px-3 py-2 text-sm text-foreground"
+              className="w-fit max-w-[85%] whitespace-pre-line rounded-lg bg-muted px-3 py-2 text-sm text-foreground"
               data-no-translate
             >
               {p}
@@ -51,10 +50,10 @@ export function AgentTestResultView({ result }: { result: AgentTestResult }) {
           ))}
         </div>
       </div>
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-border pt-4 sm:grid-cols-4">
         {stats.map((s) => (
-          <div key={s.label} className="rounded-lg border border-border px-3 py-2">
-            <dt className="text-[11px] text-muted-foreground">{t(s.label)}</dt>
+          <div key={s.label}>
+            <dt className="text-xs text-muted-foreground">{t(s.label)}</dt>
             <dd className="truncate text-sm font-medium tabular-nums text-foreground" data-no-translate>
               {s.value}
             </dd>
@@ -62,8 +61,7 @@ export function AgentTestResultView({ result }: { result: AgentTestResult }) {
         ))}
       </dl>
       <div>
-        <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <BookOpen className="size-3.5" />
+        <p className="mb-1.5 text-sm font-medium text-foreground">
           {t("Knowledge base used")}
         </p>
         {result.knowledge.length === 0 ? (
@@ -116,71 +114,56 @@ export function AgentTestPanel({ agentId, canTest }: { agentId: string; canTest:
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card className="h-fit">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <FlaskConical className="size-4 text-primary" />
-            {t("Test this agent")}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
+    <div className="max-w-2xl space-y-8">
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">{t("Test this agent")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t("No message is sent over WhatsApp • uses credits from your AI provider")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="agent-test-customer" className="text-foreground">
-              {t("Customer name (optional)")}
-            </Label>
-            <Input
-              id="agent-test-customer"
-              value={customer}
-              maxLength={AGENT_LIMITS.testNameMaxChars}
-              onChange={(e) => setCustomer(e.target.value)}
-              className="bg-card text-foreground"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="agent-test-message" className="text-foreground">
-              {t("Customer message")}
-            </Label>
-            <Textarea
-              id="agent-test-message"
-              value={message}
-              rows={4}
-              maxLength={AGENT_LIMITS.testMessageMaxChars}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder={t("E.g.: Do you deliver on Sundays?")}
-              className="bg-card text-foreground"
-            />
-          </div>
-          {error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(error)}
-            </p>
-          ) : null}
-          {canTest ? (
-            <Button disabled={running} onClick={() => void run()}>
-              {running ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />}
-              {t("Run test")}
-            </Button>
-          ) : (
-            <p className="text-sm text-muted-foreground">{t("Only admins can run tests.")}</p>
-          )}
-        </CardContent>
-      </Card>
-      <Card className="h-fit">
-        <CardHeader>
-          <CardTitle className="text-foreground">{t("Result")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {result ? (
-            <AgentTestResultView result={result} />
-          ) : (
-            <p className="text-sm text-muted-foreground">{t("Run a test to see the answer here.")}</p>
-          )}
-        </CardContent>
-      </Card>
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="agent-test-customer">{t("Customer name (optional)")}</Label>
+          <Input
+            id="agent-test-customer"
+            value={customer}
+            maxLength={AGENT_LIMITS.testNameMaxChars}
+            onChange={(e) => setCustomer(e.target.value)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="agent-test-message">{t("Customer message")}</Label>
+          <Textarea
+            id="agent-test-message"
+            value={message}
+            rows={4}
+            maxLength={AGENT_LIMITS.testMessageMaxChars}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder={t("E.g.: Do you deliver on Sundays?")}
+          />
+        </div>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t(error)}
+          </p>
+        ) : null}
+        {canTest ? (
+          <Button disabled={running} onClick={() => void run()}>
+            {running ? <Loader2 className="size-4 animate-spin" /> : null}
+            {t("Run test")}
+          </Button>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("Only admins can run tests.")}</p>
+        )}
+      </section>
+      <section className="space-y-4 border-t border-border pt-6" aria-live="polite">
+        <h2 className="text-base font-semibold text-foreground">{t("Result")}</h2>
+        {result ? (
+          <AgentTestResultView result={result} />
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("Run a test to see the answer here.")}</p>
+        )}
+      </section>
     </div>
   );
 }

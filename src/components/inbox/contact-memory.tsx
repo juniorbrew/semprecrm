@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Check, Loader2, Pencil, Sparkles, Trash2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -207,13 +207,13 @@ export function ContactMemorySection({
         {list === null ? (
           <div className="h-8 animate-pulse rounded-lg bg-muted/60" />
         ) : proposed.length === 0 && active.length === 0 && !draft ? (
-          <p className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t("No facts saved yet. Approved facts are used in AI suggestions.")}
           </p>
         ) : null}
 
         {proposed.map((m) => (
-          <div key={m.id} className="rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2">
+          <div key={m.id} className="rounded-lg border border-dashed border-border px-3 py-2">
             {draft?.id === m.id ? (
               editor(m.id)
             ) : (
@@ -222,11 +222,10 @@ export function ContactMemorySection({
                   {m.fact}
                 </p>
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1 text-[10px] text-primary">
-                    <Sparkles className="h-2.5 w-2.5" aria-hidden />
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                     {t("Suggested by AI — review")}
                     {sourceDate(m) ? (
-                      <span className="text-muted-foreground" data-no-translate>
+                      <span data-no-translate>
                         · {t("conversation of")} {new Date(sourceDate(m)!).toLocaleDateString(language)}
                       </span>
                     ) : null}
@@ -245,7 +244,7 @@ export function ContactMemorySection({
         ))}
 
         {active.map((m) => (
-          <div key={m.id} className="group rounded-lg border border-border bg-card px-3 py-2">
+          <div key={m.id} className="group border-b border-border py-2 last:border-b-0">
             {draft?.id === m.id ? (
               editor(m.id)
             ) : (
@@ -273,11 +272,7 @@ export function ContactMemorySection({
             onClick={() => void extract()}
             title={t("Reads this conversation and proposes facts for you to review. Uses the AI budget.")}
           >
-            {busy === "extract" ? (
-              <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-            ) : (
-              <Sparkles className="mr-1.5 h-3 w-3" />
-            )}
+            {busy === "extract" ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
             {busy === "extract" ? t("Extracting…") : t("Extract facts")}
           </Button>
         )}

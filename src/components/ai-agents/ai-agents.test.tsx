@@ -88,7 +88,7 @@ describe('AgentsList', () => {
     );
     expect(html).toContain('Buscar agentes');
     for (const s of ['Todas as situações', 'Ativo', 'Pausado', 'Desativado', 'Vendas', 'Suporte']) expect(html).toContain(s);
-    expect(html.match(/<article/g)).toHaveLength(2);
+    expect(html.match(/<li/g)).toHaveLength(2);
   });
 });
 
@@ -154,7 +154,7 @@ describe('AgentConfigForm', () => {
     expect(html).toContain('America/Sao_Paulo');
     expect(html).toContain('falar com atendente');
     expect(html).toContain('Isto não se desliga.');
-    expect(html.match(/Isto não se desliga\./g)).toHaveLength(6);
+    expect(html.match(/Isto não se desliga\./g)).toHaveLength(1);
     expect(html).toContain('Salvar');
   });
 

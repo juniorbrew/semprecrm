@@ -27,7 +27,7 @@ interface DetailResponse {
   knowledge_items: number | null;
 }
 
-const TAB_CLASS = "px-3 text-sm text-muted-foreground data-active:bg-card data-active:text-foreground";
+const TAB_CLASS = "px-3 text-sm";
 
 /** One AI agent: operation bar + Configuração | Teste. */
 export default function AiAgentPage() {
@@ -110,7 +110,7 @@ export default function AiAgentPage() {
       </div>
 
       {loadError ? (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
           {t(loadError)}
           <Button size="sm" variant="outline" onClick={() => void load()}>
             {t("Try again")}
@@ -118,7 +118,7 @@ export default function AiAgentPage() {
         </div>
       ) : !data ? (
         <div className="flex justify-center py-16">
-          <Loader2 className="size-6 animate-spin text-primary" />
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <>
@@ -131,7 +131,7 @@ export default function AiAgentPage() {
           />
           {data.agent.mode === "auto" ? <AgentRecentReplies agentId={data.agent.id} /> : null}
           <Tabs defaultValue="config">
-            <TabsList className="bg-muted">
+            <TabsList variant="line">
               <TabsTrigger value="config" className={TAB_CLASS}>
                 {t("Configuration")}
               </TabsTrigger>
@@ -139,7 +139,7 @@ export default function AiAgentPage() {
                 {t("Test")}
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="config" className="pt-2">
+            <TabsContent value="config" className="pt-6">
               <AgentConfigForm
                 key={formKey}
                 agent={data.agent}
@@ -155,7 +155,7 @@ export default function AiAgentPage() {
                 }}
               />
             </TabsContent>
-            <TabsContent value="test" className="pt-2">
+            <TabsContent value="test" className="pt-6">
               <AgentTestPanel agentId={data.agent.id} canTest={canEdit} />
             </TabsContent>
           </Tabs>

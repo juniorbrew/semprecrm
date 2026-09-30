@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Briefcase, FilePlus2, Headset, Loader2, MessageCircleHeart } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,13 +19,6 @@ import { useLanguage } from "@/hooks/use-language";
 import { AGENT_PRESETS, agentPreset, type AgentPresetId } from "@/lib/ai/agent-presets";
 import { AGENT_LIMITS, parseAgentInput, type AgentWrite } from "@/lib/ai/agents";
 import { cn } from "@/lib/utils";
-
-const PRESET_ICON: Record<AgentPresetId, typeof Briefcase> = {
-  sales: Briefcase,
-  support: Headset,
-  general: MessageCircleHeart,
-  blank: FilePlus2,
-};
 
 /**
  * "Novo agente": pick a starting template, adjust the name (and the
@@ -79,17 +72,14 @@ export function NewAgentDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => (!saving ? onOpenChange(v) : undefined)}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto border-border bg-popover sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="text-popover-foreground">{t("New agent")}</DialogTitle>
-          <DialogDescription className="text-muted-foreground">
-            {t("Choose a starting point. Everything can be adjusted afterwards.")}
-          </DialogDescription>
+          <DialogTitle>{t("New agent")}</DialogTitle>
+          <DialogDescription>{t("Choose a starting point. Everything can be adjusted afterwards.")}</DialogDescription>
         </DialogHeader>
 
         <div role="radiogroup" aria-label={t("Starting template")} className="grid gap-2 sm:grid-cols-2">
           {AGENT_PRESETS.map((p) => {
-            const Icon = PRESET_ICON[p.id];
             const selected = p.id === presetId;
             return (
               <button
@@ -99,11 +89,10 @@ export function NewAgentDialog({
                 aria-checked={selected}
                 onClick={() => pick(p.id)}
                 className={cn(
-                  "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
-                  selected ? "border-primary bg-primary-soft" : "border-border bg-card hover:bg-muted/50",
+                  "rounded-lg border px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                  selected ? "border-primary bg-primary-soft" : "border-border hover:bg-muted/50",
                 )}
               >
-                <Icon className={cn("mt-0.5 size-4 shrink-0", selected ? "text-primary" : "text-muted-foreground")} />
                 <span>
                   <span className="block text-sm font-medium text-foreground">{t(p.label)}</span>
                   <span className="block text-xs text-muted-foreground">{t(p.summary)}</span>
@@ -115,7 +104,7 @@ export function NewAgentDialog({
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="new-agent-name" className="text-foreground">
+            <Label htmlFor="new-agent-name">
               {t("Name")}
             </Label>
             <Input
@@ -124,11 +113,10 @@ export function NewAgentDialog({
               maxLength={AGENT_LIMITS.nameMaxChars}
               onChange={(e) => setName(e.target.value)}
               placeholder={t("E.g.: Sales")}
-              className="bg-card text-foreground"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="new-agent-instructions" className="text-foreground">
+            <Label htmlFor="new-agent-instructions">
               {t("Instructions")}
             </Label>
             <Textarea
@@ -138,7 +126,7 @@ export function NewAgentDialog({
               maxLength={AGENT_LIMITS.instructionsMaxChars}
               onChange={(e) => setInstructions(e.target.value)}
               placeholder={t("Describe what the agent does, how it talks and what it must never do.")}
-              className="max-h-[40vh] bg-card text-foreground"
+              className="max-h-[40vh]"
               data-no-translate
             />
             <p className="text-xs text-muted-foreground" data-no-translate>

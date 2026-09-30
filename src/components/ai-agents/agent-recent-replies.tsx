@@ -77,14 +77,14 @@ export function AgentRecentReplies({ agentId }: { agentId: string }) {
   }, [agentId]);
 
   return (
-    <section className="rounded-xl border border-border bg-card p-4">
+    <section>
       <h2 className="text-sm font-semibold text-foreground">{t("Latest automatic replies")}</h2>
       {rows === null ? null : rows.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">{t("No automatic reply yet.")}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{t("No automatic reply yet.")}</p>
       ) : (
-        <ul className="mt-2 divide-y divide-border text-sm">
+        <ul className="mt-1 divide-y divide-border text-sm">
           {rows.map((j) => (
-            <li key={j.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-1.5">
+            <li key={j.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-2">
               <time data-no-translate className="w-32 shrink-0 tabular-nums text-muted-foreground">
                 {new Date(j.created_at).toLocaleString(language, { dateStyle: "short", timeStyle: "short" })}
               </time>

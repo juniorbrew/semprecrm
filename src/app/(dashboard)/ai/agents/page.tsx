@@ -82,7 +82,7 @@ export default function AiAgentsPage() {
       </div>
 
       {loadError ? (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
           {t(loadError)}
           <Button size="sm" variant="outline" onClick={() => void load()}>
             {t("Try again")}
@@ -90,7 +90,7 @@ export default function AiAgentsPage() {
         </div>
       ) : data === null ? (
         <div className="flex justify-center py-16">
-          <Loader2 className="size-6 animate-spin text-primary" />
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <AgentsList
