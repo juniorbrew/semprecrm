@@ -54,6 +54,11 @@ describe("SuggestReplyButton", () => {
     expect(html).toContain('title="Sugerir resposta"');
   });
 
+  it("is a plain action, not a sparkle button", () => {
+    const html = renderToString(<SuggestReplyButton loading={false} block={null} labels={labels} onSuggest={() => {}} onCancel={() => {}} />);
+    expect(html).not.toContain("lucide-sparkles");
+  });
+
   it("disabled with the reason as tooltip", () => {
     const html = tag(renderToString(<SuggestReplyButton loading={false} block="disabled" labels={labels} onSuggest={() => {}} onCancel={() => {}} />));
     expect(html).toContain('disabled=""');

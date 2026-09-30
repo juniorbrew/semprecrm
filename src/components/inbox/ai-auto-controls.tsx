@@ -7,7 +7,7 @@
 // conversation's `ai_paused_until` changes (realtime row update).
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Bot, Check, Pause, Play, UserCheck } from "lucide-react";
+import { Pause, Play, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { useLanguage } from "@/hooks/use-language";
@@ -102,7 +102,6 @@ export function AiPauseButton({
     >
       {state.paused ? <Play className="h-3.5 w-3.5" aria-hidden /> : <Pause className="h-3.5 w-3.5" aria-hidden />}
       <span className="hidden @md:inline">{label}</span>
-      <Bot className="h-3.5 w-3.5 @md:hidden" aria-hidden />
     </button>
   );
 }
@@ -121,13 +120,10 @@ export function AiHandoffCard({
   return (
     <section
       aria-label={t("Why the AI handed this to you")}
-      className="mx-3 mb-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm sm:mx-4"
+      className="mx-3 mb-2 border-t border-border pt-3 text-sm sm:mx-4"
     >
-      <h3 className="flex items-center gap-1.5 font-semibold text-foreground">
-        <Bot className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
-        {t("Why the AI handed this to you")}
-      </h3>
-      <dl className="mt-2 grid gap-x-3 gap-y-1 text-xs sm:grid-cols-[auto_1fr]">
+      <h3 className="font-medium text-foreground">{t("Why the AI handed this to you")}</h3>
+      <dl className="mt-2 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
         {handoff.customer_wants && (
           <>
             <dt className="text-muted-foreground">{t("The customer wants")}</dt>
@@ -143,18 +139,8 @@ export function AiHandoffCard({
         <dt className="text-muted-foreground">{t("Reason")}</dt>
         <dd data-no-translate className="text-foreground">{handoff.reason}</dd>
         <dt className="text-muted-foreground">{t("Customer notified")}</dt>
-        <dd className={handoff.notified ? "text-emerald-600 dark:text-emerald-400" : "text-amber-700 dark:text-amber-300"}>
-          {handoff.notified ? (
-            <span className="inline-flex items-center gap-1">
-              <Check className="h-3.5 w-3.5" aria-hidden />
-              {t("Yes")}
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1">
-              <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-              {t("No — the notice could not be sent")}
-            </span>
-          )}
+        <dd className={handoff.notified ? "text-foreground" : "text-amber-700 dark:text-amber-300"}>
+          {handoff.notified ? t("Yes") : t("No — the notice could not be sent")}
         </dd>
       </dl>
       {canClaim && (
