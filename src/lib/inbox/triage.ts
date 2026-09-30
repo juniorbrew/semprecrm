@@ -4,7 +4,7 @@
  * archived ones (migration 056) to Arquivadas, so a just-resolved thread
  * leaves the working lists instead of lingering behind a status chip.
  */
-import type { ConversationStatus, WhatsAppChannel } from '@/types'
+import type { ConversationPriority, ConversationStatus, WhatsAppChannel } from '@/types'
 
 export type InboxTab = 'queue' | 'mine' | 'all' | 'closed' | 'archived'
 /** Narrows the live tabs (Minhas / Todas) only. */
@@ -91,9 +91,20 @@ export interface TriageState {
   tagIds: string[]
   /** WhatsApp transport filter; null = both. */
   channel: WhatsAppChannel | null
+  /** Support category filter (migration 071); null = any. */
+  categoryId?: string | null
+  /** Support priority filter (migration 071); null = any. */
+  priority?: ConversationPriority | null
 }
 
-export const DEFAULT_TRIAGE: TriageState = { tab: 'all', live: 'live', tagIds: [], channel: null }
+export const DEFAULT_TRIAGE: TriageState = {
+  tab: 'all',
+  live: 'live',
+  tagIds: [],
+  channel: null,
+  categoryId: null,
+  priority: null,
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_TAG_FILTER = 20
@@ -111,6 +122,8 @@ export function migrateTriage(raw: unknown): TriageState {
     live?: unknown
     tagIds?: unknown
     channel?: unknown
+    categoryId?: unknown
+    priority?: unknown
   }
   let tab: InboxTab =
     stored.tab === 'unassigned'
@@ -139,5 +152,11 @@ export function migrateTriage(raw: unknown): TriageState {
     : []
   const channel: WhatsAppChannel | null =
     stored.channel === 'official' || stored.channel === 'qr' ? stored.channel : null
-  return { tab, live, tagIds, channel }
+  const categoryId =
+    typeof stored.categoryId === 'string' && UUID_RE.test(stored.categoryId) ? stored.categoryId : null
+  const priority: ConversationPriority | null =
+    stored.priority === 'low' || stored.priority === 'normal' || stored.priority === 'high' || stored.priority === 'urgent'
+      ? stored.priority
+      : null
+  return { tab, live, tagIds, channel, categoryId, priority }
 }

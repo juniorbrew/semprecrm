@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, WhatsAppChannel } from "@/types";
+import type { Conversation, ConversationPriority, ConversationStatus, WhatsAppChannel } from "@/types";
+import { useConversationCategories } from "@/hooks/use-conversation-categories";
+import { CATEGORY_DOT, PRIORITY_DOT, supportCopy, type CategoryColor } from "@/lib/support/model";
 import type { Language } from "@/lib/i18n";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -329,6 +331,16 @@ export function ConversationList({
   // the tab / live filter.
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [channelFilter, setChannelFilter] = useState<WhatsAppChannel | null>(null);
+  // Support category / priority filters (migration 071).
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [priorityFilter, setPriorityFilter] = useState<ConversationPriority | null>(null);
+  const { active: activeCategories, byId: categoryById } = useConversationCategories();
+  const support = supportCopy(language);
+  // The persisted support filters ride along with every persistTriage call.
+  const supportFilterRef = useRef<Pick<TriageState, "categoryId" | "priority">>({ categoryId: null, priority: null });
+  // A saved category that was deleted must not filter (nor show a chip).
+  const validCategoryId =
+    categoryId && (categoryById.size === 0 || categoryById.has(categoryId)) ? categoryId : null;
   const { tags: facetTags, hasBothChannels, loaded: facetsLoaded } = useInboxFacets(accountId);
   // A saved channel filter is meaningless (and invisible) without both channels.
   const channel = hasBothChannels ? channelFilter : null;
@@ -393,6 +405,9 @@ export function ConversationList({
           setLiveFilter(stored.live);
           setTagIds(stored.tagIds);
           setChannelFilter(stored.channel);
+          setCategoryId(stored.categoryId ?? null);
+          setPriorityFilter(stored.priority ?? null);
+          supportFilterRef.current = { categoryId: stored.categoryId ?? null, priority: stored.priority ?? null };
         }
       } catch {
         // localStorage can throw in private-browsing / sandboxed contexts.
@@ -413,7 +428,7 @@ export function ConversationList({
 
   const persistTriage = useCallback((next: TriageState) => {
     try {
-      localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify({ ...supportFilterRef.current, ...next }));
     } catch {
       // Persistence is best-effort.
     }
@@ -449,6 +464,24 @@ export function ConversationList({
       persistTriage({ tab, live: liveFilter, tagIds, channel: next });
     },
     [persistTriage, tab, liveFilter, tagIds]
+  );
+
+  const handleCategoryChange = useCallback(
+    (next: string | null) => {
+      setCategoryId(next);
+      supportFilterRef.current = { ...supportFilterRef.current, categoryId: next };
+      persistTriage({ tab, live: liveFilter, tagIds, channel: channelFilter });
+    },
+    [persistTriage, tab, liveFilter, tagIds, channelFilter]
+  );
+
+  const handlePriorityChange = useCallback(
+    (next: ConversationPriority | null) => {
+      setPriorityFilter(next);
+      supportFilterRef.current = { ...supportFilterRef.current, priority: next };
+      persistTriage({ tab, live: liveFilter, tagIds, channel: channelFilter });
+    },
+    [persistTriage, tab, liveFilter, tagIds, channelFilter]
   );
 
   useEffect(() => {
@@ -494,8 +527,10 @@ export function ConversationList({
       search: debouncedSearch,
       tagIds: validTagIds,
       channel,
+      categoryId: validCategoryId,
+      priority: priorityFilter,
     }),
-    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, validTagIds, channel],
+    [tab, effectiveLive, unreadOnly, radar, debouncedSearch, validTagIds, channel, validCategoryId, priorityFilter],
   );
   const key = viewKey(view);
   const baseKey = viewKey({ ...view, search: "" });
@@ -649,7 +684,7 @@ export function ConversationList({
     const { data, error } = await createClient().rpc(
       "inbox_counts",
       countsArgs(
-        { live: effectiveLive, unread: unreadOnly, radar, tagIds: validTagIds, channel },
+        { live: effectiveLive, unread: unreadOnly, radar, tagIds: validTagIds, channel, categoryId: validCategoryId, priority: priorityFilter },
         { accountId, prefs: { inbox_sla_minutes: slaMinutes, cooling_hours: coolingHours } },
       ),
     );
@@ -659,7 +694,7 @@ export function ConversationList({
       return;
     }
     setCounts(parseCounts(Array.isArray(data) ? data[0] : data));
-  }, [accountId, effectiveLive, unreadOnly, radar, validTagIds, channel, slaMinutes, coolingHours]);
+  }, [accountId, effectiveLive, unreadOnly, radar, validTagIds, channel, validCategoryId, priorityFilter, slaMinutes, coolingHours]);
   const fetchCountsRef = useRef(fetchCounts);
   useEffect(() => {
     fetchCountsRef.current = fetchCounts;
@@ -769,8 +804,14 @@ export function ConversationList({
       // Realtime patches keep rows in the list; the server already filtered.
       result = result.filter((c) => (c.channel ?? "official") === channel);
     }
+    if (validCategoryId) {
+      result = result.filter((c) => (c.category_id ?? null) === validCategoryId);
+    }
+    if (priorityFilter) {
+      result = result.filter((c) => (c.priority ?? "normal") === priorityFilter);
+    }
     return result;
-  }, [conversations, unreadOnly, radar, channel, preferences, now]);
+  }, [conversations, unreadOnly, radar, channel, validCategoryId, priorityFilter, preferences, now]);
 
   const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
@@ -800,7 +841,8 @@ export function ConversationList({
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
+        const subject = c.subject?.toLowerCase() ?? "";
+        return name.includes(q) || phone.includes(q) || lastMsg.includes(q) || subject.includes(q);
       });
     }
 
@@ -887,7 +929,7 @@ export function ConversationList({
   }, [accountId]);
   const showOwner = useMemo(() => showOwnerBadge(tab, filtered), [tab, filtered]);
 
-  const anyFilter = unreadOnly || !!radar || validTagIds.length > 0 || !!channel;
+  const anyFilter = unreadOnly || !!radar || validTagIds.length > 0 || !!channel || !!validCategoryId || !!priorityFilter;
   const clearFilters = useCallback(() => {
     setUnreadOnly(false);
     if (radar) setRadar(null);
@@ -954,6 +996,11 @@ export function ConversationList({
               channel={channel}
               onTagsChange={handleTagsChange}
               onChannelChange={handleChannelChange}
+              categories={activeCategories}
+              categoryId={validCategoryId}
+              priority={priorityFilter}
+              onCategoryChange={handleCategoryChange}
+              onPriorityChange={handlePriorityChange}
             />
 
             {/* Unread-only toggle */}
@@ -1007,6 +1054,11 @@ export function ConversationList({
           channel={channel}
           onTagsChange={handleTagsChange}
           onChannelChange={handleChannelChange}
+          categories={activeCategories}
+          categoryId={validCategoryId}
+          priority={priorityFilter}
+          onCategoryChange={handleCategoryChange}
+          onPriorityChange={handlePriorityChange}
         />
 
         {/* Radar chips (spec §3): waiting past SLA · open without owner ·
@@ -1165,6 +1217,8 @@ export function ConversationList({
                 age={formatAge(conv.last_message_at, language, now)}
                 tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
                 companyName={companyByContact.get(conv.contact_id) ?? null}
+                category={conv.category_id ? (categoryById.get(conv.category_id) ?? null) : null}
+                priorityLabel={support.priorities[conv.priority ?? "normal"]}
                 rowStatus={copy.rowStatus}
                 channelLabel={copy.channel}
                 channelChip={copy.channelChip}
@@ -1265,6 +1319,10 @@ interface ConversationItemProps {
   tags: RowTag[];
   /** Primary company (nome fantasia, else razão social), if any. */
   companyName: string | null;
+  /** Support category (migration 071), muted label under the name. */
+  category: { name: string; color: CategoryColor } | null;
+  /** Localised priority name, for the dot's tooltip. */
+  priorityLabel: string;
   rowStatus: Record<Exclude<ConversationStatus, "open">, string> & { archived: string };
   channelLabel: string;
   channelChip: Record<WhatsAppChannel, string>;
@@ -1286,6 +1344,8 @@ function ConversationItem({
   age,
   tags,
   companyName,
+  category,
+  priorityLabel,
   rowStatus,
   channelLabel,
   channelChip,
@@ -1347,6 +1407,16 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
+          {(conversation.priority === "urgent" || conversation.priority === "high") && (
+            <span
+              data-no-translate
+              data-testid="priority-dot"
+              title={priorityLabel}
+              role="img"
+              aria-label={priorityLabel}
+              className={cn("h-1.5 w-1.5 shrink-0 rounded-full", PRIORITY_DOT[conversation.priority])}
+            />
+          )}
           <span
             className={cn(
               "truncate text-sm leading-[18px] text-foreground",
@@ -1410,6 +1480,17 @@ function ConversationItem({
           >
             <Building2 className="h-3 w-3 shrink-0" aria-hidden />
             <span className="truncate">{companyName}</span>
+          </p>
+        )}
+        {category && (
+          <p
+            data-no-translate
+            data-testid="category-label"
+            title={category.name}
+            className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground"
+          >
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", CATEGORY_DOT[category.color])} aria-hidden />
+            <span className="truncate">{category.name}</span>
           </p>
         )}
         <div className="flex items-center justify-between gap-2">

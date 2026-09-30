@@ -11,6 +11,7 @@ import {
   UserPlus,
   Clock,
   DollarSign,
+  Flag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Language } from "@/lib/i18n";
@@ -40,7 +41,12 @@ function EventIcon({ event }: { event: ConversationEvent }) {
       return <RotateCcw className={cls} />;
     case "label_added":
     case "label_removed":
+    case "category_changed":
       return <TagIcon className={cls} />;
+    case "priority_changed":
+      return <Flag className={cls} />;
+    case "resolution_set":
+      return <CheckCheck className={cls} />;
     case "deal_stage_changed":
       return <DollarSign className={cls} />;
     case "contact_opted_out":

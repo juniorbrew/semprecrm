@@ -185,6 +185,8 @@ describe('keyset pagination', () => {
       p_limit: 20,
       p_tag_ids: ['t1', 't2'],
       p_channel: 'qr',
+      p_category_id: null,
+      p_priority: null,
     })
     const first = pageArgs({ ...view, radar: null, search: '' }, { accountId: 'acc', prefs, pattern: null })
     // No tags / channel -> NULL parameters (backwards compatible with 067 callers).
@@ -258,6 +260,25 @@ describe('counts parity', () => {
     expect(parseCounts(null).tabs.all).toBe(0)
   })
 
+  it('category and priority map to p_category_id / p_priority, equally for list and counts (071)', () => {
+    const facets = { tagIds: [], channel: null, categoryId: 'cat-1', priority: 'urgent' as const }
+    const list = pageArgs({ tab: 'all', live: 'live', unread: false, radar: null, search: '', ...facets }, { accountId: 'a', prefs, pattern: null })
+    const counts = countsArgs({ live: 'live', unread: false, radar: null, ...facets }, { accountId: 'a', prefs })
+    expect(list).toMatchObject({ p_category_id: 'cat-1', p_priority: 'urgent' })
+    expect(counts).toMatchObject({ p_category_id: 'cat-1', p_priority: 'urgent' })
+    // Absent = NULL (backwards compatible).
+    expect(pageArgs({ tab: 'all', live: 'live', unread: false, radar: null, search: '', tagIds: [], channel: null }, { accountId: 'a', prefs, pattern: null })).toMatchObject({
+      p_category_id: null,
+      p_priority: null,
+    })
+  })
+
+  it('viewKey changes with category and priority', () => {
+    const base: InboxView = { tab: 'all', live: 'live', unread: false, radar: null, search: '', tagIds: [], channel: null }
+    const keys = new Set([viewKey(base), viewKey({ ...base, categoryId: 'c' }), viewKey({ ...base, priority: 'high' })])
+    expect(keys.size).toBe(3)
+  })
+
   it('countsArgs carries the filters and the SLA', () => {
     expect(
       countsArgs({ live: 'open', unread: false, radar: null, tagIds: [], channel: null }, { accountId: 'a', prefs }),
@@ -270,6 +291,8 @@ describe('counts parity', () => {
       p_cooling_hours: 24,
       p_tag_ids: null,
       p_channel: null,
+      p_category_id: null,
+      p_priority: null,
     })
     // Counts and list receive the same facet arguments (parity with 068).
     const facets = { tagIds: ['t1'], channel: 'official' as const }
@@ -330,6 +353,16 @@ describe('realtime merge rules', () => {
     expect(shouldInsertUnknown(fresh, q, { hasMore: true, boundary: b }, ctx)).toBe(false)
     expect(shouldInsertUnknown(older, q, { hasMore: true, boundary: b }, ctx)).toBe(true)
     expect(shouldInsertUnknown(fresh, q, { hasMore: false, boundary: b }, ctx)).toBe(true)
+  })
+
+  it('category / priority filters are checked locally on realtime rows (071)', () => {
+    const st = { hasMore: false, boundary: null }
+    expect(shouldInsertUnknown(conv('n', { category_id: 'c1' }), view({ categoryId: 'c1' }), st, ctx)).toBe(true)
+    expect(shouldInsertUnknown(conv('n', { category_id: 'c2' }), view({ categoryId: 'c1' }), st, ctx)).toBe(false)
+    expect(shouldInsertUnknown(conv('n'), view({ categoryId: 'c1' }), st, ctx)).toBe(false)
+    expect(shouldInsertUnknown(conv('n', { priority: 'urgent' }), view({ priority: 'urgent' }), st, ctx)).toBe(true)
+    expect(shouldInsertUnknown(conv('n'), view({ priority: 'urgent' }), st, ctx)).toBe(false) // default normal
+    expect(shouldInsertUnknown(conv('n'), view({ priority: 'normal' }), st, ctx)).toBe(true)
   })
 
   it('nothing unknown is inserted while a search is active', () => {

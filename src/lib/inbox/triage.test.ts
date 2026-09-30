@@ -112,4 +112,14 @@ describe('migrateTriage', () => {
     })
     expect(migrateTriage({ tab: 'all', live: 'live', tagIds: 'nope', channel: 'sms' })).toEqual(DEFAULT_TRIAGE)
   })
+
+  it('persists the category and priority filters (071), dropping anything malformed', () => {
+    const id = '11111111-1111-4111-8111-111111111111'
+    expect(migrateTriage({ tab: 'all', live: 'live', categoryId: id, priority: 'urgent' })).toEqual({
+      ...DEFAULT_TRIAGE,
+      categoryId: id,
+      priority: 'urgent',
+    })
+    expect(migrateTriage({ tab: 'all', live: 'live', categoryId: 'x', priority: 'critical' })).toEqual(DEFAULT_TRIAGE)
+  })
 })

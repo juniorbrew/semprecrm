@@ -260,3 +260,43 @@ describe('formatEventAge', () => {
     expect(formatEventAge('garbage', 'pt-BR', now)).toBe('')
   })
 })
+
+describe('support triage events (071)', () => {
+  const base = { id: 'e', conversation_id: 'c', created_at: '2026-09-30T10:00:00Z' } as const
+  it('human edits name the actor; AI edits read "Classificada automaticamente"', () => {
+    expect(
+      formatConversationEvent({ ...base, type: 'category_changed', category_name: 'Cobrança', actor_name: 'Ana' }, 'pt-BR'),
+    ).toBe('Ana definiu a categoria Cobrança')
+    expect(formatConversationEvent({ ...base, type: 'category_changed', category_name: null, actor_name: 'Ana' }, 'pt-BR')).toBe(
+      'Ana removeu a categoria',
+    )
+    expect(
+      formatConversationEvent({ ...base, type: 'priority_changed', priority: 'urgent', actor_name: 'Ana' }, 'en-US'),
+    ).toBe('Ana set the priority to urgent')
+    expect(
+      formatConversationEvent({ ...base, type: 'category_changed', category_name: 'Cobrança', source: 'ai' }, 'pt-BR'),
+    ).toBe('Classificada automaticamente: Cobrança')
+    expect(formatConversationEvent({ ...base, type: 'priority_changed', priority: 'high', source: 'ai' }, 'pt-BR')).toBe(
+      'Classificada automaticamente: prioridade alta',
+    )
+    expect(
+      formatConversationEvent({ ...base, type: 'resolution_set', resolution: 'duplicate', actor_name: 'Ana' }, 'pt-BR'),
+    ).toBe('Ana resolveu como: duplicada')
+    expect(formatConversationEvent({ ...base, type: 'resolution_set', resolution: 'expired' }, 'en-US')).toBe(
+      'Outcome: No reply from customer',
+    )
+  })
+  it('maps the payload into the view model', () => {
+    const ev = eventFromRecord({
+      id: 'e',
+      account_id: 'a',
+      conversation_id: 'c',
+      event_type: 'category_changed',
+      actor_user_id: null,
+      payload: { category_name: 'Cobrança', source: 'ai' },
+      created_at: '2026-09-30T10:00:00Z',
+    })
+    expect(ev).toMatchObject({ category_name: 'Cobrança', source: 'ai' })
+    expect(isVisibleEvent(ev)).toBe(true)
+  })
+})

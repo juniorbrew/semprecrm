@@ -231,6 +231,11 @@ export function SettingsOverview({
             subtitle: `${t('SLA')} ${preferences.inbox_sla_minutes} min · ${t('cooling')} ${preferences.cooling_hours} h`,
           },
           {
+            section: 'support' as const,
+            loading: false,
+            subtitle: t('Conversation categories and triage'),
+          },
+          {
             section: 'integrations' as const,
             loading: false,
             subtitle: t('Lead capture by webhook'),

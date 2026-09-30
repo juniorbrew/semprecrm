@@ -174,6 +174,11 @@ describe('buildTriagePrompt (untrusted text stays data)', () => {
 
 // ---- runTriage with an in-memory db --------------------------------------
 
+async function rowsOf(fake: ReturnType<typeof makeFakeDb>, table: string) {
+  const res = (await (fake.from(table).select() as unknown as Promise<{ data: Record<string, unknown>[] }>)).data
+  return res
+}
+
 function world(over: { conv?: Record<string, unknown>; settings?: Record<string, unknown> | null; cats?: Record<string, unknown>[] } = {}) {
   return makeFakeDb({
     ai_settings: over.settings === null ? [] : [{ account_id: 'acc', enabled: true, triage_enabled: true, ...over.settings }],
@@ -223,7 +228,7 @@ describe('runTriage', () => {
     expect(call.prompt).not.toContain('aviso do sistema')
     const conv = (await fake.from('conversations').select().eq('id', 'conv').maybeSingle()).data as Record<string, unknown>
     expect(conv).toMatchObject({ category_id: CAT_A, priority: 'high', sentiment: 'negative', subject: 'Boleto vencido', triage_source: 'ai' })
-    const events = (await fake.from('conversation_events').select()).data as Record<string, unknown>[]
+    const events = await rowsOf(fake, 'conversation_events')
     expect(events.map((e) => e.event_type)).toEqual(['category_changed', 'priority_changed'])
     expect(events.every((e) => e.actor_user_id === null && (e.payload as Record<string, unknown>).source === 'ai')).toBe(true)
   })
@@ -255,7 +260,7 @@ describe('runTriage', () => {
     expect(await runTriage(fake as never, { accountId: 'acc', conversationId: 'conv' })).toEqual({ status: 'skipped', reason: 'invalid_output' })
     const conv = (await fake.from('conversations').select().eq('id', 'conv').maybeSingle()).data as Record<string, unknown>
     expect(conv.triage_source).toBeNull()
-    expect((await fake.from('conversation_events').select()).data).toEqual([])
+    expect(await rowsOf(fake, 'conversation_events')).toEqual([])
   })
 
   it('a human edit that lands while the model thinks still wins (conditional write)', async () => {
