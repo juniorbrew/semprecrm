@@ -61,17 +61,32 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const agent = await resolveConversationAgent(supabaseAdmin(), ctx.accountId, conv.contact_id as string, conv.channel);
     const applies = !!agent && agent.mode === 'auto';
     const paused = isPausedUntil(conv.ai_paused_until, new Date());
-    let handoff = null;
+    // The card shows while the hand-over still holds: the AI is stopped
+    // and nobody resumed it after that hand-over.
+    let handoff: { created_at: string } | null = null;
     if (conv.ai_paused_until === 'infinity') {
-      const { data } = await ctx.supabase
-        .from('ai_handoffs')
-        .select('id, reason, customer_wants, last_customer_words, notified, created_at')
-        .eq('conversation_id', id)
-        .eq('account_id', ctx.accountId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      handoff = data ?? null;
+      const [{ data }, { data: resumed }] = await Promise.all([
+        ctx.supabase
+          .from('ai_handoffs')
+          .select('id, reason, customer_wants, last_customer_words, notified, created_at')
+          .eq('conversation_id', id)
+          .eq('account_id', ctx.accountId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        ctx.supabase
+          .from('conversation_events')
+          .select('created_at')
+          .eq('conversation_id', id)
+          .eq('account_id', ctx.accountId)
+          .eq('event_type', 'ai_resumed')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      const card = data as { created_at: string } | null;
+      const lastResume = (resumed as { created_at: string } | null)?.created_at;
+      handoff = card && (!lastResume || Date.parse(card.created_at) > Date.parse(lastResume)) ? card : null;
     }
     return NextResponse.json({
       applies,
@@ -117,7 +132,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     let queued = false;
     if (action === 'resume') {
       const admin = supabaseAdmin();
-      const [{ data: rows }, { data: contact }] = await Promise.all([
+      const [{ data: rows }, { data: contact }, { data: doneJobs }] = await Promise.all([
         admin
           .from('messages')
           .select('id, sender_type, origin, created_at')
@@ -130,16 +145,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           .eq('id', conv.contact_id as string)
           .eq('account_id', ctx.accountId)
           .maybeSingle(),
+        admin.from('ai_reply_jobs').select('inbound_message_ids').eq('conversation_id', id).eq('status', 'done'),
       ]);
+      // Unanswered = after the last HUMAN reply and not already handled by
+      // a finished AI job (by id — AI bubbles carry now() timestamps while
+      // customer rows carry WhatsApp seconds, so no created_at cut-off).
+      const covered = new Set(((doneJobs ?? []) as { inbound_message_ids: string[] | null }[]).flatMap((j) => j.inbound_message_ids ?? []));
       const pending = unansweredCustomerMessages(
-        ((rows ?? []) as { id: string; sender_type: 'customer' | 'agent' | 'bot'; origin?: string | null }[]).reverse(),
-      );
+        ((rows ?? []) as { id: string; sender_type: 'customer' | 'agent' | 'bot'; origin?: string | null; created_at: string }[])
+          .reverse()
+          .filter((m) => m.origin !== 'ai'),
+      ).filter((m) => !covered.has(m.id));
       if (pending.length > 0 && contact) {
         queued = await enqueueAutoReplyIfEligible(admin, {
           accountId: ctx.accountId,
           conversation: { ...conv, ai_paused_until: null },
           contact,
-          messageId: pending[pending.length - 1].id,
+          messageIds: pending.map((m) => m.id),
         });
         if (queued) after(kickAutoReplies);
       }

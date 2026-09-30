@@ -464,5 +464,10 @@ export const DICT_AI: Record<string, string> = {
   'Agent in suggestion mode': 'Agente no modo sugestão',
   'No agent applies': 'Nenhum agente se aplica',
   'AI not in the plan': 'IA fora do plano',
-  'Replaced by a newer reply': 'Substituída por uma resposta mais nova',
+  'Merged into a newer reply': 'Juntada a uma resposta mais nova',
+  'An automation already answered': 'Uma automação já respondeu',
+  'Customer inside a flow': 'Cliente dentro de um fluxo',
+  'AI turned off': 'IA desligada',
+  'Failed attempts': 'Tentativas falharam',
+  'Contact mismatch': 'Contato não confere',
 };

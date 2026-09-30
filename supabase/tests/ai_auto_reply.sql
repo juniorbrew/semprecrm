@@ -70,16 +70,34 @@ SELECT conv_a, 'agent', '66000000-0000-4000-8000-00000000000d', 'text', 'de novo
 SELECT pg_temp.assert_true((SELECT ai_paused_until = 'infinity' FROM conversations WHERE id = (SELECT conv_a FROM ids)), 'human reply never shortens a hand-over pause');
 UPDATE conversations SET ai_paused_until = NULL;
 
+-- ---- AI / bot replies count as answered (SLA, inactivity) ------
+UPDATE conversations SET last_agent_message_at = NULL WHERE id = (SELECT conv_a FROM ids);
+INSERT INTO messages(conversation_id, sender_type, origin, content_type, content_text)
+SELECT conv_a, 'bot', 'ai', 'text', 'Respondido pela IA' FROM ids;
+SELECT pg_temp.assert_true((SELECT last_agent_message_at IS NOT NULL FROM conversations WHERE id = (SELECT conv_a FROM ids)), 'AI reply updates last_agent_message_at');
+
+-- ---- a person claiming pauses the AI; round-robin does not -------
+UPDATE conversations SET assigned_agent_id = '66000000-0000-4000-8000-00000000000d', ai_paused_until = NULL WHERE id = (SELECT conv_a FROM ids);
+SELECT pg_temp.assert_true((SELECT ai_paused_until IS NULL FROM conversations WHERE id = (SELECT conv_a FROM ids)), 'service-role assign (round-robin) does not pause');
+UPDATE conversations SET assigned_agent_id = NULL WHERE id = (SELECT conv_a FROM ids);
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '66000000-0000-4000-8000-00000000000d', true);
+UPDATE conversations SET assigned_agent_id = '66000000-0000-4000-8000-00000000000d' WHERE id = (SELECT conv_a FROM ids);
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_true((SELECT ai_paused_until BETWEEN now() + interval '29 minutes' AND now() + interval '31 minutes' FROM conversations WHERE id = (SELECT conv_a FROM ids)), 'Assumir pauses the AI 30 min');
+UPDATE conversations SET ai_paused_until = NULL, assigned_agent_id = NULL;
+
 -- ---- enqueue: debounce + attach -------------------------------
-SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, msg_1, 8) FROM ids;
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_1], 8) FROM ids;
 CREATE TEMP TABLE first_job AS SELECT id, run_after FROM ai_reply_jobs WHERE status = 'queued';
-SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, msg_2, 8) FROM ids;
-SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, msg_2, 8) FROM ids;
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_2], 8) FROM ids;
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_2, msg_1], 8) FROM ids;
 SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM ai_reply_jobs), 'one queued job per conversation');
 SELECT pg_temp.assert_true(
   (SELECT j.inbound_message_ids = ARRAY[i.msg_1, i.msg_2] AND j.run_after = f.run_after
      FROM ai_reply_jobs j, ids i, first_job f),
-  'later messages attach, run_after anchored to the first');
+  'later messages attach once, in order; run_after anchored to the first');
 SELECT pg_temp.assert_true((SELECT run_after > now() FROM ai_reply_jobs), 'not due yet');
 
 -- ---- claim ----------------------------------------------------
@@ -88,7 +106,7 @@ UPDATE ai_reply_jobs SET run_after = now() - interval '1 second';
 SELECT pg_temp.assert_true((SELECT count(*) = 1 AND min(attempts) = 1 AND min(status) = 'running' FROM ai_reply_claim(10)), 'claims due job');
 SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM ai_reply_claim(10)), 'no double claim');
 -- a message while running opens a NEW queued job, not claimable while the other runs
-SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, msg_3, 0) FROM ids;
+SELECT ai_reply_enqueue(acc_a, conv_a, contact_a, NULL, ARRAY[msg_3], 0) FROM ids;
 UPDATE ai_reply_jobs SET run_after = now() - interval '1 second' WHERE status = 'queued';
 SELECT pg_temp.assert_true((SELECT count(*) = 2 FROM ai_reply_jobs), 'second job queued while first runs');
 SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM ai_reply_claim(10)), 'same conversation never runs twice');
@@ -97,22 +115,17 @@ SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM ai_reply_claim(10)), 'same 
 SET session_replication_role = replica; -- backdate without the updated_at trigger
 UPDATE ai_reply_jobs SET updated_at = now() - interval '3 minutes' WHERE status = 'running';
 SET session_replication_role = origin;
--- stale running + a queued sibling → superseded; the queued one is claimed
-SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM ai_reply_claim(10)), 'reaped then claimed the queued one');
-SELECT pg_temp.assert_true((SELECT status = 'skipped' AND skip_reason = 'superseded' FROM ai_reply_jobs WHERE id = (SELECT id FROM first_job)), 'stale job superseded');
--- stale alone → back to queued (retry); at 3 attempts → failed
-SET session_replication_role = replica;
-UPDATE ai_reply_jobs SET updated_at = now() - interval '3 minutes' WHERE status = 'running';
-SET session_replication_role = origin;
-SELECT pg_temp.assert_true((SELECT count(*) = 1 AND min(attempts) = 2 FROM ai_reply_claim(10)), 'stale job retried');
+-- stale running + a queued sibling → its messages merge into the queued one, which is claimed
+SELECT pg_temp.assert_true((SELECT count(*) = 1 AND bool_and(inbound_message_ids @> ARRAY[i.msg_1, i.msg_2, i.msg_3]) FROM ai_reply_claim(10), ids i), 'reaped: merged into the queued job, then claimed');
+SELECT pg_temp.assert_true((SELECT status = 'skipped' AND skip_reason = 'merged' FROM ai_reply_jobs WHERE id = (SELECT id FROM first_job)), 'stale job merged');
+-- stale alone → back to the queue (attempts keep counting; the runtime gives up past 3)
 SET session_replication_role = replica;
 UPDATE ai_reply_jobs SET updated_at = now() - interval '3 minutes', attempts = 3 WHERE status = 'running';
 SET session_replication_role = origin;
-SELECT count(*) FROM ai_reply_claim(10);
-SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM ai_reply_jobs WHERE status = 'failed'), 'fails after 3 attempts');
+SELECT pg_temp.assert_true((SELECT count(*) = 1 AND min(attempts) = 4 FROM ai_reply_claim(10)), 'stale job requeued and reclaimed (attempts 4 → runtime hands over)');
 
 -- ---- account B data for RLS -----------------------------------
-SELECT ai_reply_enqueue(acc_b, conv_b, contact_b, NULL, NULL, 8) FROM ids;
+SELECT ai_reply_enqueue(acc_b, conv_b, contact_b, NULL, ARRAY[msg_1], 8) FROM ids;
 INSERT INTO ai_handoffs(account_id, conversation_id, contact_id, reason)
 SELECT acc_a, conv_a, contact_a, 'pediu atendente' FROM ids
 UNION ALL SELECT acc_b, conv_b, contact_b, 'b' FROM ids;
@@ -145,7 +158,7 @@ DO $$ BEGIN
   RAISE EXCEPTION 'authenticated called the service search';
 EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 DO $$ BEGIN
-  PERFORM ai_reply_enqueue((SELECT acc_a FROM ids), (SELECT conv_a FROM ids), (SELECT contact_a FROM ids), NULL, NULL, 8);
+  PERFORM ai_reply_enqueue((SELECT acc_a FROM ids), (SELECT conv_a FROM ids), (SELECT contact_a FROM ids), NULL, ARRAY[]::uuid[], 8);
   RAISE EXCEPTION 'authenticated enqueued';
 EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 RESET ROLE;

@@ -41,7 +41,12 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   agent_not_auto: "Agent in suggestion mode",
   no_agent: "No agent applies",
   module_off: "AI not in the plan",
-  superseded: "Replaced by a newer reply",
+  merged: "Merged into a newer reply",
+  automation_answered: "An automation already answered",
+  flow_active: "Customer inside a flow",
+  ai_disabled: "AI turned off",
+  failed_attempts: "Failed attempts",
+  contact_mismatch: "Contact mismatch",
 };
 
 function resultLabel(j: JobRow): string {

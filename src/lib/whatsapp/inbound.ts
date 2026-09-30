@@ -1041,7 +1041,7 @@ export async function ingestInboundMessage(
           // The customer just wrote: the 24 h window is open.
           conversation: { ...conversation, last_customer_message_at: new Date().toISOString() },
           contact,
-          messageId: inboundMessageId,
+          messageIds: [inboundMessageId],
         })
       : false
 

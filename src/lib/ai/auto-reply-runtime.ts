@@ -3,46 +3,55 @@
 // service-role client. The rules live in ./auto-reply.ts.
 //
 // Trigger: ingestInboundMessage (after flows / automations, only when
-// no flow consumed the message) calls enqueueAutoReplyIfEligible. That
-// upserts ONE queued job per conversation (`ai_reply_enqueue`), due 8 s
-// after the FIRST message of the burst; later messages attach to it.
+// no flow consumed the message and it was not an opt-out) calls
+// enqueueAutoReplyIfEligible. That upserts ONE queued job per
+// conversation (`ai_reply_enqueue`), due 8 s after the FIRST message of
+// the burst; later messages attach their ids. A job answers exactly its
+// `inbound_message_ids` — never a created_at cut-off (customer rows
+// carry WhatsApp-second timestamps, our bubbles now()). A message that
+// arrives while a job runs opens the next job.
 //
-// Drain: the inbound routes kick drainAutoReplies() with `after()`
-// once the debounce window has passed (best effort), and the cron
-// (`/api/ai/auto-reply/cron`, every scripts/cron-tick.mjs tick) drains
-// whatever is due — including jobs rescheduled to the next business
-// opening and jobs whose worker died (`ai_reply_claim` reaps 'running'
-// rows older than 2 minutes; 3 attempts max).
+// Drain: the inbound routes kick drainAutoReplies() once the debounce
+// window has passed (best effort) and the cron route claims due jobs
+// every tick and runs them after its response (`after()`), at most
+// MAX_CONCURRENCY at a time in this process. `ai_reply_claim` reaps
+// dead 'running' jobs (2 min without a heartbeat).
 //
-// Run (runAutoReplyJob): eligibility again → nothing to answer? skip →
-// STOP words → opt-out + confirmation → customer asked for a person →
-// hand-over → model (strict JSON) → model hand-over / invalid →
-// hand-over → post-checks (bubbles, commercial terms) → send bubbles
-// with human-like pacing, recording each sent bubble on the job so a
-// retry never sends one twice.
+// Run: eligibility → AI still on → answered meanwhile by an automation
+// / flow? → customer asked for a person → model (strict JSON) → post-
+// checks (bubbles, commercial terms, instruction leak) → bubbles with
+// human-like pacing. Right before EACH bubble (after the QR pacing
+// wait) everything that could have changed is re-read and the job
+// heartbeats; each sent bubble is recorded, so a retry never re-sends
+// one. A send whose outcome is unknown is never retried: the rest is
+// dropped and the conversation goes to the team.
+//
+// Anything that would leave the customer unanswered for good (closed
+// 24 h window after a reschedule, repeated failures) hands the
+// conversation to the team silently (no notice, card + pending).
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { engineSendText } from '@/lib/automations/meta-send';
+import { paceAutomatedQrSend } from '@/lib/automations/qr-pacing';
 import { startOfLocalDay } from '@/lib/business-hours';
 import { accountHasModule } from '@/lib/plans-server';
+import { MetaSendError } from '@/lib/whatsapp/meta-api';
+import { GatewayUnreachableError } from '@/lib/whatsapp/qr-gateway';
 import { AGENT_COLUMNS, DEFAULT_HANDOFF_MESSAGE, resolveAgent, splitReply, suggestionInstructions, type AiAgent } from './agents';
 import {
   AUTO_REPLY,
-  DEFAULT_STOP_CONFIRMATION,
   buildAutoReplyPrompt,
   bubbleGapMs,
   checkEligibility,
   detectHandoff,
   isPausedUntil,
-  isStopRequest,
+  leaksInstructions,
   parseAutoReplyOutput,
   typingDelayMs,
-  unansweredCustomerMessages,
   unverifiedCommercialTerms,
-  type SkipReason,
 } from './auto-reply';
 import { AiError, type AiErrorCode } from './errors';
 import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from './knowledge';
@@ -62,12 +71,15 @@ export interface AiReplyJob {
   attempts: number;
   reply_parts: string[] | null;
   sent_parts: number;
-  inbound_message_ids?: string[];
+  inbound_message_ids: string[];
 }
 
 export interface AutoReplyDeps {
   db: SupabaseClient;
+  /** Sends one bubble (origin 'ai'); pacing is done by `pace` beforehand. */
   send: (args: { accountId: string; userId: string; conversationId: string; contactId: string; text: string }) => Promise<unknown>;
+  /** QR anti-ban spacing, awaited BEFORE the last-moment checks. */
+  pace: (accountId: string, channel: string | null) => Promise<void>;
   runModel: typeof runModelCall;
   hasAiModule: (db: SupabaseClient, accountId: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
@@ -78,7 +90,10 @@ export interface AutoReplyDeps {
 export function defaultAutoReplyDeps(): AutoReplyDeps {
   return {
     db: supabaseAdmin(),
-    send: (a) => engineSendText({ ...a, origin: 'ai' }),
+    send: (a) => engineSendText({ ...a, origin: 'ai', skipPacing: true }),
+    pace: async (accountId, channel) => {
+      if (channel === 'qr') await paceAutomatedQrSend(accountId);
+    },
     runModel: runModelCall,
     hasAiModule: (db, accountId) => accountHasModule(db, accountId, 'ai'),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -87,8 +102,22 @@ export function defaultAutoReplyDeps(): AutoReplyDeps {
   };
 }
 
-/** The account / settings / provider can't serve a reply: hand over at once. */
-const AI_UNAVAILABLE = new Set<AiErrorCode>(['module_not_included', 'not_enabled', 'no_key', 'budget_exceeded', 'invalid_key', 'quota', 'model_not_found']);
+/** Provider / budget problems the team must know about: hand over. */
+const AI_HANDOFF_CODES = new Set<AiErrorCode>(['budget_exceeded', 'quota', 'invalid_key', 'model_not_found']);
+/** AI switched off for the account: stay quiet. */
+const AI_OFF_CODES = new Set<AiErrorCode>(['module_not_included', 'not_enabled', 'no_key']);
+
+/**
+ * The send may have reached WhatsApp: Meta timeout / 5xx / network
+ * ("uncertain"), gateway unreachable / timeout / no id, or delivered
+ * but not stored. Such a bubble is never sent again.
+ */
+export function isUncertainSend(err: unknown): boolean {
+  if (err instanceof MetaSendError) return err.uncertain;
+  if (err instanceof GatewayUnreachableError) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\bsent (to Meta|via gateway) but DB insert failed/i.test(msg);
+}
 
 const CONVERSATION_COLUMNS =
   'id, account_id, user_id, contact_id, status, archived_at, channel, ai_paused_until, last_customer_message_at';
@@ -119,30 +148,35 @@ export async function resolveConversationAgent(
   return resolveAgent(list, { channel: channel ?? 'official', tagIds })?.agent ?? null;
 }
 
+async function aiSettingsEnabled(db: SupabaseClient, accountId: string): Promise<boolean> {
+  const { data, error } = await db.from('ai_settings').select('enabled').eq('account_id', accountId).maybeSingle();
+  if (error) throw new Error(`ai settings read failed: ${error.message}`);
+  return !!(data as { enabled?: boolean } | null)?.enabled;
+}
+
 // ------------------------------------------------------------
-// Enqueue (called by ingestInboundMessage)
+// Enqueue (ingestInboundMessage, resume)
 // ------------------------------------------------------------
 
 /**
- * Queue (or extend) the conversation's automatic-reply job when an auto
- * agent answers it and nothing rules it out. Business hours and the
- * daily cap are decided at run time (reschedule / hand-over). Never
- * throws — the inbound pipeline must not fail because of the AI.
+ * Queue (or extend) the conversation's automatic-reply job with these
+ * customer message ids when an auto agent answers it and nothing rules
+ * it out. Business hours and the daily cap are decided at run time.
+ * Never throws — the inbound pipeline must not fail because of the AI.
  */
 export async function enqueueAutoReplyIfEligible(
   db: SupabaseClient,
-  input: { accountId: string; conversation: Row; contact: Row; messageId: string | null; now?: Date },
+  input: { accountId: string; conversation: Row; contact: Row; messageIds: string[]; now?: Date },
 ): Promise<boolean> {
   try {
+    if (input.messageIds.length === 0) return false;
     const now = input.now ?? new Date();
     const conv = input.conversation;
     const agent = await resolveConversationAgent(db, input.accountId, input.contact.id, conv.channel ?? null);
     if (!agent || agent.mode !== 'auto') return false;
     const verdict = checkEligibility({ now, agent, contact: input.contact, conversation: conv });
     if (!verdict.ok && verdict.reason !== 'outside_hours' && verdict.reason !== 'daily_cap') return false;
-
-    const { data: settings } = await db.from('ai_settings').select('enabled').eq('account_id', input.accountId).maybeSingle();
-    if (!(settings as { enabled?: boolean } | null)?.enabled) return false;
+    if (!(await aiSettingsEnabled(db, input.accountId))) return false;
     if (!(await accountHasModule(db, input.accountId, 'ai'))) return false;
 
     const { error } = await db.rpc('ai_reply_enqueue', {
@@ -150,7 +184,7 @@ export async function enqueueAutoReplyIfEligible(
       p_conversation_id: conv.id,
       p_contact_id: input.contact.id,
       p_agent_id: agent.id,
-      p_message_id: input.messageId,
+      p_message_ids: input.messageIds,
       p_delay_seconds: AUTO_REPLY.debounceSeconds,
     });
     if (error) {
@@ -171,7 +205,7 @@ export async function kickAutoReplies(): Promise<void> {
 }
 
 // ------------------------------------------------------------
-// Drain (cron + kick)
+// Claim + run (cron / kick)
 // ------------------------------------------------------------
 
 export interface DrainResult {
@@ -182,10 +216,21 @@ export interface DrainResult {
   failed: number;
 }
 
-export async function drainAutoReplies(deps: AutoReplyDeps = defaultAutoReplyDeps(), limit = 10): Promise<DrainResult> {
-  const { data, error } = await deps.db.rpc('ai_reply_claim', { p_limit: limit });
+/** Jobs running in this process — the claim never takes more than the free slots. */
+export const MAX_CONCURRENCY = 10;
+let inFlight = 0;
+
+export async function claimAutoReplies(deps: AutoReplyDeps = defaultAutoReplyDeps(), limit = MAX_CONCURRENCY): Promise<AiReplyJob[]> {
+  const free = Math.min(limit, MAX_CONCURRENCY - inFlight);
+  if (free <= 0) return [];
+  const { data, error } = await deps.db.rpc('ai_reply_claim', { p_limit: free });
   if (error) throw new Error(`ai reply claim failed: ${error.message}`);
   const jobs = (data ?? []) as AiReplyJob[];
+  inFlight += jobs.length; // released by runClaimedJobs
+  return jobs;
+}
+
+export async function runClaimedJobs(jobs: AiReplyJob[], deps: AutoReplyDeps = defaultAutoReplyDeps()): Promise<DrainResult> {
   const result: DrainResult = { claimed: jobs.length, replied: 0, handoff: 0, skipped: 0, failed: 0 };
   await Promise.all(
     jobs.map(async (job) => {
@@ -195,22 +240,35 @@ export async function drainAutoReplies(deps: AutoReplyDeps = defaultAutoReplyDep
         else result.skipped++;
       } catch (err) {
         result.failed++;
-        await retryOrFail(deps.db, job, err, deps.now());
+        await retryOrGiveUp(job, err, deps).catch((e) => console.error('[ai/auto-reply] retry bookkeeping failed:', job.id, e));
+      } finally {
+        inFlight = Math.max(0, inFlight - 1);
       }
     }),
   );
   return result;
 }
 
+export async function drainAutoReplies(deps: AutoReplyDeps = defaultAutoReplyDeps(), limit = MAX_CONCURRENCY): Promise<DrainResult> {
+  return runClaimedJobs(await claimAutoReplies(deps, limit), deps);
+}
+
+/** Test helper. */
+export function resetAutoReplyConcurrency(): void {
+  inFlight = 0;
+}
+
 const errText = (err: unknown) => (err instanceof AiError ? `ai:${err.code}` : err instanceof Error ? err.message : String(err)).slice(0, 500);
 
-async function retryOrFail(db: SupabaseClient, job: AiReplyJob, err: unknown, now: Date): Promise<void> {
+/** A thrown job: retry with back-off, or — out of attempts — hand over silently. */
+async function retryOrGiveUp(job: AiReplyJob, err: unknown, deps: AutoReplyDeps): Promise<void> {
   console.error('[ai/auto-reply] job failed:', job.id, errText(err));
   if (job.attempts >= AUTO_REPLY.maxAttempts) {
-    await patchJob(db, job.id, { status: 'failed', last_error: errText(err) });
+    await patchJob(deps.db, job.id, { status: 'failed', last_error: errText(err) });
+    await giveUp(job, deps, 'A IA falhou várias vezes ao responder');
     return;
   }
-  await requeue(db, job.id, new Date(now.getTime() + 30_000 * job.attempts), { last_error: errText(err) });
+  await requeue(deps.db, job, new Date(deps.now().getTime() + 30_000 * job.attempts), { last_error: errText(err) });
 }
 
 async function patchJob(db: SupabaseClient, id: string, patch: Row): Promise<void> {
@@ -218,26 +276,77 @@ async function patchJob(db: SupabaseClient, id: string, patch: Row): Promise<voi
   if (error) console.error('[ai/auto-reply] job update failed:', id, error.message);
 }
 
-/** Back to the queue; a newer queued job of the conversation wins (unique index) → superseded. */
-async function requeue(db: SupabaseClient, id: string, runAfter: Date, extra: Row = {}): Promise<void> {
+/**
+ * Back to the queue. When a newer job of the conversation is already
+ * queued (unique index → 23505) this job's messages move into it and
+ * this one ends as 'merged' — the newer job answers all of them.
+ */
+async function requeue(db: SupabaseClient, job: AiReplyJob, runAfter: Date, extra: Row = {}): Promise<void> {
   const { error } = await db
     .from('ai_reply_jobs')
     .update({ status: 'queued', run_after: runAfter.toISOString(), ...extra })
-    .eq('id', id);
-  if (error?.code === '23505') await patchJob(db, id, { status: 'skipped', skip_reason: 'superseded' });
-  else if (error) console.error('[ai/auto-reply] requeue failed:', id, error.message);
+    .eq('id', job.id);
+  if (error?.code !== '23505') {
+    if (error) console.error('[ai/auto-reply] requeue failed:', job.id, error.message);
+    return;
+  }
+  const { data: newer } = await db
+    .from('ai_reply_jobs')
+    .select('id, inbound_message_ids')
+    .eq('conversation_id', job.conversation_id)
+    .eq('status', 'queued')
+    .maybeSingle();
+  if (newer) {
+    const ids = [...new Set([...(job.inbound_message_ids ?? []), ...((newer as Row).inbound_message_ids ?? [])])].slice(0, 200);
+    await patchJob(db, (newer as Row).id, { inbound_message_ids: ids });
+  }
+  await patchJob(db, job.id, { status: 'skipped', skip_reason: 'merged', reply_parts: null });
 }
 
-const skip = async (db: SupabaseClient, id: string, reason: SkipReason | string) => {
+const skip = async (db: SupabaseClient, id: string, reason: string) => {
   await patchJob(db, id, { status: 'skipped', skip_reason: reason, reply_parts: null });
   return 'skipped' as const;
 };
+
+/** Load what a silent hand-over needs and do it (repeated failures, dead worker). */
+async function giveUp(job: AiReplyJob, deps: AutoReplyDeps, reason: string): Promise<void> {
+  const { db } = deps;
+  const { data: conv } = await db.from('conversations').select(CONVERSATION_COLUMNS).eq('id', job.conversation_id).eq('account_id', job.account_id).maybeSingle();
+  const { data: contact } = await db.from('contacts').select('id, name, opted_out_at, anonymized_at').eq('id', job.contact_id).eq('account_id', job.account_id).maybeSingle();
+  if (!conv || !contact || (conv as Row).status === 'closed' || (contact as Row).opted_out_at || (contact as Row).anonymized_at) return;
+  const pending = await loadJobMessages(db, job, (conv as Row).id);
+  if (pending.length === 0) return;
+  await handOff({ job, deps, conv, contact, agent: null }, { reason, lastWords: lastWords(pending), notify: false, finish: false });
+}
 
 // ------------------------------------------------------------
 // Run one job
 // ------------------------------------------------------------
 
-export type JobOutcome = 'replied' | 'handoff' | 'opted_out' | 'skipped' | 'rescheduled';
+export type JobOutcome = 'replied' | 'handoff' | 'skipped' | 'rescheduled';
+
+type Msg = SuggestMessage & { id: string; origin?: string | null };
+
+async function loadJobMessages(db: SupabaseClient, job: AiReplyJob, conversationId: string): Promise<Msg[]> {
+  const ids = job.inbound_message_ids ?? [];
+  if (ids.length === 0) return [];
+  const { data, error } = await db
+    .from('messages')
+    .select('id, sender_type, origin, content_type, content_text, template_name, status, created_at')
+    .eq('conversation_id', conversationId)
+    .eq('sender_type', 'customer')
+    .in('id', ids)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(`messages read failed: ${error.message}`);
+  return (data ?? []) as Msg[];
+}
+
+const lastWords = (msgs: Msg[]) =>
+  msgs
+    .map((m) => m.content_text ?? '')
+    .filter((t) => t.trim())
+    .slice(-3)
+    .join('\n');
 
 export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Promise<JobOutcome> {
   const { db } = deps;
@@ -251,6 +360,7 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     .maybeSingle();
   if (convErr) throw new Error(`conversation read failed: ${convErr.message}`);
   if (!conv) return skip(db, job.id, 'conversation_missing');
+  if (conv.contact_id !== job.contact_id) return skip(db, job.id, 'contact_mismatch');
   const { data: contact, error: contactErr } = await db
     .from('contacts')
     .select('id, name, opted_out_at, anonymized_at')
@@ -260,8 +370,21 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   if (contactErr) throw new Error(`contact read failed: ${contactErr.message}`);
   if (!contact) return skip(db, job.id, 'contact_missing');
 
-  if (!(await deps.hasAiModule(db, job.account_id))) return skip(db, job.id, 'module_off');
+  // AI switched off / module removed: quiet, nothing to the customer.
+  if (!(await aiSettingsEnabled(db, job.account_id)) || !(await deps.hasAiModule(db, job.account_id))) {
+    return skip(db, job.id, 'ai_disabled');
+  }
+
   const agent = await resolveConversationAgent(db, job.account_id, contact.id, conv.channel ?? null);
+  if (agent && agent.id !== job.agent_id) await patchJob(db, job.id, { agent_id: agent.id });
+  const pending = await loadJobMessages(db, job, conv.id);
+  const ctx: RunCtx = { job, deps, conv, contact, agent };
+
+  // Reaped / crashed more times than allowed: stop trying, tell the team.
+  if (job.attempts > AUTO_REPLY.maxAttempts) {
+    if (pending.length === 0) return skip(db, job.id, 'failed_attempts');
+    return handOff(ctx, { reason: 'A IA falhou várias vezes ao responder', lastWords: lastWords(pending), notify: false });
+  }
 
   const tz = agent?.business_hours?.timezone || 'America/Sao_Paulo';
   const { count: repliesToday } = await db
@@ -275,13 +398,51 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   if (!verdict.ok) {
     if (verdict.reason === 'outside_hours' && verdict.retryAt) {
       // Waiting for the opening is not a failed attempt.
-      await requeue(db, job.id, verdict.retryAt, { skip_reason: 'outside_hours', attempts: Math.max(0, job.attempts - 1) });
+      await requeue(db, job, verdict.retryAt, { skip_reason: 'outside_hours', attempts: Math.max(0, job.attempts - 1) });
       return 'rescheduled';
     }
-    if (!(verdict.handoff && agent)) return skip(db, job.id, verdict.reason);
+    if (verdict.reason === 'meta_window_closed' && agent && pending.length > 0) {
+      // We can no longer answer on WhatsApp: the team must pick it up.
+      return handOff(ctx, { reason: 'A janela de 24 h do WhatsApp fechou antes da resposta', lastWords: lastWords(pending), notify: false });
+    }
+    if (verdict.reason === 'daily_cap' && agent) {
+      return handOff(ctx, { reason: 'Limite diário de respostas automáticas atingido', lastWords: lastWords(pending), notify: true });
+    }
+    return skip(db, job.id, verdict.reason);
   }
-  const ctx: RunCtx = { job, deps, conv, contact, agent: agent as AiAgent };
+  const agentCfg = agent as AiAgent;
 
+  // A retry resumes the bubbles the previous attempt did not send.
+  if (job.reply_parts?.length && job.sent_parts < job.reply_parts.length) {
+    return sendParts(ctx, job.reply_parts, started);
+  }
+  if (pending.length === 0) return skip(db, job.id, 'nothing_to_answer');
+
+  // Someone (automation, out-of-hours reply, flow) already answered, or
+  // the customer is inside a running flow: stay out of it.
+  const { count: botAfter } = await db
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conv.id)
+    .eq('sender_type', 'bot')
+    .in('origin', ['automation', 'flow'])
+    .gte('created_at', pending[0].created_at);
+  if ((botAfter ?? 0) > 0) return skip(db, job.id, 'automation_answered');
+  const { count: activeFlows } = await db
+    .from('flow_runs')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', job.account_id)
+    .eq('contact_id', contact.id)
+    .eq('status', 'active');
+  if ((activeFlows ?? 0) > 0) return skip(db, job.id, 'flow_active');
+
+  const texts = pending.map((m) => m.content_text ?? '').filter((t) => t.trim());
+  const words = lastWords(pending);
+  if (agentCfg.handoff_enabled && detectHandoff(texts, agentCfg.handoff_keywords)) {
+    return handOff(ctx, { reason: 'O cliente pediu para falar com uma pessoa', customerWants: 'Falar com uma pessoa da equipe', lastWords: words, notify: true });
+  }
+
+  // ---- prompt ----
   const { data: rows, error: msgErr } = await db
     .from('messages')
     .select('id, sender_type, origin, content_type, content_text, template_name, status, created_at')
@@ -289,42 +450,20 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     .order('created_at', { ascending: false })
     .limit(AUTO_REPLY.historyMessages + 20);
   if (msgErr) throw new Error(`messages read failed: ${msgErr.message}`);
-  const messages = ((rows ?? []) as (SuggestMessage & { origin?: string | null })[]).reverse();
-  const unanswered = unansweredCustomerMessages(messages);
-  const texts = unanswered.map((m) => m.content_text ?? '').filter((t) => t.trim());
-
-  if (!verdict.ok) {
-    return handOff(ctx, { reason: 'Limite diário de respostas automáticas atingido', lastWords: texts.slice(-3).join('\n') });
-  }
-
-  // A retry resumes the bubbles the previous attempt did not send.
-  if (job.reply_parts?.length && job.sent_parts < job.reply_parts.length) {
-    return sendParts(ctx, job.reply_parts, started);
-  }
-  if (unanswered.length === 0) return skip(db, job.id, 'nothing_to_answer');
-
-  if (texts.some(isStopRequest)) return optOut(ctx, texts);
-
-  const lastWords = texts.slice(-3).join('\n');
-  const agentCfg = ctx.agent;
-  if (agentCfg.handoff_enabled) {
-    const asked = detectHandoff(texts, agentCfg.handoff_keywords);
-    if (asked) return handOff(ctx, { reason: 'O cliente pediu para falar com uma pessoa', customerWants: 'Falar com uma pessoa da equipe', lastWords });
-  }
-
-  // ---- prompt ----
-  const [{ data: settings }, memory] = await Promise.all([
+  const history = ((rows ?? []) as Msg[]).reverse();
+  const [{ data: settings }, memory, { data: account }] = await Promise.all([
     db.from('ai_settings').select('instructions').eq('account_id', job.account_id).maybeSingle(),
     loadMemory(db, job.account_id, contact.id),
+    db.from('accounts').select('name').eq('id', job.account_id).maybeSingle(),
   ]);
-  const { data: account } = await db.from('accounts').select('name').eq('id', job.account_id).maybeSingle();
   const instructions = suggestionInstructions((settings as { instructions?: string | null } | null)?.instructions ?? null, agentCfg);
-  const knowledge = agentCfg.knowledge_enabled ? await loadKnowledge(db, job.account_id, messages) : [];
+  const knowledge = agentCfg.knowledge_enabled ? await loadKnowledge(db, job.account_id, pending) : [];
   const { system, prompt } = buildAutoReplyPrompt({
     accountName: (account as { name?: string } | null)?.name ?? '',
     contactName: contact.name ?? null,
     instructions,
-    messages,
+    messages: history,
+    pending,
     knowledge,
     memory,
     maxMessages: agentCfg.max_messages_per_turn,
@@ -347,36 +486,36 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     text = result.text;
   } catch (err) {
     const code = err instanceof AiError ? err.code : null;
-    if ((code && AI_UNAVAILABLE.has(code)) || job.attempts >= AUTO_REPLY.maxAttempts) {
-      return handOff(ctx, { reason: `A IA não conseguiu responder (${code ?? 'erro'})`, lastWords });
+    if (code && AI_OFF_CODES.has(code)) return skip(db, job.id, 'ai_disabled');
+    if (code && AI_HANDOFF_CODES.has(code)) {
+      return handOff(ctx, { reason: `A IA está indisponível (${code})`, lastWords: words, notify: true });
+    }
+    if (job.attempts >= AUTO_REPLY.maxAttempts) {
+      return handOff(ctx, { reason: `A IA não conseguiu responder (${code ?? 'erro'})`, lastWords: words, notify: false });
     }
     throw err;
   }
 
   const out = parseAutoReplyOutput(text);
-  if (!out) return handOff(ctx, { reason: 'A IA não conseguiu montar uma resposta válida', lastWords });
+  if (!out) return handOff(ctx, { reason: 'A IA não conseguiu montar uma resposta válida', lastWords: words, notify: true });
   if (out.handoff || !out.reply) {
-    return handOff(ctx, { reason: out.reason || 'A IA não tinha certeza da resposta', customerWants: out.customerWants, lastWords });
+    return handOff(ctx, { reason: out.reason || 'A IA não tinha certeza da resposta', customerWants: out.customerWants, lastWords: words, notify: true });
   }
 
   // ---- deterministic post-checks ----
   const parts = agentCfg.split_messages
     ? splitReply(out.reply, agentCfg.max_chars_per_message, agentCfg.max_messages_per_turn)
     : [out.reply];
+  const fail = (reason: string) => handOff(ctx, { reason, customerWants: out.customerWants, lastWords: words, notify: true });
   if (parts.length === 0 || parts.length > agentCfg.max_messages_per_turn || parts.some((p) => !p.trim())) {
-    return handOff(ctx, { reason: 'A resposta da IA não coube no limite de mensagens', customerWants: out.customerWants, lastWords });
+    return fail('A resposta da IA não coube no limite de mensagens');
   }
-  if (!agentCfg.split_messages && out.reply.length > AUTO_REPLY.maxSingleReplyChars) {
-    return handOff(ctx, { reason: 'A resposta da IA ficou longa demais', customerWants: out.customerWants, lastWords });
-  }
+  if (!agentCfg.split_messages && out.reply.length > AUTO_REPLY.maxSingleReplyChars) return fail('A resposta da IA ficou longa demais');
+  if (leaksInstructions(out.reply, instructions)) return fail('A resposta da IA repetia as instruções internas');
   const ground = [instructions ?? '', ...knowledge.map((k) => `${k.title}\n${k.content}`)];
   const unverified = unverifiedCommercialTerms(out.reply, ground);
   if (unverified.length > 0) {
-    return handOff(ctx, {
-      reason: `A IA ia citar condição comercial que não está na base (${unverified.slice(0, 3).join(', ')})`,
-      customerWants: out.customerWants,
-      lastWords,
-    });
+    return fail(`A IA ia citar condição comercial que não está na base (${unverified.slice(0, 3).join(', ')})`);
   }
 
   await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0 });
@@ -388,32 +527,54 @@ interface RunCtx {
   deps: AutoReplyDeps;
   conv: Row;
   contact: Row;
-  agent: AiAgent;
+  agent: AiAgent | null;
 }
 
-/** Still ours to answer? A human reply / pause / resolve since the job started stops the bubbles. */
-async function stillAnswering(ctx: RunCtx): Promise<boolean> {
-  const { data } = await ctx.deps.db
-    .from('conversations')
-    .select('status, archived_at, ai_paused_until')
-    .eq('id', ctx.conv.id)
-    .maybeSingle();
-  const c = data as Row;
-  return !!c && c.status !== 'closed' && !c.archived_at && !isPausedUntil(c.ai_paused_until, ctx.deps.now());
+/**
+ * Still ours to answer, right now? Conversation not resolved / paused
+ * (a human replied, claimed or paused), contact not opted out /
+ * anonymised, agent still automatic, enabled and not paused, AI on.
+ */
+async function stillAnswering(ctx: RunCtx): Promise<string | null> {
+  const { db, now } = ctx.deps;
+  const [{ data: c }, { data: ct }, { data: ag }] = await Promise.all([
+    db.from('conversations').select('status, archived_at, ai_paused_until').eq('id', ctx.conv.id).maybeSingle(),
+    db.from('contacts').select('opted_out_at, anonymized_at').eq('id', ctx.contact.id).maybeSingle(),
+    ctx.agent
+      ? db.from('ai_agents').select('enabled, mode, paused_at').eq('id', ctx.agent.id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const conv = c as Row;
+  const contact = ct as Row;
+  const agent = ag as Row;
+  if (!conv || conv.status === 'closed' || conv.archived_at) return 'conversation_closed';
+  if (isPausedUntil(conv.ai_paused_until, now())) return 'ai_paused';
+  if (!contact || contact.opted_out_at || contact.anonymized_at) return 'contact_opted_out';
+  if (!agent || !agent.enabled || agent.mode !== 'auto' || agent.paused_at) return 'agent_paused';
+  if (!(await aiSettingsEnabled(db, ctx.job.account_id))) return 'ai_disabled';
+  return null;
 }
 
 async function sendParts(ctx: RunCtx, parts: string[], started: Date): Promise<JobOutcome> {
   const { deps, job, conv, contact } = ctx;
   for (let i = job.sent_parts; i < parts.length; i++) {
     const wait =
-      i === job.sent_parts && i === 0
-        ? typingDelayMs(parts[0].length, deps.now().getTime() - started.getTime())
-        : bubbleGapMs(deps.random);
+      i === 0 ? typingDelayMs(parts[0].length, deps.now().getTime() - started.getTime()) : bubbleGapMs(deps.random);
     if (wait > 0) await deps.sleep(wait);
-    if (!(await stillAnswering(ctx))) {
-      return skip(deps.db, job.id, 'ai_paused');
+    await deps.pace(job.account_id, conv.channel ?? null);
+    const stop = await stillAnswering(ctx);
+    if (stop) return skip(deps.db, job.id, stop);
+    // Heartbeat: a live job is never reaped as stale.
+    await patchJob(deps.db, job.id, { sent_parts: i });
+    try {
+      await deps.send({ accountId: job.account_id, userId: conv.user_id, conversationId: conv.id, contactId: contact.id, text: parts[i] });
+    } catch (err) {
+      if (!isUncertainSend(err)) throw err; // not sent: the retry resumes at this bubble
+      // It may have gone out: never send it again; the team takes over.
+      console.warn('[ai/auto-reply] uncertain send, handing over:', conv.id, errText(err));
+      await patchJob(deps.db, job.id, { sent_parts: i + 1, last_error: errText(err) });
+      return handOff(ctx, { reason: 'Não foi possível confirmar o envio da resposta da IA', notify: false });
     }
-    await deps.send({ accountId: job.account_id, userId: conv.user_id, conversationId: conv.id, contactId: contact.id, text: parts[i] });
     // Recorded right after each bubble: a retry resumes from here.
     await patchJob(deps.db, job.id, { sent_parts: i + 1 });
   }
@@ -434,29 +595,32 @@ async function event(db: SupabaseClient, accountId: string, conversationId: stri
 }
 
 /**
- * Hand the conversation to the team: tell the customer first (normal
- * send path; failure → notified=false), then pause the AI for good,
- * move an open conversation to pending (assignment untouched: an
- * unassigned one stays in the queue), and leave the card + pill.
+ * Hand the conversation to the team. With `notify`, tell the customer
+ * first (normal send path; failure → notified=false). Then pause the AI
+ * for good, move an open conversation to pending (assignment untouched:
+ * an unassigned one stays in the queue), and leave the card + pill.
  */
 export async function handOff(
   ctx: RunCtx,
-  info: { reason: string; customerWants?: string | null; lastWords?: string },
+  info: { reason: string; customerWants?: string | null; lastWords?: string; notify: boolean; finish?: boolean },
 ): Promise<JobOutcome> {
   const { deps, job, conv, contact, agent } = ctx;
   const { db } = deps;
   let notified = false;
-  try {
-    await deps.send({
-      accountId: job.account_id,
-      userId: conv.user_id,
-      conversationId: conv.id,
-      contactId: contact.id,
-      text: agent.handoff_message?.trim() || DEFAULT_HANDOFF_MESSAGE,
-    });
-    notified = true;
-  } catch (err) {
-    console.warn('[ai/auto-reply] hand-over notice not sent:', conv.id, errText(err));
+  if (info.notify) {
+    try {
+      await deps.pace(job.account_id, conv.channel ?? null);
+      await deps.send({
+        accountId: job.account_id,
+        userId: conv.user_id,
+        conversationId: conv.id,
+        contactId: contact.id,
+        text: agent?.handoff_message?.trim() || DEFAULT_HANDOFF_MESSAGE,
+      });
+      notified = true;
+    } catch (err) {
+      console.warn('[ai/auto-reply] hand-over notice not sent:', conv.id, errText(err));
+    }
   }
   await db
     .from('conversations')
@@ -467,7 +631,7 @@ export async function handOff(
     account_id: job.account_id,
     conversation_id: conv.id,
     contact_id: contact.id,
-    agent_id: agent.id,
+    agent_id: agent?.id ?? job.agent_id,
     job_id: job.id,
     reason: info.reason.slice(0, 300),
     customer_wants: info.customerWants?.slice(0, 300) ?? null,
@@ -476,26 +640,8 @@ export async function handOff(
   });
   if (error) console.error('[ai/auto-reply] hand-over insert failed:', error.message);
   await event(db, job.account_id, conv.id, 'ai_handoff', { reason: info.reason.slice(0, 300) });
-  await patchJob(db, job.id, { status: 'done', outcome: 'handoff', reply_parts: null });
+  if (info.finish !== false) await patchJob(db, job.id, { status: 'done', outcome: 'handoff', reply_parts: null });
   return 'handoff';
-}
-
-/** STOP words: confirm, then opt out through the same columns / pill as inbound opt-out. */
-async function optOut(ctx: RunCtx, texts: string[]): Promise<JobOutcome> {
-  const { deps, job, conv, contact } = ctx;
-  const { db } = deps;
-  try {
-    await deps.send({ accountId: job.account_id, userId: conv.user_id, conversationId: conv.id, contactId: contact.id, text: DEFAULT_STOP_CONFIRMATION });
-  } catch (err) {
-    console.warn('[ai/auto-reply] opt-out confirmation not sent:', conv.id, errText(err));
-  }
-  const now = deps.now().toISOString();
-  await db.from('contacts').update({ opted_out_at: now, updated_at: now }).eq('id', contact.id).eq('account_id', job.account_id);
-  await db.from('conversations').update({ ai_paused_until: 'infinity' }).eq('id', conv.id);
-  const keyword = texts.find(isStopRequest) ?? '';
-  await event(db, job.account_id, conv.id, 'contact_opted_out', { keyword: keyword.slice(0, 100), source: 'ai_auto_reply' });
-  await patchJob(db, job.id, { status: 'done', outcome: 'opted_out', reply_parts: null });
-  return 'opted_out';
 }
 
 async function loadMemory(db: SupabaseClient, accountId: string, contactId: string): Promise<string[]> {

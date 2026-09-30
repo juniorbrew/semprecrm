@@ -163,6 +163,14 @@ export async function anonymizeContact(
       .in('id', conversationIds)
       .not('last_message_text', 'is', null)
     if (convUpdErr) warnings.push(`conversations preview: ${convUpdErr.message}`)
+
+    // AI hand-over pills (066) carry the reason text, which can quote the customer.
+    const { error: evErr } = await admin
+      .from('conversation_events')
+      .update({ payload: {} })
+      .in('conversation_id', conversationIds)
+      .eq('event_type', 'ai_handoff')
+    if (evErr) warnings.push(`ai_handoff events: ${evErr.message}`)
   }
 
   // 2. Notes + custom field values.

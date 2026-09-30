@@ -34,6 +34,8 @@ export interface ContactExport {
   tasks: Record<string, unknown>[]
   /** "Memória do contato" facts (AI, migration 064), every status. */
   ai_memories: Record<string, unknown>[]
+  /** Automatic-reply hand-overs (migration 066): reason, what the customer wanted, their last words. */
+  ai_handoffs: Record<string, unknown>[]
   /** Consent-related audit events (export / anonymisation) for this contact. */
   consent_events: Record<string, unknown>[]
   /** Tables that failed to load (RLS gap, missing migration) — never fatal. */
@@ -84,7 +86,7 @@ export async function buildContactExport(
     }
   }
 
-  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows] =
+  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows, handoffRows] =
     await Promise.all([
       load('custom_fields', () =>
         db
@@ -140,6 +142,14 @@ export async function buildContactExport(
         db
           .from('ai_contact_memories')
           .select('id, fact, status, source, conversation_id, created_at, updated_at')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: true }),
+      ),
+      load('ai_handoffs', () =>
+        db
+          .from('ai_handoffs')
+          .select('id, conversation_id, reason, customer_wants, last_customer_words, notified, created_at')
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: true }),
@@ -206,6 +216,7 @@ export async function buildContactExport(
     deals: dealRows,
     tasks: taskRows,
     ai_memories: memoryRows,
+    ai_handoffs: handoffRows,
     consent_events: auditRows,
     warnings,
   }

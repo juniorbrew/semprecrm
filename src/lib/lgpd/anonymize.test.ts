@@ -227,6 +227,7 @@ describe('anonymizeContact', () => {
     for (const t of ['ai_handoffs', 'ai_reply_jobs']) {
       expect(calls.find((c) => c.table === t)).toMatchObject({ op: 'delete' })
     }
+    expect(calls.find((c) => c.table === 'conversation_events')).toMatchObject({ op: 'update' })
 
     const contactUpdate = calls.find((c) => c.table === 'contacts' && c.op === 'update')!
     expect(contactUpdate.payload).toEqual({

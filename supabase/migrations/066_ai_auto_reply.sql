@@ -15,6 +15,8 @@
 --      pause). This is the "human is talking" rule: SempreCRM round-robins
 --      conversations to agents at the first message, so "has an assignee"
 --      cannot mean "a human took over" — a human MESSAGE does.
+--      Likewise a signed-in user claiming / transferring the
+--      conversation ("Assumir"); service-role round-robin does not pause.
 --   3. messages.origin accepts 'ai'; ai_usage.feature accepts
 --      'auto_reply'; conversation_events accepts 'ai_handoff',
 --      'ai_paused', 'ai_resumed'.
@@ -25,8 +27,9 @@
 --      where it stopped instead of sending a bubble twice.
 --   5. ai_handoffs — why the AI handed a conversation to the team
 --      (the thread card "Por que a IA passou para você").
---   6. RPCs (service_role only): ai_reply_enqueue, ai_reply_claim
---      (FOR UPDATE SKIP LOCKED + stale-running reaper) and
+--   6. RPCs (service_role only): ai_reply_enqueue (message ids),
+--      ai_reply_claim (FOR UPDATE SKIP LOCKED + stale-running reaper that
+--      merges into a newer queued job or requeues) and
 --      ai_knowledge_search_service (knowledge search for the server-side
 --      runtime, which has no signed-in user; strictly one account).
 --
@@ -82,11 +85,14 @@ CREATE TRIGGER messages_pause_ai_on_human_reply AFTER INSERT ON public.messages
 -- ============================================================
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_origin_check;
 ALTER TABLE public.messages ADD CONSTRAINT messages_origin_check
-  CHECK (origin IS NULL OR origin IN ('phone', 'automation', 'flow', 'system', 'ai'));
+  CHECK (origin IS NULL OR origin IN ('phone', 'automation', 'flow', 'system', 'ai')) NOT VALID;
+-- NOT VALID + VALIDATE: the scan runs without blocking writes.
+ALTER TABLE public.messages VALIDATE CONSTRAINT messages_origin_check;
 
 ALTER TABLE ai_usage DROP CONSTRAINT IF EXISTS ai_usage_feature_check;
 ALTER TABLE ai_usage ADD CONSTRAINT ai_usage_feature_check
-  CHECK (feature IN ('suggest_reply', 'memory_extract', 'agent_test', 'auto_reply'));
+  CHECK (feature IN ('suggest_reply', 'memory_extract', 'agent_test', 'auto_reply')) NOT VALID;
+ALTER TABLE ai_usage VALIDATE CONSTRAINT ai_usage_feature_check;
 
 ALTER TABLE conversation_events DROP CONSTRAINT IF EXISTS conversation_events_event_type_check;
 ALTER TABLE conversation_events ADD CONSTRAINT conversation_events_event_type_check
@@ -104,7 +110,33 @@ ALTER TABLE conversation_events ADD CONSTRAINT conversation_events_event_type_ch
       'ai_paused',
       'ai_resumed'
     )
-  );
+  ) NOT VALID;
+ALTER TABLE conversation_events VALIDATE CONSTRAINT conversation_events_event_type_check;
+
+-- ============================================================
+-- 3b. A PERSON CLAIMING THE CONVERSATION PAUSES THE AI
+-- ============================================================
+-- "Assumir" / transfer by a signed-in user (auth.uid() set) counts like a
+-- human message: 30 minutes of silence (never shortens a longer pause).
+-- Round-robin auto-assign runs as the service role and does not pause.
+CREATE OR REPLACE FUNCTION public.conversations_pause_ai_on_claim()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.assigned_agent_id IS NOT NULL
+     AND NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id
+     AND auth.uid() IS NOT NULL THEN
+    NEW.ai_paused_until := GREATEST(COALESCE(NEW.ai_paused_until, '-infinity'::timestamptz), NOW() + INTERVAL '30 minutes');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS conversations_pause_ai_on_claim ON public.conversations;
+CREATE TRIGGER conversations_pause_ai_on_claim BEFORE UPDATE OF assigned_agent_id ON public.conversations
+  FOR EACH ROW EXECUTE FUNCTION public.conversations_pause_ai_on_claim();
 
 -- ============================================================
 -- 4. AI_REPLY_JOBS
@@ -211,13 +243,16 @@ GRANT ALL ON TABLE ai_handoffs TO service_role;
 -- ============================================================
 
 -- Debounced enqueue: a new queued job runs `p_delay_seconds` after the
--- FIRST message; later messages only attach their id. Returns the job id.
+-- FIRST message; later messages only attach their ids (the job answers
+-- exactly its `inbound_message_ids` — no timestamp comparisons, since
+-- customer rows carry WhatsApp-second timestamps). Returns the job id.
+DROP FUNCTION IF EXISTS public.ai_reply_enqueue(UUID, UUID, UUID, UUID, UUID, INT);
 CREATE OR REPLACE FUNCTION public.ai_reply_enqueue(
   p_account_id      UUID,
   p_conversation_id UUID,
   p_contact_id      UUID,
   p_agent_id        UUID,
-  p_message_id      UUID,
+  p_message_ids     UUID[],
   p_delay_seconds   INT DEFAULT 8
 ) RETURNS UUID
 LANGUAGE sql
@@ -228,29 +263,34 @@ AS $$
   VALUES (
     p_account_id, p_conversation_id, p_contact_id, p_agent_id,
     NOW() + make_interval(secs => greatest(0, least(coalesce(p_delay_seconds, 8), 300))),
-    CASE WHEN p_message_id IS NULL THEN '{}'::uuid[] ELSE ARRAY[p_message_id] END
+    (SELECT coalesce(array_agg(DISTINCT m), '{}') FROM unnest(coalesce(p_message_ids, '{}')) m WHERE m IS NOT NULL)
   )
   ON CONFLICT (conversation_id) WHERE status = 'queued'
   DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
-    inbound_message_ids = CASE
-      WHEN p_message_id IS NULL OR p_message_id = ANY (ai_reply_jobs.inbound_message_ids)
-        OR cardinality(ai_reply_jobs.inbound_message_ids) >= 200
-      THEN ai_reply_jobs.inbound_message_ids
-      ELSE array_append(ai_reply_jobs.inbound_message_ids, p_message_id)
-    END
+    inbound_message_ids = (
+      SELECT coalesce(array_agg(m ORDER BY ord), '{}')
+        FROM (
+          SELECT DISTINCT ON (m) m, ord
+            FROM unnest(ai_reply_jobs.inbound_message_ids || EXCLUDED.inbound_message_ids) WITH ORDINALITY AS u(m, ord)
+           ORDER BY m, ord
+        ) d
+    )[1:200]
   RETURNING id;
 $$;
 
-REVOKE ALL ON FUNCTION public.ai_reply_enqueue(UUID, UUID, UUID, UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.ai_reply_enqueue(UUID, UUID, UUID, UUID, UUID, INT) TO service_role;
+REVOKE ALL ON FUNCTION public.ai_reply_enqueue(UUID, UUID, UUID, UUID, UUID[], INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ai_reply_enqueue(UUID, UUID, UUID, UUID, UUID[], INT) TO service_role;
 
 -- Claim due jobs. First the reaper: a job 'running' for more than 2
--- minutes (crashed worker) goes back to the queue — or fails after 3
--- attempts, or is dropped when a newer queued job of the same
--- conversation will answer anyway. Then up to p_limit due jobs whose
--- conversation has no job running are flipped to 'running' (attempts+1)
--- with FOR UPDATE SKIP LOCKED, so concurrent drains never share a job.
+-- minutes (dead worker — a live one heartbeats before every bubble) is
+-- either merged into a newer queued job of the same conversation (its
+-- messages get answered there) or put back in the queue. A reaped job
+-- that already used its attempts comes back with attempts > 3 and the
+-- runtime hands the conversation over silently instead of retrying.
+-- Then up to p_limit due jobs whose conversation has no job running are
+-- flipped to 'running' (attempts+1) with FOR UPDATE SKIP LOCKED, so
+-- concurrent drains never share a job.
 CREATE OR REPLACE FUNCTION public.ai_reply_claim(p_limit INT DEFAULT 10)
 RETURNS SETOF ai_reply_jobs
 LANGUAGE plpgsql
@@ -258,17 +298,28 @@ SECURITY INVOKER
 SET search_path = public
 AS $$
 BEGIN
+  WITH stale AS (
+    SELECT j.id, j.conversation_id, j.inbound_message_ids
+      FROM ai_reply_jobs j
+     WHERE j.status = 'running' AND j.updated_at < NOW() - INTERVAL '2 minutes'
+       AND EXISTS (SELECT 1 FROM ai_reply_jobs q WHERE q.conversation_id = j.conversation_id AND q.status = 'queued')
+     FOR UPDATE SKIP LOCKED
+  ), merged AS (
+    UPDATE ai_reply_jobs q
+       SET inbound_message_ids = (
+             SELECT coalesce(array_agg(DISTINCT m), '{}') FROM unnest(s.inbound_message_ids || q.inbound_message_ids) m
+           )[1:200]
+      FROM stale s
+     WHERE q.conversation_id = s.conversation_id AND q.status = 'queued'
+    RETURNING s.id
+  )
   UPDATE ai_reply_jobs j
-     SET status = CASE
-           WHEN j.attempts >= 3 THEN 'failed'
-           WHEN EXISTS (SELECT 1 FROM ai_reply_jobs q WHERE q.conversation_id = j.conversation_id AND q.status = 'queued') THEN 'skipped'
-           ELSE 'queued'
-         END,
-         skip_reason = CASE
-           WHEN j.attempts < 3 AND EXISTS (SELECT 1 FROM ai_reply_jobs q WHERE q.conversation_id = j.conversation_id AND q.status = 'queued')
-           THEN 'superseded' ELSE j.skip_reason END,
-         last_error = 'stale: worker stopped while running',
-         run_after = NOW()
+     SET status = 'skipped', skip_reason = 'merged', reply_parts = NULL,
+         last_error = 'stale: worker stopped while running'
+   WHERE j.id IN (SELECT id FROM merged);
+
+  UPDATE ai_reply_jobs j
+     SET status = 'queued', run_after = NOW(), last_error = 'stale: worker stopped while running'
    WHERE j.status = 'running'
      AND j.updated_at < NOW() - INTERVAL '2 minutes';
 

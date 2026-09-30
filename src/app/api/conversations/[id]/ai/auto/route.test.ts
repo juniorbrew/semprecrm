@@ -90,8 +90,18 @@ describe('POST pause / resume', () => {
     const res = await post({ action: 'resume' });
     expect(await res.json()).toMatchObject({ paused: false, queued: true });
     expect(h.db.table('conversations')[0].ai_paused_until).toBeNull();
-    expect(h.enqueue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ messageId: 'm2' }));
+    expect(h.enqueue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ messageIds: ['m2'] }));
     expect(h.after).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume skips messages a finished AI job already answered, even with an older timestamp than its bubble', async () => {
+    h.db.table('messages').push(
+      { id: 'ai1', conversation_id: CONV, sender_type: 'bot', origin: 'ai', created_at: '2026-09-29T10:05:01Z' },
+      { id: 'm4', conversation_id: CONV, sender_type: 'customer', created_at: '2026-09-29T10:05:00Z' },
+    );
+    h.db.seed('ai_reply_jobs', [{ id: 'j', conversation_id: CONV, status: 'done', inbound_message_ids: ['m2'] }]);
+    await post({ action: 'resume' });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ messageIds: ['m4'] }));
   });
 
   it('resume with nothing unanswered does not enqueue', async () => {
