@@ -139,4 +139,11 @@ export const DICT_INBOX: Record<string, string> = {
   Resolve: 'Resolver',
   'Search conversations': 'Buscar conversas',
   'Leave the field': 'Sair do campo',
+
+  // ---- Transfer with a reason ----
+  'Transfer conversation': 'Transferir conversa',
+  To: 'Para',
+  'Reason (optional)': 'Motivo (opcional)',
+  'Context for the new owner…': 'Contexto para quem vai assumir…',
+  Transfer: 'Transferir',
 };

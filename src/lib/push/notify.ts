@@ -390,6 +390,13 @@ export interface ConversationAssignedNotice {
   reason?: unknown
 }
 
+/** "Contact · por Ana — motivo": who it is, who handed it over, the optional note. */
+export function assignedPushBody(who: string, actor: string | null | undefined, reason?: unknown): string {
+  const base = actor ? `${who} · ${tr('by')} ${actor}` : who
+  const note = normalizeTransferReason(reason)
+  return note ? `${base} — ${note}` : base
+}
+
 export async function notifyConversationAssigned(
   admin: SupabaseClient,
   notice: ConversationAssignedNotice,
@@ -415,11 +422,9 @@ export async function notifyConversationAssigned(
     ])
     const recipients = allowed(profiles, 'conversation_assigned')
     if (recipients.length === 0) return { ...NOOP }
-    const reason = normalizeTransferReason(notice.reason)
-    const base = actor ? `${who} · ${tr('by')} ${actor}` : who
     return await sendPushToUsers(admin, recipients, {
       title: tr('Conversation assigned to you'),
-      body: reason ? `${base} — ${reason}` : base,
+      body: assignedPushBody(who, actor, notice.reason),
       url: conversationUrl(notice.conversationId),
       tag: `conversation:${notice.conversationId}`,
     })

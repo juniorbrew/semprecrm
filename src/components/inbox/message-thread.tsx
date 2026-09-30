@@ -61,6 +61,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
+import { TransferDialog } from "./transfer-dialog";
+import { normalizeTransferReason, transferEventPayload } from "@/lib/conversations/transfer-reason";
 import { INBOX_SHORTCUT_EVENT, type ShortcutAction } from "@/lib/inbox/shortcuts";
 import { updateConversationAssignee } from "@/lib/conversations/assign";
 import {
@@ -1436,7 +1438,7 @@ export function MessageThread({
   const handleAssignChange = useCallback(
     async (
       agentId: string | null,
-      opts: { expectCurrent?: boolean } = {},
+      opts: { expectCurrent?: boolean; reason?: string | null } = {},
     ): Promise<"ok" | "failed" | "conflict"> => {
       if (!conversation) return "failed";
 
@@ -1467,17 +1469,23 @@ export function MessageThread({
       onAssignChange(conversation.id, agentId);
       if (agentId && agentId !== user?.id) {
         // Push (spec round 2 §5d): the server notifies the new assignee.
-        notifyPushEvent({ kind: "conversation_assigned", conversation_id: conversation.id });
+        const reason = normalizeTransferReason(opts.reason);
+        notifyPushEvent({
+          kind: "conversation_assigned",
+          conversation_id: conversation.id,
+          ...(reason ? { reason } : {}),
+        });
       }
       if (agentId) {
         const assignee = profiles.find((p) => p.user_id === agentId);
         void logEvent({
           event_type: "assigned",
-          payload: {
-            assignee_user_id: agentId,
-            assignee_name: assignee?.full_name ?? undefined,
-            self_assigned: agentId === user?.id,
-          },
+          payload: transferEventPayload({
+            assigneeUserId: agentId,
+            assigneeName: assignee?.full_name,
+            selfAssigned: agentId === user?.id,
+            reason: opts.reason,
+          }),
         });
       } else {
         void logEvent({ event_type: "unassigned", payload: {} });
@@ -1524,6 +1532,8 @@ export function MessageThread({
   // clears `archived_at` (the thread stays resolved). The DB trigger
   // unarchives by itself when the customer writes again or it reopens.
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  // Transferir: picking a teammate (other than me) asks for an optional reason.
+  const [transferTarget, setTransferTarget] = useState<Profile | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const handleArchive = useCallback(
     async (archive: boolean) => {
@@ -1817,7 +1827,11 @@ export function MessageThread({
                   return (
                     <DropdownMenuItem
                       key={p.id}
-                      onClick={() => handleAssignChange(p.user_id)}
+                      onClick={() =>
+                        p.user_id === user?.id || isSelected
+                          ? handleAssignChange(p.user_id)
+                          : setTransferTarget(p)
+                      }
                       className={cn(
                         "text-sm",
                         isSelected ? "text-primary" : "text-popover-foreground"
@@ -2038,6 +2052,16 @@ export function MessageThread({
           )}
         </div>
       </div>
+
+      <TransferDialog
+        targetName={transferTarget ? transferTarget.full_name || "?" : null}
+        onCancel={() => setTransferTarget(null)}
+        onConfirm={(reason) => {
+          const target = transferTarget;
+          setTransferTarget(null);
+          if (target) void handleAssignChange(target.user_id, { reason });
+        }}
+      />
 
       <Dialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
         <DialogContent data-no-translate>
