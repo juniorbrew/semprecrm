@@ -183,6 +183,16 @@ function extract(content: proto.IMessage): Extracted | { skip: SkipReason } {
     const text = label ? `${label} (${lat},${lng})` : `${lat},${lng}`;
     return { type: "location", text, contextInfo: loc.contextInfo };
   }
+  // Contact cards travel as vCard text ("BEGIN:VCARD..."): the inbox renders
+  // a card from it (src/lib/inbox/vcard.ts).
+  const vcards = [
+    content.contactMessage?.vcard,
+    ...(content.contactsArrayMessage?.contacts ?? []).map((c) => c.vcard),
+  ].filter((v): v is string => !!v && /^\s*BEGIN:VCARD/i.test(v));
+  if (vcards.length > 0) {
+    const info = content.contactMessage?.contextInfo ?? content.contactsArrayMessage?.contextInfo;
+    return { type: "text", text: vcards.join("\n"), contextInfo: info };
+  }
   if (
     content.protocolMessage ||
     content.senderKeyDistributionMessage ||

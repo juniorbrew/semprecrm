@@ -146,4 +146,13 @@ export const DICT_INBOX: Record<string, string> = {
   'Reason (optional)': 'Motivo (opcional)',
   'Context for the new owner…': 'Contexto para quem vai assumir…',
   Transfer: 'Transferir',
+
+  // ---- Voice player, contact card ----
+  Play: 'Reproduzir',
+  Seek: 'Posição do áudio',
+  'Playback speed': 'Velocidade de reprodução',
+  'Save as contact': 'Salvar como contato',
+  'Contact saved': 'Contato salvo',
+  'Contact already saved': 'Este contato já está salvo',
+  'Could not save the contact': 'Não foi possível salvar o contato',
 };

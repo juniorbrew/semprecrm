@@ -200,6 +200,13 @@ describe("mapInboundMessage", () => {
       kind: "skip",
       reason: "unsupported-type",
     });
+    // With a vCard the card is forwarded as text (the inbox renders it).
+    expect(
+      mapInboundMessage(
+        ACCOUNT,
+        fixture({ message: { contactMessage: { displayName: "x", vcard: "BEGIN:VCARD\nFN:Ana\nEND:VCARD" } } }),
+      ),
+    ).toMatchObject({ kind: "message", payload: { type: "text", text: "BEGIN:VCARD\nFN:Ana\nEND:VCARD" } });
     expect(mapInboundMessage(ACCOUNT, fixture({ message: undefined }))).toEqual({ kind: "skip", reason: "no-message" });
   });
 

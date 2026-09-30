@@ -15,6 +15,7 @@ import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
+import { buildVCards } from '@/lib/inbox/vcard'
 import { supabaseServerUrl } from '@/lib/supabase/url'
 import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
 import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
@@ -44,6 +45,10 @@ interface WhatsAppMessage {
   audio?: { id: string; mime_type: string }
   sticker?: { id: string; mime_type: string }
   location?: { latitude: number; longitude: number; name?: string; address?: string }
+  contacts?: {
+    name?: { formatted_name?: string; first_name?: string; last_name?: string }
+    phones?: { phone?: string; wa_id?: string }[]
+  }[]
   reaction?: { message_id: string; emoji: string }
   /**
    * Set when the customer taps a button or list row on an interactive
@@ -781,6 +786,13 @@ async function parseMessageContent(
         interactiveReplyId: payload || label,
       }
     }
+
+    case 'contacts':
+      // Contact card: stored as vCard text, rendered as a card in the inbox.
+      if (message.contacts?.length) {
+        return { ...empty, contentText: buildVCards(message.contacts) }
+      }
+      return { ...empty, contentText: '[Contact]' }
 
     default:
       return {
