@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { normalizeCategoryDraft } from './categories'
-import { activeCategories, DEFAULT_RESOLUTION, type ConversationCategory } from './model'
+import { activeCategories, DEFAULT_RESOLUTION, RESOLVE_AS_OPTIONS, RESOLUTIONS, resolutionNote, type ConversationCategory } from './model'
 import { manualTriagePatch, resolvePatch, sanitizeSubject, triageEvents } from './triage-fields'
 
 describe('manual edits', () => {
@@ -14,6 +14,19 @@ describe('manual edits', () => {
     expect(DEFAULT_RESOLUTION).toBe('resolved')
     expect(resolvePatch()).toEqual({ status: 'closed', resolution: 'resolved' })
     expect(resolvePatch('duplicate')).toEqual({ status: 'closed', resolution: 'duplicate' })
+  })
+})
+
+describe('resolution options', () => {
+  it('"Resolver como…" lists every outcome except the one-click default', () => {
+    expect(RESOLVE_AS_OPTIONS).toEqual(['not_applicable', 'closed_by_customer', 'expired', 'duplicate'])
+    expect([DEFAULT_RESOLUTION, ...RESOLVE_AS_OPTIONS].sort()).toEqual([...RESOLUTIONS].sort())
+  })
+  it('the outcome is only noted on closed conversations and only when it adds information', () => {
+    expect(resolutionNote('closed', 'duplicate')).toBe('duplicate')
+    expect(resolutionNote('closed', 'resolved')).toBeNull()
+    expect(resolutionNote('closed', null)).toBeNull()
+    expect(resolutionNote('open', 'duplicate')).toBeNull()
   })
 })
 

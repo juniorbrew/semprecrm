@@ -305,7 +305,6 @@ function CategoryRow({
     // Mirror server values after a reload (e.g. a rejected rename).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(cat.name);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDescription(cat.description ?? "");
   }, [cat.name, cat.description]);
 

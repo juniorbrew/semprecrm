@@ -40,6 +40,7 @@ import { TasksToday } from '@/components/dashboard/tasks-today'
 import { CalendarToday } from '@/components/dashboard/calendar-today'
 import { RadarCard } from '@/components/dashboard/radar-card'
 import { TeamMetrics } from '@/components/dashboard/team-metrics'
+import { ResolutionTimeCard } from '@/components/dashboard/resolution-time-card'
 import { cn } from '@/lib/utils'
 
 type RangeDays = 7 | 30 | 90
@@ -296,8 +297,13 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Response time */}
-      <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
+      {/* Response time + resolution time */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
+        </div>
+        <ResolutionTimeCard refreshToken={tasksRefreshToken} />
+      </div>
 
       {/* Team — per-member numbers (admin+ sees everyone, agents their own row). */}
       <TeamMetrics refreshToken={tasksRefreshToken} />

@@ -12,7 +12,7 @@ import { TaskDrawer } from "@/components/tasks";
 import { SubjectLine, TriageChips } from "@/components/inbox/triage-chips";
 import { useConversationCategories } from "@/hooks/use-conversation-categories";
 import { useTriageSettings } from "@/hooks/use-triage-settings";
-import { DEFAULT_RESOLUTION, supportCopy } from "@/lib/support/model";
+import { DEFAULT_RESOLUTION, RESOLVE_AS_OPTIONS, resolutionNote, supportCopy } from "@/lib/support/model";
 import { manualTriagePatch, triageEvents, type TriageChange } from "@/lib/support/triage-fields";
 import { EventDrawer } from "@/components/calendar";
 import type {
@@ -208,8 +208,6 @@ function formatDayMonth(dateStr: string, language: Language): string {
 
 const STATUS_ORDER: ConversationStatus[] = ["open", "pending", "closed"];
 
-/** "Resolver como…" offers the outcomes besides the default (the main button). */
-const RESOLVE_AS_OPTIONS: ConversationResolution[] = ["not_applicable", "closed_by_customer", "expired", "duplicate"];
 
 const STATUS_COLOR: Record<ConversationStatus, string> = {
   open: "text-primary",
@@ -1764,10 +1762,8 @@ export function MessageThread({
     (!entitlementsReady || modules.ai) &&
     triageSettings.aiEnabled &&
     triageSettings.triageEnabled;
-  const resolutionLabel =
-    isResolved && conversation.resolution && conversation.resolution !== DEFAULT_RESOLUTION
-      ? support.resolutions[conversation.resolution]
-      : null;
+  const resolutionNoteKey = resolutionNote(status, conversation.resolution);
+  const resolutionLabel = resolutionNoteKey ? support.resolutions[resolutionNoteKey] : null;
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the

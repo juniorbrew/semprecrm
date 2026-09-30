@@ -17,7 +17,6 @@ import { CATEGORY_LIMITS, DEFAULT_RESOLUTION, type ConversationCategory } from '
 export function sanitizeSubject(input: unknown): string | null {
   if (typeof input !== 'string') return null
   const clean = input
-    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F]/g, ' ')
     .replace(/<[^>]*>/g, '')
     .replace(/[<>]/g, '')

@@ -1306,7 +1306,7 @@ function queueBadgeFor(
   };
 }
 
-interface ConversationItemProps {
+export interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   /** Keyboard cursor (j / k) is here. */
@@ -1334,7 +1334,7 @@ interface ConversationItemProps {
   queue: QueueBadge | null;
 }
 
-function ConversationItem({
+export function ConversationItem({
   conversation,
   isActive,
   isCursor,

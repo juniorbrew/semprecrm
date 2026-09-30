@@ -23,6 +23,17 @@ export const RESOLUTIONS: readonly ConversationResolution[] = [
 /** One click on "Resolver" records this. */
 export const DEFAULT_RESOLUTION: ConversationResolution = 'resolved'
 
+/** "Resolver como…" offers the outcomes besides the default (the main button). */
+export const RESOLVE_AS_OPTIONS: readonly ConversationResolution[] = RESOLUTIONS.filter((r) => r !== DEFAULT_RESOLUTION)
+
+/** Outcome to show next to "Resolvida": only when it says more than "resolved". */
+export function resolutionNote(
+  status: string,
+  resolution: ConversationResolution | null | undefined,
+): ConversationResolution | null {
+  return status === 'closed' && resolution && resolution !== DEFAULT_RESOLUTION ? resolution : null
+}
+
 export const CATEGORY_COLORS = [
   'gray',
   'red',
