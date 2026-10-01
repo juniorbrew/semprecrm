@@ -206,6 +206,16 @@ export const RATE_LIMITS = {
   aiSuggest: { limit: 10, windowMs: 60_000 },
   /** "Classificar" (per user) — one small model call on the account's own key. */
   aiTriage: { limit: 10, windowMs: 60_000 },
+  /** WhatsApp media proxy (per user). Each hit is two Meta calls; an
+   *  inbox thread can render dozens of bubbles at once and the browser
+   *  caches the result (private, 1 day), so the budget is generous. */
+  mediaProxy: { limit: 300, windowMs: 60_000 },
+  /** Mark-as-read (per user): fired on every conversation open and
+   *  forwards a read receipt to Meta / the QR gateway. */
+  markRead: { limit: 120, windowMs: 60_000 },
+  /** Meta webhook verification handshake (public, per IP). Meta calls
+   *  it once when the URL is saved; anything more is probing. */
+  webhookVerify: { limit: 20, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
