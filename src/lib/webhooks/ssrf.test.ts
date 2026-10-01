@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { DestinoNaoPermitido, fetchSeguro, isPrivateOrReservedIp, isDeliverableUrl } from './ssrf';
+import { DestinoNaoPermitido, fetchSeguro, isPrivateOrReservedIp, isDeliverableUrl, lookupVetado, requestFixado } from './ssrf';
 
 describe('isPrivateOrReservedIp', () => {
   it('flags loopback / private / link-local / CGNAT IPv4', () => {
@@ -131,5 +131,63 @@ describe('fetchSeguro — segredo não atravessa para outra origem', () => {
     expect(vistos[1]).toMatchObject({ authorization: 'Bearer segredo', 'x-api-key': 'k' });
     expect(vistos[2]).toEqual({ 'content-type': 'application/json' });
     vi.unstubAllGlobals();
+  });
+});
+
+describe('DNS rebinding — o IP conferido é o IP conectado', () => {
+  const pub = { address: '93.184.216.34', family: 4 };
+  const priv = { address: '127.0.0.1', family: 4 };
+
+  it('lookupVetado entrega só endereços públicos e recusa se houver um interno', async () => {
+    const chama = (addrs: { address: string; family: number }[], all: boolean) =>
+      new Promise<unknown[]>((resolve) =>
+        lookupVetado(async () => addrs)('h.example', { all }, (...args: unknown[]) => resolve(args)),
+      );
+    expect(await chama([pub], false)).toEqual([null, pub.address, 4]);
+    expect(await chama([pub], true)).toEqual([null, [pub]]);
+    const [err] = await chama([pub, priv], false);
+    expect(err).toBeInstanceOf(DestinoNaoPermitido);
+  });
+
+  it('público na conferência e privado na conexão: recusa sem conectar', async () => {
+    const f = vi.fn();
+    vi.stubGlobal('fetch', f);
+    let n = 0;
+    const resolver = vi.fn(async () => (n++ === 0 ? [pub] : [priv]));
+    await expect(
+      fetchSeguro('http://rebind.example/hook', { method: 'POST', body: '{}' }, 3, resolver),
+    ).rejects.toBeInstanceOf(DestinoNaoPermitido);
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(f).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('requestFixado conecta pelo lookup dado e devolve uma Response', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((req, res) => {
+      let corpo = '';
+      req.on('data', (c) => (corpo += c));
+      req.on('end', () => {
+        res.writeHead(201, { 'x-eco': req.headers['x-k'] as string });
+        res.end(`${req.method} ${req.url} ${corpo}`);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    const usado: string[] = [];
+    const res = await requestFixado(
+      `http://qualquer.example:${port}/p?q=1`,
+      { method: 'POST', headers: { 'x-k': 'v' }, body: 'oi' },
+      (host, opts, cb) => {
+        usado.push(host);
+        if (opts.all) cb(null, [{ address: '127.0.0.1', family: 4 }]);
+        else cb(null, '127.0.0.1', 4);
+      },
+    );
+    expect(usado).toEqual(['qualquer.example']);
+    expect(res.status).toBe(201);
+    expect(res.headers.get('x-eco')).toBe('v');
+    expect(await res.text()).toBe('POST /p?q=1 oi');
+    await new Promise((r) => server.close(r));
   });
 });

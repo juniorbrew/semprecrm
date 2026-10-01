@@ -16,13 +16,22 @@
 // pointing at `127.0.0.1`, a cloud metadata IP (`169.254.169.254`), or an
 // RFC1918 host would let a caller probe / POST to internal services.
 //
-// NOT a defense against DNS rebinding (a host that resolves public here but
-// flips to private before connect) — that needs pinning the resolved IP into
-// the socket, which fetch doesn't expose; documented as a residual risk.
+// DNS rebinding (a host that resolves public on the check but private on
+// connect): `fetchSeguro` sends hostname requests through node:http(s) with
+// a socket `lookup` that resolves again, vets every address and connects only
+// to a vetted one — the address checked is the address dialled.
 // ============================================================
 
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import type { LookupAddress } from 'node:dns';
+import { lookup as lookupAsync } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { isIP, type LookupFunction } from 'node:net';
+import { Readable } from 'node:stream';
+
+/** Resolves a hostname to all its addresses (injectable for tests). */
+export type Resolver = (host: string) => Promise<LookupAddress[]>;
+const resolverPadrao: Resolver = (host) => lookupAsync(host, { all: true });
 
 function ipv4Privado(a: number, b: number, c: number, d: number): boolean {
   if ([a, b, c, d].some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
@@ -93,7 +102,7 @@ export function isPrivateOrReservedIp(ip: string): boolean {
  * obvious internal name (`localhost`, `*.local`, `*.internal`), a literal
  * private IP, or a hostname that resolves to any private/reserved address.
  */
-export async function isDeliverableUrl(rawUrl: string): Promise<boolean> {
+export async function isDeliverableUrl(rawUrl: string, resolver: Resolver = resolverPadrao): Promise<boolean> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -116,7 +125,7 @@ export async function isDeliverableUrl(rawUrl: string): Promise<boolean> {
   }
 
   try {
-    const results = await lookup(host, { all: true });
+    const results = await resolver(host);
     if (results.length === 0) return false;
     return results.every((r) => !isPrivateOrReservedIp(r.address));
   } catch {
@@ -130,6 +139,73 @@ export class DestinoNaoPermitido extends Error {
     super('destination not allowed');
     this.name = 'DestinoNaoPermitido';
   }
+}
+
+/**
+ * Socket `lookup` that resolves the name again at connect time and refuses
+ * (DestinoNaoPermitido) unless EVERY address is public — then connects only
+ * to those vetted addresses. Closes the check-then-connect rebinding gap.
+ */
+export function lookupVetado(resolver: Resolver = resolverPadrao): LookupFunction {
+  return (hostname, options, callback) => {
+    resolver(hostname).then(
+      (todos) => {
+        if (todos.length === 0 || todos.some((a) => isPrivateOrReservedIp(a.address))) {
+          callback(new DestinoNaoPermitido(), '', 0);
+          return;
+        }
+        const daFamilia = options.family ? todos.filter((a) => a.family === options.family) : todos;
+        if (daFamilia.length === 0) {
+          callback(new DestinoNaoPermitido(), '', 0);
+          return;
+        }
+        if (options.all) callback(null, daFamilia);
+        else callback(null, daFamilia[0].address, daFamilia[0].family);
+      },
+      (err: NodeJS.ErrnoException) => callback(err, '', 0),
+    );
+  };
+}
+
+/**
+ * Minimal fetch over node:http(s) with a custom socket `lookup`. Only what
+ * fetchSeguro's callers use: method, headers, string/bytes body, signal.
+ * No automatic redirects (fetchSeguro follows them by hand).
+ */
+export function requestFixado(rawUrl: string, init: RequestInit, lookupFn: LookupFunction): Promise<Response> {
+  const url = new URL(rawUrl);
+  const method = (init.method ?? 'GET').toUpperCase();
+  const body = init.body;
+  if (body != null && typeof body !== 'string' && !(body instanceof Uint8Array)) {
+    return Promise.reject(new TypeError('fetchSeguro: unsupported body type'));
+  }
+  const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
+    method,
+    headers: Object.fromEntries(new Headers(init.headers).entries()),
+    lookup: lookupFn,
+    signal: init.signal ?? undefined,
+  });
+  return new Promise((resolve, reject) => {
+    req.on('error', reject);
+    req.on('response', (res) => {
+      const headers = new Headers();
+      for (const [nome, valor] of Object.entries(res.headers)) {
+        if (valor === undefined) continue;
+        for (const v of Array.isArray(valor) ? valor : [valor]) headers.append(nome, v);
+      }
+      const status = res.statusCode ?? 502;
+      const semCorpo = method === 'HEAD' || status === 204 || status === 205 || status === 304;
+      if (semCorpo) res.resume();
+      resolve(
+        new Response(semCorpo ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>), {
+          status,
+          statusText: res.statusMessage,
+          headers,
+        }),
+      );
+    });
+    req.end(body ?? undefined);
+  });
 }
 
 /** Cabeçalhos que podem atravessar para OUTRA origem num redirect. */
@@ -158,12 +234,16 @@ export async function fetchSeguro(
   rawUrl: string,
   init: RequestInit = {},
   maxRedirects = 3,
+  resolver: Resolver = resolverPadrao,
 ): Promise<Response> {
   let url = rawUrl;
   let atual: RequestInit = { ...init, redirect: 'manual' };
   for (let i = 0; i <= maxRedirects; i++) {
-    if (!(await isDeliverableUrl(url))) throw new DestinoNaoPermitido();
-    const res = await fetch(url, atual);
+    if (!(await isDeliverableUrl(url, resolver))) throw new DestinoNaoPermitido();
+    // A literal IP was vetted as is; a hostname is re-resolved and pinned
+    // to a vetted address at connect time (DNS rebinding).
+    const literal = isIP(new URL(url).hostname.replace(/^\[|\]$/g, '')) !== 0;
+    const res = literal ? await fetch(url, atual) : await requestFixado(url, atual, lookupVetado(resolver));
     if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
     const location = res.headers.get('location');
     if (!location) return res;
