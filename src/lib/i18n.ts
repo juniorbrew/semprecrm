@@ -20,6 +20,7 @@ export const EN_TO_PT: Record<string, string> = {
   ...EN_TO_PT_EXTRA,
   Dashboard: 'Painel',
   Inbox: 'Caixa de entrada',
+  Reports: 'Relatórios',
   Contacts: 'Contatos',
   Pipelines: 'Funis',
   Broadcasts: 'Disparos',
