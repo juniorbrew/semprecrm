@@ -19,10 +19,10 @@ interface InternalNoteBubbleProps {
 }
 
 /**
- * Amber "sticky note" bubble for a private team note in the thread.
- * Right-aligned like agent messages (it's ours), but visually distinct —
- * dashed amber border, lock chip, no delivery ticks — so nobody mistakes
- * it for something the customer can read.
+ * Amber note for a private team note in the thread. Centred (it is neither
+ * side of the conversation), light amber tint with a thin amber border, a
+ * lock chip and no delivery ticks — so nobody mistakes it for something
+ * the customer can read.
  */
 export function InternalNoteBubble({
   note,
@@ -34,11 +34,12 @@ export function InternalNoteBubble({
 }: InternalNoteBubbleProps) {
   const time = format(new Date(note.created_at), "HH:mm");
   return (
-    <div className="flex justify-end" data-no-translate>
+    <div className="flex justify-center" data-no-translate>
       <div
         title={hint}
+        data-bubble="note"
         className={cn(
-          "group/note relative max-w-[75%] rounded-2xl rounded-br-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-foreground",
+          "group/note relative max-w-[80%] rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-foreground",
         )}
       >
         <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">

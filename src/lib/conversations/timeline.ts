@@ -95,3 +95,13 @@ export function groupTimelineByDay(items: ThreadItem[]): ThreadDayGroup[] {
   }
   return groups
 }
+
+/**
+ * A message that arrived after the thread was opened (realtime, own send,
+ * resync catch-up) — only these get the entrance animation; the page that
+ * loads on open and older pages do not. Unparseable dates are not fresh.
+ */
+export function isFreshMessage(createdAt: string, openedAt: number): boolean {
+  const t = Date.parse(createdAt)
+  return Number.isFinite(t) && t > openedAt
+}

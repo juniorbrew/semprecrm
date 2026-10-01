@@ -60,12 +60,12 @@ Barra lateral e cabeçalho (`src/components/layout/`, itens em `nav-config.ts`).
 Mesmas regras aplicadas à lista, ao histórico e ao painel do contato.
 
 - **Lista:** ver "Lista de conversas" abaixo.
-- **Cabeçalho da conversa:** só Resolver/Reabrir é preenchido; Assumir, Transferir, Pausar IA e utilitários são ghost. Situação, canal e janela de 24 h são texto, sem pílula.
-- **Fundo do chat liso** (sem desenho repetido). Separador de data e eventos do sistema são texto pequeno e discreto, sem fundo.
-- **Balões:** remetente e hora em 10 px; os ticks herdam a cor do balão (`opacity-70`), o lido fica em tom cheio. Nota interna: borda e fundo âmbar leves, sem tracejado nem sombra.
-- **Compositor:** campo `bg-background` com uma única borda; barra de formatação sem divisória; Enviar é o único botão preenchido.
-- **Painel:** ações rápidas são uma linha de texto com ícone (`size-3.5`), sem blocos com borda. Títulos de seção em frase (`text-xs font-medium`), contagem em texto simples, sem caixa alta. Etiquetas, notas e memória sem borda tracejada.
-- Sem ícone decorativo de IA no aviso de sugestão pendente.
+- **Cabeçalho da conversa:** avatar, nome e **uma** linha de situação, sem quebra (SLA · estado · canal · empresa · janela de 24 h · telefone). Ações à direita: Pausar IA, Assumir, Transferir e utilitários são ghost; Resolver/Reabrir é o único preenchido e fica por último. Categoria, prioridade, equipe e assunto ficam numa segunda linha de chips. O botão de painel mostra/oculta o painel do contato (lembrado por usuário) e, oculto, a conversa ocupa a largura.
+- **Fundo do chat liso** (sem desenho repetido). Separador de data é uma pílula pequena (`bg-muted`, texto muted). Evento do sistema é uma linha centralizada com um traço fino de cada lado ("— Atribuída a Bia —").
+- **Balões:** raio `calc(var(--radius) + 2px)` com o canto pequeno (4 px) do lado de quem enviou; enviado em `bg-primary text-primary-foreground`, recebido em `bg-card` com borda fina. Remetente e hora em 10 px; os ticks herdam a cor do balão (`opacity-70`), o lido fica em tom cheio. Nota interna centralizada, borda e fundo âmbar leves, sem tracejado nem sombra. Só mensagem que chega com a conversa aberta entra com fade/subida de 250 ms (nada com `prefers-reduced-motion`).
+- **Compositor:** um único campo com borda sobre o fundo do chat (sem barra superior nem divisória); a barra de ferramentas fica embaixo (anexo, voz, Nota interna como alternância, modelo, respostas rápidas, emoji, sugestão). "/" abre as respostas rápidas; Enter envia, Shift+Enter quebra linha. Enviar é o único botão preenchido.
+- **Painel:** seções separadas por linha fina de ponta a ponta, sem caixas. Títulos de seção pequenos em caixa alta e muted (`text-[10.5px] uppercase tracking-[0.07em]`), contagem em texto simples — exceção deliberada à regra geral de não usar caixa alta. Ordem: identidade (avatar ao lado do nome; sem ponto de presença, contato não tem disponibilidade), Situação (estado, prioridade, responsável, equipe, SLA com barra de progresso), Tarefas, Conversas anteriores (até 5: assunto ou categoria, data · estado · nota CSAT), Histórico (nº de conversas, satisfação média, cliente desde), depois Etiquetas, Campos, Empresas, Negócios, Agenda, Atividade, Memória, Notas e Privacidade. Ações rápidas são uma linha de texto com ícone (`size-3.5`). Notas do painel com filete âmbar à esquerda; etiquetas, notas e memória sem borda tracejada.
+- **Sugestão pendente** (chegou com texto já na caixa): uma linha com borda tracejada em tom de `primary` acima do compositor, "Sugestão: “…”" truncado, Usar (contorno), Adicionar ao final e descartar. Sem ícone decorativo de IA.
 
 ### Lista de conversas
 

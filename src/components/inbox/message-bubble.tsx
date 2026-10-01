@@ -37,7 +37,24 @@ interface MessageBubbleProps {
   senderLabel?: SenderLabel | null;
   /** Lets a received contact card jump to that contact's conversation. */
   onOpenConversation?: (conversation: Conversation) => void;
+  /** Arrived while the thread was open: short fade/rise (none with reduced motion). */
+  fresh?: boolean;
 }
+
+/**
+ * Bubble frame per direction: radius + 2 px with the small corner on the
+ * sender's side; outgoing on the primary fill, incoming on the card with a
+ * hairline border. Exported for the variant test.
+ */
+export function bubbleFrameClass(direction: "in" | "out"): string {
+  return direction === "out"
+    ? "rounded-[calc(var(--radius)+2px)] rounded-br-[4px] bg-primary px-3 py-2 text-primary-foreground"
+    : "rounded-[calc(var(--radius)+2px)] rounded-bl-[4px] border border-border bg-card px-3 py-2 text-foreground";
+}
+
+/** New-message entrance: 250 ms fade + 4 px rise; off under prefers-reduced-motion. */
+export const FRESH_ITEM_CLASS =
+  "animate-in fade-in-0 slide-in-from-bottom-1 duration-250 motion-reduce:animate-none";
 
 // Delivery state is icon-only; the title/aria-label carry the words
 // ("Sent", "Delivered"…) so the DOM translator can localize them.
@@ -356,6 +373,7 @@ export function MessageBubble({
   onToggleReaction,
   senderLabel,
   onOpenConversation,
+  fresh = false,
 }: MessageBubbleProps) {
   // Stickers are WebP images without a caption: bare image, no bubble frame.
   // Proxied (Meta) media has no file extension, so the fetched MIME decides.
@@ -383,21 +401,17 @@ export function MessageBubble({
       className={cn(
         "flex flex-col",
         isAgent ? "items-end" : "items-start",
+        fresh && FRESH_ITEM_CLASS,
       )}
+      data-fresh={fresh ? "" : undefined}
     >
       <div
         className={cn(
           "relative",
-          sticker
-            ? "px-1 py-0.5 text-foreground"
-            : cn(
-                "rounded-2xl px-3 py-2",
-                isAgent
-                  ? "rounded-br-md bg-primary text-primary-foreground"
-                  : "rounded-bl-md bg-muted text-foreground",
-              ),
+          sticker ? "px-1 py-0.5 text-foreground" : bubbleFrameClass(isAgent ? "out" : "in"),
         )}
         data-sticker={sticker ? "" : undefined}
+        data-bubble={isAgent ? "out" : "in"}
       >
         {reply && (
           <ReplyQuote

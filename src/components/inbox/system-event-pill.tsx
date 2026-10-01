@@ -78,7 +78,8 @@ function EventIcon({ event }: { event: ConversationEvent }) {
 
 /**
  * Centred muted line for a system event in the thread stream — the
- * "who did what" layer between customer and agent bubbles. Copy is
+ * "who did what" layer between customer and agent bubbles, framed by a
+ * hairline rule on each side ("— Atribuída a Bia —"). Copy is
  * language-keyed in the events lib (names are interpolated), so the
  * DOM translator is told to leave it alone.
  */
@@ -87,15 +88,17 @@ export function SystemEventPill({ event, language, now }: SystemEventPillProps) 
   if (!text) return null;
   const age = formatEventAge(event.created_at, language, now);
   return (
-    <div className="flex justify-center py-0.5" data-no-translate>
+    <div className="flex items-center justify-center gap-2 py-0.5" data-no-translate data-testid="system-event">
+      <span className="h-px w-7 shrink-0 bg-border" aria-hidden />
       <span
         title={new Date(event.created_at).toLocaleString(language)}
-        className="inline-flex max-w-[85%] items-center gap-1.5 text-[11px] leading-4 text-muted-foreground"
+        className="inline-flex min-w-0 max-w-[80%] items-center gap-1.5 text-[11px] leading-4 text-muted-foreground"
       >
         <EventIcon event={event} />
         <span className={cn(event.reason ? "line-clamp-3 break-words" : "truncate")}>{text}</span>
         {age && <span className="shrink-0">· {age}</span>}
       </span>
+      <span className="h-px w-7 shrink-0 bg-border" aria-hidden />
     </div>
   );
 }

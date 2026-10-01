@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildThreadTimeline, groupTimelineByDay } from './timeline'
+import { buildThreadTimeline, groupTimelineByDay, isFreshMessage } from './timeline'
 import type { ContactNote, Message } from '@/types'
 import type { ConversationEvent } from './events'
 
@@ -65,5 +65,15 @@ describe('groupTimelineByDay', () => {
 
   it('returns nothing for an empty timeline', () => {
     expect(groupTimelineByDay([])).toEqual([])
+  })
+})
+
+describe('isFreshMessage', () => {
+  const opened = Date.parse('2026-09-28T12:00:00Z')
+  it('is true only for messages created after the thread was opened', () => {
+    expect(isFreshMessage('2026-09-28T12:00:01Z', opened)).toBe(true)
+    expect(isFreshMessage('2026-09-28T11:59:59Z', opened)).toBe(false)
+    expect(isFreshMessage('2026-09-28T12:00:00Z', opened)).toBe(false)
+    expect(isFreshMessage('not a date', opened)).toBe(false)
   })
 })

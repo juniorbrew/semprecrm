@@ -105,13 +105,12 @@ export function SectionAddButton({
   );
 }
 
+/** Small uppercase muted heading (inbox panel sections, redesign stage 3). */
 export function SectionHeader({
-  icon: Icon,
   label,
   count,
   action,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
   label: string;
   count?: number;
   action?: React.ReactNode;
@@ -119,15 +118,14 @@ export function SectionHeader({
   const section = useContext(SectionContext);
   const title = (
     <>
-      <Icon className="size-3.5 text-muted-foreground" />
       <span>{label}</span>
       {typeof count === "number" && count > 0 && (
-        <span className="text-xs font-normal tabular-nums text-muted-foreground">{count}</span>
+        <span className="font-normal normal-case tracking-normal tabular-nums">{count}</span>
       )}
     </>
   );
   const titleCls =
-    "flex items-center gap-2 text-xs font-medium text-foreground";
+    "flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground";
   return (
     <div className="flex min-h-6 items-center justify-between gap-2 px-1">
       {section ? (
@@ -135,7 +133,10 @@ export function SectionHeader({
           type="button"
           onClick={section.toggle}
           aria-expanded={section.open}
-          className={cn(titleCls, "min-w-0 rounded-md text-left")}
+          className={cn(
+            titleCls,
+            "min-w-0 rounded-sm text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          )}
         >
           {title}
           <ChevronDown

@@ -27,10 +27,7 @@ import {
   whatsappConnectionBanner,
   type WhatsAppBanner,
 } from "@/lib/whatsapp/connection-banner";
-
-// Remembers the agent's show/hide choice for the desktop contact panel
-// across reloads and sessions (device-scoped, like the theme prefs).
-const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
+import { useContactPanelOpen } from "@/hooks/use-contact-panel-open";
 
 export default function InboxPage() {
   const router = useRouter();
@@ -129,35 +126,9 @@ export default function InboxPage() {
     [user?.id, preferences],
   );
 
-  /**
-   * Whether the desktop contact sidebar (tags / deals / notes) is shown.
-   * Defaults to `true` (the historical behaviour) and is restored from
-   * localStorage after mount. We deliberately do NOT read localStorage in
-   * the initializer: the server renders with `true`, so reading a stored
-   * `false` synchronously would produce a hydration mismatch. The effect
-   * below reconciles to the stored value right after mount instead.
-   */
-  const [contactPanelOpen, setContactPanelOpen] = useState(true);
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(CONTACT_PANEL_STORAGE_KEY);
-      if (stored !== null) setContactPanelOpen(stored === "true");
-    } catch {
-      // localStorage can throw in private-browsing / sandboxed contexts.
-    }
-  }, []);
-
-  const handleToggleContactPanel = useCallback(() => {
-    setContactPanelOpen((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(CONTACT_PANEL_STORAGE_KEY, String(next));
-      } catch {
-        // Persistence is best-effort; ignore storage failures.
-      }
-      return next;
-    });
-  }, []);
+  // Desktop contact sidebar shown / hidden, remembered per user (the
+  // thread header's toggle); hidden, the thread takes the width.
+  const [contactPanelOpen, handleToggleContactPanel] = useContactPanelOpen(user?.id);
 
   // Fire the deep-link auto-select exactly once per URL — subsequent
   // list refreshes (realtime, manual refetch) must not snap the user
@@ -922,6 +893,7 @@ export default function InboxPage() {
             <ContactSidebar
               contact={activeContact}
               conversationId={activeConversation?.id ?? null}
+              conversation={activeConversation}
               onOpenConversation={handleSelectConversation}
               onContactChanged={setActiveContact}
             />

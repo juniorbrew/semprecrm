@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, DollarSign, ExternalLink, Loader2 } from "lucide-react";
+import { ChevronDown, ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
@@ -143,7 +143,7 @@ export function PanelDeals({ deals, onPatch, onMoved, loaded, canWrite, conversa
 
   return (
     <div>
-      <SectionHeader icon={DollarSign} label={copy.title} count={deals.length} action={addAction} />
+      <SectionHeader label={copy.title} count={deals.length} action={addAction} />
       <div className="mt-2 space-y-2 px-1">
         {!loaded ? (
           <div role="status" aria-label={copy.skeleton} className="h-14 animate-pulse rounded-lg bg-muted/60" />

@@ -7,7 +7,6 @@ import { PANEL_DEAL_LIMIT, PanelDeals } from "./panel-deals"
 import { PanelSection, SectionHeader, readSectionOpen } from "./panel-section"
 import { PanelTags } from "./panel-tags"
 import { ContactSidebar } from "./contact-sidebar"
-import { Building2 } from "lucide-react"
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => {
@@ -35,7 +34,7 @@ describe("PanelSection", () => {
     renderToString(
       <PanelSection id={id} defaultOpen={defaultOpen}>
         <div>
-          <SectionHeader icon={Building2} label="Empresas" count={2} />
+          <SectionHeader label="Empresas" count={2} />
           <p>corpo</p>
         </div>
       </PanelSection>,
@@ -57,9 +56,9 @@ describe("PanelSection", () => {
   it("lazy sections render only their header until first opened (children never mount, so no queries)", () => {
     const lazy = (defaultOpen: boolean) =>
       renderToString(
-        <PanelSection id="lz" defaultOpen={defaultOpen} lazyHeader={<SectionHeader icon={Building2} label="Atividade" />}>
+        <PanelSection id="lz" defaultOpen={defaultOpen} lazyHeader={<SectionHeader label="Atividade" />}>
           <div>
-            <SectionHeader icon={Building2} label="Atividade" />
+            <SectionHeader label="Atividade" />
             <p>corpo-carregado</p>
           </div>
         </PanelSection>,
