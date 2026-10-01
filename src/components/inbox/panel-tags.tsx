@@ -222,8 +222,7 @@ export function PanelTags({
                     disabled={!canWrite || !!busyId}
                     title={copy.remove(tag.name)}
                     aria-label={copy.remove(tag.name)}
-                    className="group/tag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-60"
-                    style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                    className="group/tag inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-60"
                   >
                     <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
                     {tag.name}
@@ -234,7 +233,7 @@ export function PanelTags({
             </div>
             {suggestions.length > 0 && (
               <div className="mt-2">
-                <p className="mb-1 text-[10px] text-muted-foreground">{copy.suggested}</p>
+                <p className="mb-1 text-xs text-muted-foreground">{copy.suggested}</p>
                 <div className="flex flex-wrap gap-1">
                   {suggestions.map((tag) => (
                     <button
@@ -244,10 +243,9 @@ export function PanelTags({
                       disabled={!!busyId}
                       title={copy.suggest(tag.name)}
                       aria-label={copy.suggest(tag.name)}
-                      className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-muted disabled:opacity-60"
-                      style={{ borderColor: `${tag.color}80`, color: tag.color }}
+                      className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
                     >
-                      <Plus className="h-2.5 w-2.5" aria-hidden />
+                      <Plus className="size-3" aria-hidden />
                       {tag.name}
                     </button>
                   ))}

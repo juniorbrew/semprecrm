@@ -213,7 +213,7 @@ export function ContactMemorySection({
         ) : null}
 
         {proposed.map((m) => (
-          <div key={m.id} className="rounded-lg border border-dashed border-border px-3 py-2">
+          <div key={m.id} className="rounded-lg bg-muted/50 px-3 py-2">
             {draft?.id === m.id ? (
               editor(m.id)
             ) : (

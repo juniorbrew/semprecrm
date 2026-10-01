@@ -29,7 +29,7 @@ export interface LinkedEventsProps extends EventLinkFilter {
   withHeader?: boolean;
   /** Override the header label (default "Calendar"). */
   label?: string;
-  /** Header markup variant: the inbox panel uses uppercase tiny labels like its other sections. */
+  /** Header markup variant: the inbox panel uses the same small sentence-case headings as its other sections. */
   headerClassName?: string;
   /** Extra classes on the list / quick-add wrapper (panel gutters). */
   bodyClassName?: string;
@@ -81,11 +81,11 @@ export function LinkedEvents({
     <div className={className}>
       {withHeader && (
         <div className={cn("flex items-center justify-between gap-2", headerClassName)}>
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            <CalendarDays className="h-3 w-3" />
+          <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+            <CalendarDays className="size-3.5 text-muted-foreground" />
             <span>{label ?? t("Calendar")}</span>
             {linked.events.length > 0 && (
-              <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums">{linked.events.length}</span>
+              <span className="text-xs font-normal tabular-nums text-muted-foreground">{linked.events.length}</span>
             )}
           </div>
           {!readOnly && (
