@@ -203,6 +203,31 @@ describe('runCsatCron: reserved, uncertain, active, recent, burst (review round)
     expect(send).toHaveBeenCalledTimes(1)
   })
 
+  it('a gateway 5xx (send_failed, 502) is uncertain: reservation kept, never retried', async () => {
+    const { GatewayRequestError } = await import('@/lib/whatsapp/qr-gateway')
+    const { state, send, run } = setup()
+    send.mockRejectedValueOnce(new GatewayRequestError('send_failed', 502, 'send_failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(await run()).toMatchObject({ sent: 0, errors: 1 })
+    warn.mockRestore()
+    expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'reserved' })])
+    expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'uncertain' })
+    expect(await run(new Date(NOW.getTime() + 60_000))).toMatchObject({ claimed: 0 })
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([400, 422])('a gateway %i is definitive: reservation removed, job released for retry', async (status) => {
+    const { GatewayRequestError } = await import('@/lib/whatsapp/qr-gateway')
+    const { state, send, run } = setup()
+    send.mockRejectedValueOnce(new GatewayRequestError('not_on_whatsapp', status, 'not_on_whatsapp'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    expect(await run()).toMatchObject({ sent: 0, errors: 1 })
+    err.mockRestore()
+    expect(state.tables.csat_responses).toEqual([])
+    expect(state.tables.csat_jobs[0]).toMatchObject({ claimed_at: null })
+    expect(state.tables.csat_jobs[0].processed_at).toBeUndefined()
+  })
+
   it('a reservation that never became sent is not a survey sent (crash between reserve and send)', async () => {
     const { state, run } = setup()
     state.tables.csat_responses = [{ id: 'x', conversation_id: 'conv-0', contact_id: 'k1', status: 'reserved', sent_at: minutesAgo(5) }]

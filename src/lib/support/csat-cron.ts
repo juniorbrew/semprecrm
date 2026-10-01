@@ -22,6 +22,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
+import { GatewayRequestError } from '@/lib/whatsapp/qr-gateway'
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import {
   CSAT_JOB_ONLY_REASONS,
@@ -59,6 +60,16 @@ type Send = (args: {
   text: string
   origin: 'csat'
 }) => Promise<{ whatsapp_message_id: string }>
+
+/**
+ * Surveys are at-most-once: besides the shared uncertain errors, a gateway 5xx
+ * (e.g. send_failed) may have reached the customer, so it is never retried.
+ * 4xx (not_on_whatsapp, invalid payload) stay definitive. Local to the CSAT
+ * cron: the shared isUncertainSend (AI replies, broadcasts) is unchanged.
+ */
+export function isGateway5xx(err: unknown): boolean {
+  return err instanceof GatewayRequestError && err.status >= 500
+}
 
 /** Missing function / table (migration 074 not applied yet) reads as nothing to do. */
 const MISSING_RE = /42883|42P01|PGRST202|PGRST205|does not exist|schema cache/i
@@ -242,7 +253,7 @@ async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): P
       origin: 'csat',
     })
   } catch (err) {
-    if (isUncertainSend(err)) {
+    if (isUncertainSend(err) || isGateway5xx(err)) {
       // It may have reached the customer: the reservation stays (nothing else is
       // ever sent for this conversation) and the job is never retried.
       console.warn('[csat] uncertain send, not retrying:', job.conversation_id, err instanceof Error ? err.message : err)
