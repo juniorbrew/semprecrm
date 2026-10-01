@@ -48,8 +48,27 @@ SELECT s FROM unnest(ARRAY[
 --    new ones). Expected: 0, otherwise replace them.
 SELECT count(*) FROM storage.objects WHERE bucket_id = 'account-branding' AND name ILIKE '%.svg';
 
--- 6. Cross-tenant references that enforce_same_account() would reject on
---    the next edit of that column. Expected: every count = 0.
+-- 5b. Every policy on storage.objects. After 076 the public buckets
+--     (chat-media, flow-media, avatars, account-branding) must have NO
+--     SELECT policy for anon/public; an extra hand-made permissive policy
+--     (e.g. created in the dashboard) would OR with ours and cancel the
+--     tightening — drop it. Expected before 076: the "... is publicly
+--     readable" SELECT policies (076 drops them by name).
+SELECT policyname, cmd, roles, qual, with_check
+  FROM pg_policies
+ WHERE schemaname = 'storage' AND tablename = 'objects'
+ ORDER BY policyname;
+
+-- 6. Cross-tenant references enforce_same_account() would reject if the
+--    column were set to that value again (existing rows keep working: the
+--    guard fires only when the column changes).
+--    * USER-reference columns (deals.assigned_to, tasks.assignee_user_id,
+--      lead_sources.assignee_user_id, calendar_events.owner_user_id,
+--      calendar_event_attendees.user_id): non-zero is EXPECTED — a removed
+--      member's profile moves to another account. Review, no action needed.
+--    * contact / conversation / deal / pipeline / stage / tag / field /
+--      status / task / thread columns: non-zero is a REAL cross-tenant leak —
+--      investigate before deploying.
 SELECT 'contact_notes.contact_id' AS ref, count(*) AS violations FROM public.contact_notes x WHERE x.contact_id IS NOT NULL AND x.account_id IS NOT NULL AND (SELECT r.account_id FROM public.contacts r WHERE r.id = x.contact_id) IS DISTINCT FROM x.account_id
 UNION ALL
 SELECT 'conversations.contact_id' AS ref, count(*) AS violations FROM public.conversations x WHERE x.contact_id IS NOT NULL AND x.account_id IS NOT NULL AND (SELECT r.account_id FROM public.contacts r WHERE r.id = x.contact_id) IS DISTINCT FROM x.account_id

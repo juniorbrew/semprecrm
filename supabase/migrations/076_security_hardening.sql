@@ -28,19 +28,24 @@
 --     storage API reads /object/public/* as superuser, no policy involved.
 --     A SELECT policy scoped to the caller's own folder is kept for
 --     authenticated, because upload(upsert: true) and remove() need it.
---     chat-media / flow-media writes now require agent+ (viewers cannot
---     upload, replace or delete media); the legacy "<user id>/" folder of
---     flow-media is no longer writable (the app writes only
---     "account-<id>/"; old objects are still served). SVG removed from
---     account-branding (stored XSS through a same-origin logo).
+--     flow-media writes now require agent+ (viewers cannot upload, replace
+--     or delete media); the legacy "<user id>/" folder of flow-media is no
+--     longer writable (the app writes only "account-<id>/"; old objects are
+--     still served). chat-media WRITE policies are NOT touched here:
+--     migration 078 owns them (agent+ through chat_media_writable()).
+--     SVG removed from account-branding (stored XSS through a same-origin
+--     logo).
 --  3. Function privileges: _bcast_bump, recompute_broadcast_counts,
 --     chat_insert_system_message, merge_duplicate_contacts,
 --     seed_task_statuses, seed_deal_loss_reasons and EVERY trigger
 --     function are no longer executable by PUBLIC/anon/authenticated.
---     Other SECURITY DEFINER functions lose anon unless an RLS / storage
---     policy calls them (is_account_member, is_chat_thread_member,
---     chat_internal_object_allowed, can_read/edit_calendar_event) or the
---     anonymous invite page uses them (peek_invitation). New functions are
+--     An explicit list of signed-in-only SECURITY DEFINER RPCs (member
+--     management, invitation redeem, platform_*, chat_* RPCs) loses anon;
+--     every other function keeps its current grants — in particular the
+--     helpers called by RLS / storage policies (is_account_member,
+--     is_chat_thread_member, chat_internal_object_allowed,
+--     can_read/edit_calendar_event) and peek_invitation (anonymous invite
+--     page) stay executable by anon. New functions are
 --     closed by default (default privileges): a future migration MUST
 --     GRANT EXECUTE explicitly to whoever calls it, including functions
 --     used inside RLS policies. TRUNCATE / TRIGGER / REFERENCES revoked
@@ -64,9 +69,16 @@
 --     nor where a guard already exists (conversations.category_id/team_id,
 --     deals.company_id, contact_companies, ai_knowledge_chunks,
 --     team_members, routing_rules) or RLS already checks the parent
---     (conversation_events, ai_contact_memories). Run the check query in
---     the owner report on production BEFORE deploying: a pre-existing
---     cross-tenant row would make any later edit of that column fail.
+--     (conversation_events, ai_contact_memories). The guard only fires
+--     when the guarded column (or the row's account / anchor) actually
+--     changes, so pre-existing cross-tenant rows keep working until someone
+--     points that column at another cross-tenant value. Run check 6 of
+--     supabase/tests/security_hardening_prod_check.sql before deploying.
+--
+-- Run at a quiet hour: lock_timeout = 5s makes the migration fail fast
+-- (and roll back) instead of queueing behind long transactions on the
+-- altered tables; just retry on a lock timeout.
+-- Rollback: supabase/rollback/076_rollback.sql (forward script, by hand).
 --  8. contacts (LGPD): for user roles, anonymized_at cannot change, an
 --     anonymized row cannot change at all, and opted_out_at can only be
 --     cleared by agent+ (the inbox "reactivate" button, contact-sidebar.tsx,
@@ -96,6 +108,8 @@
 --
 -- Idempotent.
 -- ============================================================
+
+SET lock_timeout = '5s';
 
 
 -- ============================================================
@@ -159,29 +173,7 @@ CREATE POLICY "Members read own chat media" ON storage.objects
     THEN public.is_account_member(substring((storage.foldername(name))[1] FROM 9)::uuid)
     ELSE false END);
 
-DROP POLICY IF EXISTS "Members can upload chat media" ON storage.objects;
-CREATE POLICY "Members can upload chat media" ON storage.objects
-  FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'chat-media' AND CASE
-    WHEN (storage.foldername(name))[1] ~ '^account-[0-9a-f-]{36}$'
-    THEN public.is_account_member(substring((storage.foldername(name))[1] FROM 9)::uuid, 'agent')
-    ELSE false END);
-
-DROP POLICY IF EXISTS "Members can update chat media" ON storage.objects;
-CREATE POLICY "Members can update chat media" ON storage.objects
-  FOR UPDATE TO authenticated
-  USING (bucket_id = 'chat-media' AND CASE
-    WHEN (storage.foldername(name))[1] ~ '^account-[0-9a-f-]{36}$'
-    THEN public.is_account_member(substring((storage.foldername(name))[1] FROM 9)::uuid, 'agent')
-    ELSE false END);
-
-DROP POLICY IF EXISTS "Members can delete chat media" ON storage.objects;
-CREATE POLICY "Members can delete chat media" ON storage.objects
-  FOR DELETE TO authenticated
-  USING (bucket_id = 'chat-media' AND CASE
-    WHEN (storage.foldername(name))[1] ~ '^account-[0-9a-f-]{36}$'
-    THEN public.is_account_member(substring((storage.foldername(name))[1] FROM 9)::uuid, 'agent')
-    ELSE false END);
+-- chat-media INSERT/UPDATE/DELETE: owned by migration 078 (not changed here).
 
 DROP POLICY IF EXISTS "Members read own flow media" ON storage.objects;
 CREATE POLICY "Members read own flow media" ON storage.objects
@@ -616,3 +608,6 @@ DROP TRIGGER IF EXISTS ai_contact_memories_guard ON public.ai_contact_memories;
 CREATE TRIGGER ai_contact_memories_guard
   BEFORE INSERT OR UPDATE ON public.ai_contact_memories
   FOR EACH ROW EXECUTE FUNCTION public.ai_contact_memories_guard();
+
+-- PostgREST: pick up the new view, grants and policies now.
+NOTIFY pgrst, 'reload schema';

@@ -64,6 +64,7 @@ INSERT INTO lead_sources(id, account_id, name, token) VALUES
 INSERT INTO whatsapp_config(account_id, user_id, phone_number_id, waba_id, access_token, verify_token, status)
 VALUES ((SELECT acc_a FROM ids), '76000000-0000-4000-8000-00000000000a', 'pn-a', 'waba-a', 'cipher-access', 'cipher-verify', 'connected');
 INSERT INTO storage.objects(bucket_id, name, owner) VALUES
+ ('flow-media', 'account-' || (SELECT acc_a FROM ids) || '/f.jpg', '76000000-0000-4000-8000-00000000000a'),
  ('chat-media', 'account-' || (SELECT acc_a FROM ids) || '/a.jpg', '76000000-0000-4000-8000-00000000000a'),
  ('chat-media', 'account-' || (SELECT acc_b FROM ids) || '/b.jpg', '76000000-0000-4000-8000-00000000000b');
 UPDATE accounts SET platform_notes = 'internal note' WHERE id = (SELECT acc_a FROM ids);
@@ -209,13 +210,16 @@ DO $$ BEGIN
   PERFORM token FROM lead_sources_public;
   RAISE EXCEPTION 'lead_sources_public exposes token';
 EXCEPTION WHEN undefined_column THEN NULL; END $$;
+-- flow-media writes are agent+ (chat-media write policies: migration 078's test).
 DO $$ BEGIN
-  INSERT INTO storage.objects(bucket_id, name) VALUES ('chat-media', 'account-' || (SELECT acc_a FROM ids) || '/viewer.jpg');
-  RAISE EXCEPTION 'viewer uploaded chat media';
+  INSERT INTO storage.objects(bucket_id, name) VALUES ('flow-media', 'account-' || (SELECT acc_a FROM ids) || '/viewer.jpg');
+  RAISE EXCEPTION 'viewer uploaded flow media';
 EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
-DELETE FROM storage.objects WHERE bucket_id = 'chat-media' AND name LIKE 'account-' || (SELECT acc_a FROM ids) || '/%';
+DELETE FROM storage.objects WHERE bucket_id = 'flow-media' AND name LIKE 'account-' || (SELECT acc_a FROM ids) || '/%';
+SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM storage.objects WHERE bucket_id = 'flow-media'
+  AND name LIKE 'account-' || (SELECT acc_a FROM ids) || '/%'), 'viewer cannot delete flow media');
 SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM storage.objects WHERE bucket_id = 'chat-media'
-  AND name LIKE 'account-' || (SELECT acc_a FROM ids) || '/%'), 'viewer cannot delete chat media');
+  AND name LIKE 'account-' || (SELECT acc_a FROM ids) || '/%'), 'viewer lists own chat-media');
 SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM accounts WHERE id = (SELECT acc_a FROM ids)), 'viewer reads own account row');
 RESET ROLE;
 
@@ -224,12 +228,22 @@ RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims', '{"sub":"76000000-0000-4000-8000-0000000000ac","role":"authenticated"}', true);
 
--- 2. agent+ writes media in its own folder
+-- 2. agent+ writes media in its own folder (chat-media: pre-076 policies, unchanged)
 INSERT INTO storage.objects(bucket_id, name) VALUES ('chat-media', 'account-' || (SELECT acc_a FROM ids) || '/agent.jpg');
 DELETE FROM storage.objects WHERE bucket_id = 'chat-media' AND name = 'account-' || (SELECT acc_a FROM ids) || '/agent.jpg';
+SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM storage.objects WHERE name = 'account-' || (SELECT acc_a FROM ids) || '/agent.jpg'),
+  'agent deletes own chat media');
+INSERT INTO storage.objects(bucket_id, name) VALUES ('flow-media', 'account-' || (SELECT acc_a FROM ids) || '/agent.jpg');
+DELETE FROM storage.objects WHERE bucket_id = 'flow-media' AND name = 'account-' || (SELECT acc_a FROM ids) || '/agent.jpg';
+SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM storage.objects WHERE name = 'account-' || (SELECT acc_a FROM ids) || '/agent.jpg'),
+  'agent deletes own flow media');
 DO $$ BEGIN
   INSERT INTO storage.objects(bucket_id, name) VALUES ('chat-media', 'account-' || (SELECT acc_b FROM ids) || '/x.jpg');
-  RAISE EXCEPTION 'agent uploaded into account B';
+  RAISE EXCEPTION 'agent uploaded chat media into account B';
+EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
+DO $$ BEGIN
+  INSERT INTO storage.objects(bucket_id, name) VALUES ('flow-media', 'account-' || (SELECT acc_b FROM ids) || '/x.jpg');
+  RAISE EXCEPTION 'agent uploaded flow media into account B';
 EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 
 -- 4. calendar_connections_public is read-only
