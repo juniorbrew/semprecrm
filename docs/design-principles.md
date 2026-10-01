@@ -7,13 +7,13 @@ Regras aplicadas às telas de IA (configurações, agentes, sugestão de respost
 - Ícones decorativos de IA (brilhos, varinha, robô) em títulos, botões e cartões. Use um ícone neutro ou nenhum.
 - Gradientes, brilhos, fundos coloridos em avisos e sombras pesadas.
 - Cartão dentro de cartão e bordas em todo bloco.
-- Selos "IA" e "beta" espalhados, rótulos em caixa alta, emoji.
+- Selos "IA" e "beta" espalhados, rótulos em caixa alta (exceto os títulos de seção da navegação, ver "Navegação"), emoji.
 - Texto de marketing ("turbine", "mágica"), exclamações e ajuda embaixo de todo campo.
 
 ## O que fazer
 
 - **Superfícies calmas.** Mesmos tokens do app (`background`, `muted`, `border`). Sem tema novo.
-- **Um único acento** (`primary`), só na ação principal e no estado ativo. Um botão primário por tela.
+- **Um único acento** (`primary`): ação principal, estado ativo e títulos de seção da navegação. Um botão primário por tela.
 - **Hierarquia por tipo e espaço.** Título `text-base font-semibold`, corpo `text-sm`, apoio `text-muted-foreground`. Grade de 4/8 px; `space-y-8` entre grupos, `space-y-4` dentro.
 - **Seções são grupos com título**, separados por espaço e uma linha fina (`border-t`), nunca por caixa. Use `SettingsGroup` (`src/components/settings/settings-group.tsx`).
 - **Formulários em uma coluna**, com `max-w-2xl`. Campos lado a lado só para valores curtos (orçamento, horário).
@@ -44,6 +44,16 @@ Regras aplicadas às telas de IA (configurações, agentes, sugestão de respost
 3. Cada bloco tem título e a separação vem de espaço ou de uma linha fina?
 4. A cópia cabe em uma linha? Há exclamação, caixa alta ou jargão de IA?
 5. Funciona em tema claro e escuro, em 360 px e com teclado?
+
+## Navegação
+
+Barra lateral e cabeçalho (`src/components/layout/`, itens em `nav-config.ts`).
+
+- **Seções com título** (Atendimento, Vendas, Automação, Trabalho): texto pequeno em caixa alta, espaçado, na cor da marca (`text-primary`). É o único lugar com caixa alta.
+- **Item ativo:** fundo levemente tingido da marca (`bg-primary/10`) com filete de 2 px à esquerda (`shadow-[inset_2px_0_0_var(--primary)]`), texto `text-foreground` e ícone `text-primary`. Sempre com `aria-current` e foco visível.
+- **Submenu da caixa de entrada** (Minhas, Equipe, Sem dono, SLA em risco): só visões que já existem na lista; os contadores vêm da própria lista, sem consulta extra. Contador vermelho só para SLA em risco.
+- **Só tokens** (`--primary`, `--muted`, `--border`…): a cor escolhida em Configurações vale em todo o app. Nada de cor fixa nem seletor de cor no cabeçalho.
+- Cabeçalho na mesma superfície da barra lateral (`bg-card`), título `text-[15px] font-semibold`.
 
 ## Caixa de entrada
 

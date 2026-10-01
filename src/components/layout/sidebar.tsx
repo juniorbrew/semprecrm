@@ -11,32 +11,28 @@ import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useOverdueTasks } from "@/hooks/use-overdue-tasks";
 import { useChatUnread } from "@/hooks/use-chat-unread";
 import { useUpcomingEvents } from "@/hooks/use-upcoming-events";
-import type { Module } from "@/lib/plans";
+import { useInboxNav } from "@/hooks/use-inbox-nav";
 import {
-  BarChart3,
-  CalendarDays,
-  CheckSquare,
   Crown,
-  GitBranch,
-  LayoutDashboard,
   LogOut,
   MessageSquare,
-  MessagesSquare,
-  Radio,
   Settings,
   Shield,
   ShieldCheck,
   User,
   UserCog,
-  Users,
-  Bot,
-  Building2,
   UsersRound,
-  Workflow,
   X,
-  Zap,
 } from "lucide-react";
-import { canViewReports, type AccountRole } from "@/lib/auth/roles";
+import type { AccountRole } from "@/lib/auth/roles";
+import {
+  activeInboxShortcut,
+  INBOX_SHORTCUTS,
+  isNavActive,
+  NAV_COPY,
+  NAV_ITEMS,
+  navGroups,
+} from "@/components/layout/nav-config";
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -88,48 +84,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: typeof LayoutDashboard;
-  /**
-   * When true, the nav row renders a small "Beta" chip after the label.
-   * Purely informational — doesn't affect routing or access.
-   */
-  beta?: boolean;
-  /**
-   * Plan module this entry belongs to (see `src/lib/plans.ts`). The
-   * row is hidden when the account's entitlements have the module
-   * off. `inbox` / `contacts` are always on, so those rows never hide.
-   */
-  module: Module;
-  /** Owner / admin only (the row is hidden for agents and viewers). */
-  adminOnly?: boolean;
-}
-
-const navItems: NavItem[] = [
-  { href: "/dashboard", label: "Painel", icon: LayoutDashboard, module: "dashboard" },
-  // Support reports (migration 075) — owner / admin, same plan module as the dashboard.
-  { href: "/reports", label: "Relatórios", icon: BarChart3, module: "dashboard", adminOnly: true },
-  { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare, module: "inbox" },
-  { href: "/contacts", label: "Contatos", icon: Users, module: "contacts" },
-  // Customer companies (migration 054) — part of the always-on CRM core.
-  { href: "/companies", label: "Empresas", icon: Building2, module: "contacts" },
-  { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines" },
-  { href: "/tasks", label: "Tarefas", icon: CheckSquare, module: "tasks" },
-  { href: "/chat", label: "Chat", icon: MessagesSquare, module: "internal_chat" },
-  { href: "/agenda", label: "Agenda", icon: CalendarDays, module: "calendar" },
-  { href: "/broadcasts", label: "Disparos", icon: Radio, module: "broadcasts" },
-  { href: "/automations", label: "Automações", icon: Zap, module: "automations" },
-  { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows" },
-  // AI agents (migrations 064/065) — agent+ view, admin+ edit.
-  { href: "/ai/agents", label: "Agentes de IA", icon: Bot, module: "ai" },
-];
-
-const bottomNavItems = [
-  { href: "/settings", label: "Configurações", icon: Settings },
-];
-
 interface SidebarProps {
   /** Controlled on mobile by the Header's hamburger button. Ignored on lg+. */
   open?: boolean;
@@ -138,7 +92,8 @@ interface SidebarProps {
 
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const navCopy = NAV_COPY[language] ?? NAV_COPY["pt-BR"];
   const { profile, profileLoading, account, accountRole, signOut, isPlatformAdmin } =
     useAuth();
   const { ready: entitlementsReady, modules } = useEntitlements();
@@ -155,11 +110,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   // off. Until the entitlements settle we show everything — a row
   // that appears late is less jarring than the whole menu reflowing
   // after a disabled module briefly showed up and vanished.
-  const visibleNavItems = navItems.filter(
-    (item) =>
-      (!entitlementsReady || modules[item.module]) &&
-      (!item.adminOnly || (!!accountRole && canViewReports(accountRole))),
-  );
+  const groups = navGroups(NAV_ITEMS, { entitlementsReady, modules, accountRole });
+  // Inbox shortcuts: only while the inbox is open (its list publishes the
+  // tab / Radar / counts they mirror).
+  const inboxNav = useInboxNav();
+  const activeShortcut = activeInboxShortcut(inboxNav);
   // The logo link should never point at a hidden module.
   const homeHref =
     entitlementsReady && !modules.dashboard ? "/inbox" : "/dashboard";
@@ -258,107 +213,148 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           </button>
         </div>
 
-        {/* Main navigation */}
+        {/* Main navigation: an unlabelled top row (Painel), then labelled
+            sections. Section titles use the brand colour; the active row
+            gets a brand tint + a 2px inset accent (docs/design-principles). */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <ul className="flex flex-col gap-1">
-            {visibleNavItems.map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== "/dashboard" && pathname.startsWith(item.href));
-
-              const showUnreadDot =
-                item.href === "/inbox" && totalUnread > 0 && !isActive;
-              const showOverdueBadge = item.href === "/tasks" && overdueTasks > 0;
-              const showChatBadge = item.href === "/chat" && chatUnread > 0;
-              const showAgendaBadge = item.href === "/agenda" && upcomingEvents > 0;
-
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      // Taller on mobile so fingers can hit the row reliably (≥44px).
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
+          {groups.map((group) => {
+            const headingId = group.section ? `nav-section-${group.section}` : undefined;
+            return (
+              <div
+                key={group.section ?? "top"}
+                role={group.section ? "group" : undefined}
+                aria-labelledby={headingId}
+              >
+                {group.section ? (
+                  <p
+                    id={headingId}
+                    data-no-translate
+                    className="px-3 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-primary"
                   >
-                    <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{item.label}</span>
-                    {item.beta && (
-                      <span
-                        aria-label="Recurso beta"
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
-                      >
-                        Beta
-                      </span>
-                    )}
-                    {showOverdueBadge && (
-                      <span
-                        aria-label={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
-                        title={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
-                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400"
-                      >
-                        {overdueTasks > 99 ? "99+" : overdueTasks}
-                      </span>
-                    )}
-                    {showChatBadge && (
-                      <span
-                        aria-label={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
-                        title={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
-                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
-                      >
-                        {chatUnread > 99 ? "99+" : chatUnread}
-                      </span>
-                    )}
-                    {showAgendaBadge && (
-                      <span
-                        aria-label={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
-                        title={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
-                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-amber-600 dark:text-amber-400"
-                      >
-                        {upcomingEvents > 99 ? "99+" : upcomingEvents}
-                      </span>
-                    )}
-                    {showUnreadDot && (
-                      <span
-                        aria-label={`${totalUnread} ${t(totalUnread === 1 ? "unread conversation" : "unread conversations")}`}
-                        className="relative flex h-2 w-2"
-                      >
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-                      </span>
-                    )}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+                    {navCopy.sections[group.section]}
+                  </p>
+                ) : null}
+                <ul className="flex flex-col gap-0.5">
+                  {group.items.map((item) => {
+                    const isActive = isNavActive(pathname, item.href);
+                    const isInbox = item.href === "/inbox";
 
-          <div className="my-4 border-t border-border" />
+                    const showUnreadDot = isInbox && totalUnread > 0 && !isActive;
+                    const showOverdueBadge = item.href === "/tasks" && overdueTasks > 0;
+                    const showChatBadge = item.href === "/chat" && chatUnread > 0;
+                    const showAgendaBadge = item.href === "/agenda" && upcomingEvents > 0;
 
-          <ul className="flex flex-col gap-1">
-            {bottomNavItems.map((item) => {
-              const isActive = pathname.startsWith(item.href);
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+                    return (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          aria-current={isActive ? "page" : undefined}
+                          className={cn(
+                            // Taller on mobile so fingers can hit the row reliably (≥44px).
+                            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 lg:py-2",
+                            isActive
+                              ? "bg-primary/10 font-semibold text-foreground shadow-[inset_2px_0_0_var(--primary)]"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                          )}
+                        >
+                          <item.icon className={cn("h-4 w-4", isActive && "text-primary")} />
+                          <span className="flex-1">{item.label}</span>
+                          {item.beta && (
+                            <span
+                              aria-label="Recurso beta"
+                              className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
+                            >
+                              Beta
+                            </span>
+                          )}
+                          {showOverdueBadge && (
+                            <span
+                              aria-label={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
+                              title={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
+                              className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400"
+                            >
+                              {overdueTasks > 99 ? "99+" : overdueTasks}
+                            </span>
+                          )}
+                          {showChatBadge && (
+                            <span
+                              aria-label={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
+                              title={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
+                              className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
+                            >
+                              {chatUnread > 99 ? "99+" : chatUnread}
+                            </span>
+                          )}
+                          {showAgendaBadge && (
+                            <span
+                              aria-label={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
+                              title={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
+                              className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-amber-600 dark:text-amber-400"
+                            >
+                              {upcomingEvents > 99 ? "99+" : upcomingEvents}
+                            </span>
+                          )}
+                          {showUnreadDot && (
+                            <span
+                              aria-label={`${totalUnread} ${t(totalUnread === 1 ? "unread conversation" : "unread conversations")}`}
+                              className="relative flex h-2 w-2"
+                            >
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                            </span>
+                          )}
+                        </Link>
+                        {isInbox && isActive ? (
+                          <ul
+                            aria-label={navCopy.inboxViews}
+                            data-no-translate
+                            className="mb-1 ml-5 mt-0.5 flex flex-col border-l border-border pl-2.5"
+                          >
+                            {INBOX_SHORTCUTS.map((shortcut) => {
+                              const current = activeShortcut === shortcut.id;
+                              const count = inboxNav?.counts ? shortcut.count(inboxNav.counts) : 0;
+                              return (
+                                <li key={shortcut.id}>
+                                  <Link
+                                    href={shortcut.href}
+                                    scroll={false}
+                                    // Same pathname: the route-change effect won't close the drawer.
+                                    onClick={onClose}
+                                    aria-current={current ? "true" : undefined}
+                                    className={cn(
+                                      "flex items-center gap-2 rounded-md px-2.5 py-2 text-[13px] outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 lg:py-1.5",
+                                      current
+                                        ? "bg-muted font-medium text-foreground"
+                                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                    )}
+                                  >
+                                    <span className="flex-1">{navCopy.shortcuts[shortcut.id]}</span>
+                                    {count > 0 ? (
+                                      <span
+                                        data-testid={`inbox-shortcut-count-${shortcut.id}`}
+                                        className={cn(
+                                          "inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                                          shortcut.alert
+                                            ? "bg-red-500/15 text-red-600 dark:text-red-400"
+                                            : "bg-muted text-muted-foreground",
+                                        )}
+                                      >
+                                        {count > 99 ? "99+" : count}
+                                      </span>
+                                    ) : null}
+                                  </Link>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
 
         {/* User section */}
