@@ -7,13 +7,13 @@ Regras aplicadas às telas de IA (configurações, agentes, sugestão de respost
 - Ícones decorativos de IA (brilhos, varinha, robô) em títulos, botões e cartões. Use um ícone neutro ou nenhum.
 - Gradientes, brilhos, fundos coloridos em avisos e sombras pesadas.
 - Cartão dentro de cartão e bordas em todo bloco.
-- Selos "IA" e "beta" espalhados, rótulos em caixa alta, emoji.
+- Selos "IA" e "beta" espalhados, rótulos em caixa alta (exceto os títulos de seção da navegação, ver "Navegação"), emoji.
 - Texto de marketing ("turbine", "mágica"), exclamações e ajuda embaixo de todo campo.
 
 ## O que fazer
 
 - **Superfícies calmas.** Mesmos tokens do app (`background`, `muted`, `border`). Sem tema novo.
-- **Um único acento** (`primary`), só na ação principal e no estado ativo. Um botão primário por tela.
+- **Um único acento** (`primary`): ação principal, estado ativo e títulos de seção da navegação. Um botão primário por tela.
 - **Hierarquia por tipo e espaço.** Título `text-base font-semibold`, corpo `text-sm`, apoio `text-muted-foreground`. Grade de 4/8 px; `space-y-8` entre grupos, `space-y-4` dentro.
 - **Seções são grupos com título**, separados por espaço e uma linha fina (`border-t`), nunca por caixa. Use `SettingsGroup` (`src/components/settings/settings-group.tsx`).
 - **Formulários em uma coluna**, com `max-w-2xl`. Campos lado a lado só para valores curtos (orçamento, horário).
@@ -45,14 +45,34 @@ Regras aplicadas às telas de IA (configurações, agentes, sugestão de respost
 4. A cópia cabe em uma linha? Há exclamação, caixa alta ou jargão de IA?
 5. Funciona em tema claro e escuro, em 360 px e com teclado?
 
+## Navegação
+
+Barra lateral e cabeçalho (`src/components/layout/`, itens em `nav-config.ts`).
+
+- **Seções com título** (Atendimento, Vendas, Automação, Trabalho): texto pequeno em caixa alta, espaçado, na cor da marca (`text-primary`). É o único lugar com caixa alta.
+- **Item ativo:** fundo levemente tingido da marca (`bg-primary/10`) com filete de 2 px à esquerda (`shadow-[inset_2px_0_0_var(--primary)]`), texto `text-foreground` e ícone `text-primary`. Sempre com `aria-current` e foco visível.
+- **Submenu da caixa de entrada** (Minhas, Equipe, Sem dono, SLA em risco): só visões que já existem na lista; os contadores vêm da própria lista, sem consulta extra. Contador vermelho só para SLA em risco.
+- **Só tokens** (`--primary`, `--muted`, `--border`…): a cor escolhida em Configurações vale em todo o app. Nada de cor fixa nem seletor de cor no cabeçalho.
+- Cabeçalho na mesma superfície da barra lateral (`bg-card`), título `text-[15px] font-semibold`.
+
 ## Caixa de entrada
 
 Mesmas regras aplicadas à lista, ao histórico e ao painel do contato.
 
-- **Lista:** uma linha de metadados (categoria · empresa), etiquetas como ponto + texto, canal "Oficial/QR" como texto discreto, situação (pendente, resolvida) e SLA como ponto + texto. O único preenchido é o contador de não lidas.
+- **Lista:** ver "Lista de conversas" abaixo.
 - **Cabeçalho da conversa:** avatar, nome e **uma** linha de situação, sem quebra (SLA · estado · canal · empresa · janela de 24 h · telefone). Ações à direita: Pausar IA, Assumir, Transferir e utilitários são ghost; Resolver/Reabrir é o único preenchido e fica por último. Categoria, prioridade, equipe e assunto ficam numa segunda linha de chips. O botão de painel mostra/oculta o painel do contato (lembrado por usuário) e, oculto, a conversa ocupa a largura.
 - **Fundo do chat liso** (sem desenho repetido). Separador de data é uma pílula pequena (`bg-muted`, texto muted). Evento do sistema é uma linha centralizada com um traço fino de cada lado ("— Atribuída a Bia —").
 - **Balões:** raio `calc(var(--radius) + 2px)` com o canto pequeno (4 px) do lado de quem enviou; enviado em `bg-primary text-primary-foreground`, recebido em `bg-card` com borda fina. Remetente e hora em 10 px; os ticks herdam a cor do balão (`opacity-70`), o lido fica em tom cheio. Nota interna centralizada, borda e fundo âmbar leves, sem tracejado nem sombra. Só mensagem que chega com a conversa aberta entra com fade/subida de 250 ms (nada com `prefers-reduced-motion`).
 - **Compositor:** um único campo com borda sobre o fundo do chat (sem barra superior nem divisória); a barra de ferramentas fica embaixo (anexo, voz, Nota interna como alternância, modelo, respostas rápidas, emoji, sugestão). "/" abre as respostas rápidas; Enter envia, Shift+Enter quebra linha. Enviar é o único botão preenchido.
 - **Painel:** seções separadas por linha fina de ponta a ponta, sem caixas. Títulos de seção pequenos em caixa alta e muted (`text-[10.5px] uppercase tracking-[0.07em]`), contagem em texto simples — exceção deliberada à regra geral de não usar caixa alta. Ordem: identidade (avatar ao lado do nome; sem ponto de presença, contato não tem disponibilidade), Situação (estado, prioridade, responsável, equipe, SLA com barra de progresso), Tarefas, Conversas anteriores (até 5: assunto ou categoria, data · estado · nota CSAT), Histórico (nº de conversas, satisfação média, cliente desde), depois Etiquetas, Campos, Empresas, Negócios, Agenda, Atividade, Memória, Notas e Privacidade. Ações rápidas são uma linha de texto com ícone (`size-3.5`). Notas do painel com filete âmbar à esquerda; etiquetas, notas e memória sem borda tracejada.
 - **Sugestão pendente** (chegou com texto já na caixa): uma linha com borda tracejada em tom de `primary` acima do compositor, "Sugestão: “…”" truncado, Usar (contorno), Adicionar ao final e descartar. Sem ícone decorativo de IA.
+
+### Lista de conversas
+
+Substitui, para a lista, as regras de "situação como pílula" e "sem caixa alta" acima (protótipo Atendimento aprovado).
+
+- **Faixas:** Minhas e Todas agrupam as linhas em faixas fixas no topo ao rolar, cada uma com ponto + rótulo curto em caixa alta (`text-[10.5px] tracking-wider`) e a contagem: Agora (SLA estourado ou vencendo em até 15 min), Esperando por você (pendente, sem responsável ou nunca respondida), Em andamento, Aguardando cliente (nossa mensagem foi a última). Dentro da faixa, o prazo mais próximo primeiro, depois a mais recente. Fila mantém a ordem de espera; Encerradas e Arquivadas não têm faixas. A regra fica em `src/lib/inbox/bands.ts`.
+- **Linha:** avatar, nome, prévia e hora; uma única linha de metadados (pílula de SLA, situação, categoria em pílula neutra, empresa, etiquetas). O contador de não lidas continua sendo o único elemento preenchido. Selecionada: `bg-primary/10` com acento de 3 px em `bg-primary` à esquerda.
+- **SLA:** pílula com o tempo restante em palavras ("SLA 12min", "estourado há 5min") e uma linha fina na base da linha com a fração restante: verde, âmbar abaixo de 40%, vermelho abaixo de 15% ou vencido. O tempo anda num relógio único da lista (1 s, pausado com a aba oculta); só a pílula e a linha re-renderizam.
+- **Ações rápidas:** ao passar o mouse ou com o foco dentro da linha, uma barra pequena com Resolver (Reabrir nas encerradas) e Assumir, só ícones `size-3.5` com `aria-label`. Só ações que já existem no cabeçalho; sem Adiar. Leitores não veem a barra.
+- **Densidade:** confortável ou compacta (sem a linha de metadados, padding menor), salva por usuário neste aparelho. Abas e filtros ativos em pílula `bg-primary/15 text-primary`.

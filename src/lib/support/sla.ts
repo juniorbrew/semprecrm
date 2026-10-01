@@ -65,6 +65,32 @@ export function slaLevel(target: SlaTarget, now: number): SlaLevel {
   return 'ok'
 }
 
+/**
+ * Share of the target still left (0–1), for the list's progress line. The
+ * span comes from the 80% warning stamp (warn = start + 0.8 × span); null
+ * when there is no warning stamp (targets under 2 min).
+ * ponytail: with business hours the span is approximate (warn/due skip the
+ * closed hours); store the start stamp if the line must be exact.
+ */
+export function slaFractionLeft(target: SlaTarget, now: number): number | null {
+  if (target.warnAt === null) return null
+  const span = (target.dueAt - target.warnAt) / 0.2
+  if (span <= 0) return null
+  return Math.min(1, Math.max(0, (target.dueAt - now) / span))
+}
+
+export type SlaTone = 'ok' | 'warn' | 'critical'
+
+/** List pill / line colour: green, amber under 40% left, red under 15% or past due. */
+export function slaTone(target: SlaTarget, now: number): SlaTone {
+  if (now >= target.dueAt) return 'critical'
+  const left = slaFractionLeft(target, now)
+  if (left === null) return slaLevel(target, now) === 'warning' ? 'warn' : 'ok'
+  if (left < 0.15) return 'critical'
+  if (left < 0.4) return 'warn'
+  return 'ok'
+}
+
 /** Mirrors the SQL filter "SLA estourado": a pending target already past. */
 export function isSlaBreached(c: SlaFields, now: number): boolean {
   if (c.status === 'closed') return false
