@@ -36,6 +36,7 @@ import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { triageDueOnInbound } from '@/lib/support/ai-triage'
 import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
+import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
@@ -169,6 +170,16 @@ export async function findOrCreateContact(
     return { contact: existingContact, wasCreated: false }
   }
 
+  // A number that opted out before being anonymised comes back opted out
+  // (suppression list, migration 077). Fail-open on a lookup error: the
+  // inbound message must never be dropped for it.
+  let suppressed = false
+  try {
+    suppressed = (await findSuppressedPhones(db, accountId, [phone])).size > 0
+  } catch (err) {
+    console.error('[inbound] suppression lookup failed:', err instanceof Error ? err.message : err)
+  }
+
   const { data: newContact, error: createError } = await db
     .from('contacts')
     .insert({
@@ -176,6 +187,7 @@ export async function findOrCreateContact(
       user_id: ownerUserId,
       phone,
       name: name || phone,
+      ...(suppressed ? { opted_out_at: new Date().toISOString() } : {}),
     })
     .select()
     .single()
@@ -188,7 +200,8 @@ export async function findOrCreateContact(
       const raced = await findExistingContact(db, accountId, phone)
       if (raced) return { contact: raced, wasCreated: false }
     }
-    console.error('[inbound] error creating contact:', createError)
+    // Code only: the error details echo the phone (LGPD log hygiene).
+    console.error('[inbound] error creating contact:', createError.code ?? 'unknown')
     return null
   }
 
@@ -989,7 +1002,10 @@ export async function ingestInboundMessage(
     newConversation && !autoAssignedTo
       ? await assignPreviousAgentIfMember(db, accountId, conversation, conversationOutcome.previous)
       : null
-  const outOfHoursReply = optedOut
+  // Opted out ("PARAR", now or before) or anonymised: no bot / automatic
+  // message goes to this contact — not the out-of-hours notice, not flows.
+  const contactBlocked = optedOut || !!contact.opted_out_at || !!contact.anonymized_at
+  const outOfHoursReply = contactBlocked
     ? undefined
     : await replyOutOfHoursIfNeeded(
         db,
@@ -1021,25 +1037,27 @@ export async function ingestInboundMessage(
   // still fire. The runner never throws.
   // A shared contact card is third-party data: automations / flows only see a placeholder.
   const inboundText = plainMessageText(contentText)
-  const flowResult = await dispatchInboundToFlows({
-    accountId,
-    userId: ownerUserId,
-    contactId: contact.id,
-    conversationId: conversation.id,
-    message: interactiveReplyId
-      ? {
-          kind: 'interactive_reply',
-          reply_id: interactiveReplyId,
-          reply_title: inboundText,
-          meta_message_id: input.messageId,
-        }
-      : {
-          kind: 'text',
-          text: inboundText,
-          meta_message_id: input.messageId,
-        },
-    isFirstInboundMessage,
-  })
+  const flowResult: { consumed: boolean } = contactBlocked
+    ? { consumed: false }
+    : await dispatchInboundToFlows({
+        accountId,
+        userId: ownerUserId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        message: interactiveReplyId
+          ? {
+              kind: 'interactive_reply',
+              reply_id: interactiveReplyId,
+              reply_title: inboundText,
+              meta_message_id: input.messageId,
+            }
+          : {
+              kind: 'text',
+              text: inboundText,
+              meta_message_id: input.messageId,
+            },
+        isFirstInboundMessage,
+      })
 
   const automationTriggers: (
     | 'new_contact_created'

@@ -5,7 +5,7 @@ import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { scanInactiveConversations } from '@/lib/automations/inactivity'
 import { drainAutomationEvents, pruneAutomationEvents } from '@/lib/automations/event-queue'
-import { AUDIT_RETENTION_DAYS } from '@/lib/audit'
+import { runRetentionPurge } from '@/lib/retention'
 import {
   notifyCalendarReminders,
   notifyNewLeads,
@@ -13,12 +13,6 @@ import {
   notifyTasksDueSoon,
 } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
-
-/** Retention for the lead-capture webhook log (spec §2). */
-const LEAD_SOURCE_EVENTS_RETENTION_DAYS = 90
-
-/** Matches "relation does not exist" from PostgREST / Postgres. */
-const RELATION_MISSING_RE = /42P01|PGRST205|does not exist|schema cache/i
 
 /**
  * Drain due `automation_pending_executions` rows, then run the
@@ -102,48 +96,14 @@ export async function GET(request: Request) {
   // wait step that just resumed is not immediately re-nudged.
   const inactivity = await scanInactiveConversations(admin, new Date())
 
-  // Housekeeping: lead_source_events older than 90 days (spec §2). The
-  // table comes with migration 029; a schema without it just skips.
-  let leadEventsPurged: number | null = null
+  // Housekeeping (LGPD retention, lib/retention.ts): ended flow runs,
+  // finished AI / survey jobs, expired invitations, old hand-over quotes,
+  // lead-capture log and audit trail. Bounded per tick; never fails it.
+  let retention: Record<string, number | null> = {}
   try {
-    const cutoff = new Date(
-      Date.now() - LEAD_SOURCE_EVENTS_RETENTION_DAYS * 86_400_000,
-    ).toISOString()
-    const { error: purgeErr, count } = await admin
-      .from('lead_source_events')
-      .delete({ count: 'exact' })
-      .lt('created_at', cutoff)
-    if (purgeErr) {
-      // 42P01 = undefined_table (PostgREST reports PGRST205 when the
-      // relation is missing from its schema cache). Anything else is
-      // logged; never fails the tick.
-      if (!/42P01|PGRST205|does not exist|schema cache/i.test(`${purgeErr.code} ${purgeErr.message}`)) {
-        console.error('[cron] lead_source_events purge failed:', purgeErr.message)
-      }
-    } else {
-      leadEventsPurged = count ?? 0
-    }
+    retention = await runRetentionPurge(admin, new Date())
   } catch (err) {
-    console.error('[cron] lead_source_events purge threw:', err)
-  }
-
-  // Housekeeping: audit_log older than 365 days (round 2 spec §3).
-  let auditPurged: number | null = null
-  try {
-    const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 86_400_000).toISOString()
-    const { error: purgeErr, count } = await admin
-      .from('audit_log')
-      .delete({ count: 'exact' })
-      .lt('created_at', cutoff)
-    if (purgeErr) {
-      if (!RELATION_MISSING_RE.test(`${purgeErr.code} ${purgeErr.message}`)) {
-        console.error('[cron] audit_log purge failed:', purgeErr.message)
-      }
-    } else {
-      auditPurged = count ?? 0
-    }
-  } catch (err) {
-    console.error('[cron] audit_log purge threw:', err)
+    console.error('[cron] retention purge threw:', err)
   }
 
   // Browser push (round 2 spec §5c): tasks due within 15 minutes, once
@@ -194,7 +154,8 @@ export async function GET(request: Request) {
       skipped: inactivity.skipped,
       errors: inactivity.errors.length,
     },
-    lead_events_purged: leadEventsPurged,
-    audit_purged: auditPurged,
+    lead_events_purged: retention.lead_source_events ?? null,
+    audit_purged: retention.audit_log ?? null,
+    retention,
   })
 }

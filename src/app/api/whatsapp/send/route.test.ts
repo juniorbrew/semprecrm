@@ -493,3 +493,36 @@ describe('POST /api/whatsapp/send — resolved conversation (migration 060)', ()
     expect(h.state.inserted).toHaveLength(1)
   })
 })
+
+// LGPD: anonymised contacts receive nothing; opted-out ones get no template.
+describe('POST /api/whatsapp/send — opt-out / anonymised contacts', () => {
+  beforeEach(() => {
+    h.state.conversation.channel = 'official'
+    h.meta.sendTextMessage.mockClear()
+    h.meta.sendTemplateMessage.mockClear()
+  })
+
+  it('409 for an anonymised contact, nothing sent', async () => {
+    h.state.conversation.contact = { id: 'c-1', phone: 'anon-deadbeef', anonymized_at: '2026-09-01T00:00:00Z' }
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ code: 'contact_anonymized' })
+    expect(h.meta.sendTextMessage).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
+  })
+
+  it('409 for a template to an opted-out contact', async () => {
+    h.state.conversation.contact = { id: 'c-1', phone: '+55 11 99999-0000', opted_out_at: '2026-09-01T00:00:00Z' }
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'template', template_name: 'promo' }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ code: 'contact_opted_out' })
+    expect(h.meta.sendTemplateMessage).not.toHaveBeenCalled()
+  })
+
+  it('an agent can still answer an opted-out contact with free text', async () => {
+    h.state.conversation.contact = { id: 'c-1', phone: '+55 11 99999-0000', opted_out_at: '2026-09-01T00:00:00Z' }
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'Tudo certo, removemos você da lista.' }))
+    expect(res.status).toBe(200)
+    expect(h.meta.sendTextMessage).toHaveBeenCalledTimes(1)
+  })
+})

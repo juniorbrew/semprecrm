@@ -4,9 +4,17 @@
 // Body: `{ confirm: "<contact name>" }` — must match the contact's
 // current name exactly (trimmed; the phone when the contact has no
 // name), the same guard the UI dialog enforces. Irreversible; see
-// src/lib/lgpd/anonymize.ts for what is scrubbed. Audited as
-// `contact.anonymized` with the pre-anonymisation name so the trail
-// still says who the record used to be.
+// src/lib/lgpd/anonymize.ts for what is scrubbed.
+//
+// Resumable: a contact that was marked anonymised but whose scrub did
+// not finish (anonymization_completed_at NULL) can be re-run — its name
+// is then "Contato anonimizado", which is what `confirm` must say.
+// Responses: 200 `{ ok: true, result }` when everything was scrubbed;
+// 207 `{ ok: false, code: 'anonymization_incomplete', result }` when a
+// step failed (re-run to finish) or the audit row could not be written.
+//
+// Audited as `contact.anonymized` WITHOUT the former name / phone (the
+// scrub also drops them from the contact's earlier audit rows).
 //
 // The contact is looked up with the caller's RLS-scoped client (so a
 // contact outside the account is a 404), then the scrub itself runs
@@ -16,7 +24,8 @@
 
 import { NextResponse } from 'next/server'
 
-import { AUDIT_ACTIONS, logAudit } from '@/lib/audit'
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { auditStrict } from '@/lib/audit-server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { AnonymizeError, anonymizeContact } from '@/lib/lgpd/anonymize'
@@ -43,7 +52,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const { data: contact, error: readErr } = await ctx.supabase
       .from('contacts')
-      .select('id, name, phone, anonymized_at')
+      .select('id, name, phone, anonymized_at, anonymization_completed_at')
       .eq('id', id)
       .eq('account_id', ctx.accountId)
       .maybeSingle()
@@ -52,8 +61,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Failed to load contact' }, { status: 500 })
     }
     if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
-    const row = contact as { name: string | null; phone: string; anonymized_at: string | null }
-    if (row.anonymized_at) {
+    const row = contact as {
+      name: string | null
+      phone: string
+      anonymized_at: string | null
+      anonymization_completed_at: string | null
+    }
+    if (row.anonymized_at && row.anonymization_completed_at) {
       return NextResponse.json(
         { error: 'Contact is already anonymized', code: 'already_anonymized' },
         { status: 409 },
@@ -75,31 +89,52 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     } catch (err) {
       if (err instanceof AnonymizeError) {
         const status =
-          err.code === 'not_found' ? 404 : err.code === 'already_anonymized' ? 409 : 500
+          err.code === 'not_found' ? 404 : err.code === 'already_anonymized' || err.code === 'in_progress' ? 409 : 500
         return NextResponse.json({ error: err.message, code: err.code }, { status })
       }
       console.error('[POST /api/contacts/:id/anonymize] failed:', err)
       return NextResponse.json({ error: 'Failed to anonymize contact' }, { status: 500 })
     }
 
-    await logAudit(admin, {
+    const audited = await auditStrict({
       accountId: ctx.accountId,
       actorUserId: ctx.userId,
       action: AUDIT_ACTIONS.CONTACT_ANONYMIZED,
       entityType: 'contact',
       entityId: id,
       metadata: {
-        contact_name: row.name ?? null,
+        resumed: result.resumed,
+        completed: result.completed,
         conversations: result.conversations,
         messages_scrubbed: result.messagesScrubbed,
         media_deleted: result.mediaDeleted,
         notes_deleted: result.notesDeleted,
         custom_values_deleted: result.customValuesDeleted,
         ai_memories_deleted: result.memoriesDeleted,
-        warnings: result.warnings,
+        warnings: result.warnings.slice(0, 20),
       },
-    })
+    }).then(
+      () => true,
+      () => false,
+    )
+    if (!audited) {
+      console.error('[POST /api/contacts/:id/anonymize] AUDIT WRITE FAILED for contact', id)
+      result.warnings.push('audit_log: write failed')
+    }
 
+    if (!result.completed || !audited) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: result.completed ? 'audit_failed' : 'anonymization_incomplete',
+          error: result.completed
+            ? 'Os dados foram removidos, mas o registro na auditoria falhou. Avise o suporte.'
+            : 'A anonimização não foi concluída. O contato já está bloqueado; tente novamente para terminar a remoção dos dados.',
+          result,
+        },
+        { status: 207 },
+      )
+    }
     return NextResponse.json({ ok: true, result })
   } catch (err) {
     return toErrorResponse(err)

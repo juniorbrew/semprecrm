@@ -1,153 +1,102 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ANONYMIZED_DEAL_TITLE,
+  ANONYMIZED_EVENT_TITLE,
   ANONYMIZED_NAME,
+  ANONYMIZED_TASK_TITLE,
   AnonymizeError,
+  DeleteContactError,
   REMOVED_CONTENT,
+  SCRUBBED_TABLES,
   anonymizeContact,
+  deleteContact,
   extractChatMediaPath,
   generateAnonymousPhone,
 } from './anonymize'
+import { suppressionHash } from './suppression'
+import { makeFakeDb } from './fake-db.test-helper'
 
-// ------------------------------------------------------------
-// A tiny in-memory Supabase double: records every call as
-// { table, op, payload, filters } and answers from `state`.
-// ------------------------------------------------------------
-
-interface Call {
-  table: string
-  op: 'select' | 'update' | 'delete'
-  payload?: unknown
-  filters: [string, string, unknown][]
-}
-
-function makeDb(state: {
-  contact?: Record<string, unknown> | null
-  conversations?: { id: string }[]
-  media?: { media_url: string | null }[]
-  messagesCount?: number
-  notesCount?: number
-  customCount?: number
-  memoriesCount?: number
-  assignedEvents?: { id: string; payload: Record<string, unknown> }[]
-  updateErrors?: ({ code?: string; message: string } | null)[]
-}) {
-  const calls: Call[] = []
-  const removed: string[][] = []
-  const removedFrom: string[] = []
-  const updateErrors = [...(state.updateErrors ?? [])]
-
-  function builder(table: string) {
-    const call: Call = { table, op: 'select', filters: [] }
-    calls.push(call)
-    let selecting = false
-    let terminal: 'maybeSingle' | null = null
-    const b: Record<string, unknown> = {}
-    const chain = () => b
-    b.select = () => {
-      selecting = true
-      return b
-    }
-    b.update = (payload: unknown) => {
-      call.op = 'update'
-      call.payload = payload
-      return b
-    }
-    b.delete = () => {
-      call.op = 'delete'
-      return b
-    }
-    for (const f of ['eq', 'in', 'not']) {
-      b[f] = (col: string, ...rest: unknown[]) => {
-        call.filters.push([f, col, rest])
-        return b
-      }
-    }
-    b.maybeSingle = () => {
-      terminal = 'maybeSingle'
-      return Promise.resolve(resolve())
-    }
-    b.then = (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
-      Promise.resolve(resolve()).then(onF, onR)
-    b.order = chain
-    b.limit = chain
-
-    function resolve(): { data: unknown; error: unknown; count?: number } {
-      if (table === 'contacts') {
-        if (call.op === 'select' && terminal === 'maybeSingle') {
-          return { data: state.contact ?? null, error: null }
-        }
-        if (call.op === 'update') {
-          const err = updateErrors.length ? updateErrors.shift() : null
-          return { data: null, error: err ?? null }
-        }
-      }
-      if (table === 'conversations') {
-        if (call.op === 'select') return { data: state.conversations ?? [], error: null }
-        return { data: null, error: null }
-      }
-      if (table === 'messages') {
-        if (call.op === 'select') return { data: state.media ?? [], error: null }
-        if (call.op === 'update') {
-          const n = state.messagesCount ?? 0
-          return { data: Array.from({ length: n }, (_, i) => ({ id: `m${i}` })), error: null }
-        }
-      }
-      if (table === 'conversation_events' && call.op === 'select') {
-        return { data: state.assignedEvents ?? [], error: null }
-      }
-      if (table === 'contact_notes') {
-        const n = state.notesCount ?? 0
-        return { data: Array.from({ length: n }, (_, i) => ({ id: `n${i}` })), error: null }
-      }
-      if (table === 'ai_contact_memories') {
-        const n = state.memoriesCount ?? 0
-        return { data: Array.from({ length: n }, (_, i) => ({ id: `mem${i}` })), error: null }
-      }
-      if (table === 'contact_custom_values') {
-        const n = state.customCount ?? 0
-        return { data: Array.from({ length: n }, (_, i) => ({ id: `c${i}` })), error: null }
-      }
-      void selecting
-      return { data: null, error: null }
-    }
-    return b
-  }
-
-  const db = {
-    from: (table: string) => builder(table),
-    storage: {
-      from: (bucket: string) => ({
-        remove: async (paths: string[]) => {
-          removed.push(paths)
-          removedFrom.push(bucket)
-          return { data: paths.map((name) => ({ name })), error: null }
-        },
-      }),
-    },
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { db: db as any, calls, removed, removedFrom }
-}
+const SECRET = 'a'.repeat(64)
+const ACC = 'acc'
+const C1 = 'c1'
+const now = () => new Date('2026-09-13T12:00:00.000Z')
+const NOW = '2026-09-13T12:00:00.000Z'
 
 const PUBLIC =
-  'http://127.0.0.1:56021/storage/v1/object/public/chat-media/account-abc/1700000000-foto.jpg'
+  'http://127.0.0.1:56021/storage/v1/object/public/chat-media/account-acc/1700000000-foto.jpg'
+
+type Row = Record<string, unknown>
+
+/** One row in every table the scrub covers, all about contact c1. */
+function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Row[]> {
+  return {
+    contacts: [
+      {
+        id: C1,
+        account_id: ACC,
+        name: 'Ana Souza',
+        phone: '+55 11 91234-5678',
+        email: 'ana@example.com',
+        company: 'ACME',
+        avatar_url: 'x',
+        opted_out_at: null,
+        anonymized_at: null,
+        anonymization_completed_at: null,
+      },
+    ],
+    conversations: [
+      { id: 'conv1', account_id: ACC, contact_id: C1, last_message_text: 'oi, sou a Ana', subject: 'Ana quer boleto', sentiment: 'negative' },
+    ],
+    messages: [
+      { id: 'm1', conversation_id: 'conv1', content_text: 'meu CPF é 123', media_url: PUBLIC, error_details: null },
+      { id: 'm2', conversation_id: 'conv1', content_text: 'oi', media_url: 'https://lookaside.fbsbx.com/x', error_details: '+5511912345678 invalid' },
+    ],
+    conversation_events: [
+      { id: 'e1', conversation_id: 'conv1', event_type: 'assigned', payload: { assignee_user_id: 'u2', assignee_name: 'Bruno', reason: 'cliente Ana quer boleto' } },
+      { id: 'e2', conversation_id: 'conv1', event_type: 'assigned', payload: { assignee_user_id: 'u2' } },
+      { id: 'e3', conversation_id: 'conv1', event_type: 'ai_handoff', payload: { reason: 'Ana irritada' } },
+      { id: 'e4', conversation_id: 'conv1', event_type: 'deal_stage_changed', payload: { deal_title: 'Ana - 11 9123' } },
+    ],
+    contact_notes: [{ id: 'n1', account_id: ACC, contact_id: C1, note_text: 'Ana' }],
+    contact_custom_values: [{ id: 'cv1', contact_id: C1, value: 'CPF' }],
+    contact_companies: [{ contact_id: C1, company_id: 'co1', account_id: ACC }],
+    ai_contact_memories: [{ id: 'mem1', account_id: ACC, contact_id: C1, fact: 'tem 2 filhos' }],
+    ai_handoffs: [{ id: 'h1', account_id: ACC, contact_id: C1, last_customer_words: 'socorro' }],
+    ai_reply_jobs: [{ id: 'j1', account_id: ACC, contact_id: C1 }],
+    csat_responses: [{ id: 'cs1', account_id: ACC, contact_id: C1, score: 5, comment: 'Ana adorou' }],
+    automation_event_queue: [{ id: 1, account_id: ACC, contact_id: C1, context: { message_text: 'oi' } }],
+    deals: [{ id: 'd1', account_id: ACC, contact_id: C1, conversation_id: 'conv1', title: 'Ana Souza - 11912345678', notes: 'liga às 18h', lost_note: 'caro' }],
+    tasks: [
+      { id: 't1', account_id: ACC, contact_id: C1, conversation_id: null, title: 'Ligar para Ana', description: 'cpf 123' },
+      { id: 't2', account_id: ACC, contact_id: null, conversation_id: 'conv1', title: 'Lembrar Ana', description: null },
+    ],
+    task_comments: [{ id: 'tc1', task_id: 't1', body: 'Ana pediu desconto' }],
+    calendar_events: [{ id: 'ev1', account_id: ACC, contact_id: C1, conversation_id: null, title: 'Visita Ana', description: 'Rua X', location: 'Rua X, 10' }],
+    flow_runs: [{ id: 'fr1', account_id: ACC, contact_id: C1, vars: { cpf: '123' } }],
+    flow_run_events: [{ id: 'fre1', flow_run_id: 'fr1', payload: { text: '123' } }],
+    lead_source_events: [{ id: 'l1', account_id: ACC, contact_id: C1, payload: { name: 'Ana' } }],
+    broadcast_recipients: [{ id: 'br1', contact_id: C1, template_params: ['Ana'] }],
+    automation_pending_executions: [{ id: 'ape1', account_id: ACC, contact_id: C1, status: 'pending', context: { message_text: 'oi' } }],
+    automation_logs: [{ id: 'al1', account_id: ACC, contact_id: C1, error_message: 'falha para Ana' }],
+    audit_log: [{ id: 'au1', account_id: ACC, entity_type: 'contact', entity_id: C1, metadata: { contact_name: 'Ana', phone: '+55', count: 1 } }],
+    ...overrides,
+  }
+}
 
 describe('extractChatMediaPath', () => {
   it('extracts the object path from a public URL', () => {
-    expect(extractChatMediaPath(PUBLIC)).toBe('account-abc/1700000000-foto.jpg')
+    expect(extractChatMediaPath(PUBLIC)).toBe('account-acc/1700000000-foto.jpg')
   })
   it('strips query strings and decodes percent-escapes', () => {
     expect(
-      extractChatMediaPath(
-        'https://x.supabase.co/storage/v1/object/sign/chat-media/account-1/a%20b.pdf?token=zzz',
-      ),
+      extractChatMediaPath('https://x.supabase.co/storage/v1/object/sign/chat-media/account-1/a%20b.pdf?token=zzz'),
     ).toBe('account-1/a b.pdf')
   })
   it('extracts the path from an origin-relative URL (same-origin proxy)', () => {
-    expect(
-      extractChatMediaPath('/supabase/storage/v1/object/public/chat-media/account-abc/1-foto.jpg'),
-    ).toBe('account-abc/1-foto.jpg')
+    expect(extractChatMediaPath('/supabase/storage/v1/object/public/chat-media/account-abc/1-foto.jpg')).toBe(
+      'account-abc/1-foto.jpg',
+    )
   })
   it('ignores foreign URLs and other buckets', () => {
     expect(extractChatMediaPath('https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1')).toBeNull()
@@ -158,185 +107,250 @@ describe('extractChatMediaPath', () => {
 })
 
 describe('generateAnonymousPhone', () => {
-  it('uses the anon- prefix with 8 hex chars by default', () => {
-    expect(generateAnonymousPhone()).toMatch(/^anon-[0-9a-f]{8}$/)
+  it('is anon- plus 8 letters — no digits, so phone_normalized is empty', () => {
+    expect(generateAnonymousPhone()).toMatch(/^anon-[a-p]{8}$/)
   })
-  it('accepts an injected generator', () => {
-    expect(generateAnonymousPhone(() => 'deadbeef')).toBe('anon-deadbeef')
+  it('maps an injected hex generator onto a–p', () => {
+    expect(generateAnonymousPhone(() => '0123abcf')).toBe('anon-abcdklmp')
+    expect(generateAnonymousPhone(() => 'deadbeef').replace(/\D/g, '')).toBe('')
   })
 })
 
 describe('anonymizeContact', () => {
-  const now = () => new Date('2026-09-13T12:00:00.000Z')
-
   it('throws not_found when the contact is not in the account', async () => {
-    const { db } = makeDb({ contact: null })
-    await expect(anonymizeContact(db, 'acc', 'c1', { now })).rejects.toMatchObject({
-      code: 'not_found',
-    })
+    const { db } = makeFakeDb(seed({ contacts: [] }))
+    await expect(anonymizeContact(db, ACC, C1, { now })).rejects.toMatchObject({ code: 'not_found' })
   })
 
-  it('refuses to anonymise twice', async () => {
-    const { db } = makeDb({ contact: { id: 'c1', account_id: 'acc', anonymized_at: '2026-01-01' } })
-    await expect(anonymizeContact(db, 'acc', 'c1', { now })).rejects.toBeInstanceOf(AnonymizeError)
+  it('refuses a contact whose anonymisation completed', async () => {
+    const tables = seed()
+    Object.assign(tables.contacts[0], { anonymized_at: '2026-01-01', anonymization_completed_at: '2026-01-01' })
+    const { db } = makeFakeDb(tables)
+    await expect(anonymizeContact(db, ACC, C1, { now })).rejects.toBeInstanceOf(AnonymizeError)
   })
 
-  it('scrubs messages, deletes media/notes/custom values and rewrites the contact', async () => {
-    const { db, calls, removed, removedFrom } = makeDb({
-      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
-      conversations: [{ id: 'conv1' }, { id: 'conv2' }],
-      media: [
-        { media_url: PUBLIC },
-        { media_url: PUBLIC }, // duplicate → removed once
-        { media_url: 'https://lookaside.fbsbx.com/x' }, // foreign → ignored
-      ],
-      messagesCount: 5,
-      notesCount: 2,
-      customCount: 3,
-      memoriesCount: 4,
-    })
+  it('marks the contact FIRST, then scrubs every covered table and completes', async () => {
+    const { db, tables, writes, removed } = makeFakeDb(seed())
+    const res = await anonymizeContact(db, ACC, C1, { now, randomHex: () => 'deadbeef', secret: SECRET })
 
-    const res = await anonymizeContact(db, 'acc', 'c1', { now, randomHex: () => 'deadbeef' })
-
-    expect(res).toMatchObject({
-      contactId: 'c1',
-      anonymizedAt: '2026-09-13T12:00:00.000Z',
-      conversations: 2,
-      messagesScrubbed: 5,
-      mediaDeleted: 1,
-      notesDeleted: 2,
-      customValuesDeleted: 3,
-      memoriesDeleted: 4,
-      warnings: [],
-    })
-    // Chat media, then the stored WhatsApp profile photo (migration 055).
-    expect(removed).toEqual([['account-abc/1700000000-foto.jpg'], ['account-acc/c1']])
-    expect(removedFrom).toEqual(['chat-media', 'contact-avatars'])
-
-    const msgUpdate = calls.find((c) => c.table === 'messages' && c.op === 'update')!
-    expect(msgUpdate.payload).toEqual({ content_text: REMOVED_CONTENT, media_url: null })
-    expect(msgUpdate.filters).toContainEqual(['in', 'conversation_id', [['conv1', 'conv2']]])
-
-    const convUpdate = calls.find((c) => c.table === 'conversations' && c.op === 'update')!
-    expect(convUpdate.payload).toEqual({ last_message_text: REMOVED_CONTENT })
-    // Support triage (071): the free-text subject and the sentiment are cleared.
-    const triageUpdate = calls.find(
-      (c) => c.table === 'conversations' && c.op === 'update' && c !== convUpdate,
-    )!
-    expect(triageUpdate.payload).toEqual({ subject: null, sentiment: null })
-    expect(triageUpdate.filters).toContainEqual(['in', 'id', [['conv1', 'conv2']]])
-
-    expect(calls.some((c) => c.table === 'contact_notes' && c.op === 'delete')).toBe(true)
-    expect(calls.some((c) => c.table === 'contact_custom_values' && c.op === 'delete')).toBe(true)
-    // AI contact memory (migration 064) is personal data too.
-    const memDelete = calls.find((c) => c.table === 'ai_contact_memories')!
-    expect(memDelete.op).toBe('delete')
-    expect(memDelete.filters).toContainEqual(['eq', 'contact_id', ['c1']])
-    expect(memDelete.filters).toContainEqual(['eq', 'account_id', ['acc']])
-    // Automatic-reply hand-overs / jobs (migration 066) too.
-    for (const t of ['ai_handoffs', 'ai_reply_jobs']) {
-      expect(calls.find((c) => c.table === t)).toMatchObject({ op: 'delete' })
-    }
-    expect(calls.find((c) => c.table === 'conversation_events')).toMatchObject({ op: 'update' })
-
-    const contactUpdate = calls.find((c) => c.table === 'contacts' && c.op === 'update')!
-    expect(contactUpdate.payload).toEqual({
+    expect(res).toMatchObject({ contactId: C1, completed: true, resumed: false, warnings: [], conversations: 1, messagesScrubbed: 2, mediaDeleted: 1 })
+    // The very first write is the contact marker.
+    expect(writes[0]).toMatchObject({ table: 'contacts', op: 'update' })
+    expect(tables.contacts[0]).toMatchObject({
       name: ANONYMIZED_NAME,
-      phone: 'anon-deadbeef',
+      phone: 'anon-noknloop',
       email: null,
       company: null,
       avatar_url: null,
-      opted_out_at: '2026-09-13T12:00:00.000Z',
-      anonymized_at: '2026-09-13T12:00:00.000Z',
-      updated_at: '2026-09-13T12:00:00.000Z',
+      opted_out_at: NOW,
+      anonymized_at: NOW,
+      anonymization_completed_at: NOW,
     })
-    expect(contactUpdate.filters).toContainEqual(['eq', 'account_id', ['acc']])
-
-    // Satisfaction survey (074): only the free-text comment goes; the score stays.
-    const csatUpdate = calls.find((c) => c.table === 'csat_responses')!
-    expect(csatUpdate).toMatchObject({ op: 'update', payload: { comment: null } })
-    expect(csatUpdate.filters).toContainEqual(['eq', 'contact_id', ['c1']])
-    expect(csatUpdate.filters).toContainEqual(['eq', 'account_id', ['acc']])
-
-    // Contact row is rewritten last.
-    const lastCall = calls[calls.length - 1]
-    expect(lastCall.table).toBe('contacts')
-    expect(lastCall.op).toBe('update')
-
-    // Deals / tasks are never touched.
-    expect(calls.some((c) => c.table === 'deals' || c.table === 'tasks')).toBe(false)
+    // Chat media first, then the stored WhatsApp profile photo (migration 055).
+    expect(removed).toEqual([
+      { bucket: 'chat-media', paths: ['account-acc/1700000000-foto.jpg'] },
+      { bucket: 'contact-avatars', paths: ['account-acc/c1'] },
+    ])
+    expect(tables.messages.map((m) => [m.content_text, m.media_url, m.error_details])).toEqual([
+      [REMOVED_CONTENT, null, null],
+      [REMOVED_CONTENT, null, null],
+    ])
+    expect(tables.conversations[0]).toMatchObject({ last_message_text: REMOVED_CONTENT, subject: null, sentiment: null })
+    const ev = Object.fromEntries(tables.conversation_events.map((e) => [e.id, e.payload]))
+    expect(ev).toEqual({
+      e1: { assignee_user_id: 'u2', assignee_name: 'Bruno' },
+      e2: { assignee_user_id: 'u2' },
+      e3: {},
+      e4: {},
+    })
+    for (const tbl of ['contact_notes', 'contact_custom_values', 'contact_companies', 'ai_contact_memories', 'ai_handoffs', 'ai_reply_jobs']) {
+      expect(tables[tbl], tbl).toHaveLength(0)
+    }
+    expect(tables.csat_responses[0]).toMatchObject({ score: 5, comment: null })
+    expect(tables.automation_event_queue[0].context).toEqual({})
+    expect(tables.deals[0]).toMatchObject({ title: ANONYMIZED_DEAL_TITLE, notes: null, lost_note: null, contact_id: C1 })
+    expect(tables.tasks.map((x) => [x.title, x.description])).toEqual([
+      [ANONYMIZED_TASK_TITLE, null],
+      [ANONYMIZED_TASK_TITLE, null],
+    ])
+    expect(tables.task_comments[0].body).toBe(REMOVED_CONTENT)
+    expect(tables.calendar_events[0]).toMatchObject({ title: ANONYMIZED_EVENT_TITLE, description: null, location: null })
+    expect(tables.flow_runs[0].vars).toEqual({})
+    expect(tables.flow_run_events[0].payload).toEqual({})
+    expect(tables.lead_source_events[0].payload).toEqual({})
+    expect(tables.broadcast_recipients[0].template_params).toBeNull()
+    expect(tables.automation_pending_executions[0]).toMatchObject({ status: 'cancelled', context: {} })
+    expect(tables.automation_logs[0].error_message).toBeNull()
+    expect(tables.audit_log[0].metadata).toEqual({ count: 1 })
+    // Not opted out before → nothing on the suppression list.
+    expect(tables.contact_suppressions ?? []).toHaveLength(0)
   })
 
-  it('works for a contact without conversations', async () => {
-    const { db, removed } = makeDb({
-      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
-      conversations: [],
-    })
-    const res = await anonymizeContact(db, 'acc', 'c1', { now })
-    expect(res.conversations).toBe(0)
-    expect(res.messagesScrubbed).toBe(0)
-    // No chat media to remove — only the (possibly absent) profile photo.
-    expect(removed).toEqual([['account-acc/c1']])
+  it('covers every table in SCRUBBED_TABLES (coverage)', async () => {
+    const { db, writes } = makeFakeDb(seed())
+    await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    const touched = new Set(writes.filter((w) => w.rows > 0).map((w) => w.table))
+    for (const table of Object.keys(SCRUBBED_TABLES)) {
+      expect(touched.has(table), `${table} not scrubbed`).toBe(true)
+    }
   })
 
-  it('retries the phone on a unique violation and gives up on other errors', async () => {
-    let n = 0
-    const { db, calls } = makeDb({
-      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
-      updateErrors: [{ code: '23505', message: 'dup' }, null],
-    })
-    const res = await anonymizeContact(db, 'acc', 'c1', {
-      now,
-      randomHex: () => `0000000${n++}`,
-    })
-    expect(res.contactId).toBe('c1')
-    const updates = calls.filter((c) => c.table === 'contacts' && c.op === 'update')
-    expect(updates).toHaveLength(2)
+  it('pages through large histories: ≤200 ids per in(), never more than max_rows per read', async () => {
+    const conversations = Array.from({ length: 450 }, (_, i) => ({ id: `conv${String(i).padStart(4, '0')}`, account_id: ACC, contact_id: C1, last_message_text: 'x' }))
+    const messages = Array.from({ length: 2600 }, (_, i) => ({
+      id: `m${String(i).padStart(5, '0')}`,
+      conversation_id: conversations[i % 450].id,
+      content_text: `msg ${i}`,
+      media_url: i % 10 === 0 ? `${PUBLIC.replace('foto', `f${i}`)}` : null,
+    }))
+    const { db, tables, reads, removed } = makeFakeDb(seed({ conversations, messages }))
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(true)
+    expect(res.conversations).toBe(450)
+    expect(tables.messages.every((m) => m.content_text === REMOVED_CONTENT && m.media_url === null)).toBe(true)
+    expect(removed.filter((r) => r.bucket === 'chat-media').flatMap((r) => r.paths)).toHaveLength(260)
+    expect(Math.max(...reads.flatMap((r) => r.inSizes))).toBeLessThanOrEqual(200)
+  })
 
-    const failing = makeDb({
-      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
-      updateErrors: [{ code: '42501', message: 'denied' }],
+  it('keeps media_url when the object removal fails, reports it, and a re-run resumes', async () => {
+    let storageDown = true
+    const { db, tables } = makeFakeDb(seed(), {
+      failStorage: (bucket) => (storageDown && bucket === 'chat-media' ? { message: 'storage unavailable' } : null),
     })
-    await expect(anonymizeContact(failing.db, 'acc', 'c1', { now })).rejects.toMatchObject({
-      code: 'db_error',
+    const first = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(first.completed).toBe(false)
+    expect(first.warnings.join(' ')).toMatch(/chat-media remove/)
+    // Marked (no in-flight writer can re-populate it) but not completed.
+    expect(tables.contacts[0]).toMatchObject({ name: ANONYMIZED_NAME, anonymized_at: NOW, anonymization_completed_at: null })
+    expect(tables.messages[0]).toMatchObject({ content_text: REMOVED_CONTENT, media_url: PUBLIC })
+
+    storageDown = false
+    const second = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(second).toMatchObject({ completed: true, resumed: true, warnings: [] })
+    expect(tables.messages[0].media_url).toBeNull()
+    expect(tables.contacts[0].anonymization_completed_at).toBe(NOW)
+    await expect(anonymizeContact(db, ACC, C1, { now, secret: SECRET })).rejects.toMatchObject({ code: 'already_anonymized' })
+  })
+
+  it('a failing table leaves the anonymisation incomplete (not silently done)', async () => {
+    const { db, tables } = makeFakeDb(seed(), { fail: (table, op) => (table === 'deals' && op === 'update' ? { message: 'boom' } : null) })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(false)
+    expect(res.warnings).toEqual(['deals scrub: boom'])
+    expect(tables.contacts[0].anonymization_completed_at).toBeNull()
+    // Every other step still ran.
+    expect(tables.tasks[0].title).toBe(ANONYMIZED_TASK_TITLE)
+  })
+
+  it('keeps an opt-out across the anonymisation through the suppression list (hash only)', async () => {
+    const tables = seed()
+    tables.contacts[0].opted_out_at = '2026-01-01T00:00:00.000Z'
+    const { db } = makeFakeDb(tables)
+    await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(tables.contact_suppressions).toEqual([
+      { account_id: ACC, phone_hash: suppressionHash(ACC, '+55 11 91234-5678', SECRET) },
+    ])
+    expect(JSON.stringify(tables.contact_suppressions)).not.toMatch(/1234/)
+    // The original opt-out date is kept.
+    expect(tables.contacts[0].opted_out_at).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('does not mark the contact when the suppression cannot be written', async () => {
+    const tables = seed()
+    tables.contacts[0].opted_out_at = '2026-01-01T00:00:00.000Z'
+    const { db } = makeFakeDb(tables, { fail: (t) => (t === 'contact_suppressions' ? { message: 'down' } : null) })
+    await expect(anonymizeContact(db, ACC, C1, { now, secret: SECRET })).rejects.toMatchObject({ code: 'db_error' })
+    expect(tables.contacts[0].anonymized_at).toBeNull()
+  })
+
+  it('detects a concurrent anonymisation of the same contact (mark matched no row)', async () => {
+    const tables = seed()
+    const { db } = makeFakeDb(tables, {
+      fail: (t, op) => {
+        // Another request marks the contact between our read and our update.
+        if (t === 'contacts' && op === 'update' && !tables.contacts[0].anonymized_at) tables.contacts[0].anonymized_at = 'x'
+        return null
+      },
     })
+    await expect(anonymizeContact(db, ACC, C1, { now, secret: SECRET })).rejects.toMatchObject({ code: 'in_progress' })
+  })
+
+  it('never removes a chat-media object of another account — only drops the reference', async () => {
+    const foreign = PUBLIC.replace('account-acc/', 'account-other/')
+    const { db, tables, removed } = makeFakeDb(
+      seed({ messages: [{ id: 'm1', conversation_id: 'conv1', content_text: 'x', media_url: foreign }] }),
+    )
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(true)
+    expect(removed.filter((x) => x.bucket === 'chat-media')).toEqual([])
+    expect(tables.messages[0].media_url).toBeNull()
+  })
+
+  it('verifies before completing: data left behind by a racing writer gets another pass', async () => {
+    const tables = seed()
+    let injected = false
+    const { db } = makeFakeDb(tables, {
+      fail: (t, op) => {
+        // Right after the first scrub of tasks, a writer re-adds a named task.
+        if (t === 'tasks' && op === 'update' && !injected) {
+          injected = true
+          queueMicrotask(() => tables.tasks.push({ id: 't9', account_id: ACC, contact_id: C1, title: 'Ligar Ana' }))
+        }
+        return null
+      },
+    })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(true)
+    expect(tables.tasks.find((x) => x.id === 't9')?.title).toBe(ANONYMIZED_TASK_TITLE)
+  })
+
+  it('leaves the anonymisation incomplete when verification still finds data', async () => {
+    const tables = seed()
+    const { db } = makeFakeDb(tables, {
+      fail: (t, op) => {
+        // A writer keeps putting the name back right after each scrub.
+        if (t === 'deals' && op === 'update') queueMicrotask(() => (tables.deals[0].title = 'Ana Souza'))
+        return null
+      },
+    })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(false)
+    expect(res.warnings).toEqual(['verification: personal data remains in deals'])
+    expect(tables.contacts[0].anonymization_completed_at).toBeNull()
   })
 })
 
-describe('anonymizeContact — deal move pills', () => {
-  it('empties the payload of deal_stage_changed events (deal title)', async () => {
-    const { db, calls } = makeDb({
-      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
-      conversations: [{ id: 'conv1' }],
-    })
-    await anonymizeContact(db, 'acc', 'c1', { now: () => new Date('2026-09-13T12:00:00.000Z'), randomHex: () => 'deadbeef' })
-    const scrub = calls.find(
-      (c) =>
-        c.table === 'conversation_events' &&
-        c.op === 'update' &&
-        c.filters.some((f) => f[1] === 'event_type' && (f[2] as unknown[])[0] === 'deal_stage_changed'),
-    )!
-    expect(scrub.payload).toEqual({ payload: {} })
-    expect(scrub.filters).toContainEqual(['in', 'conversation_id', [['conv1']]])
+describe('deleteContact', () => {
+  it('removes own media, then deletes in one SQL transaction (detach deals, scrub, delete)', async () => {
+    const { db, tables, removed, rpcCalls, writes } = makeFakeDb(seed())
+    const report = await deleteContact(db, ACC, C1)
+    expect(report.warnings).toEqual([])
+    expect(removed.map((r) => r.bucket)).toEqual(['chat-media', 'contact-avatars'])
+    // Messages cascade away: only media_url is touched before the delete.
+    const msgWrites = writes.filter((w) => w.table === 'messages')
+    expect(msgWrites.every((w) => JSON.stringify(w.payload) === JSON.stringify({ media_url: null }))).toBe(true)
+    expect(rpcCalls).toEqual([{ fn: 'lgpd_delete_contact', args: { p_account_id: ACC, p_contact_id: C1 } }])
+    expect(tables.contacts).toHaveLength(0)
+    expect(tables.deals[0]).toMatchObject({ title: ANONYMIZED_DEAL_TITLE, conversation_id: null })
   })
-})
 
-describe('anonymizeContact — transfer reasons', () => {
-  it('removes only the reason key from assigned events', async () => {
-    const { db, calls } = makeDb({
-      contact: { id: 'c1', account_id: 'acc', anonymized_at: null },
-      conversations: [{ id: 'conv1' }],
-      assignedEvents: [
-        { id: 'e1', payload: { assignee_user_id: 'u2', assignee_name: 'Bruno', reason: 'cliente Ana quer boleto' } },
-        { id: 'e2', payload: { assignee_user_id: 'u2' } },
-      ],
-    })
-    await anonymizeContact(db, 'acc', 'c1', { now: () => new Date('2026-09-13T12:00:00.000Z'), randomHex: () => 'deadbeef' })
-    const updates = calls.filter((c) => c.table === 'conversation_events' && c.op === 'update')
-    const scrub = updates.find((c) => c.filters.some((f) => f[1] === 'id'))!
-    expect(scrub.payload).toEqual({ payload: { assignee_user_id: 'u2', assignee_name: 'Bruno' } })
-    expect(scrub.filters).toContainEqual(['eq', 'id', ['e1']])
-    // The event without a reason is left alone.
-    expect(updates.filter((c) => c.filters.some((f) => f[1] === 'id'))).toHaveLength(1)
+  it('refuses to delete (no SQL call) when a media object could not be removed', async () => {
+    const { db, tables, rpcCalls } = makeFakeDb(seed(), { failStorage: (b) => (b === 'chat-media' ? { message: 'down' } : null) })
+    await expect(deleteContact(db, ACC, C1)).rejects.toBeInstanceOf(DeleteContactError)
+    expect(rpcCalls).toHaveLength(0)
+    expect(tables.contacts).toHaveLength(1)
+    expect(tables.messages[0].media_url).toBe(PUBLIC)
+  })
+
+  it('a failed SQL delete leaves the contact untouched (all-or-nothing)', async () => {
+    const { db, tables } = makeFakeDb(seed(), { rpc: () => ({ data: null, error: { message: 'deadlock' } }) })
+    await expect(deleteContact(db, ACC, C1)).rejects.toMatchObject({ code: 'db_error' })
+    expect(tables.contacts[0].name).toBe('Ana Souza')
+    expect(tables.deals[0].title).toMatch(/Ana/)
+  })
+
+  it('404s a contact outside the account', async () => {
+    const { db } = makeFakeDb(seed())
+    await expect(deleteContact(db, 'other', C1)).rejects.toMatchObject({ code: 'not_found' })
   })
 })

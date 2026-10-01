@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Suppression list (migration 077): nothing suppressed unless a test says so.
+vi.mock('@/lib/lgpd/suppression', () => ({ findSuppressedPhones: vi.fn(async () => new Set<string>()) }))
+
+import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { ingestLead, leadDealTitle, type IngestLeadSource } from './ingest'
 
 // ------------------------------------------------------------
@@ -217,6 +221,20 @@ describe('ingestLead — new lead', () => {
     expect(state.contacts[0]).toMatchObject({ phone: '5511988887777', name: '5511988887777' })
     expect(state.deals).toHaveLength(0)
     expect(res.dealId).toBeUndefined()
+  })
+
+  it('creates a suppressed number (opted out, then anonymised) already opted out', async () => {
+    vi.mocked(findSuppressedPhones).mockResolvedValueOnce(new Set(['5511988887777']))
+    const res = await ingestLead(makeDb(), source({ pipeline_id: null, stage_id: null }), { phone: '5511988887777' })
+    expect(res.status).toBe('ok')
+    expect(state.contacts[0].opted_out_at).toEqual(expect.any(String))
+  })
+
+  it('still creates the lead when the suppression lookup fails (fail-open)', async () => {
+    vi.mocked(findSuppressedPhones).mockRejectedValueOnce(new Error('down'))
+    const res = await ingestLead(makeDb(), source({ pipeline_id: null, stage_id: null }), { phone: '5511988887777' })
+    expect(res.status).toBe('ok')
+    expect(state.contacts[0].opted_out_at).toBeUndefined()
   })
 
   it('re-resolves the contact when the unique index rejects a racing insert', async () => {

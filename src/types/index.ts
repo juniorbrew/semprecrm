@@ -221,6 +221,12 @@ export interface Contact {
    * data is gone; the UI shows a badge and blocks editing / sending.
    */
   anonymized_at?: string | null;
+  /**
+   * Stamped once every scrub step of the anonymisation succeeded
+   * (migration 077). `anonymized_at` set + this NULL = incomplete: an
+   * admin can run the anonymisation again to finish it.
+   */
+  anonymization_completed_at?: string | null;
   created_at: string;
   updated_at: string;
 }

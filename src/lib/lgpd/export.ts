@@ -8,43 +8,69 @@
 // every table involved for their own account, and using it (rather
 // than the service role) means the export can never leak a row the
 // caller could not have seen in the app.
+//
+// Never silently truncated: every list is read in pages (`.range()`,
+// PostgREST caps a response at max_rows = 1000) until a short page, id
+// lists are chunked (≤200 per `.in()`), and `manifest` records the row
+// count of every section plus whether it loaded completely. A section
+// that failed is listed in `warnings` and flagged `complete: false`.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export const EXPORT_FORMAT_VERSION = 1
+import { chunk, ID_CHUNK, PAGE_SIZE } from './anonymize'
+
+export const EXPORT_FORMAT_VERSION = 2
+
+type Row = Record<string, unknown>
+
+export interface ManifestEntry {
+  count: number
+  complete: boolean
+}
 
 export interface ContactExport {
   format: 'semprecrm.contact'
   version: number
   exported_at: string
   account_id: string
-  contact: Record<string, unknown> | null
+  /** Row count per section and whether it loaded completely. */
+  manifest: Record<string, ManifestEntry>
+  contact: Row | null
   custom_fields: { field: string | null; type: string | null; value: unknown }[]
   tags: { id: string; name: string | null; color: string | null }[]
+  /** Companies the contact is linked to. */
+  companies: { id: string | null; name: string | null; is_primary: unknown }[]
   consent: {
     status: unknown
     updated_at: unknown
     opted_out_at: unknown
     anonymized_at: unknown
   }
-  conversations: (Record<string, unknown> & {
-    messages: Record<string, unknown>[]
+  conversations: (Row & {
+    messages: Row[]
     /** Activity log (assignments incl. transfer reasons, status changes, labels). */
-    events: Record<string, unknown>[]
+    events: Row[]
   })[]
-  notes: Record<string, unknown>[]
-  deals: Record<string, unknown>[]
-  tasks: Record<string, unknown>[]
+  notes: Row[]
+  deals: Row[]
+  /** Tasks of the contact or of its conversations. */
+  tasks: Row[]
+  task_comments: Row[]
+  calendar_events: Row[]
+  /** Flow (chatbot) runs with the variables the customer answered. */
+  flow_runs: Row[]
+  /** Lead-capture submissions (form / webhook payloads) that created or matched the contact. */
+  lead_events: Row[]
   /** "Memória do contato" facts (AI, migration 064), every status. */
-  ai_memories: Record<string, unknown>[]
+  ai_memories: Row[]
   /** Automatic-reply hand-overs (migration 066): reason, what the customer wanted, their last words. */
-  ai_handoffs: Record<string, unknown>[]
+  ai_handoffs: Row[]
   /** Satisfaction survey (migration 074): score and the customer's free-text comment. */
-  csat: Record<string, unknown>[]
+  csat: Row[]
   /** Consent-related audit events (export / anonymisation) for this contact. */
-  consent_events: Record<string, unknown>[]
-  /** Tables that failed to load (RLS gap, missing migration) — never fatal. */
+  consent_events: Row[]
+  /** Sections that failed to load (RLS gap, missing migration). */
   warnings: string[]
 }
 
@@ -55,7 +81,8 @@ export class ExportNotFoundError extends Error {
   }
 }
 
-type Row = Record<string, unknown>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Query = any
 
 export async function buildContactExport(
   db: SupabaseClient,
@@ -64,6 +91,7 @@ export async function buildContactExport(
   now: () => Date = () => new Date(),
 ): Promise<ContactExport> {
   const warnings: string[] = []
+  const manifest: Record<string, ManifestEntry> = {}
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -75,145 +103,188 @@ export async function buildContactExport(
   if (!contact) throw new ExportNotFoundError()
   const c = contact as Row
 
-  async function load<T = Row>(
-    label: string,
-    run: () => PromiseLike<{ data: unknown; error: { message: string } | null }>,
-  ): Promise<T[]> {
-    try {
-      const { data, error } = await run()
-      if (error) {
-        warnings.push(`${label}: ${error.message}`)
-        return []
-      }
-      return (data ?? []) as T[]
-    } catch (err) {
-      warnings.push(`${label}: ${err instanceof Error ? err.message : String(err)}`)
-      return []
+  /** Every page of `build()` (ordered by created_at, id) until a short page. */
+  async function pages(build: () => Query): Promise<Row[]> {
+    const out: Row[] = []
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await build().range(from, from + PAGE_SIZE - 1)
+      if (error) throw new Error(error.message)
+      const rows = (data ?? []) as Row[]
+      out.push(...rows)
+      if (rows.length < PAGE_SIZE) return out
     }
   }
 
-  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows, handoffRows, csatRows] =
+  /** One section: all pages, every id chunk; recorded in the manifest. */
+  async function load(label: string, build: (ids: string[]) => Query, ids?: string[]): Promise<Row[]> {
+    const out: Row[] = []
+    try {
+      if (ids === undefined) out.push(...(await pages(() => build([]))))
+      else for (const part of chunk(ids, ID_CHUNK)) out.push(...(await pages(() => build(part))))
+      manifest[label] = { count: out.length, complete: true }
+    } catch (err) {
+      warnings.push(`${label}: ${err instanceof Error ? err.message : String(err)}`)
+      manifest[label] = { count: out.length, complete: false }
+    }
+    return out
+  }
+
+  const ordered = (q: Query, col = 'created_at') => q.order(col, { ascending: true }).order('id', { ascending: true })
+  const byContact = (table: string, cols: string, scoped = true) => {
+    const q = db.from(table).select(cols).eq('contact_id', contactId)
+    return scoped ? q.eq('account_id', accountId) : q
+  }
+
+  const [customRows, tagRows, companyRows, convRows, noteRows, dealRows, taskRowsByContact, auditRows, memoryRows, handoffRows, csatRows, calendarByContact, flowRows, leadRows] =
     await Promise.all([
       load('custom_fields', () =>
         db
           .from('contact_custom_values')
-          .select('value, created_at, custom_field:custom_fields(field_name, field_type)')
-          .eq('contact_id', contactId),
+          .select('id, value, created_at, custom_field:custom_fields(field_name, field_type)')
+          .eq('contact_id', contactId)
+          .order('id', { ascending: true }),
       ),
       load('tags', () =>
-        db.from('contact_tags').select('tag:tags(id, name, color)').eq('contact_id', contactId),
+        db.from('contact_tags').select('tag_id, tag:tags(id, name, color)').eq('contact_id', contactId).order('tag_id', { ascending: true }),
       ),
-      load('conversations', () =>
-        db
-          .from('conversations')
-          .select('*')
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: true }),
+      load('companies', () =>
+        // contact_companies has no id column (PK contact_id, company_id).
+        byContact('contact_companies', 'company_id, is_primary, created_at, company:companies(id, name)').order('company_id', {
+          ascending: true,
+        }),
       ),
-      load('notes', () =>
-        db
-          .from('contact_notes')
-          .select('id, note_text, user_id, created_at')
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: true }),
-      ),
+      load('conversations', () => ordered(byContact('conversations', '*'))),
+      load('notes', () => ordered(byContact('contact_notes', 'id, note_text, user_id, created_at', false))),
       load('deals', () =>
-        db
-          .from('deals')
-          .select(
+        ordered(
+          byContact(
+            'deals',
             'id, title, value, currency, status, notes, expected_close_date, pipeline_id, stage_id, conversation_id, loss_reason_id, lost_note, created_at, updated_at',
-          )
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: true }),
+          ),
+        ),
       ),
       load('tasks', () =>
-        db
-          .from('tasks')
-          .select(
+        ordered(
+          byContact(
+            'tasks',
             'id, title, description, priority, status_id, assignee_user_id, due_at, completed_at, conversation_id, deal_id, created_at, updated_at',
-          )
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: true }),
+          ),
+        ),
       ),
       load('consent_events', () =>
-        db
-          .from('audit_log')
-          .select('id, action, actor_name, metadata, created_at')
-          .eq('account_id', accountId)
-          .eq('entity_type', 'contact')
-          .eq('entity_id', contactId)
-          .order('created_at', { ascending: true }),
+        ordered(
+          db
+            .from('audit_log')
+            .select('id, action, actor_name, metadata, created_at')
+            .eq('account_id', accountId)
+            .eq('entity_type', 'contact')
+            .eq('entity_id', contactId),
+        ),
       ),
-      load('ai_memories', () =>
-        db
-          .from('ai_contact_memories')
-          .select('id, fact, status, source, conversation_id, created_at, updated_at')
-          .eq('account_id', accountId)
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: true }),
-      ),
+      load('ai_memories', () => ordered(byContact('ai_contact_memories', 'id, fact, status, source, conversation_id, created_at, updated_at'))),
       load('ai_handoffs', () =>
-        db
-          .from('ai_handoffs')
-          .select('id, conversation_id, reason, customer_wants, last_customer_words, notified, created_at')
-          .eq('account_id', accountId)
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: true }),
+        ordered(byContact('ai_handoffs', 'id, conversation_id, reason, customer_wants, last_customer_words, notified, created_at')),
       ),
-      load('csat', () =>
-        db
-          .from('csat_responses')
-          .select('id, conversation_id, status, score, comment, sent_at, answered_at')
-          .eq('account_id', accountId)
-          .eq('contact_id', contactId)
-          .order('sent_at', { ascending: true }),
+      load('csat', () => ordered(byContact('csat_responses', 'id, conversation_id, status, score, comment, sent_at, answered_at'), 'sent_at')),
+      load('calendar_events', () =>
+        ordered(
+          byContact(
+            'calendar_events',
+            'id, title, description, location, starts_at, ends_at, all_day, status, conversation_id, deal_id, task_id, source, created_at',
+          ),
+          'starts_at',
+        ),
       ),
+      load('flow_runs', () =>
+        ordered(byContact('flow_runs', 'id, flow_id, conversation_id, status, vars, started_at, ended_at, end_reason'), 'started_at'),
+      ),
+      load('lead_events', () => ordered(byContact('lead_source_events', 'id, source_id, status, deal_id, payload, created_at'))),
     ])
 
   const conversationIds = convRows.map((r) => r.id as string)
-  let messageRows: Row[] = []
-  if (conversationIds.length > 0) {
-    messageRows = await load('messages', () =>
-      db
-        .from('messages')
-        .select(
-          'id, conversation_id, sender_type, sender_id, content_type, content_text, media_url, template_name, status, created_at',
-        )
-        .in('conversation_id', conversationIds)
-        .order('created_at', { ascending: true }),
-    )
+  const calendarCols =
+    'id, title, description, location, starts_at, ends_at, all_day, status, conversation_id, deal_id, task_id, source, created_at'
+  const [messageRows, eventRows, convTaskRows, convCalendarRows] = await Promise.all([
+    load(
+      'messages',
+      (ids) =>
+        ordered(
+          db
+            .from('messages')
+            .select('id, conversation_id, sender_type, sender_id, content_type, content_text, media_url, template_name, status, created_at')
+            .in('conversation_id', ids),
+        ),
+      conversationIds,
+    ),
+    load(
+      'conversation_events',
+      (ids) =>
+        ordered(
+          db
+            .from('conversation_events')
+            .select('id, conversation_id, event_type, actor_user_id, payload, created_at')
+            .in('conversation_id', ids),
+        ),
+      conversationIds,
+    ),
+    load(
+      'tasks_by_conversation',
+      (ids) =>
+        ordered(
+          db
+            .from('tasks')
+            .select('id, title, description, priority, status_id, assignee_user_id, due_at, completed_at, conversation_id, deal_id, created_at, updated_at')
+            .eq('account_id', accountId)
+            .in('conversation_id', ids),
+        ),
+      conversationIds,
+    ),
+    load(
+      'calendar_by_conversation',
+      (ids) =>
+        ordered(db.from('calendar_events').select(calendarCols).eq('account_id', accountId).in('conversation_id', ids), 'starts_at'),
+      conversationIds,
+    ),
+  ])
+  delete manifest.tasks_by_conversation
+  delete manifest.calendar_by_conversation
+  const seenEvents = new Set(calendarByContact.map((e) => e.id))
+  const calendarRows = [...calendarByContact, ...convCalendarRows.filter((e) => !seenEvents.has(e.id))]
+  manifest.calendar_events = {
+    count: calendarRows.length,
+    complete: manifest.calendar_events.complete && !warnings.some((w) => w.startsWith('calendar_by_conversation')),
   }
-  let eventRows: Row[] = []
-  if (conversationIds.length > 0) {
-    eventRows = await load('conversation_events', () =>
-      db
-        .from('conversation_events')
-        .select('id, conversation_id, event_type, actor_user_id, payload, created_at')
-        .in('conversation_id', conversationIds)
-        .order('created_at', { ascending: true }),
-    )
-  }
-  const eventsByConversation = new Map<string, Row[]>()
-  for (const e of eventRows) {
-    const key = e.conversation_id as string
-    eventsByConversation.set(key, [...(eventsByConversation.get(key) ?? []), e])
-  }
-  const byConversation = new Map<string, Row[]>()
-  for (const m of messageRows) {
-    const key = m.conversation_id as string
-    const list = byConversation.get(key) ?? []
-    list.push(m)
-    byConversation.set(key, list)
-  }
+  const seenTasks = new Set(taskRowsByContact.map((t) => t.id))
+  const taskRows = [...taskRowsByContact, ...convTaskRows.filter((t) => !seenTasks.has(t.id))]
+  manifest.tasks = { count: taskRows.length, complete: manifest.tasks.complete && !warnings.some((w) => w.startsWith('tasks_by_conversation')) }
 
-  const one = <T>(v: T | T[] | null | undefined): T | null =>
-    Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
+  const commentRows = await load(
+    'task_comments',
+    (ids) => ordered(db.from('task_comments').select('id, task_id, user_id, body, created_at').in('task_id', ids)),
+    taskRows.map((t) => t.id as string),
+  )
+
+  const groupBy = (rows: Row[]) => {
+    const m = new Map<string, Row[]>()
+    for (const r of rows) {
+      const key = r.conversation_id as string
+      const list = m.get(key) ?? []
+      list.push(r)
+      m.set(key, list)
+    }
+    return m
+  }
+  const messagesByConversation = groupBy(messageRows)
+  const eventsByConversation = groupBy(eventRows)
+
+  const one = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
   return {
     format: 'semprecrm.contact',
     version: EXPORT_FORMAT_VERSION,
     exported_at: now().toISOString(),
     account_id: accountId,
+    manifest,
     contact: c,
     custom_fields: customRows.map((r) => {
       const f = one(r.custom_field as Row | Row[] | null)
@@ -231,6 +302,14 @@ export async function buildContactExport(
         name: (t.name as string | undefined) ?? null,
         color: (t.color as string | undefined) ?? null,
       })),
+    companies: companyRows.map((r) => {
+      const co = one(r.company as Row | Row[] | null)
+      return {
+        id: (co?.id as string | undefined) ?? (r.company_id as string | undefined) ?? null,
+        name: (co?.name as string | undefined) ?? null,
+        is_primary: r.is_primary ?? false,
+      }
+    }),
     consent: {
       status: c.consent_status ?? 'unknown',
       updated_at: c.consent_updated_at ?? null,
@@ -239,12 +318,16 @@ export async function buildContactExport(
     },
     conversations: convRows.map((conv) => ({
       ...conv,
-      messages: byConversation.get(conv.id as string) ?? [],
+      messages: messagesByConversation.get(conv.id as string) ?? [],
       events: eventsByConversation.get(conv.id as string) ?? [],
     })),
     notes: noteRows,
     deals: dealRows,
     tasks: taskRows,
+    task_comments: commentRows,
+    calendar_events: calendarRows,
+    flow_runs: flowRows,
+    lead_events: leadRows,
     ai_memories: memoryRows,
     ai_handoffs: handoffRows,
     csat: csatRows,
