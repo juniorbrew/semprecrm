@@ -108,6 +108,8 @@ export const DICT_AI: Record<string, string> = {
     'Ex.: Tom simpático e curto. Somos uma padaria em Campinas, aberta de seg. a sáb., das 7h às 19h. Entregamos só na cidade. Nunca informe preços — diga que um atendente vai confirmar.',
   'Tone, what the company does, what the assistant may and may not say.':
     'Tom de voz, o que a empresa faz, o que o assistente pode e não pode dizer.',
+  'No passwords or confidential data: the assistant may repeat them.':
+    'Não coloque senhas nem dados confidenciais: o assistente pode repeti-los.',
   'Data processing (LGPD)': 'Tratamento de dados (LGPD)',
   "When an agent asks for a suggestion, the latest messages of that conversation, the contact's name, your company name and the instructions above are sent to the chosen provider, which may process them outside Brazil (international data transfer, LGPD art. 33). The CRM does not store the suggestion text — only usage counters (tokens and cost). Make sure your privacy notice covers this use and that you have a legal basis for it.":
     'Quando um atendente pede uma sugestão, as mensagens mais recentes daquela conversa, o nome do contato, o nome da sua empresa e as instruções acima são enviados ao provedor escolhido, que pode tratá-los fora do Brasil (transferência internacional de dados, art. 33 da LGPD). O CRM não guarda o texto das sugestões — só contadores de uso (tokens e custo). Garanta que o seu aviso de privacidade cubra esse uso e que haja base legal para ele.',
