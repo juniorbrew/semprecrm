@@ -18,6 +18,7 @@
 // ============================================================
 
 import { isValidModelId } from './providers';
+import { promptName } from './suggest-reply';
 
 export const AGENT_CHANNELS = ['official', 'qr'] as const;
 export type AgentChannel = (typeof AGENT_CHANNELS)[number];
@@ -322,7 +323,7 @@ export function resolveAgent<T extends Pick<AiAgent, 'enabled' | 'is_default' | 
 /** The trusted instructions block for a suggestion written by `agent`. */
 export function agentInstructions(agent: Pick<AiAgent, 'instructions' | 'tone'>): string {
   const tone = agent.tone?.trim();
-  return tone ? `${agent.instructions.trim()}\n\nTom de voz: ${tone}` : agent.instructions.trim();
+  return tone ? `${agent.instructions.trim()}\n\nTom de voz: ${promptName(tone, 200)}` : agent.instructions.trim();
 }
 
 /**
@@ -336,7 +337,7 @@ export function suggestionInstructions(
   const base = general?.trim() || null;
   if (!agent) return base;
   const own = agentInstructions(agent);
-  return base ? `${base}\n\nInstruções do agente "${agent.name}":\n${own}` : own;
+  return base ? `${base}\n\nInstruções do agente ${promptName(agent.name, 80)}:\n${own}` : own;
 }
 
 export type AgentStatus = 'active' | 'paused' | 'disabled';

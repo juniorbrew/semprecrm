@@ -222,7 +222,7 @@ describe('POST /api/ai/agents/:id/test', () => {
     expect(input.system).toContain('INSTRUÇÕES GERAIS');
     expect(input.system).toContain('Instruções do agente "Suporte":\nAjude');
     expect(input.system.indexOf('INSTRUÇÕES GERAIS')).toBeLessThan(input.system.indexOf('Ajude'));
-    expect(input.system).toContain('Tom de voz: calmo');
+    expect(input.system).toContain('Tom de voz: "calmo"');
     expect(input.prompt).toContain('{"de":"cliente","texto":"Vocês abrem domingo?"}');
     expect(input.prompt).toContain('Ana');
   });

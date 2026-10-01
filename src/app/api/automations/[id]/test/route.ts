@@ -70,7 +70,8 @@ export async function POST(
     return NextResponse.json(result)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    const status = /not found/.test(msg) ? 404 : 500
-    return NextResponse.json({ error: msg }, { status })
+    if (/not found/.test(msg)) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    console.error('[automations/test] simulation failed:', id, msg)
+    return NextResponse.json({ error: 'Simulation failed' }, { status: 500 })
   }
 }

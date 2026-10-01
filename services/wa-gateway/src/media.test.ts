@@ -82,3 +82,105 @@ describe("storageMimeType", () => {
     expect(storageMimeType("")).toBe("application/octet-stream");
   });
 });
+
+describe("limites de mídia recebida (DoS de memória)", () => {
+  const msgWith = (fileLength: unknown, wrap = false) => {
+    const inner = { videoMessage: { fileLength } };
+    return { message: wrap ? { viewOnceMessageV2: { message: inner } } : inner } as unknown as WAMessage;
+  };
+
+  it("declaredMediaBytes lê fileLength (número, Long, embrulhado)", async () => {
+    const { declaredMediaBytes } = await import("./media.js");
+    expect(declaredMediaBytes(msgWith(1234))).toBe(1234);
+    expect(declaredMediaBytes(msgWith({ toNumber: () => 99 }))).toBe(99);
+    expect(declaredMediaBytes(msgWith(500, true))).toBe(500);
+    expect(declaredMediaBytes({} as WAMessage)).toBeUndefined();
+  });
+
+  it("acima de 16 MB declarados não baixa nem sobe nada", async () => {
+    const { MAX_INBOUND_MEDIA_BYTES, MediaTooLargeError } = await import("./media.js");
+    const { client, upload } = fakeClient("http://x");
+    const download = vi.fn(async () => Buffer.from("x"));
+    const media = new MediaStore({ supabaseUrl: "http://x", serviceRoleKey: "k", logger, client, download });
+    await expect(
+      media.storeInbound(ACCOUNT, msgWith(MAX_INBOUND_MEDIA_BYTES + 1), {} as WASocket, { mimetype: "video/mp4" } as never),
+    ).rejects.toBeInstanceOf(MediaTooLargeError);
+    expect(download).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("readCapped corta o stream que passa do teto (fileLength mentiroso)", async () => {
+    const { readCapped, MediaTooLargeError } = await import("./media.js");
+    const { Readable } = await import("node:stream");
+    let produced = 0;
+    const stream = Readable.from(
+      (function* () {
+        for (let i = 0; i < 1000; i++) {
+          produced++;
+          yield Buffer.alloc(1024);
+        }
+      })(),
+    );
+    await expect(readCapped(stream, 10 * 1024)).rejects.toBeInstanceOf(MediaTooLargeError);
+    expect(produced).toBeLessThan(20);
+    expect(stream.destroyed).toBe(true);
+    expect((await readCapped(Readable.from([Buffer.from("ab"), Buffer.from("c")]), 10)).toString()).toBe("abc");
+  });
+
+  it("no máximo N downloads simultâneos; os demais esperam", async () => {
+    const { client } = fakeClient("http://x");
+    let active = 0;
+    let peak = 0;
+    const download = vi.fn(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      return Buffer.from("x");
+    });
+    const media = new MediaStore({
+      supabaseUrl: "http://x",
+      serviceRoleKey: "k",
+      logger,
+      client,
+      download,
+      maxConcurrentDownloads: 2,
+    });
+    await Promise.all(
+      Array.from({ length: 7 }, () =>
+        media.storeInbound(ACCOUNT, {} as WAMessage, {} as WASocket, { mimetype: "image/jpeg" } as never),
+      ),
+    );
+    expect(download).toHaveBeenCalledTimes(7);
+    expect(peak).toBe(2);
+  });
+});
+
+describe("prazo por download", () => {
+  it("download pendurado é abortado e libera a vaga", async () => {
+    const { client, upload } = fakeClient("http://x");
+    let aborted = false;
+    const download = vi.fn(
+      (_m: WAMessage, _s: WASocket, signal: AbortSignal) =>
+        new Promise<Buffer>(() => {
+          signal.addEventListener("abort", () => (aborted = true));
+        }),
+    );
+    const media = new MediaStore({
+      supabaseUrl: "http://x",
+      serviceRoleKey: "k",
+      logger,
+      client,
+      download,
+      maxConcurrentDownloads: 1,
+      downloadTimeoutMs: 20,
+    });
+    const args = [ACCOUNT, {} as WAMessage, {} as WASocket, { mimetype: "image/jpeg" } as never] as const;
+    await expect(media.storeInbound(...args)).rejects.toThrow(/prazo/);
+    expect(aborted).toBe(true);
+    expect(upload).not.toHaveBeenCalled();
+    // a vaga foi devolvida: o próximo download entra
+    download.mockImplementationOnce(async () => Buffer.from("ok"));
+    await expect(media.storeInbound(...args)).resolves.toMatchObject({ path: expect.any(String) });
+  });
+});

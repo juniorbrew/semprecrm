@@ -46,6 +46,47 @@ sed -i \
 # ENABLE_EMAIL_AUTOCONFIRM=true evita depender de SMTP para o primeiro login;
 # desligue depois de configurar SMTP_* se quiser confirmação por e-mail.
 
+# Postgres/Supavisor só em loopback. O compose oficial publica o pooler em
+# 0.0.0.0:5432 e 0.0.0.0:6543, e o Docker abre essas portas por iptables
+# ANTES do ufw: "ufw deny 5432" não protege nada. POSTGRES_PORT não aceita
+# "IP:porta" (também entra nas URLs internas de conexão), então a troca vai num
+# arquivo extra de compose. "!override" exige Docker Compose >= 2.24.4.
+cat > docker-compose.semprecrm.yml <<'YAML'
+# Gerado por deploy/vps-all-in-one/install-supabase.sh (SempreCRM): publica o
+# Supavisor só em 127.0.0.1. Não apague; está em COMPOSE_FILE no .env.
+services:
+  supavisor:
+    ports: !override
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+      - "127.0.0.1:${POOLER_PROXY_PORT_TRANSACTION}:6543"
+YAML
+# O .env oficial fixa COMPOSE_FILE=docker-compose.yml, o que desliga a leitura
+# automática de overrides; acrescenta o nosso arquivo à lista.
+if grep -q '^COMPOSE_FILE=' .env; then
+  grep -q '^COMPOSE_FILE=.*docker-compose.semprecrm.yml' .env ||
+    sed -i 's#^COMPOSE_FILE=.*#&:docker-compose.semprecrm.yml#' .env
+else
+  echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.semprecrm.yml' >> .env
+fi
+if [ "$(docker compose config supavisor 2>/dev/null | grep -c 'host_ip: 127.0.0.1')" -lt 2 ]; then
+  echo "ERRO: o supavisor não ficou só em 127.0.0.1 em 'docker compose config' (Docker Compose >= 2.24.4?)" >&2
+  exit 1
+fi
+
 mkdir -p volumes/db/data volumes/storage volumes/functions
 echo ">> Supabase preparado em $DEST. Próximo: editar $DEST/.env (segredos) e rodar:"
 echo "   cd $DEST && docker compose pull && docker compose up -d"
+
+# Conferência: com o stack no ar (reexecução do instalador ou depois do
+# "up -d"), nenhuma porta do Supabase pode escutar fora do loopback.
+# Rode de novo depois de qualquer "docker compose up":
+#   ss -ltnH '( sport = :5432 or sport = :6543 or sport = :8000 or sport = :8443 )'
+#   (todas as linhas devem ser 127.0.0.1; 0.0.0.0, [::] ou * = exposto)
+exposed=$(ss -ltnH '( sport = :5432 or sport = :6543 or sport = :8000 or sport = :8443 )' 2>/dev/null |
+  awk '{print $4}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
+if [ -n "$exposed" ]; then
+  echo "ATENÇÃO: portas do Supabase expostas fora do loopback: $exposed" >&2
+  echo "         rode 'cd $DEST && docker compose up -d' para aplicar docker-compose.semprecrm.yml" >&2
+  exit 1
+fi
+echo ">> Depois do 'up -d', confira: ss -ltn | grep -E ':(5432|6543|8000|8443) ' (só 127.0.0.1)"

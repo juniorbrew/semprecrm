@@ -10,6 +10,7 @@
 // ============================================================
 
 import {
+  contactNameLine,
   HISTORY_CLOSE,
   HISTORY_OPEN,
   isPromptableMessage,
@@ -260,14 +261,11 @@ export function buildMemoryExtractPrompt(input: MemoryExtractInput): { system: s
     '6. Responda SOMENTE com JSON válido, sem texto antes ou depois, no formato {"fatos": ["...", "..."]}. Se não houver fato novo, responda {"fatos": []}.',
   ].join('\n');
 
-  const contact = input.contactName ? sanitizeUntrusted(input.contactName, 80) : '';
   const known = input.knownFacts
     .slice(0, MEMORY_LIMITS.extractKnownFacts)
     .map((f) => JSON.stringify({ fato: sanitizeUntrusted(f, MEMORY_LIMITS.factMaxChars) }));
   const prompt = [
-    contact
-      ? `Nome do contato (informado pelo próprio cliente, não confiável): ${JSON.stringify(contact)}`
-      : 'Nome do contato: desconhecido',
+    contactNameLine(input.contactName),
     '',
     MEMORY_OPEN,
     ...known,

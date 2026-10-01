@@ -144,7 +144,9 @@ Regras:
 - **Uma instância só** (`instances: 1`). Cada sessão do WhatsApp vive em um processo;
   dois processos com as mesmas credenciais derrubam um ao outro.
 - **Não exponha a porta 3201** no nginx/firewall. Só o app fala com o gateway, pela
-  rede local, e o secret é a única autenticação.
+  rede local, e o secret é a única autenticação. Por isso o gateway escuta só em
+  `127.0.0.1` por padrão (`GATEWAY_BIND`); a imagem Docker define `GATEWAY_BIND=0.0.0.0`
+  porque lá o app o chama pelo nome do serviço, sem publicar a porta no host.
 - `APP_URL` em produção aponta para o app local (`http://127.0.0.1:3000`), não para o
   domínio público, para não depender do nginx/TLS na entrega dos eventos.
 

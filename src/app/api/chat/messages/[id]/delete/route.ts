@@ -17,10 +17,15 @@ import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
-import { asChatAttachment, CHAT_INTERNAL_BUCKET } from '@/lib/chat/attachments'
+import { asChatAttachment, CHAT_INTERNAL_BUCKET, isChatAttachmentPathFor } from '@/lib/chat/attachments'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function serverError(where: string, detail: unknown) {
+  console.error(`[chat] delete: ${where} failed:`, detail)
+  return NextResponse.json({ error: 'Failed to delete message' }, { status: 500 })
+}
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -36,10 +41,10 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     // RLS: only threads I belong to are visible at all.
     const { data: message, error } = await ctx.supabase
       .from('chat_messages')
-      .select('id, sender_id, kind, deleted_at, attachment')
+      .select('id, thread_id, sender_id, kind, deleted_at, attachment')
       .eq('id', id)
       .maybeSingle()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return serverError('lookup', error.message)
     if (!message) return NextResponse.json({ error: 'Message not found' }, { status: 404 })
     if (message.sender_id !== ctx.userId) {
       return NextResponse.json({ error: 'Only the sender can delete a message' }, { status: 403 })
@@ -55,10 +60,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
         .from('chat_messages')
         .update({ deleted_at: new Date().toISOString() })
         .eq('id', id)
-      if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
+      if (updateError) return serverError('update', updateError.message)
     }
 
-    if (attachment?.path) {
+    // The attachment JSON is sender-written: only remove an object that
+    // lives under this account's prefix AND this message's own thread,
+    // otherwise the service role would delete whatever path was planted.
+    if (attachment?.path && !isChatAttachmentPathFor(attachment.path, ctx.accountId, message.thread_id)) {
+      console.warn('[chat] delete: refusing foreign attachment path', { id, path: attachment.path })
+    } else if (attachment?.path) {
       // Best effort: the row is already marked deleted; a stale object is
       // unreachable (no message points to it) and logged for follow-up.
       const { error: removeError } = await supabaseAdmin().storage.from(CHAT_INTERNAL_BUCKET).remove([attachment.path])
@@ -70,7 +80,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       .select('*')
       .eq('id', id)
       .single()
-    if (reloadError) return NextResponse.json({ error: reloadError.message }, { status: 500 })
+    if (reloadError) return serverError('reload', reloadError.message)
     return NextResponse.json({ ok: true, message: updated })
   } catch (err) {
     return toErrorResponse(err)

@@ -24,14 +24,7 @@ import {
 import { clearGateCookie, issueGateCookie, loadGateCredentials } from '@/lib/platform/gate'
 import { getPlatformAdmin } from '@/lib/platform/server'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-
-function getClientIp(request: Request): string {
-  const xff = request.headers.get('x-forwarded-for')
-  if (xff) return xff.split(',')[0].trim()
-  const xri = request.headers.get('x-real-ip')
-  if (xri) return xri.trim()
-  return 'unknown'
-}
+import { getClientIp } from '@/lib/request-ip'
 
 async function readBody(request: Request): Promise<Record<string, unknown> | null> {
   const body = (await request.json().catch(() => null)) as unknown

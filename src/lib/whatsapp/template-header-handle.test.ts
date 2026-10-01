@@ -182,6 +182,19 @@ describe('ensureMediaHeaderHandle', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('barra invertida no caminho relativo é recusada sem buscar (WHATWG a trataria como /)', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase');
+    vi.stubEnv('SUPABASE_INTERNAL_URL', 'http://kong:8000');
+    const fetchSpy = vi.fn(async () => imgResponse());
+    vi.stubGlobal('fetch', fetchSpy);
+    const p = payload({
+      header_media_url: '/supabase/storage/v1/object/public/chat-media/x\\..\\..\\..\\api\\platform\\x',
+    });
+    await expect(ensureMediaHeaderHandle(p, 'tok')).rejects.toThrow(/publicly reachable/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('names a PNG sample header.png and assumes JPEG without a Content-Type', async () => {
     vi.stubEnv('META_APP_ID', 'app-1');
     vi.stubGlobal('fetch', vi.fn(async () => imgResponse('image/png', 2048)));

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   getSubscribedApps,
@@ -30,31 +31,17 @@ import {
  * what the UI badges on.
  */
 export async function GET() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Setup diagnostic: admins only (it drives Meta calls with the
+  // account's stored token and returns Meta's raw error text).
+  let ctx
+  try {
+    ctx = await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
   }
-
-  // whatsapp_config is one-row-per-account post-017. Resolve the
-  // caller's account_id so a teammate who joined an existing account
-  // sees the same registration state as the admin who set it up.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .maybeSingle()
-  const accountId = profile?.account_id as string | undefined
-  if (!accountId) {
-    return NextResponse.json({
-      live: false,
-      checks: { config_exists: false },
-      message: 'Your profile is not linked to an account.',
-    })
-  }
+  const limit = checkRateLimit(`wa-config:verify:${ctx.userId}`, RATE_LIMITS.adminAction)
+  if (!limit.success) return rateLimitResponse(limit)
+  const { accountId } = ctx
 
   // Service role: the token columns are server-only (migration 076).
   const { data: config } = await supabaseAdmin()

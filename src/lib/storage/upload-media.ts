@@ -67,7 +67,7 @@ export interface UploadAccountMediaResult {
    * Public URL to persist. Origin-relative (`/supabase/storage/...`) when
    * Supabase is reached through the app's own origin; server code that
    * hands it to Meta / the gateway absolutises it (`mediaUrlForPublic` /
-   * `mediaUrlForServer`).
+   * `accountMediaUrlForServer`).
    */
   publicUrl: string;
   /** Storage object path (account-scoped). */

@@ -22,6 +22,7 @@ import {
   AUDIT_ENTITY_TYPES,
   CLIENT_AUDIT_ACTIONS,
   isAuditAction,
+  sanitizeClientAuditMetadata,
   type AuditLogRow,
 } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
@@ -162,10 +163,8 @@ export async function POST(request: Request) {
       typeof entityIdRaw === 'string' && entityIdRaw.length <= MAX_ENTITY_ID_LEN
         ? entityIdRaw
         : null
-    const metadata =
-      body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
-        ? (body.metadata as Record<string, unknown>)
-        : {}
+    // Per-action allowlist: only the fields the UI records survive.
+    const metadata = sanitizeClientAuditMetadata(action, body?.metadata)
 
     const ok = await audit({
       accountId: ctx.accountId,

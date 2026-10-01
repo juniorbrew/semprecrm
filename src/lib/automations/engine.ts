@@ -147,6 +147,26 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<Di
       }
     }
 
+    // Same for `context.conversation_id` (also body-supplied on the manual
+    // route): steps write to that conversation through the service role,
+    // so a foreign id is dropped and steps fall back to the contact's own.
+    const ctxConv = input.context?.conversation_id
+    if (ctxConv) {
+      let owned: string | null
+      try {
+        owned = await ownedConversationId(input.accountId, input.contactId ?? null, ctxConv)
+      } catch (err) {
+        console.error('[automations] conversation ownership check failed:', err)
+        return { ok: false }
+      }
+      if (!owned) {
+        console.warn('[automations] conversation not in account/contact, dropping it', ctxConv)
+        const { conversation_id: _dropped, ...rest } = input.context ?? {}
+        void _dropped
+        input = { ...input, context: rest }
+      }
+    }
+
     // Plan gate (migration 025): an account without the `automations`
     // module (or a blocked account) runs nothing, even if active rows
     // exist from before the plan changed.
@@ -672,8 +692,9 @@ function contactOptedOut(args: ExecuteArgs): Promise<boolean> {
       .eq('account_id', args.automation.account_id)
       .maybeSingle()
     if (error) {
-      console.error('[automations] opt-out check failed:', error)
-      return false
+      // Fail closed: when we cannot tell, do not message the contact.
+      console.error('[automations] opt-out check failed, skipping send:', error)
+      return true
     }
     return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at
   })()
@@ -734,8 +755,8 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         })
         continue
       }
-      let conversationId: string | null = args.context.conversation_id ?? null
-      if (!conversationId && args.contactId) {
+      let conversationId: string | null = null
+      if (args.context.conversation_id || args.contactId) {
         try {
           conversationId = await resolveConversationId(args)
         } catch {
@@ -1161,7 +1182,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
-      const body = cfg.body_template ? await interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      const body = cfg.body_template ? await webhookBody(cfg.body_template, args) : JSON.stringify(args.context)
       // SSRF guard (wacrm GHSA-8jqh-598v-rfxc): a URL e os headers vêm da
       // conta e quem faz o request é o servidor — fetchSeguro recusa destino
       // interno (loopback, rede privada, metadata de nuvem, reservado) antes de
@@ -1178,6 +1199,8 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         if (err instanceof DestinoNaoPermitido) throw new Error('send_webhook: destination not allowed')
         throw err
       }
+      // The body is never read: release the connection.
+      await res.body?.cancel().catch(() => undefined)
       if (!res.ok) throw new Error(`webhook returned ${res.status}`)
       return `webhook ${res.status}`
     }
@@ -1237,8 +1260,8 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       // Link the conversation when the trigger had one (inbound message)
       // or the contact has exactly one; a contact-only trigger (tag added
       // to an imported contact) just leaves it empty.
-      let conversationId: string | undefined = args.context.conversation_id
-      if (!conversationId && args.contactId) {
+      let conversationId: string | undefined
+      if (args.context.conversation_id || args.contactId) {
         try {
           conversationId = await resolveConversationId(args)
         } catch {
@@ -1307,9 +1330,35 @@ export function pickLiveConversation<T extends { status?: string | null }>(rows:
   return rows.find((r) => r.status && r.status !== 'closed') ?? rows[0] ?? null
 }
 
+/**
+ * `conversationId` when it belongs to the account (and to the contact,
+ * when there is one), else null. Context ids can be caller-supplied and
+ * every step writes through the service role, so they are never trusted
+ * blindly. Throws on a DB error.
+ */
+async function ownedConversationId(
+  accountId: string,
+  contactId: string | null,
+  conversationId: string,
+): Promise<string | null> {
+  let query = supabaseAdmin()
+    .from('conversations')
+    .select('id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+  if (contactId) query = query.eq('contact_id', contactId)
+  const { data, error } = await query.maybeSingle()
+  if (error) throw new Error(`conversation ownership check failed: ${error.message}`)
+  return (data as { id: string } | null)?.id ?? null
+}
+
 async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
-  if (fromCtx) return fromCtx
+  if (fromCtx) {
+    const owned = await ownedConversationId(args.automation.account_id, args.contactId, fromCtx)
+    if (owned) return owned
+    console.warn('[automations] context conversation not owned, ignoring', fromCtx)
+  }
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
   const { data: rows, error } = await supabaseAdmin()
     .from('conversations')
@@ -1494,20 +1543,33 @@ const TEMPLATE_VAR = /\{\{\s*([\w.]+)\s*\}\}/g
 /**
  * Resolve `{{ message.text }}`, `{{ vars.* }}` and `{{ contact.name |
  * phone | email | company }}` in a step's text. Unknown variables
- * become empty strings.
+ * become empty strings. `escape` is applied to every substituted value.
  */
-async function interpolate(s: string, args: ExecuteArgs): Promise<string> {
+async function interpolate(s: string, args: ExecuteArgs, escape: (v: string) => string = (v) => v): Promise<string> {
   const needsContact = /\{\{\s*contact\./.test(s)
   const contact = needsContact ? await loadContactVars(args) : null
   return s.replace(TEMPLATE_VAR, (_, key) => {
     const [ns, prop] = String(key).split('.')
-    if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
-    if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
+    if (ns === 'message' && prop === 'text') return escape(String(args.context.message_text ?? ''))
+    if (ns === 'vars' && prop) return escape(String(args.context.vars?.[prop] ?? ''))
     if (ns === 'contact' && prop && CONTACT_VAR_KEYS.has(prop as keyof ContactVars)) {
-      return String(contact?.[prop as keyof ContactVars] ?? '')
+      return escape(String(contact?.[prop as keyof ContactVars] ?? ''))
     }
     return ''
   })
+}
+
+/** Escape a value for use inside a JSON string literal (no surrounding quotes). */
+const jsonStringEscape = (v: string) => JSON.stringify(v).slice(1, -1)
+
+/**
+ * send_webhook body. A JSON-shaped template gets every substituted value
+ * JSON-escaped, so customer text (`", "status":"paid"`) cannot add keys;
+ * a plain-text template is left as is.
+ */
+export async function webhookBody(template: string, args: ExecuteArgs): Promise<string> {
+  const looksJson = /^\s*[[{]/.test(template)
+  return interpolate(template, args, looksJson ? jsonStringEscape : undefined)
 }
 
 
