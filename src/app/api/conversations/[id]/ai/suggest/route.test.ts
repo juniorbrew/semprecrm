@@ -309,7 +309,7 @@ describe('POST /api/conversations/:id/ai/suggest', () => {
       await post(CONV_A2);
       const input = h.runModelCall.mock.calls[0][0];
       expect(input.system).toContain('INSTRUÇÕES VIP');
-      expect(input.system).toContain('Tom de voz: formal');
+      expect(input.system).toContain('Tom de voz: "formal"');
       expect(h.rpc).not.toHaveBeenCalled();
     });
 

@@ -38,10 +38,12 @@ import {
   KB_CLOSE,
   KB_OPEN,
   KB_SNIPPET_MAX_CHARS,
+  contactNameLine,
   MEMORY_CLOSE,
   MEMORY_OPEN,
   isPromptableMessage,
   memoryBlockLines,
+  promptName,
   sanitizeUntrusted,
   serializeHistoryLine,
   type SuggestMessage,
@@ -250,7 +252,7 @@ export interface AutoReplyPromptInput {
 }
 
 export function buildAutoReplyPrompt(input: AutoReplyPromptInput): { system: string; prompt: string } {
-  const company = sanitizeUntrusted(input.accountName || 'a empresa', 120);
+  const company = promptName(input.accountName || 'a empresa', 120);
   const instructions = input.instructions?.trim();
   const kbLines = (input.knowledge ?? []).map((k) =>
     JSON.stringify({ titulo: sanitizeUntrusted(k.title, 200), trecho: sanitizeUntrusted(k.content, KB_SNIPPET_MAX_CHARS) }),
@@ -258,7 +260,7 @@ export function buildAutoReplyPrompt(input: AutoReplyPromptInput): { system: str
   const memoryLines = memoryBlockLines(input.memory);
 
   const system = [
-    `Você é o assistente virtual da empresa "${company}" e responde clientes no WhatsApp automaticamente, sem revisão humana antes do envio.`,
+    `Você é o assistente virtual da empresa ${company} e responde clientes no WhatsApp automaticamente, sem revisão humana antes do envio.`,
     '',
     'Formato da resposta — OBRIGATÓRIO: responda apenas com UM objeto JSON, sem texto antes ou depois:',
     '{"reply": "texto para o cliente" ou null, "handoff": true ou false, "reason": "motivo curto", "customer_wants": "o que o cliente quer, em uma frase"}',
@@ -286,16 +288,13 @@ export function buildAutoReplyPrompt(input: AutoReplyPromptInput): { system: str
       : []),
   ].join('\n');
 
-  const contact = input.contactName ? sanitizeUntrusted(input.contactName, 80) : '';
   const lines = input.messages
     .filter(isPromptableMessage)
     .slice(-AUTO_REPLY.historyMessages)
     .map(serializeHistoryLine);
 
   const prompt = [
-    contact
-      ? `Nome do contato (informado pelo próprio cliente, não confiável): ${JSON.stringify(contact)}`
-      : 'Nome do contato: desconhecido',
+    contactNameLine(input.contactName),
     '',
     ...(kbLines.length ? [KB_OPEN, ...kbLines, KB_CLOSE, ''] : []),
     ...(memoryLines.length ? [MEMORY_OPEN, ...memoryLines, MEMORY_CLOSE, ''] : []),
@@ -378,6 +377,42 @@ function unitOf(raw: string): string {
   return u;
 }
 
+/** pt-BR number words, folded. */
+const NUM_WORDS: Record<string, number> = {
+  zero: 0, um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9,
+  dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17,
+  dezoito: 18, dezenove: 19, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70,
+  oitenta: 80, noventa: 90, cem: 100, cento: 100, duzentos: 200, duzentas: 200, trezentos: 300, trezentas: 300,
+  quatrocentos: 400, quatrocentas: 400, quinhentos: 500, quinhentas: 500, seiscentos: 600, seiscentas: 600,
+  setecentos: 700, setecentas: 700, oitocentos: 800, oitocentas: 800, novecentos: 900, novecentas: 900, mil: 1000,
+};
+const NW = Object.keys(NUM_WORDS).sort((a, z) => z.length - a.length).join('|');
+const NUM_WORDS_RE = new RegExp(String.raw`\b(?:${NW})(?:(?:\s+e\s+|\s+)(?:${NW}))*\b`, 'g');
+/** A lone "um"/"uma" is an article ("um bom dia") unless a unit or currency follows. */
+const AFTER_LONE_ONE = /^\s+(?:horas?|dias?|semanas?|mes|meses|anos?|real|reais)\b/;
+
+/** "noventa e nove reais" → "99 reais", "uma semana" → "1 semana" (input already folded). */
+function numberWordsToDigits(text: string): string {
+  const t = text.replace(/\bpor cento\b/g, '%');
+  return t.replace(NUM_WORDS_RE, (m: string, offset: number) => {
+    const words = m.split(/\s+/).filter((w) => w !== 'e');
+    // "2 mil" stays: UNIT_RE reads it as "mil:2".
+    if (m === 'mil' && /\d\s*$/.test(t.slice(0, offset))) return m;
+    if (words.length === 1 && (words[0] === 'um' || words[0] === 'uma') && !AFTER_LONE_ONE.test(t.slice(offset + m.length))) {
+      return m;
+    }
+    let total = 0;
+    let cur = 0;
+    for (const w of words) {
+      if (w === 'mil') {
+        total += (cur || 1) * 1000;
+        cur = 0;
+      } else cur += NUM_WORDS[w];
+    }
+    return String(total + cur);
+  });
+}
+
 const NUM = String.raw`\d+(?:[.,]\d+)*`;
 const MONEY_RES: RegExp[] = [
   new RegExp(String.raw`(?:r\$|us\$|\$|€)\s*(${NUM})`, 'g'),
@@ -393,25 +428,72 @@ const DATE_RE = /\b(\d{1,2})\/(\d{1,2})\b/g;
 /** "sala 12/13", "nº 10/12": a room / house number, not a date. */
 const ADDRESS_BEFORE = /(?:sala|n[º°o]|numero|apto|ap|apartamento|loja|cj|conjunto|bloco|casa|lote|quadra|rua|av|avenida)\s*\.?\s*$/;
 const WORD_RE =
-  /\b(desconto|cupom|promo[a-z]*|frete|gratuit[ao]s?|gratis|de graca|brinde|sem juros|parcel[a-z]*)\b/g;
+  /\b(desconto|cupom|promo[a-z]*|frete|gratuit[ao]s?|gratis|de graca|brinde|sem juros|sem acrescimo|parcel[a-z]*|reembols(?:o|os|amos|ar|ado|ada)|estorn(?:o|os|amos|ar|ado|ada)|garanti(?:a|as|mos|do|da|dos|das)|vitalici[ao]s?|sem multa|cancelamos|cancelaremos)\b/g;
 /** "até sexta" only means a deadline promise next to a price / giveaway. */
 const UNTIL_RE = /\bate (?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g;
 const OFFER_KEY = /^(?:money:|%:|w:(?!ate ))/;
 /** A word negated in its sentence ("não temos desconto", "sem frete") is not an offer. */
-const NEGATED = /\b(?:nao|nunca|sem(?!\s+juros))(?:\s+[^\s.;!?,]+){1,4}/g;
+const NEGATED = /\b(?:nao|nunca|sem(?!\s+(?:juros|acrescimo|multa)))(?:\s+[^\s.;!?,]+){1,4}/g;
 const stripNegated = (t: string) => t.replace(NEGATED, (m) => m.replace(WORD_RE, ' '));
 
 function wordKey(w: string): string {
   if (/^promo/.test(w)) return 'w:promo';
   if (/^parcel/.test(w)) return 'w:parcel';
   if (/^gratuit|^de graca$/.test(w)) return 'w:gratis';
+  if (w === 'sem acrescimo') return 'w:sem juros';
+  if (/^reembols/.test(w)) return 'w:reembolso';
+  if (/^estorn/.test(w)) return 'w:estorno';
+  if (/^garanti/.test(w)) return 'w:garantia';
+  if (/^vitalici/.test(w)) return 'w:vitalicio';
+  if (/^cancela/.test(w)) return 'w:cancelamos';
   return `w:${w}`;
 }
 
-/** Normalized commercial claims: "money:99,90", "%:20", "h:24", "x:12", "date:5/10", "w:desconto". */
+const EMAIL_RE = /[a-z0-9._%+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})\b/g;
+/** A URL / host with "http(s)://" or "www." — any TLD. */
+const URL_RE = /(?<![a-z0-9@.-])(?:https?:\/\/|www\.)((?:[a-z0-9-]+\.)+[a-z]{2,})(?![a-z0-9-])/g;
+/**
+ * A bare domain ("loja.com.br"): after a space / start / bracket / quote
+ * (so "Obrigado.Até" is not one), labels of 2+ characters and a common
+ * TLD (so "p.ex." and "Node.js" are not either).
+ */
+const BARE_HOST_RE = /(?<![^\s(["'])((?:[a-z0-9-]{2,}\.)+([a-z]{2,}))(?![a-z0-9-])/g;
+const BARE_TLDS = new Set(
+  'com br net org io app dev me co shop store site online info biz xyz link ly pay tech top club live pro gov edu ai us uk pt'.split(' '),
+);
+/** Phone / Pix key / account number: 8+ digits, optionally split by spaces, dots, dashes or parentheses. */
+const DIGIT_RUN_RE = /(?<![\d/])\+?\(?\d(?:[\s().-]?\d){7,}(?![\d/])/g;
+/** Not a phone: a date written with dashes / dots (01-10-2026, 01.10.2026) or a CEP (01310-100). */
+const NOT_A_PHONE = /^(?:\d{1,2}[-.]\d{1,2}[-.]\d{2,4}|\d{5}-?\d{3})$/;
+
+/** "host:", "email:" and "digits:" tokens — contact / payment details. */
+function contactTokens(t: string, out: Set<string>): void {
+  const withoutEmails = t.replace(EMAIL_RE, (m: string, domain: string) => {
+    out.add(`email:${m}`);
+    out.add(`host:${domain.replace(/^www\./, '')}`);
+    return ' ';
+  });
+  const withoutUrls = withoutEmails.replace(URL_RE, (_m: string, host: string) => {
+    out.add(`host:${host.replace(/^www\./, '')}`);
+    return ' ';
+  });
+  for (const m of withoutUrls.matchAll(BARE_HOST_RE)) {
+    if (BARE_TLDS.has(m[2])) out.add(`host:${m[1].replace(/^www\./, '')}`);
+  }
+  for (const m of t.matchAll(DIGIT_RUN_RE)) {
+    if (!NOT_A_PHONE.test(m[0].trim())) out.add(`digits:${m[0].replace(/\D/g, '')}`);
+  }
+}
+
+/**
+ * Normalized claims: "money:99,90", "%:20", "h:24", "x:12", "date:5/10",
+ * "w:desconto", "host:loja.com.br", "email:a@b.com", "digits:11999999999".
+ * Number words count as numbers ("noventa e nove reais" → "money:99").
+ */
 export function commercialTokens(text: string): string[] {
-  const t = fold(text);
+  const t = numberWordsToDigits(fold(text));
   const out = new Set<string>();
+  contactTokens(t, out);
   for (const re of MONEY_RES) for (const m of t.matchAll(re)) out.add(`money:${canonNumber(m[1])}`);
   for (const m of t.matchAll(UNIT_RE)) out.add(`${unitOf(m[2])}:${canonNumber(m[1])}`);
   for (const m of t.matchAll(DATE_RE)) {
@@ -442,11 +524,29 @@ function groundTokens(ground: readonly string[]): Set<string> {
  * normalized token ("money:99,90", "%:20", "h:24", "x:12") — never by
  * bare digits. "Até amanhã" alone is a goodbye, not a claim.
  */
-export function unverifiedCommercialTerms(reply: string, ground: readonly string[]): string[] {
+export function unverifiedCommercialTerms(
+  reply: string,
+  ground: readonly string[],
+  /**
+   * The customer's own messages: they vouch for contact details only —
+   * digit runs (an order number), e-mails and hosts the customer typed.
+   */
+  customerTexts: readonly string[] = [],
+): string[] {
   const g = groundTokens(ground);
+  for (const k of commercialTokens(customerTexts.join('\n'))) {
+    if (/^(?:digits|email|host):/.test(k)) g.add(k);
+  }
+  const digitGround = [...g].filter((k) => k.startsWith('digits:')).map((k) => k.slice(7));
+  // "(11) 99999-9999" in the reply is grounded by "+55 (11) 99999-9999" — never the other way round.
+  const digitsGrounded = (d: string) => digitGround.some((x) => x.endsWith(d));
   const tokens = commercialTokens(reply);
   const offers = tokens.some((k) => OFFER_KEY.test(k));
-  return tokens.filter((k) => !g.has(k) && (offers || !k.startsWith('w:ate ')));
+  return tokens.filter((k) => {
+    if (g.has(k)) return false;
+    if (k.startsWith('digits:')) return !digitsGrounded(k.slice(7));
+    return offers || !k.startsWith('w:ate ');
+  });
 }
 
 /** The agent's business hours as trusted text ("das 8h às 18h") for the ground list. */
@@ -460,19 +560,53 @@ export function businessHoursGround(bh: AgentBusinessHours | null | undefined): 
 const PUBLIC_LINE =
   /\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}|\b\d{1,2}(?::\d{2}|h)\b|\b(?:rua|avenida|av\.|endereco|cep|horario|telefone|whatsapp|fone|funcionamos|atendemos)\b/;
 
+/** Shortest memory fact checked for a near-verbatim copy. */
+export const LEAK_MIN_CHARS = 25;
+/** Share of a fact's word trigrams found in the reply that counts as a copy. */
+const LEAK_TRIGRAM_RATIO = 0.8;
+
+const wordsOf = (s: string) => fold(s).match(/[\p{L}\p{N}]+/gu) ?? [];
+function trigrams(s: string): Set<string> {
+  const w = wordsOf(s);
+  const out = new Set<string>();
+  for (let i = 0; i + 3 <= w.length; i++) out.add(`${w[i]} ${w[i + 1]} ${w[i + 2]}`);
+  return out;
+}
+/** `unit` (≥ LEAK_MIN_CHARS) is reproduced almost word for word in the text whose trigrams are `inText`. */
+function nearlyCopied(unit: string, inText: Set<string>, ratio = LEAK_TRIGRAM_RATIO): boolean {
+  if (unit.trim().length < LEAK_MIN_CHARS) return false;
+  const tris = [...trigrams(unit)];
+  if (tris.length < 2) return false;
+  return tris.filter((t) => inText.has(t)).length / tris.length >= ratio;
+}
+
 /**
- * The reply quotes ≥ `span` characters of the (trusted) instructions
- * verbatim. Address / phone / opening-hours lines don't count.
+ * The reply reproduces internal text: ≥ `span` characters of an
+ * instruction line verbatim (address / phone / opening-hours lines don't
+ * count), or (almost) word for word an approved memory fact of 25+
+ * characters the customer did not write. Short instruction sentences are
+ * NOT checked: they are mostly public facts the assistant should repeat
+ * ("Aceitamos cartão e pix"); knowledge-base snippets neither, same reason.
  */
-export function leaksInstructions(reply: string, instructions: string | null | undefined, span = 80): boolean {
+export function leaksInstructions(
+  reply: string,
+  instructions: string | null | undefined,
+  extra: { memory?: readonly string[]; customerTexts?: readonly string[] } = {},
+  span = 80,
+): boolean {
   const r = fold(reply);
-  if (r.length < span) return false;
+  const replyTris = trigrams(reply);
   for (const line of (instructions ?? '').split(/\n+/)) {
     const src = fold(line).trim();
-    if (src.length < span || PUBLIC_LINE.test(src)) continue;
-    for (let i = 0; i + span <= src.length; i += 5) {
-      if (r.includes(src.slice(i, i + span))) return true;
+    if (src.length >= span && !PUBLIC_LINE.test(src)) {
+      for (let i = 0; i + span <= src.length; i += 5) {
+        if (r.includes(src.slice(i, i + span))) return true;
+      }
     }
+  }
+  const customerTris = trigrams((extra.customerTexts ?? []).join('\n'));
+  for (const fact of extra.memory ?? []) {
+    if (nearlyCopied(fact, replyTris) && !nearlyCopied(fact, customerTris, 0.5)) return true;
   }
   return false;
 }

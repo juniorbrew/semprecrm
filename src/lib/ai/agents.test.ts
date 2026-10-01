@@ -82,7 +82,7 @@ describe('parseAgentInput', () => {
 describe('agentInstructions', () => {
   it('appends the tone when set', () => {
     expect(agentInstructions({ instructions: 'Seja breve.', tone: null })).toBe('Seja breve.');
-    expect(agentInstructions({ instructions: 'Seja breve.', tone: 'formal' })).toBe('Seja breve.\n\nTom de voz: formal');
+    expect(agentInstructions({ instructions: 'Seja breve.', tone: 'formal' })).toBe('Seja breve.\n\nTom de voz: "formal"');
   });
 });
 
