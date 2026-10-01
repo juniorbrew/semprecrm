@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 import type {
   Contact,
   ContactCustomValue,
@@ -24,26 +23,27 @@ import {
   Mail,
   Copy,
   Check,
-  Building2,
   Tag as TagIcon,
   DollarSign,
-  StickyNote,
-  ListChecks,
   CheckSquare,
-  History,
   Lock,
-  MessageCircle,
   Loader2,
   Ban,
   ShieldCheck,
   CalendarPlus,
   UserRound,
-  Brain,
-  CalendarDays,
-  Activity,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { listConversationsByContact } from "@/lib/conversations/find-by-contact";
+import {
+  contactHistorySummary,
+  csatByConversation,
+  listCsatAnswersByContact,
+  previousConversationRows,
+  type CsatAnswer,
+} from "@/lib/conversations/contact-history";
+import { useConversationCategories } from "@/hooks/use-conversation-categories";
+import { useTeams } from "@/hooks/use-teams";
 import { insertConversationEvent } from "@/lib/conversations/events";
 import { addContactNote, onContactNotesChanged } from "@/lib/conversations/notes";
 import { DealForm } from "@/components/pipelines/deal-form";
@@ -67,11 +67,15 @@ import { PanelSection, SectionAddButton, SectionHeader } from "./panel-section";
 import { PanelTags, TAG_PALETTE, type ContactTag } from "./panel-tags";
 import { PanelDeals } from "./panel-deals";
 import { PanelActivity } from "./panel-activity";
+import { PanelSituation } from "./panel-situation";
+import { PanelHistory, PanelPreviousConversations } from "./panel-history";
 
 interface ContactSidebarProps {
   contact: Contact | null;
   /** Active thread — label changes are logged as pills against it. */
   conversationId?: string | null;
+  /** Active thread's row — drives the "Situação" section (state, owner, SLA). */
+  conversation?: Conversation | null;
   /** Jump to another conversation with this contact (previous threads). */
   onOpenConversation?: (conversation: Conversation) => void;
   /** Fired with the refetched row after a privacy action (consent / anonymise). */
@@ -109,13 +113,9 @@ const PANEL_COPY: Record<
     emptyValue: string;
     deals: string;
     noDeals: string;
-    previous: string;
-    current: string;
-    noPrevious: string;
     notes: string;
     noNotes: string;
     notesHint: string;
-    status: Record<Conversation["status"], string>;
     tagAdded: (name: string) => string;
     tagRemoved: (name: string) => string;
     /** Tooltip/aria on a tag chip — clicking it removes the tag. */
@@ -154,13 +154,9 @@ const PANEL_COPY: Record<
     emptyValue: "—",
     deals: "Negócios vinculados",
     noDeals: "Nenhum negócio vinculado",
-    previous: "Conversas anteriores",
-    current: "Atual",
-    noPrevious: "Primeira conversa com este contato",
     notes: "Notas internas",
     noNotes: "Nenhuma nota ainda",
     notesHint: "Use a aba Nota interna na caixa de resposta",
-    status: { open: "Aberta", pending: "Pendente", closed: "Resolvida" },
     tagAdded: (name) => `Etiqueta ${name} adicionada`,
     tagRemoved: (name) => `Etiqueta ${name} removida`,
     removeTag: (name) => `Remover etiqueta ${name}`,
@@ -197,13 +193,9 @@ const PANEL_COPY: Record<
     emptyValue: "—",
     deals: "Linked deals",
     noDeals: "No linked deals",
-    previous: "Previous conversations",
-    current: "Current",
-    noPrevious: "First conversation with this contact",
     notes: "Internal notes",
     noNotes: "No notes yet",
     notesHint: "Use the Private note tab in the composer",
-    status: { open: "Open", pending: "Pending", closed: "Resolved" },
     tagAdded: (name) => `Label ${name} added`,
     tagRemoved: (name) => `Label ${name} removed`,
     removeTag: (name) => `Remove label ${name}`,
@@ -218,21 +210,8 @@ const PANEL_COPY: Record<
   },
 };
 
-const STATUS_DOT: Record<Conversation["status"], string> = {
-  open: "bg-primary",
-  pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
-};
-
 /** Notes shown in the panel; the full list lives in the thread. */
 const MAX_PANEL_NOTES = 3;
-
-function formatShortDate(iso: string | undefined, language: Language): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(language, { day: "2-digit", month: "short" });
-}
 
 function formatDateTime(iso: string, language: Language): string {
   const d = new Date(iso);
@@ -290,6 +269,7 @@ function ShortcutButton({
 export function ContactSidebar({
   contact,
   conversationId = null,
+  conversation = null,
   onOpenConversation,
   onContactChanged,
 }: ContactSidebarProps) {
@@ -369,6 +349,7 @@ export function ContactSidebar({
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
   const [previous, setPrevious] = useState<Conversation[]>([]);
+  const [csatAnswers, setCsatAnswers] = useState<CsatAnswer[]>([]);
   const [tagBusy, setTagBusy] = useState<string | null>(null);
   const [creatingTag, setCreatingTag] = useState(false);
   const [newFieldOpen, setNewFieldOpen] = useState(false);
@@ -396,11 +377,41 @@ export function ContactSidebar({
   const contactId = contact?.id ?? null;
   const linkedTasks = useLinkedTasks({ contactId, enabled: tasksEnabled });
 
+  // "Situação" / "Conversas anteriores": names for the ids on the rows.
+  const { byId: categoryById } = useConversationCategories();
+  const { byId: teamById } = useTeams();
+  const ownerId = conversation?.assigned_agent_id ?? null;
+  const [owner, setOwner] = useState<{ id: string; name: string | null } | null>(null);
+  useEffect(() => {
+    if (!ownerId || ownerId === user?.id) return;
+    let cancelled = false;
+    void createClient()
+      .from("profiles")
+      .select("full_name")
+      .eq("user_id", ownerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setOwner({ id: ownerId, name: (data?.full_name as string | undefined) ?? null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ownerId, user?.id]);
+  const csatMap = useMemo(() => csatByConversation(csatAnswers), [csatAnswers]);
+  const previousRows = useMemo(
+    () => previousConversationRows(previous, conversationId, csatMap, (id) => categoryById.get(id)?.name),
+    [previous, conversationId, csatMap, categoryById],
+  );
+  const historySummary = useMemo(
+    () => contactHistorySummary(previous, csatMap, contact?.created_at),
+    [previous, csatMap, contact?.created_at],
+  );
+
   const fetchContactData = useCallback(async () => {
     if (!contactId) return;
     const supabase = createClient();
 
-    const [dealsRes, notesRes, tagsRes, allTagsRes, fieldsRes, valuesRes, convs, usageRes] =
+    const [dealsRes, notesRes, tagsRes, allTagsRes, fieldsRes, valuesRes, convs, usageRes, csat] =
       await Promise.all([
         supabase
           .from("deals")
@@ -424,6 +435,7 @@ export function ContactSidebar({
           .eq("contact_id", contactId),
         listConversationsByContact(supabase, contactId),
         supabase.rpc("account_tag_usage"),
+        listCsatAnswersByContact(supabase, contactId),
       ]);
 
     if (dealsRes.data) setDeals(dealsRes.data as Deal[]);
@@ -454,6 +466,7 @@ export function ContactSidebar({
       setTagUsage(usage);
     }
     setPrevious(convs);
+    setCsatAnswers(csat);
     setLoadedFor(contactId);
   }, [contactId]);
 
@@ -689,7 +702,6 @@ export function ContactSidebar({
   const panelLoaded = loadedFor === contact.id;
   const activityLabel = language === "pt-BR" ? "Atividade" : "Activity";
   const displayName = contact.name || contact.phone;
-  const otherConversations = previous.filter((c) => c.id !== conversationId);
   const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
   const hiddenNotes = notes.length - panelNotes.length;
 
@@ -707,55 +719,55 @@ export function ContactSidebar({
           height and the panel scrolls on its own. */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
-          {/* Identity */}
-          <div className="flex flex-col items-center text-center">
+          {/* Identity — avatar beside name + company. No presence dot:
+              contacts carry no availability data (only agents do). */}
+          <div className="flex items-center gap-3">
             <ContactAvatar
               key={contact.id}
               src={contact.avatar_url}
               name={displayName}
-              className="h-16 w-16 text-lg font-semibold"
+              className="h-11 w-11 shrink-0 text-sm font-semibold"
             />
-            <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
-            {contact.anonymized_at && (
-              <span
-                className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground"
-                title={t("Personal data removed (LGPD)")}
-              >
-                <ShieldCheck className="h-3 w-3" aria-hidden />
-                {t("Anonymized")}
-              </span>
-            )}
-            {optedOutAt && !contact.anonymized_at && (
-              <div
-                className="mt-1.5 flex flex-col items-center gap-1"
-                title={copy.optedOutHint(new Date(optedOutAt).toLocaleDateString(language))}
-              >
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
-                  <Ban className="h-3 w-3" aria-hidden />
-                  {copy.optedOut}
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-semibold text-foreground">{displayName}</h3>
+              {contact.anonymized_at && (
+                <span
+                  className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+                  title={t("Personal data removed (LGPD)")}
+                >
+                  <ShieldCheck className="h-3 w-3" aria-hidden />
+                  {t("Anonymized")}
                 </span>
-                {canReactivate && (
-                  <button
-                    type="button"
-                    onClick={handleReactivate}
-                    disabled={reactivating}
-                    className="text-[11px] font-medium text-primary underline-offset-2 hover:underline disabled:opacity-60"
-                  >
-                    {reactivating ? <Loader2 className="inline h-3 w-3 animate-spin" /> : copy.reactivate}
-                  </button>
-                )}
-              </div>
-            )}
-            {contact.company && (
-              <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <Building2 className="h-3 w-3" />
-                {contact.company}
-              </p>
-            )}
+              )}
+              {optedOutAt && !contact.anonymized_at && (
+                <div
+                  className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                  title={copy.optedOutHint(new Date(optedOutAt).toLocaleDateString(language))}
+                >
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
+                    <Ban className="h-3 w-3" aria-hidden />
+                    {copy.optedOut}
+                  </span>
+                  {canReactivate && (
+                    <button
+                      type="button"
+                      onClick={handleReactivate}
+                      disabled={reactivating}
+                      className="text-[11px] font-medium text-primary underline-offset-2 hover:underline disabled:opacity-60"
+                    >
+                      {reactivating ? <Loader2 className="inline h-3 w-3 animate-spin" /> : copy.reactivate}
+                    </button>
+                  )}
+                </div>
+              )}
+              {contact.company && (
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">{contact.company}</p>
+              )}
+            </div>
           </div>
 
           {/* Reach */}
-          <div className="mt-4 space-y-1">
+          <div className="-mx-2 mt-3 space-y-0.5">
             <button
               type="button"
               onClick={handleCopyPhone}
@@ -858,140 +870,23 @@ export function ContactSidebar({
             />
           )}
 
-          <div className="my-4 border-t border-border" />
-
-          {/* Labels: click a chip to remove, one-click "most used"
-              suggestions, quick create with colour. Every section below
-              is collapsible and remembers its open/closed state. */}
-          <PanelSection id="tags">
-            <PanelTags
-              contactTags={contactTags}
-              allTags={allTags}
-              usage={tagUsage}
-              loaded={panelLoaded}
-              canWrite={canWrite}
-              canCreate={canDefineFields}
-              busyId={tagBusy}
-              creating={creatingTag}
-              onToggle={(tag) => void toggleTag(tag)}
-              onCreate={(name, color) => void createAndAttachTag(name, color)}
-            />
-          </PanelSection>
-
-          <div className="my-4 border-t border-border" />
-
-          {/* Custom fields: every account definition, this contact's
-              value editable inline; "+" defines a new field (admin+). */}
-          <PanelSection id="fields" defaultOpen={false}>
-            <div>
-              <SectionHeader
-                icon={ListChecks}
-                label={copy.customFields}
-                count={customFields.length}
-                action={
-                  canDefineFields ? (
-                    <SectionAddButton
-                      label={t("Add custom field")}
-                      onClick={() => setNewFieldOpen(true)}
-                    />
-                  ) : undefined
-                }
+          {/* Situação of the open conversation (state, priority, owner,
+              team, SLA) — from the row the inbox already holds. */}
+          {conversation && conversation.contact_id === contact.id && (
+            <>
+              <div className="-mx-4 my-3.5 border-t border-border" />
+              <PanelSituation
+                conversation={conversation}
+                currentUserId={user?.id}
+                ownerName={owner && owner.id === conversation.assigned_agent_id ? owner.name : null}
+                teamName={conversation.team_id ? (teamById.get(conversation.team_id)?.name ?? null) : null}
               />
-              <div className="mt-2 px-1">
-                {!panelLoaded ? (
-                  <div className="h-8 animate-pulse rounded-lg bg-muted/60" />
-                ) : customFields.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
-                ) : (
-                  <dl className="divide-y divide-border/60">
-                    {customFields.map((field) => (
-                      <CustomFieldValue
-                        key={field.id}
-                        contactId={contact.id}
-                        field={field}
-                        value={customValues[field.id] ?? ""}
-                        onSaved={handleValueSaved}
-                        emptyLabel={copy.emptyValue}
-                        disabled={!canWrite}
-                      />
-                    ))}
-                  </dl>
-                )}
-              </div>
-            </div>
-          </PanelSection>
-          <NewCustomFieldDialog
-            open={newFieldOpen}
-            onOpenChange={setNewFieldOpen}
-            existing={customFields}
-            onCreated={handleFieldCreated}
-          />
-
-          <div className="my-4 border-t border-border" />
-
-          {/* Companies (migration 054): primary first, each linking to
-              /companies?company=id; agent+ links / unlinks / marks the
-              primary through the shared data layer. */}
-          <PanelSection id="companies">
-            <ContactCompanies
-              key={contact.id}
-              contactId={contact.id}
-              readOnly={!canWrite}
-              compact
-              header={({ count, togglePicker, readOnly }) => (
-                <SectionHeader
-                  icon={Building2}
-                  label={copy.companies}
-                  count={count}
-                  action={
-                    readOnly ? undefined : (
-                      <SectionAddButton label={t("Link company")} onClick={togglePicker} />
-                    )
-                  }
-                />
-              )}
-            />
-          </PanelSection>
-
-          <div className="my-4 border-t border-border" />
-
-          {/* Linked deals: stage select + expandable deal fields; "+"
-              opens the shared deal sheet prefilled with this contact;
-              hidden when the plan has no Pipelines. */}
-          <PanelSection id="deals">
-            <PanelDeals
-              deals={deals}
-              onPatch={patchDeal}
-              onMoved={() => setActivityVersion((v) => v + 1)}
-              loaded={panelLoaded}
-              canWrite={canWrite}
-              conversationId={conversationId}
-              addAction={
-                pipelinesEnabled && canWrite ? (
-                  <SectionAddButton
-                    label={t("Add Deal")}
-                    onClick={() => void openNewDeal()}
-                    disabled={dealTargetLoading}
-                  />
-                ) : undefined
-              }
-            />
-          </PanelSection>
-          {dealTarget && (
-            <DealForm
-              open={dealFormOpen}
-              onOpenChange={setDealFormOpen}
-              pipelineId={dealTarget.pipeline.id}
-              stages={dealTarget.stages}
-              defaultStageId={dealTarget.stages[0]?.id}
-              defaultContactId={contact.id}
-              onSaved={() => void refreshDeals()}
-            />
+            </>
           )}
 
           {tasksEnabled && (
             <>
-              <div className="my-4 border-t border-border" />
+              <div className="-mx-4 my-3.5 border-t border-border" />
 
               {/* Tasks: open tasks linked to this contact; the checkbox
                   completes (default done status), "+" reveals the inline
@@ -999,7 +894,6 @@ export function ContactSidebar({
               <PanelSection id="tasks">
                 <div>
                   <SectionHeader
-                    icon={CheckSquare}
                     label={t("Tasks")}
                     count={linkedTasks.tasks.length}
                     action={
@@ -1049,13 +943,165 @@ export function ContactSidebar({
             </>
           )}
 
+
+          <div className="-mx-4 my-3.5 border-t border-border" />
+
+          {/* The contact's other conversations (latest 5): date, subject
+              or category, state and the CSAT score (migration 074). */}
+          <PanelSection id="previous">
+            <PanelPreviousConversations
+              rows={previousRows}
+              loaded={panelLoaded}
+              onOpen={
+                onOpenConversation
+                  ? (conv) => onOpenConversation({ ...conv, contact: conv.contact ?? contact })
+                  : undefined
+              }
+            />
+          </PanelSection>
+
+          <div className="-mx-4 my-3.5 border-t border-border" />
+
+          <PanelSection id="history">
+            <PanelHistory summary={historySummary} loaded={panelLoaded} />
+          </PanelSection>
+
+          <div className="-mx-4 my-3.5 border-t border-border" />
+
+          {/* Labels: click a chip to remove, one-click "most used"
+              suggestions, quick create with colour. Every section below
+              is collapsible and remembers its open/closed state. */}
+          <PanelSection id="tags">
+            <PanelTags
+              contactTags={contactTags}
+              allTags={allTags}
+              usage={tagUsage}
+              loaded={panelLoaded}
+              canWrite={canWrite}
+              canCreate={canDefineFields}
+              busyId={tagBusy}
+              creating={creatingTag}
+              onToggle={(tag) => void toggleTag(tag)}
+              onCreate={(name, color) => void createAndAttachTag(name, color)}
+            />
+          </PanelSection>
+
+          <div className="-mx-4 my-3.5 border-t border-border" />
+
+          {/* Custom fields: every account definition, this contact's
+              value editable inline; "+" defines a new field (admin+). */}
+          <PanelSection id="fields" defaultOpen={false}>
+            <div>
+              <SectionHeader
+                label={copy.customFields}
+                count={customFields.length}
+                action={
+                  canDefineFields ? (
+                    <SectionAddButton
+                      label={t("Add custom field")}
+                      onClick={() => setNewFieldOpen(true)}
+                    />
+                  ) : undefined
+                }
+              />
+              <div className="mt-2 px-1">
+                {!panelLoaded ? (
+                  <div className="h-8 animate-pulse rounded-lg bg-muted/60" />
+                ) : customFields.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
+                ) : (
+                  <dl className="divide-y divide-border/60">
+                    {customFields.map((field) => (
+                      <CustomFieldValue
+                        key={field.id}
+                        contactId={contact.id}
+                        field={field}
+                        value={customValues[field.id] ?? ""}
+                        onSaved={handleValueSaved}
+                        emptyLabel={copy.emptyValue}
+                        disabled={!canWrite}
+                      />
+                    ))}
+                  </dl>
+                )}
+              </div>
+            </div>
+          </PanelSection>
+          <NewCustomFieldDialog
+            open={newFieldOpen}
+            onOpenChange={setNewFieldOpen}
+            existing={customFields}
+            onCreated={handleFieldCreated}
+          />
+
+          <div className="-mx-4 my-3.5 border-t border-border" />
+
+          {/* Companies (migration 054): primary first, each linking to
+              /companies?company=id; agent+ links / unlinks / marks the
+              primary through the shared data layer. */}
+          <PanelSection id="companies">
+            <ContactCompanies
+              key={contact.id}
+              contactId={contact.id}
+              readOnly={!canWrite}
+              compact
+              header={({ count, togglePicker, readOnly }) => (
+                <SectionHeader
+                  label={copy.companies}
+                  count={count}
+                  action={
+                    readOnly ? undefined : (
+                      <SectionAddButton label={t("Link company")} onClick={togglePicker} />
+                    )
+                  }
+                />
+              )}
+            />
+          </PanelSection>
+
+          <div className="-mx-4 my-3.5 border-t border-border" />
+
+          {/* Linked deals: stage select + expandable deal fields; "+"
+              opens the shared deal sheet prefilled with this contact;
+              hidden when the plan has no Pipelines. */}
+          <PanelSection id="deals">
+            <PanelDeals
+              deals={deals}
+              onPatch={patchDeal}
+              onMoved={() => setActivityVersion((v) => v + 1)}
+              loaded={panelLoaded}
+              canWrite={canWrite}
+              conversationId={conversationId}
+              addAction={
+                pipelinesEnabled && canWrite ? (
+                  <SectionAddButton
+                    label={t("Add Deal")}
+                    onClick={() => void openNewDeal()}
+                    disabled={dealTargetLoading}
+                  />
+                ) : undefined
+              }
+            />
+          </PanelSection>
+          {dealTarget && (
+            <DealForm
+              open={dealFormOpen}
+              onOpenChange={setDealFormOpen}
+              pipelineId={dealTarget.pipeline.id}
+              stages={dealTarget.stages}
+              defaultStageId={dealTarget.stages[0]?.id}
+              defaultContactId={contact.id}
+              onSaved={() => void refreshDeals()}
+            />
+          )}
+
           {calendarEnabled && (
             <>
-              <div className="my-4 border-t border-border" />
+              <div className="-mx-4 my-3.5 border-t border-border" />
 
               {/* Agenda: the contact's next appointments; "+" reveals the
                   inline title + when creator linked to the contact and thread. */}
-              <PanelSection id="agenda" lazyHeader={<SectionHeader icon={CalendarDays} label={t("Calendar")} />}>
+              <PanelSection id="agenda" lazyHeader={<SectionHeader label={t("Calendar")} />}>
                 <LinkedEvents
                   key={`${contact.id}:${eventsVersion}`}
                   contactId={contact.id}
@@ -1068,72 +1114,24 @@ export function ContactSidebar({
             </>
           )}
 
-          <div className="my-4 border-t border-border" />
-
-          {/* Previous conversations with this contact */}
-          <PanelSection id="previous" defaultOpen={false}>
-            <div>
-              <SectionHeader
-                icon={History}
-                label={copy.previous}
-                count={otherConversations.length}
-              />
-              <div className="mt-2 space-y-1 px-1">
-                {otherConversations.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{copy.noPrevious}</p>
-                ) : (
-                  otherConversations.map((conv) => (
-                    <button
-                      key={conv.id}
-                      type="button"
-                      onClick={() =>
-                        onOpenConversation?.({ ...conv, contact: conv.contact ?? contact })
-                      }
-                      disabled={!onOpenConversation}
-                      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted disabled:cursor-default"
-                    >
-                      <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                            <span
-                              className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[conv.status])}
-                            />
-                            {copy.status[conv.status]}
-                          </span>
-                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                            {formatShortDate(conv.last_message_at ?? conv.created_at, language)}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-foreground">
-                          {conv.last_message_text || copy.emptyValue}
-                        </span>
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </PanelSection>
-
-          <div className="my-4 border-t border-border" />
+          <div className="-mx-4 my-3.5 border-t border-border" />
 
           {/* Activity: merged feed (contact_activity RPC, migration 070). */}
-          <PanelSection id="activity" lazyHeader={<SectionHeader icon={Activity} label={activityLabel} />}>
+          <PanelSection id="activity" lazyHeader={<SectionHeader label={activityLabel} />}>
             <PanelActivity contactId={contact.id} refreshKey={activityVersion} />
           </PanelSection>
 
           {/* Contact memory (AI, migration 064): facts used in suggestions. */}
           {aiEnabled && (
             <>
-              <div className="my-4 border-t border-border" />
-              <PanelSection id="memory" lazyHeader={<SectionHeader icon={Brain} label={t("Contact memory")} />}>
+              <div className="-mx-4 my-3.5 border-t border-border" />
+              <PanelSection id="memory" lazyHeader={<SectionHeader label={t("Contact memory")} />}>
                 <ContactMemorySection
                   contactId={contact.id}
                   conversationId={conversationId}
                   anonymized={!!contact.anonymized_at}
                   renderHeader={(action, count) => (
-                    <SectionHeader icon={Brain} label={t("Contact memory")} count={count} action={action} />
+                    <SectionHeader label={t("Contact memory")} count={count} action={action} />
                   )}
                   renderAddButton={(label, onClick) => <SectionAddButton label={label} onClick={onClick} />}
                 />
@@ -1141,7 +1139,7 @@ export function ContactSidebar({
             </>
           )}
 
-          <div className="my-4 border-t border-border" />
+          <div className="-mx-4 my-3.5 border-t border-border" />
 
           {/* Team notes: the latest few; the full history sits in the
               thread as amber bubbles. "+" reveals an inline note box that
@@ -1149,7 +1147,6 @@ export function ContactSidebar({
           <PanelSection id="notes">
             <div>
               <SectionHeader
-                icon={StickyNote}
                 label={copy.notes}
                 count={notes.length}
                 action={
@@ -1181,7 +1178,7 @@ export function ContactSidebar({
                     {panelNotes.map((note) => (
                       <div
                         key={note.id}
-                        className="rounded-lg bg-amber-500/10 px-3 py-2"
+                        className="border-l-2 border-amber-500/50 pl-2.5"
                       >
                         <p className="line-clamp-3 whitespace-pre-wrap text-xs text-foreground">
                           {note.note_text}
@@ -1203,12 +1200,12 @@ export function ContactSidebar({
             </div>
           </PanelSection>
 
-          <div className="my-4 border-t border-border" />
+          <div className="-mx-4 my-3.5 border-t border-border" />
 
           {/* Privacy (LGPD, migration 035): consent, export, anonymise. */}
-          <PanelSection id="privacy" defaultOpen={false} lazyHeader={<SectionHeader icon={ShieldCheck} label={t("Privacy")} />}>
+          <PanelSection id="privacy" defaultOpen={false} lazyHeader={<SectionHeader label={t("Privacy")} />}>
             <div>
-              <SectionHeader icon={ShieldCheck} label={t("Privacy")} />
+              <SectionHeader label={t("Privacy")} />
               <ContactPrivacySection
                 compact
                 className="mt-2"

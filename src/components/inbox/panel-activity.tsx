@@ -127,7 +127,7 @@ export function PanelActivity({
 
   return (
     <div>
-      <SectionHeader icon={Activity} label={copy.title} />
+      <SectionHeader label={copy.title} />
       <div className="mt-2 px-1">
         {!current ? (
           <div role="status" aria-label={copy.loading} className="space-y-1.5">

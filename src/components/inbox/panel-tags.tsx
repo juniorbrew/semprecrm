@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, Loader2, Plus, Tag as TagIcon, X } from "lucide-react";
+import { Check, Loader2, Plus, X } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -105,7 +105,6 @@ export function PanelTags({
   return (
     <div>
       <SectionHeader
-        icon={TagIcon}
         label={copy.title}
         count={contactTags.length}
         action={
