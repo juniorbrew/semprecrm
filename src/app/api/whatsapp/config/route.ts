@@ -27,6 +27,7 @@ import { AUDIT_ACTIONS } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
 import { supabaseServerUrl } from '@/lib/supabase/url'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { invalidateVerifyTokenCache } from '@/lib/whatsapp/verify-token-cache'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 /**
@@ -648,6 +649,10 @@ export async function POST(request: Request) {
       }
     }
 
+    // The webhook handshake caches verify-token digests; a new token
+    // must verify immediately when Meta calls right after this save.
+    invalidateVerifyTokenCache()
+
     await audit({
       accountId,
       actorUserId: ctx.userId,
@@ -732,6 +737,7 @@ export async function DELETE() {
     }
 
     if (removedRows && removedRows.length > 0) {
+      invalidateVerifyTokenCache()
       await audit({
         accountId,
         actorUserId: ctx.userId,

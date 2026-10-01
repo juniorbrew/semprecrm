@@ -97,6 +97,9 @@ vi.mock("@/lib/whatsapp/meta-api", () => ({
   getSubscribedApps: vi.fn(async () => []),
 }));
 
+const invalidate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/whatsapp/verify-token-cache", () => ({ invalidateVerifyTokenCache: invalidate }));
+
 import { __resetRateLimitForTests } from "@/lib/rate-limit";
 import { DELETE, POST } from "./route";
 import * as metaApi from "@/lib/whatsapp/meta-api";
@@ -130,6 +133,7 @@ beforeEach(() => {
   h.state.claimed = false;
   h.state.writes = [];
   __resetRateLimitForTests();
+  invalidate.mockClear();
   vi.mocked(metaApi.verifyPhoneNumber).mockReset();
   vi.mocked(metaApi.verifyPhoneNumber).mockImplementation(
     async () => ({ id: "123456", display_phone_number: "+55 11 99999-0000" }),
@@ -379,5 +383,16 @@ describe("/api/whatsapp/config — role and disclosure", () => {
     const json = (await res.json()) as ConfigError;
     expect(json.error).not.toMatch(/another account|already linked/i);
     expect(metaApi.verifyPhoneNumber).not.toHaveBeenCalled();
+  });
+});
+
+describe("/api/whatsapp/config — webhook verify-token cache", () => {
+  it("is invalidated after a successful save and not after a refused one", async () => {
+    expect((await POST(request(VALID))).status).toBe(200);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    invalidate.mockClear();
+    h.state.role = "agent";
+    await POST(request(VALID));
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });

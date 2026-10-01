@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createVerifyTokenMatcher, VERIFY_CACHE_MS, VERIFY_MISS_REFETCH_MS } from './verify-token-cache'
+import {
+  createVerifyTokenMatcher,
+  invalidateVerifyTokenCache,
+  VERIFY_CACHE_MS,
+  VERIFY_MISS_REFETCH_MS,
+} from './verify-token-cache'
 
 function setup(rows: { id: string; verify_token: string | null }[]) {
   let t = 1_000_000
@@ -45,5 +50,23 @@ describe('createVerifyTokenMatcher', () => {
   it('returns undefined when the configs cannot be loaded', async () => {
     const m = createVerifyTokenMatcher(async () => null, (v) => v)
     expect(await m.find('x')).toBeUndefined()
+  })
+
+  it('reloads after invalidateVerifyTokenCache (config saved / removed)', async () => {
+    const { m, load } = setup([{ id: 'c', verify_token: 'enc:secret' }])
+    await m.find('secret')
+    await m.find('secret')
+    expect(load).toHaveBeenCalledTimes(1)
+    invalidateVerifyTokenCache()
+    await m.find('secret')
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('dedupes concurrent refreshes into one load', async () => {
+    const { m, load, decrypt } = setup([{ id: 'c', verify_token: 'enc:secret' }])
+    const results = await Promise.all(Array.from({ length: 10 }, (_, i) => m.find(i % 2 ? 'secret' : 'nope')))
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(decrypt).toHaveBeenCalledTimes(1)
+    expect(results.filter(Boolean)).toHaveLength(5)
   })
 })

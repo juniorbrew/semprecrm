@@ -31,14 +31,36 @@ interface Entry extends VerifyMatch {
 
 const sha256 = (v: string) => createHash('sha256').update(v).digest()
 
+// Bumped whenever a whatsapp_config row is saved or removed. Kept on
+// globalThis so the config route and the webhook route see the same
+// counter even if the bundler gives each route its own module copy.
+const EPOCH_KEY = '__semprecrmVerifyTokenEpoch'
+const g = globalThis as unknown as Record<string, number | undefined>
+const currentEpoch = () => g[EPOCH_KEY] ?? 0
+
+/** Drop every cached verify-token digest (call after a config write). */
+export function invalidateVerifyTokenCache(): void {
+  g[EPOCH_KEY] = currentEpoch() + 1
+}
+
 export function createVerifyTokenMatcher(
   load: () => Promise<VerifyConfigRow[] | null>,
   decrypt: (v: string) => string,
   now: () => number = Date.now,
 ) {
-  let cache: { at: number; rows: Entry[] } | null = null
+  let cache: { at: number; epoch: number; rows: Entry[] } | null = null
+  // Concurrent misses share one load + decrypt pass.
+  let inflight: Promise<Entry[] | null> | null = null
 
-  async function refresh(): Promise<Entry[] | null> {
+  function refresh(): Promise<Entry[] | null> {
+    inflight ??= doRefresh().finally(() => {
+      inflight = null
+    })
+    return inflight
+  }
+
+  async function doRefresh(): Promise<Entry[] | null> {
+    const epoch = currentEpoch()
     const configs = await load()
     if (!configs) return null
     const rows: Entry[] = []
@@ -50,7 +72,7 @@ export function createVerifyTokenMatcher(
         // Malformed / wrong-key token row — skip it.
       }
     }
-    cache = { at: now(), rows }
+    cache = { at: now(), epoch, rows }
     return rows
   }
 
@@ -68,7 +90,7 @@ export function createVerifyTokenMatcher(
     async find(verifyToken: string): Promise<VerifyMatch | null | undefined> {
       const supplied = sha256(verifyToken)
       const t = now()
-      if (cache && t - cache.at < VERIFY_CACHE_MS) {
+      if (cache && cache.epoch === currentEpoch() && t - cache.at < VERIFY_CACHE_MS) {
         const hit = match(cache.rows, supplied)
         if (hit || t - cache.at < VERIFY_MISS_REFETCH_MS) return hit
       }
