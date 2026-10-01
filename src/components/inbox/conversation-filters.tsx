@@ -123,7 +123,7 @@ export function FilterPopover({
         className={cn(
           "relative inline-flex h-7 w-7 items-center justify-center rounded-full border transition-colors",
           active > 0
-            ? "border-primary/40 bg-primary/10 text-primary"
+            ? "border-transparent bg-primary/10 text-primary"
             : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
         )}
       >
@@ -137,7 +137,7 @@ export function FilterPopover({
       <PopoverContent align="end" className="w-64">
         {tags.length > 0 && (
           <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <p className="mb-1 text-xs text-muted-foreground">
               {t("Tags")}
             </p>
             <div className="max-h-48 overflow-y-auto">
@@ -163,7 +163,7 @@ export function FilterPopover({
         )}
         {hasBothChannels && (
           <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <p className="mb-1 text-xs text-muted-foreground">
               WhatsApp
             </p>
             <div className="flex gap-1" role="group" aria-label="WhatsApp">
@@ -176,8 +176,8 @@ export function FilterPopover({
                   className={cn(
                     "h-7 flex-1 rounded-md border text-xs font-medium transition-colors",
                     channel === value
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-border text-foreground hover:bg-muted",
+                      ? "border-transparent bg-primary/10 text-primary"
+                      : "border-transparent text-foreground hover:bg-muted",
                   )}
                 >
                   {value ? channelLabel(value, t) : t("Both")}
@@ -220,8 +220,8 @@ export function FilterPopover({
                     className={cn(
                       "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
                       priority === value
-                        ? "border-primary/40 bg-primary/10 text-primary"
-                        : "border-border text-foreground hover:bg-muted",
+                        ? "border-transparent bg-primary/10 text-primary"
+                        : "border-transparent text-foreground hover:bg-muted",
                     )}
                   >
                     <span className={cn("h-1.5 w-1.5 rounded-full", PRIORITY_DOT[value])} aria-hidden />
@@ -262,7 +262,7 @@ export function FilterPopover({
                 onClick={() => onSlaBreachedChange?.(!slaBreached)}
                 className={cn(
                   "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
-                  slaBreached ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-foreground hover:bg-muted",
+                  slaBreached ? "border-transparent bg-primary/10 text-primary" : "border-transparent text-foreground hover:bg-muted",
                 )}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden />
@@ -334,7 +334,7 @@ export function FilterChips({
   const team = teamId ? teams.find((x) => x.id === teamId) : null;
   if (tagIds.length === 0 && !channel && !category && !priority && !team && !slaBreached) return null;
   const chip =
-    "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 pl-2 pr-1 text-[11px] font-medium text-primary";
+    "inline-flex h-6 shrink-0 items-center gap-1 rounded-full bg-primary/10 pl-2 pr-1 text-[11px] font-medium text-primary";
   return (
     <div
       className="mt-2 flex items-center gap-1.5 overflow-x-auto px-3 [scrollbar-width:none]"

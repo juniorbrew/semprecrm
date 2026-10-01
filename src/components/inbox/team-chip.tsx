@@ -8,7 +8,7 @@ import { teamCopy, type Team } from "@/lib/support/teams";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const CHIP =
-  "inline-flex h-5 max-w-36 shrink-0 items-center gap-1.5 rounded-full bg-muted px-2 text-[11px] leading-4 text-muted-foreground";
+  "inline-flex h-5 max-w-36 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs leading-4 text-muted-foreground";
 
 interface TeamChipProps {
   teamId: string | null | undefined;
@@ -36,7 +36,7 @@ export function TeamChip({ teamId, teams, byId, canEdit, onChange }: TeamChipPro
         data-testid="team-chip"
         aria-label={copy.team}
         title={copy.team}
-        className={cn(CHIP, "transition-colors hover:bg-muted/70 hover:text-foreground", !team && "opacity-70")}
+        className={cn(CHIP, "transition-colors hover:bg-muted hover:text-foreground", !team && "opacity-70")}
       >
         {label}
       </PopoverTrigger>

@@ -231,7 +231,7 @@ function DealRow({
   const color = deal.stage?.color ?? "#64748b";
 
   return (
-    <div className="rounded-lg bg-muted px-3 py-2">
+    <div className="rounded-lg bg-muted/50 px-3 py-2">
       <div className="flex items-center gap-1 text-sm font-medium text-foreground">
         <span className="min-w-0 flex-1 truncate">{deal.title}</span>
         <Link
@@ -282,7 +282,7 @@ function DealRow({
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+        className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
         <ChevronDown className={cn("h-3 w-3 transition-transform", !expanded && "-rotate-90")} aria-hidden />
         {copy.fields}

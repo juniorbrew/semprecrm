@@ -44,3 +44,15 @@ Regras aplicadas às telas de IA (configurações, agentes, sugestão de respost
 3. Cada bloco tem título e a separação vem de espaço ou de uma linha fina?
 4. A cópia cabe em uma linha? Há exclamação, caixa alta ou jargão de IA?
 5. Funciona em tema claro e escuro, em 360 px e com teclado?
+
+## Caixa de entrada
+
+Mesmas regras aplicadas à lista, ao histórico e ao painel do contato.
+
+- **Lista:** uma linha de metadados (categoria · empresa), etiquetas como ponto + texto, canal "Oficial/QR" como texto discreto, situação (pendente, resolvida) e SLA como ponto + texto. O único preenchido é o contador de não lidas.
+- **Cabeçalho da conversa:** só Resolver/Reabrir é preenchido; Assumir, Transferir, Pausar IA e utilitários são ghost. Situação, canal e janela de 24 h são texto, sem pílula.
+- **Fundo do chat liso** (sem desenho repetido). Separador de data e eventos do sistema são texto pequeno e discreto, sem fundo.
+- **Balões:** remetente e hora em 10 px; os ticks herdam a cor do balão (`opacity-70`), o lido fica em tom cheio. Nota interna: borda e fundo âmbar leves, sem tracejado nem sombra.
+- **Compositor:** campo `bg-background` com uma única borda; barra de formatação sem divisória; Enviar é o único botão preenchido.
+- **Painel:** ações rápidas são uma linha de texto com ícone (`size-3.5`), sem blocos com borda. Títulos de seção em frase (`text-xs font-medium`), contagem em texto simples, sem caixa alta. Etiquetas, notas e memória sem borda tracejada.
+- Sem ícone decorativo de IA no aviso de sugestão pendente.

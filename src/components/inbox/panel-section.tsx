@@ -119,17 +119,15 @@ export function SectionHeader({
   const section = useContext(SectionContext);
   const title = (
     <>
-      <Icon className="h-3 w-3" />
+      <Icon className="size-3.5 text-muted-foreground" />
       <span>{label}</span>
       {typeof count === "number" && count > 0 && (
-        <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
-          {count}
-        </span>
+        <span className="text-xs font-normal tabular-nums text-muted-foreground">{count}</span>
       )}
     </>
   );
   const titleCls =
-    "flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground";
+    "flex items-center gap-2 text-xs font-medium text-foreground";
   return (
     <div className="flex min-h-6 items-center justify-between gap-2 px-1">
       {section ? (
@@ -137,7 +135,7 @@ export function SectionHeader({
           type="button"
           onClick={section.toggle}
           aria-expanded={section.open}
-          className={cn(titleCls, "min-w-0 rounded-md text-left transition-colors hover:text-foreground")}
+          className={cn(titleCls, "min-w-0 rounded-md text-left")}
         >
           {title}
           <ChevronDown

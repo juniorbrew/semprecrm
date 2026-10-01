@@ -218,7 +218,7 @@ const STATUS_ORDER: ConversationStatus[] = ["open", "pending", "closed"];
 
 const STATUS_COLOR: Record<ConversationStatus, string> = {
   open: "text-primary",
-  pending: "text-amber-400",
+  pending: "text-amber-600 dark:text-amber-400",
   closed: "text-muted-foreground",
 };
 
@@ -412,16 +412,11 @@ const THREAD_STATUS_COPY: Record<
 };
 
 /**
- * WhatsApp-style doodle background applied to the chat area (both the
- * active thread and the empty state). The SVG tile lives at
- * `/public/inbox-doodle.svg`; the slate-950 colour sits underneath so
- * the doodles read as a subtle pattern rather than a stark grid.
- *
- * Defined once at module scope so the two render paths can't drift —
- * if we ever switch the asset, both spots update together.
+ * Chat area background (active thread and empty state). Plain `background`:
+ * the old doodle tile (`/public/inbox-doodle.svg`) competed with the bubbles.
+ * Defined once so the two render paths can't drift.
  */
-const DOODLE_BG_CLASSES =
-  "bg-background bg-[url('/inbox-doodle.svg')] bg-repeat";
+const DOODLE_BG_CLASSES = "bg-background";
 
 export function MessageThread({
   conversation,
@@ -1919,7 +1914,7 @@ export function MessageThread({
               <span
                 data-no-translate
                 className={cn(
-                  "inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 text-[10px] font-medium leading-4",
+                  "inline-flex shrink-0 items-center gap-1 text-xs leading-4",
                   STATUS_COLOR[status]
                 )}
               >
@@ -1931,10 +1926,10 @@ export function MessageThread({
                 data-no-translate
                 title={statusCopy.channelTitle[channel]}
                 className={cn(
-                  "inline-flex shrink-0 items-center rounded px-1 text-[9px] font-semibold uppercase leading-4 tracking-wide",
+                  "inline-flex shrink-0 items-center text-xs leading-4",
                   channel === "qr"
-                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                    : "bg-muted text-muted-foreground"
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground"
                 )}
               >
                 {statusCopy.channelChip[channel]}
@@ -1948,8 +1943,8 @@ export function MessageThread({
                   title={sessionInfo.remaining}
                   aria-label={sessionInfo.remaining}
                   className={cn(
-                    "hidden h-4 shrink-0 gap-1 border-border px-1.5 py-0 text-[10px] tabular-nums @lg:inline-flex",
-                    sessionInfo.expired ? "text-red-400" : "text-primary"
+                    "hidden h-4 shrink-0 gap-1 border-transparent px-0 py-0 text-xs tabular-nums @lg:inline-flex",
+                    sessionInfo.expired ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                   )}
                 >
                   <Clock className="h-3 w-3" />
@@ -1991,7 +1986,7 @@ export function MessageThread({
               disabled={!actions.claim.enabled}
               aria-label={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
               title={actions.canWrite ? statusCopy.claimTitle : statusCopy.readOnly}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <UserCheck className="h-3.5 w-3.5" />
               <span>{statusCopy.claim}</span>
@@ -2100,7 +2095,7 @@ export function MessageThread({
               "ml-1 inline-flex h-8 items-stretch overflow-hidden rounded-md text-xs font-medium",
               isResolved
                 ? "border border-border bg-card text-foreground"
-                : "bg-primary text-primary-foreground shadow-sm"
+                : "bg-primary text-primary-foreground"
             )}
           >
             <button
@@ -2479,7 +2474,7 @@ export function MessageThread({
               <div key={group.date}>
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
-                  <span className="rounded-full bg-muted px-3 py-1 text-[10px] font-medium text-muted-foreground">
+                  <span className="text-[11px] font-medium text-muted-foreground">
                     {formatDateSeparator(group.date, language)}
                   </span>
                 </div>

@@ -1011,21 +1011,21 @@ export function ConversationList({
           className="flex items-center justify-between gap-2 px-3 pt-3"
           data-no-translate
         >
-          <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
-          <div className="flex items-center gap-1">
+          <h2 className="shrink-0 text-sm font-semibold text-foreground">{copy.title}</h2>
+          <div className="flex min-w-0 items-center gap-1">
             {/* Live filter — narrows Minhas / Todas to open or pending */}
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={copy.live[effectiveLive]}
                 disabled={liveFilterDisabled}
                 title={liveFilterDisabled ? copy.liveFilterHint : undefined}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-muted/60 pl-2 pr-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                className="-ml-1.5 inline-flex h-7 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span
                   className={cn("h-1.5 w-1.5 rounded-full", LIVE_DOT[effectiveLive])}
                 />
-                {copy.live[effectiveLive]}
-                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                <span className="truncate">{copy.live[effectiveLive]}</span>
+                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-44 border-border bg-popover">
                 {LIVE_FILTERS.map((value) => (
@@ -1075,7 +1075,7 @@ export function ConversationList({
               className={cn(
                 "inline-flex h-7 w-7 items-center justify-center rounded-full border transition-colors",
                 unreadOnly
-                  ? "border-primary/40 bg-primary/10 text-primary"
+                  ? "border-transparent bg-primary/10 text-primary"
                   : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
@@ -1137,7 +1137,7 @@ export function ConversationList({
           className="mt-2 flex items-center gap-1.5 overflow-x-auto px-3 [scrollbar-width:none]"
           data-no-translate
         >
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
             {copy.radar}
           </span>
           {RADAR_KEYS.map((key) => {
@@ -1156,17 +1156,14 @@ export function ConversationList({
                   active
                     ? RADAR_ACTIVE[key]
                     : count > 0
-                      ? "border-border bg-muted/60 text-foreground hover:bg-muted"
+                      ? "border-transparent bg-muted/60 text-foreground hover:bg-muted"
                       : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
                 <Icon className="h-3 w-3" aria-hidden />
                 {copy.radarChips[key]}
                 <span
-                  className={cn(
-                    "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums leading-none",
-                    active ? "bg-background/70" : "bg-background/60 text-muted-foreground",
-                  )}
+                  className={cn("text-[11px] tabular-nums leading-none", !active && "text-muted-foreground")}
                 >
                   {count}
                 </span>
@@ -1184,17 +1181,14 @@ export function ConversationList({
                 slaBreached
                   ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
                   : counts.slaBreached > 0
-                    ? "border-border bg-muted/60 text-foreground hover:bg-muted"
+                    ? "border-transparent bg-muted/60 text-foreground hover:bg-muted"
                     : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
             >
               <Timer className="h-3 w-3" aria-hidden />
               {sla.breachedChip}
               <span
-                className={cn(
-                  "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums leading-none",
-                  slaBreached ? "bg-background/70" : "bg-background/60 text-muted-foreground",
-                )}
+                className={cn("text-[11px] tabular-nums leading-none", !slaBreached && "text-muted-foreground")}
               >
                 {counts.slaBreached}
               </span>
@@ -1227,10 +1221,8 @@ export function ConversationList({
                 {copy.tabs[value]}
                 <span
                   className={cn(
-                    "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums leading-none",
-                    active
-                      ? "bg-primary/15 text-primary"
-                      : "bg-muted text-muted-foreground"
+                    "text-[11px] tabular-nums leading-none",
+                    active ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
                   {counts.tabs[value]}
@@ -1496,7 +1488,7 @@ export function ConversationItem({
         <span
           data-no-translate
           title={`${channelLabel} · ${channelChip[channel]}`}
-          className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-card"
+          className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background"
         >
           <MessageCircle className="h-2.5 w-2.5" />
         </span>
@@ -1529,10 +1521,10 @@ export function ConversationItem({
           <span
             data-no-translate
             className={cn(
-              "shrink-0 rounded px-1 text-[9px] font-semibold uppercase leading-[14px] tracking-wide",
+              "shrink-0 text-[11px] leading-[18px]",
               channel === "qr"
-                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                : "bg-muted text-muted-foreground",
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-muted-foreground",
             )}
           >
             {channelChip[channel]}
@@ -1542,7 +1534,7 @@ export function ConversationItem({
               data-no-translate
               data-testid="ai-handling-badge"
               title={language === "pt-BR" ? "A IA está respondendo esta conversa" : "The AI is answering this conversation"}
-              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-500/15 px-1 text-[9px] font-semibold uppercase leading-[14px] tracking-wide text-violet-600 dark:text-violet-400"
+              className="inline-flex shrink-0 items-center gap-0.5 text-[11px] leading-[18px] text-muted-foreground"
             >
               <Bot className="h-2.5 w-2.5" aria-hidden />
               {language === "pt-BR" ? "IA" : "AI"}
@@ -1555,7 +1547,7 @@ export function ConversationItem({
               data-testid="owner-badge"
               title={ownerTitle(ownerName)}
               aria-label={ownerTitle(ownerName)}
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[9px] font-semibold leading-none text-primary"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-medium leading-none text-muted-foreground"
             >
               {avatarInitial(ownerName)}
             </span>
@@ -1570,25 +1562,27 @@ export function ConversationItem({
             {age}
           </span>
         </div>
-        {companyName && (
+        {(companyName || category) && (
           <p
             data-no-translate
-            title={companyName}
-            className="flex min-w-0 items-center gap-1 text-[11px] leading-4 text-muted-foreground"
-          >
-            <Building2 className="h-3 w-3 shrink-0" aria-hidden />
-            <span className="truncate">{companyName}</span>
-          </p>
-        )}
-        {category && (
-          <p
-            data-no-translate
-            data-testid="category-label"
-            title={category.name}
             className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground"
           >
-            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", CATEGORY_DOT[category.color])} aria-hidden />
-            <span className="truncate">{category.name}</span>
+            {category && (
+              <span
+                data-testid="category-label"
+                title={category.name}
+                className="flex min-w-0 shrink-0 items-center gap-1.5"
+              >
+                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", CATEGORY_DOT[category.color])} aria-hidden />
+                <span className="truncate">{category.name}</span>
+              </span>
+            )}
+            {category && companyName && <span aria-hidden>·</span>}
+            {companyName && (
+              <span title={companyName} className="min-w-0 truncate">
+                {companyName}
+              </span>
+            )}
           </p>
         )}
         <div className="flex items-center justify-between gap-2">
@@ -1605,7 +1599,7 @@ export function ConversationItem({
             {waitingLabel && !queue && (
               <span
                 title={waitingTitle}
-                className="inline-flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-semibold leading-4 text-red-600 dark:text-red-400"
+                className="inline-flex items-center gap-0.5 text-[11px] font-medium leading-4 text-red-600 dark:text-red-400"
               >
                 <Clock className="h-3 w-3" aria-hidden />
                 {waitingLabel}
@@ -1614,12 +1608,19 @@ export function ConversationItem({
             {status !== "open" && (
               <span
                 className={cn(
-                  "rounded-full px-1.5 py-px text-[10px] font-medium leading-4",
+                  "inline-flex items-center gap-1 text-[11px] leading-4",
                   status === "pending"
-                    ? "bg-amber-500/15 text-amber-500"
-                    : "bg-muted text-muted-foreground"
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground"
                 )}
               >
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    status === "pending" ? "bg-amber-500" : "bg-zinc-400"
+                  )}
+                  aria-hidden
+                />
                 {conversation.archived_at ? rowStatus.archived : rowStatus[status]}
               </span>
             )}
@@ -1658,12 +1659,11 @@ export function ConversationItem({
           </div>
         )}
         {tags.length > 0 && (
-          <div data-no-translate className="mt-1 flex items-center gap-1 overflow-hidden">
+          <div data-no-translate className="mt-0.5 flex items-center gap-2.5 overflow-hidden">
             {visibleTags.map((tag) => (
               <span
                 key={tag.name}
-                className="inline-flex max-w-32 items-center gap-1 rounded-full px-1.5 text-[10px] font-medium leading-[14px]"
-                style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                className="inline-flex max-w-32 items-center gap-1 text-[11px] leading-4 text-muted-foreground"
               >
                 <span
                   className="h-1.5 w-1.5 shrink-0 rounded-full"
@@ -1673,7 +1673,7 @@ export function ConversationItem({
               </span>
             ))}
             {hiddenTagCount > 0 && (
-              <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] font-medium leading-[14px] text-muted-foreground">
+              <span className="shrink-0 text-[11px] leading-4 text-muted-foreground">
                 {moreTags(hiddenTagCount)}
               </span>
             )}

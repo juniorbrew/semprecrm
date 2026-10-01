@@ -245,7 +245,11 @@ function formatDateTime(iso: string, language: Language): string {
   });
 }
 
-/** One tile of the contact shortcut row. */
+/** Text-first action in the contact shortcut row (no tile, no border). */
+const ACTION_CLS =
+  "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
+
+/** One action of the contact shortcut row. */
 function ShortcutButton({
   icon: Icon,
   label,
@@ -271,12 +275,12 @@ function ShortcutButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="flex flex-col items-center gap-1 rounded-lg border border-border px-1 py-2 text-center text-[11px] font-medium leading-tight text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className={ACTION_CLS}
     >
       {busy ? (
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
       ) : (
-        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+        <Icon className="size-3.5" aria-hidden />
       )}
       {label}
     </button>
@@ -714,7 +718,7 @@ export function ContactSidebar({
             <h3 className="mt-3 text-sm font-semibold text-foreground">{displayName}</h3>
             {contact.anonymized_at && (
               <span
-                className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground"
                 title={t("Personal data removed (LGPD)")}
               >
                 <ShieldCheck className="h-3 w-3" aria-hidden />
@@ -726,7 +730,7 @@ export function ContactSidebar({
                 className="mt-1.5 flex flex-col items-center gap-1"
                 title={copy.optedOutHint(new Date(optedOutAt).toLocaleDateString(language))}
               >
-                <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
                   <Ban className="h-3 w-3" aria-hidden />
                   {copy.optedOut}
                 </span>
@@ -756,7 +760,7 @@ export function ContactSidebar({
               type="button"
               onClick={handleCopyPhone}
               title={copied ? copy.copied : copy.copyPhone}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
             >
               <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="flex-1 truncate text-left tabular-nums text-foreground">
@@ -770,7 +774,7 @@ export function ContactSidebar({
             </button>
 
             {contact.email && (
-              <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground">
                 <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 break-all" title={contact.email}>
                   {contact.email}
@@ -786,7 +790,7 @@ export function ContactSidebar({
           <div
             role="group"
             aria-label={copy.shortcuts}
-            className="mt-3 grid grid-cols-2 gap-1.5"
+            className="-mx-2 mt-3 flex flex-wrap gap-y-0.5"
           >
             <ShortcutButton
               icon={CalendarPlus}
@@ -816,9 +820,9 @@ export function ContactSidebar({
             <Link
               href={`/contacts?contact=${encodeURIComponent(contact.id)}`}
               title={copy.viewContact}
-              className="flex flex-col items-center gap-1 rounded-lg border border-border px-1 py-2 text-center text-[11px] font-medium leading-tight text-foreground transition-colors hover:bg-muted"
+              className={ACTION_CLS}
             >
-              <UserRound className="h-4 w-4 text-muted-foreground" aria-hidden />
+              <UserRound className="size-3.5" aria-hidden />
               {copy.viewContact}
             </Link>
           </div>
@@ -899,7 +903,7 @@ export function ContactSidebar({
                 ) : customFields.length === 0 ? (
                   <p className="text-xs text-muted-foreground">{copy.noCustomFields}</p>
                 ) : (
-                  <dl className="divide-y divide-border/60 rounded-lg border border-border/60">
+                  <dl className="divide-y divide-border/60">
                     {customFields.map((field) => (
                       <CustomFieldValue
                         key={field.id}
@@ -1165,7 +1169,7 @@ export function ContactSidebar({
                   />
                 )}
                 {panelNotes.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border px-3 py-2">
+                  <div>
                     <p className="text-xs text-muted-foreground">{copy.noNotes}</p>
                     <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground/80">
                       <Lock className="h-3 w-3" />
@@ -1177,7 +1181,7 @@ export function ContactSidebar({
                     {panelNotes.map((note) => (
                       <div
                         key={note.id}
-                        className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2"
+                        className="rounded-lg bg-amber-500/10 px-3 py-2"
                       >
                         <p className="line-clamp-3 whitespace-pre-wrap text-xs text-foreground">
                           {note.note_text}

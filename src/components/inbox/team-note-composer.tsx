@@ -38,7 +38,7 @@ export function TeamNoteComposer({ onSubmit, onCancel }: TeamNoteComposerProps) 
   }
 
   return (
-    <div className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 p-2">
+    <div className="rounded-lg bg-amber-500/10 p-2">
       <Textarea
         value={text}
         autoFocus
