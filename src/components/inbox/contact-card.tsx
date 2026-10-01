@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
+import { applySuppressions } from "@/lib/contacts/apply-suppressions";
 import { findConversationByContact } from "@/lib/conversations/find-by-contact";
 import { parseVCards, type VCardContact } from "@/lib/inbox/vcard";
 import type { Contact, Conversation } from "@/types";
@@ -70,6 +71,10 @@ function OneCard({
       return;
     }
     toast.success(t("Contact saved"));
+    // Opted-out-then-anonymised numbers come back opted out (migration 077).
+    void applySuppressions([(data as Contact).id]).catch((err) =>
+      console.error("[contact-card] suppression check failed:", err),
+    );
     setKnown({ state: "known", contact: data as Contact, conversation: null });
   };
 

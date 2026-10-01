@@ -2,9 +2,12 @@
 // GET /api/contacts/[id]/export — LGPD data export. Admin+.
 //
 // Streams one JSON document (contact, custom fields, tags,
-// conversations + messages with media URLs, notes, deals, tasks,
-// AI contact memory, consent events) as an attachment `contato-<id>.json`. Audited as
-// `contact.exported`.
+// conversations + messages with media URLs, notes, deals, tasks and
+// comments, calendar, flows, lead events, companies, AI memory and
+// hand-overs, CSAT, consent events — with a per-section `manifest`) as
+// an attachment `contato-<id>.json`. Audited as `contact.exported`; the
+// audit row is part of the action — if it cannot be written, nothing is
+// exported (500).
 //
 // Reads with the caller's RLS-scoped client (see src/lib/lgpd/export.ts).
 // ============================================================
@@ -12,7 +15,7 @@
 import { NextResponse } from 'next/server'
 
 import { AUDIT_ACTIONS } from '@/lib/audit'
-import { audit } from '@/lib/audit-server'
+import { AuditWriteError, auditStrict } from '@/lib/audit-server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { ExportNotFoundError, buildContactExport } from '@/lib/lgpd/export'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -41,22 +44,29 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Failed to export contact' }, { status: 500 })
     }
 
-    await audit({
-      accountId: ctx.accountId,
-      actorUserId: ctx.userId,
-      action: AUDIT_ACTIONS.CONTACT_EXPORTED,
-      entityType: 'contact',
-      entityId: id,
-      metadata: {
-        contact_name: (payload.contact?.name as string | undefined) ?? null,
-        conversations: payload.conversations.length,
-        messages: payload.conversations.reduce((n, c) => n + c.messages.length, 0),
-        notes: payload.notes.length,
-        deals: payload.deals.length,
-        tasks: payload.tasks.length,
-        ai_memories: payload.ai_memories.length,
-      },
-    })
+    try {
+      await auditStrict({
+        accountId: ctx.accountId,
+        actorUserId: ctx.userId,
+        action: AUDIT_ACTIONS.CONTACT_EXPORTED,
+        entityType: 'contact',
+        entityId: id,
+        metadata: {
+          contact_name: (payload.contact?.name as string | undefined) ?? null,
+          sections: Object.fromEntries(Object.entries(payload.manifest).map(([k, v]) => [k, v.count])),
+          incomplete_sections: Object.entries(payload.manifest)
+            .filter(([, v]) => !v.complete)
+            .map(([k]) => k),
+        },
+      })
+    } catch (err) {
+      if (!(err instanceof AuditWriteError)) throw err
+      console.error('[GET /api/contacts/:id/export] audit write failed — export refused')
+      return NextResponse.json(
+        { error: 'Não foi possível registrar a exportação na auditoria. Nada foi exportado; tente novamente.', code: 'audit_failed' },
+        { status: 500 },
+      )
+    }
 
     return new NextResponse(JSON.stringify(payload, null, 2), {
       status: 200,

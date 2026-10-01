@@ -1762,6 +1762,9 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Type the contact name to confirm': 'Digite o nome do contato para confirmar',
   'Contact anonymized': 'Contato anonimizado',
   'Could not anonymize the contact': 'Não foi possível anonimizar o contato',
+  'Finish anonymization': 'Concluir anonimização',
+  'Anonymization incomplete. Run it again to finish.':
+    'Anonimização incompleta. Execute novamente para concluir.',
   'Personal data removed (LGPD)': 'Dados pessoais removidos (LGPD)',
   'Personal data was removed on': 'Os dados pessoais foram removidos em',
   'Editing and messaging are blocked for this contact.':

@@ -655,12 +655,18 @@ interface ExecuteArgs {
   /** Describe actions instead of performing them. */
   dryRun?: boolean
   /**
-   * Lazily resolved "contact has opted out" flag (migration 030), shared
-   * by every scope of one run so the contact row is read at most once.
+   * Lazily resolved opt-out / anonymised state of the contact (migrations
+   * 030, 035), shared by every scope of one run so the row is read once.
    */
-  optedOut?: Promise<boolean>
+  contactGate?: Promise<ContactGate>
 }
 
+interface ContactGate {
+  optedOut: boolean
+  anonymized: boolean
+}
+
+/** Steps that message the contact: skipped for an opted-out or anonymised contact. */
 const SEND_STEP_TYPES = new Set<AutomationStepType>(['send_message', 'send_template'])
 
 /** send_webhook gives up after this long. */
@@ -670,35 +676,64 @@ const WAIT_UNIT_PT: Record<string, string> = { minutes: 'minuto(s)', hours: 'hor
 
 /** pt-BR on purpose: it is shown verbatim in the automation log table. */
 const OPTED_OUT_SKIP_DETAIL = 'contato descadastrado'
+const ANONYMIZED_SKIP_DETAIL = 'contato anonimizado'
 
 /**
- * Whether the run's contact asked to stop receiving messages. The
- * inbound pipeline pre-flags the very message that opted out through
- * `context.vars.opted_out`; every other run reads `contacts.opted_out_at`
- * once. A contact-less run cannot send anyway, so it reads as not opted out.
+ * The run's contact state, read once. The inbound pipeline pre-flags the
+ * very message that opted out through `context.vars.opted_out`. Fails
+ * CLOSED: when the contact cannot be read it counts as opted out AND
+ * anonymised (a skipped step beats a message / data export to someone who
+ * asked to stop). A contact-less run has nothing to protect.
  */
-function contactOptedOut(args: ExecuteArgs): Promise<boolean> {
-  if (args.optedOut) return args.optedOut
-  if (args.context.vars?.opted_out === true) {
-    args.optedOut = Promise.resolve(true)
-    return args.optedOut
-  }
-  args.optedOut = (async () => {
-    if (!args.contactId) return false
+function contactGate(args: ExecuteArgs): Promise<ContactGate> {
+  if (args.contactGate) return args.contactGate
+  const flagged = args.context.vars?.opted_out === true
+  args.contactGate = (async () => {
+    if (!args.contactId) return { optedOut: flagged, anonymized: false }
     const { data, error } = await supabaseAdmin()
       .from('contacts')
-      .select('opted_out_at')
+      .select('opted_out_at, anonymized_at')
       .eq('id', args.contactId)
       .eq('account_id', args.automation.account_id)
       .maybeSingle()
-    if (error) {
-      // Fail closed: when we cannot tell, do not message the contact.
-      console.error('[automations] opt-out check failed, skipping send:', error)
-      return true
+    if (error || !data) {
+      console.error('[automations] opt-out check failed — skipping sends:', error?.message ?? 'contact not found')
+      return { optedOut: true, anonymized: true }
     }
-    return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at
+    const row = data as { opted_out_at?: string | null; anonymized_at?: string | null }
+    return { optedOut: flagged || !!row.opted_out_at || !!row.anonymized_at, anonymized: !!row.anonymized_at }
   })()
-  return args.optedOut
+  return args.contactGate
+}
+
+/**
+ * Why `step` must be skipped for this contact, or null. Messages: opted out
+ * or anonymised (the inbound opt-out flag answers without a read).
+ * send_webhook: only an anonymised contact — the opt-out is about messages,
+ * and an integration may need to learn about it.
+ */
+async function skipForContact(step: AutomationStep, args: ExecuteArgs): Promise<string | null> {
+  if (SEND_STEP_TYPES.has(step.step_type)) {
+    if (args.context.vars?.opted_out === true) return OPTED_OUT_SKIP_DETAIL
+    return (await contactGate(args)).optedOut ? OPTED_OUT_SKIP_DETAIL : null
+  }
+  if (step.step_type === 'send_webhook') {
+    return (await contactGate(args)).anonymized ? ANONYMIZED_SKIP_DETAIL : null
+  }
+  return null
+}
+
+/** send_webhook payload when the step has no body template: identifiers only. */
+function defaultWebhookBody(args: ExecuteArgs): Record<string, unknown> {
+  const ctx = args.context
+  return {
+    automation_id: args.automation.id,
+    account_id: args.automation.account_id,
+    contact_id: args.contactId ?? null,
+    conversation_id: ctx.conversation_id ?? null,
+    ...(ctx.tag_id ? { tag_id: ctx.tag_id } : {}),
+    ...(ctx.agent_id ? { agent_id: ctx.agent_id } : {}),
+  }
 }
 
 /**
@@ -820,12 +855,13 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
       // Opt-out (spec §5): never message a contact who asked to stop.
       // The step is recorded as skipped, not failed, and the run goes on
       // (tags, tasks, deals still apply).
-      if (SEND_STEP_TYPES.has(step.step_type) && (await contactOptedOut(args))) {
+      const skipDetail = await skipForContact(step, args)
+      if (skipDetail) {
         run.results.push({
           step_id: step.id,
           step_type: step.step_type,
           status: 'skipped',
-          detail: OPTED_OUT_SKIP_DETAIL,
+          detail: skipDetail,
         })
         continue
       }
@@ -1182,7 +1218,12 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
-      const body = cfg.body_template ? await webhookBody(cfg.body_template, args) : JSON.stringify(args.context)
+      // Without a template, only ids go out — never the message text or the
+      // collected variables (personal data the account did not choose to send).
+      // A template is interpolated with JSON-escaped values (webhookBody).
+      const body = cfg.body_template
+        ? await webhookBody(cfg.body_template, args)
+        : JSON.stringify(defaultWebhookBody(args))
       // SSRF guard (wacrm GHSA-8jqh-598v-rfxc): a URL e os headers vêm da
       // conta e quem faz o request é o servidor — fetchSeguro recusa destino
       // interno (loopback, rede privada, metadata de nuvem, reservado) antes de
