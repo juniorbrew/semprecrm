@@ -31,6 +31,7 @@ import {
   DELIVERY_LOCK_STALE_MS,
   renewDeliveryLock,
 } from '@/lib/broadcast-delivery-lock';
+import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { findSuppressedPhones } from '@/lib/lgpd/suppression';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { isUncertainSendError, sendTemplateMessage } from '@/lib/whatsapp/meta-api';
@@ -265,7 +266,9 @@ export async function sendClaimedRows(
     // Opted-out numbers whose contact was anonymised (suppression list,
     // migration 077). Throws on a lookup failure: fail CLOSED — the claimed
     // rows are left unsent (they turn 'uncertain' and are never sent blind).
-    for (const n of await findSuppressedPhones(db, ctx.accountId, chunkNumbers)) blocked.add(n);
+    // The list is service-role only (RLS, no member grants): always read it
+    // with the service client, whatever client the caller passed in.
+    for (const n of await findSuppressedPhones(supabaseAdmin(), ctx.accountId, chunkNumbers)) blocked.add(n);
   }
 
   const messageParams = ctx.headerMediaUrl ? { headerMediaUrl: ctx.headerMediaUrl } : undefined;

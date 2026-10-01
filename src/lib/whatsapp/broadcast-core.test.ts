@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
 
+// The service client reads the same in-memory DB as the test's member client.
+const svc = vi.hoisted(() => ({ db: null as null | { client: (o?: { service?: boolean }) => unknown } }));
+vi.mock('@/lib/automations/admin-client', () => ({
+  supabaseAdmin: () => svc.db!.client({ service: true }),
+}));
+
 const sendTemplateMessage = vi.fn();
 vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/lib/whatsapp/meta-api')>();
@@ -38,6 +44,7 @@ function phoneOf(i: number): string {
 
 function seed(n: number, opts: { lock?: string | null; bodyText?: string } = {}): FakeDb {
   const db = new FakeDb();
+  svc.db = db;
   db.seed('broadcasts', [
     {
       id: BC,
@@ -294,11 +301,20 @@ describe('outcome classification', () => {
     db.seed('contact_suppressions', [
       { account_id: ACCOUNT, phone_hash: suppressionHash(ACCOUNT, phoneOf(0)) as string },
     ]);
+    // A member (RLS) client, like the UI broadcast route: the list is
+    // service-only, so it must be read with the service client.
     const client = db.client();
     const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
     const res = await deliverRecipientIds(client, ctx, ['r0', 'r1'], ['pending']);
     expect(res.find((r) => r.id === 'r0')).toMatchObject({ outcome: 'failed', error: 'Contact opted out' });
+    expect(res.find((r) => r.id === 'r1')?.outcome).not.toBe('failed');
     expect(sendTemplateMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('the member client cannot read the suppression list (service-only table)', async () => {
+    const db = seed(0);
+    const { error } = await db.client().from('contact_suppressions').select('phone_hash');
+    expect(error).toMatchObject({ code: '42501' });
   });
 
   it('opted-out contacts and bad phones are failed without a send', async () => {

@@ -90,6 +90,9 @@ function parseTerm(term: string): Pred {
   }
 }
 
+/** Tables with RLS on and no member grants (migration 077): service role only. */
+const SERVICE_ONLY_TABLES = new Set(['contact_suppressions']);
+
 export class FakeDb {
   tables = new Map<string, Row[]>();
   private seq = 0;
@@ -111,9 +114,10 @@ export class FakeDb {
   /** Optional `rpc` handler for tests that call Postgres functions. */
   rpcHandler: ((fn: string, args: Row) => { data: unknown; error: unknown }) | null = null;
 
-  client(): SupabaseClient {
+  /** A member (RLS) client by default; `{ service: true }` = service role. */
+  client(opts: { service?: boolean } = {}): SupabaseClient {
     return {
-      from: (t: string) => new Query(this, t),
+      from: (t: string) => new Query(this, t, !opts.service && SERVICE_ONLY_TABLES.has(t)),
       rpc: async (fn: string, args: Row) => this.rpcHandler?.(fn, args) ?? { data: null, error: null },
     } as unknown as SupabaseClient;
   }
@@ -135,6 +139,7 @@ class Query implements PromiseLike<unknown> {
   constructor(
     private db: FakeDb,
     private name: string,
+    private denied = false,
   ) {}
 
   select(_cols?: string, opts?: { count?: string; head?: boolean }) {
@@ -221,6 +226,9 @@ class Query implements PromiseLike<unknown> {
   }
 
   private execute(): { data: unknown; error: unknown; count?: number | null } {
+    if (this.denied) {
+      return { data: null, error: { code: '42501', message: `permission denied for table ${this.name}` } };
+    }
     if (this.op === 'insert') {
       const created = this.inserts.map((r) => ({ id: this.db.nextId(), ...r }));
       this.db.table(this.name).push(...created);
