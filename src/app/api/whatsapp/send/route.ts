@@ -24,6 +24,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
+import { maskPhone } from '@/lib/log-redact'
 import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard'
 import {
   resolveTemplateRow,
@@ -198,6 +199,32 @@ export async function POST(request: Request) {
     }
 
     const contact = conversation.contact
+
+    // LGPD (migration 035 / 077): an anonymised contact never receives
+    // anything. An opted-out contact ("PARAR") can still get a free-text
+    // reply from an agent inside the conversation it started, but no
+    // template — templates are how marketing / re-engagement goes out.
+    // Same rule as automations (send steps skipped) and broadcasts.
+    if (contact?.anonymized_at) {
+      return NextResponse.json(
+        {
+          error: 'Este contato foi anonimizado (LGPD) e não pode receber mensagens.',
+          code: 'contact_anonymized',
+        },
+        { status: 409 },
+      )
+    }
+    if (contact?.opted_out_at && message_type === 'template') {
+      return NextResponse.json(
+        {
+          error:
+            'Este contato pediu para não receber mensagens (descadastrado). Modelos de mensagem não podem ser enviados a ele.',
+          code: 'contact_opted_out',
+        },
+        { status: 409 },
+      )
+    }
+
     if (!contact?.phone) {
       return NextResponse.json(
         { error: 'Contact phone number not found' },
@@ -519,7 +546,7 @@ export async function POST(request: Request) {
     // will yield workingPhone itself, so re-storing preserves it.
     if (workingPhone !== sanitizedPhone) {
       console.log(
-        `[whatsapp/send] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
+        `[whatsapp/send] Auto-corrected contact phone: ${maskPhone(sanitizedPhone)} → ${maskPhone(workingPhone)}`
       )
       await supabase
         .from('contacts')

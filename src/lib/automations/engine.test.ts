@@ -18,6 +18,8 @@ const h = vi.hoisted(() => ({
     member: null as { user_id: string } | null,
     insertCalls: [] as { table: string; payload: unknown }[],
     logResults: [] as unknown[],
+    /** Fail the opt-out read (select of opted_out_at) — fail-closed tests. */
+    optOutReadError: false,
   },
 }));
 
@@ -28,9 +30,13 @@ vi.mock("./admin-client", () => {
     table: string;
     type: string;
     payload?: unknown;
+    cols?: string;
     filters: [string, string, unknown][];
   }) {
     const { table, type } = ops;
+    if (table === "contacts" && state.optOutReadError && ops.cols?.includes("opted_out_at")) {
+      return { data: null, error: { message: "connection reset" } };
+    }
     if (table === "contacts") {
       if (type === "update") {
         state.updateCalls.push({ table, filters: ops.filters });
@@ -81,10 +87,11 @@ vi.mock("./admin-client", () => {
       table,
       type: "select",
       payload: undefined as unknown,
+      cols: undefined as string | undefined,
       filters: [] as [string, string, unknown][],
     };
     const b: Record<string, unknown> = {
-      select: () => b,
+      select: (cols?: string) => ((ops.cols = cols), b),
       insert: (p: unknown) => ((ops.type = "insert"), (ops.payload = p), b),
       update: (p: unknown) => ((ops.type = "update"), (ops.payload = p), b),
       delete: () => ((ops.type = "delete"), b),
@@ -112,6 +119,12 @@ vi.mock("./admin-client", () => {
       rpc: () => Promise.resolve({ error: null }),
     }),
   };
+});
+
+// fetchSeguro stays real (SSRF tests) unless a test overrides it once.
+vi.mock("@/lib/webhooks/ssrf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/webhooks/ssrf")>();
+  return { ...actual, fetchSeguro: vi.fn(actual.fetchSeguro) };
 });
 
 vi.mock("./meta-send", () => ({
@@ -142,6 +155,7 @@ beforeEach(() => {
   h.state.member = null;
   h.state.insertCalls = [];
   h.state.logResults = [];
+  h.state.optOutReadError = false;
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {
@@ -694,3 +708,64 @@ function webhookStep(url: string) {
     step_config: { url, headers: { "Metadata-Flavor": "Google" }, body_template: "{}" },
   };
 }
+
+describe("LGPD — opt-out / anonymised contacts and send_webhook", () => {
+  const plainWebhook = (url: string) => ({
+    id: "w1",
+    automation_id: "a1",
+    step_type: "send_webhook",
+    position: 0,
+    parent_step_id: null,
+    step_config: { url },
+  });
+
+  it("fails CLOSED: a failed opt-out read skips the send", async () => {
+    const { engineSendText } = await import("./meta-send");
+    (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
+    h.state.owned = { id: "c1" };
+    h.state.optOutReadError = true;
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [{ id: "s1", automation_id: "a1", step_type: "send_message", position: 0, parent_step_id: null, step_config: { text: "oi" } }];
+
+    await runAutomationsForTrigger({ accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: { conversation_id: "conv-1" } });
+
+    expect(engineSendText).not.toHaveBeenCalled();
+    expect(h.state.logResults[0]).toMatchObject({ status: "skipped", detail: "contato descadastrado" });
+  });
+
+  it("skips sends and webhooks for an anonymised contact", async () => {
+    const { fetchSeguro } = await import("@/lib/webhooks/ssrf");
+    const spy = vi.mocked(fetchSeguro);
+    spy.mockClear();
+    h.state.owned = { id: "c1", anonymized_at: "2026-09-13T10:00:00.000Z" } as { id: string };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [plainWebhook("https://hooks.example.com/x")];
+
+    await runAutomationsForTrigger({ accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: { message_text: "meu cpf é 123" } });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(h.state.logResults[0]).toMatchObject({ step_type: "send_webhook", status: "skipped" });
+  });
+
+  it("without a body template, the webhook posts identifiers only — never the message text or vars", async () => {
+    const { fetchSeguro } = await import("@/lib/webhooks/ssrf");
+    const spy = vi.mocked(fetchSeguro);
+    spy.mockClear();
+    spy.mockImplementationOnce(async () => new Response("ok", { status: 200 }));
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [plainWebhook("https://hooks.example.com/x")];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { message_text: "meu cpf é 123", conversation_id: "conv-1", vars: { cpf: "123" } },
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body));
+    expect(body).toMatchObject({ contact_id: "c1", conversation_id: "conv-1" });
+    expect(JSON.stringify(body)).not.toMatch(/cpf|123/);
+  });
+});

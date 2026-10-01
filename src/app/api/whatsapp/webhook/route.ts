@@ -20,6 +20,7 @@ import { buildVCards } from '@/lib/inbox/vcard'
 import { supabaseServerUrl } from '@/lib/supabase/url'
 import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
 import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
+import { redactPhones } from '@/lib/log-redact'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -402,9 +403,12 @@ async function handleStatusUpdate(status: {
       : null
 
   if (failure) {
+    // Meta's details can quote the recipient number: mask phone-like
+    // digits and cap the length (LGPD log hygiene). The DB keeps the full
+    // text for the inbox tooltip.
     console.warn(
-      `[webhook] WhatsApp message ${status.id} failed: [${failure.code}] ${failure.title}` +
-        (failure.details ? ` — ${failure.details}` : ''),
+      `[webhook] WhatsApp message ${status.id} failed: [${failure.code}] ${redactPhones(failure.title)}` +
+        (failure.details ? ` — ${redactPhones(failure.details).slice(0, 300)}` : ''),
     )
   }
 

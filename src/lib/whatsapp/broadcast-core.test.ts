@@ -12,6 +12,7 @@ vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
 });
 
 import { MetaSendError } from '@/lib/whatsapp/meta-api';
+import { suppressionHash } from '@/lib/lgpd/suppression';
 import { newLockToken } from '@/lib/broadcast-delivery-lock';
 import {
   claimRecipientRows,
@@ -286,6 +287,18 @@ describe('outcome classification', () => {
     const [res] = await deliverRecipientIds(client, ctx, ['r0'], ['pending']);
     expect(res).toMatchObject({ outcome: 'failed', error: 'Contact opted out' });
     expect(sendTemplateMessage).not.toHaveBeenCalled();
+  });
+
+  it('a number on the suppression list (anonymised opt-out, migration 077) is never sent', async () => {
+    const db = seed(2);
+    db.seed('contact_suppressions', [
+      { account_id: ACCOUNT, phone_hash: suppressionHash(ACCOUNT, phoneOf(0)) as string },
+    ]);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const res = await deliverRecipientIds(client, ctx, ['r0', 'r1'], ['pending']);
+    expect(res.find((r) => r.id === 'r0')).toMatchObject({ outcome: 'failed', error: 'Contact opted out' });
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(1);
   });
 
   it('opted-out contacts and bad phones are failed without a send', async () => {

@@ -641,7 +641,12 @@ interface ExecuteArgs {
   optedOut?: Promise<boolean>
 }
 
-const SEND_STEP_TYPES = new Set<AutomationStepType>(['send_message', 'send_template'])
+/**
+ * Steps that reach the contact or ship their data out: skipped for an
+ * opted-out or anonymised contact (LGPD). send_webhook counts — it posts
+ * the run's data to a third party.
+ */
+const SEND_STEP_TYPES = new Set<AutomationStepType>(['send_message', 'send_template', 'send_webhook'])
 
 /** send_webhook gives up after this long. */
 const WEBHOOK_TIMEOUT_MS = 10_000
@@ -652,10 +657,13 @@ const WAIT_UNIT_PT: Record<string, string> = { minutes: 'minuto(s)', hours: 'hor
 const OPTED_OUT_SKIP_DETAIL = 'contato descadastrado'
 
 /**
- * Whether the run's contact asked to stop receiving messages. The
- * inbound pipeline pre-flags the very message that opted out through
- * `context.vars.opted_out`; every other run reads `contacts.opted_out_at`
- * once. A contact-less run cannot send anyway, so it reads as not opted out.
+ * Whether the run's contact asked to stop receiving messages or was
+ * anonymised. The inbound pipeline pre-flags the very message that opted
+ * out through `context.vars.opted_out`; every other run reads
+ * `contacts.opted_out_at` / `anonymized_at` once. Fails CLOSED: when the
+ * contact cannot be read, the run is treated as opted out (a skipped
+ * step beats a message to someone who asked to stop). A contact-less run
+ * cannot send anyway, so it reads as not opted out.
  */
 function contactOptedOut(args: ExecuteArgs): Promise<boolean> {
   if (args.optedOut) return args.optedOut
@@ -667,17 +675,31 @@ function contactOptedOut(args: ExecuteArgs): Promise<boolean> {
     if (!args.contactId) return false
     const { data, error } = await supabaseAdmin()
       .from('contacts')
-      .select('opted_out_at')
+      .select('opted_out_at, anonymized_at')
       .eq('id', args.contactId)
       .eq('account_id', args.automation.account_id)
       .maybeSingle()
-    if (error) {
-      console.error('[automations] opt-out check failed:', error)
-      return false
+    if (error || !data) {
+      console.error('[automations] opt-out check failed — skipping sends:', error?.message ?? 'contact not found')
+      return true
     }
-    return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at
+    const row = data as { opted_out_at?: string | null; anonymized_at?: string | null }
+    return !!row.opted_out_at || !!row.anonymized_at
   })()
   return args.optedOut
+}
+
+/** send_webhook payload when the step has no body template: identifiers only. */
+function defaultWebhookBody(args: ExecuteArgs): Record<string, unknown> {
+  const ctx = args.context
+  return {
+    automation_id: args.automation.id,
+    account_id: args.automation.account_id,
+    contact_id: args.contactId ?? null,
+    conversation_id: ctx.conversation_id ?? null,
+    ...(ctx.tag_id ? { tag_id: ctx.tag_id } : {}),
+    ...(ctx.agent_id ? { agent_id: ctx.agent_id } : {}),
+  }
 }
 
 /**
@@ -1161,7 +1183,11 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
-      const body = cfg.body_template ? await interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      // Without a template, only ids go out — never the message text or the
+      // collected variables (personal data the account did not choose to send).
+      const body = cfg.body_template
+        ? await interpolate(cfg.body_template, args)
+        : JSON.stringify(defaultWebhookBody(args))
       // SSRF guard (wacrm GHSA-8jqh-598v-rfxc): a URL e os headers vêm da
       // conta e quem faz o request é o servidor — fetchSeguro recusa destino
       // interno (loopback, rede privada, metadata de nuvem, reservado) antes de

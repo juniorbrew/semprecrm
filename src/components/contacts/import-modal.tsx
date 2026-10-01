@@ -340,6 +340,7 @@ export function ImportModal({
       //    unique index is the backstop: a 23505 (race, or a format
       //    that normalizes equal) counts as skipped, not failed.
       const chunkSize = 50;
+      const insertedIds: string[] = [];
 
       for (let i = 0; i < toInsert.length; i += chunkSize) {
         const chunk = toInsert.slice(i, i + chunkSize);
@@ -371,6 +372,7 @@ export function ImportModal({
 
             if (!singleErr && singleData) {
               imported++;
+              insertedIds.push(singleData.id);
               if (source.tagNames.length > 0) {
                 tagAssignments.push({
                   contactId: singleData.id,
@@ -402,6 +404,7 @@ export function ImportModal({
         } else {
           const inserted = data ?? [];
           imported += inserted.length;
+          insertedIds.push(...inserted.map((row) => row.id));
           // inserted[j] ↔ chunk[j] only holds because a single INSERT
           // preserves RETURNING order. If this path is ever split into
           // parallel inserts, zip by phone or returned id instead.
@@ -427,6 +430,33 @@ export function ImportModal({
         );
       } catch {
         toast.warning('Contacts imported, but some tag assignments failed.');
+      }
+
+      // Numbers that opted out before being anonymised come back opted out
+      // (suppression list, migration 077 — checked server-side only).
+      let reOptedOut = 0;
+      for (let i = 0; i < insertedIds.length; i += 500) {
+        try {
+          const res = await fetch('/api/contacts/suppressions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: insertedIds.slice(i, i + 500) }),
+          });
+          const body = (await res.json().catch(() => null)) as { opted_out?: number } | null;
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          reOptedOut += body?.opted_out ?? 0;
+        } catch (err) {
+          console.error('[contacts import] suppression check failed:', err);
+          toast.warning(
+            'Não foi possível verificar a lista de descadastrados. Confira os contatos importados antes de enviar campanhas.'
+          );
+          break;
+        }
+      }
+      if (reOptedOut > 0) {
+        toast.info(
+          `${reOptedOut} contato(s) importado(s) já tinham pedido para não receber mensagens e foram marcados como descadastrados.`
+        );
       }
 
       setResult({
