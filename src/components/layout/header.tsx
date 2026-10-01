@@ -35,6 +35,7 @@ import {
 // (set from JS, out of the DOM translator's reach) follows the language.
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
+  "/reports": "Reports",
   "/inbox": "Inbox",
   "/contacts": "Contacts",
   "/companies": "Companies",

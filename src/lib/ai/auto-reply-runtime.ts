@@ -38,8 +38,7 @@ import { engineSendText } from '@/lib/automations/meta-send';
 import { paceAutomatedQrSend } from '@/lib/automations/qr-pacing';
 import { startOfLocalDay } from '@/lib/business-hours';
 import { accountHasModule } from '@/lib/plans-server';
-import { MetaSendError } from '@/lib/whatsapp/meta-api';
-import { GatewayUnreachableError } from '@/lib/whatsapp/qr-gateway';
+import { isUncertainSend } from '@/lib/whatsapp/uncertain-send';
 import { AGENT_COLUMNS, DEFAULT_HANDOFF_MESSAGE, resolveAgent, splitReply, suggestionInstructions, type AiAgent } from './agents';
 import {
   AUTO_REPLY,
@@ -111,17 +110,7 @@ const AI_HANDOFF_CODES = new Set<AiErrorCode>(['budget_exceeded', 'quota', 'inva
 /** AI switched off for the account: stay quiet. */
 const AI_OFF_CODES = new Set<AiErrorCode>(['module_not_included', 'not_enabled', 'no_key']);
 
-/**
- * The send may have reached WhatsApp: Meta timeout / 5xx / network
- * ("uncertain"), gateway unreachable / timeout / no id, or delivered
- * but not stored. Such a bubble is never sent again.
- */
-export function isUncertainSend(err: unknown): boolean {
-  if (err instanceof MetaSendError) return err.uncertain;
-  if (err instanceof GatewayUnreachableError) return true;
-  const msg = err instanceof Error ? err.message : String(err);
-  return /\bsent (to Meta|via gateway) but DB insert failed/i.test(msg);
-}
+export { isUncertainSend };
 
 const CONVERSATION_COLUMNS =
   'id, account_id, user_id, contact_id, status, archived_at, channel, ai_paused_until, last_customer_message_at';

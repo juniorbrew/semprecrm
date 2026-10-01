@@ -8,6 +8,7 @@ import {
   canSendMessages,
   canTransferOwnership,
   canViewOnly,
+  canViewReports,
 } from "@/lib/auth/roles";
 
 /**
@@ -21,6 +22,7 @@ export type CanAction =
   | "edit-settings"
   | "send-messages"
   | "view-only"
+  | "view-reports"
   | "delete-account"
   | "transfer-ownership";
 
@@ -50,6 +52,8 @@ export function useCan(action: CanAction): boolean {
       return canSendMessages(accountRole);
     case "view-only":
       return canViewOnly(accountRole);
+    case "view-reports":
+      return canViewReports(accountRole);
     case "delete-account":
       return canDeleteAccount(accountRole);
     case "transfer-ownership":

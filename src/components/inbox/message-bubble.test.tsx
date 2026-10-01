@@ -45,6 +45,8 @@ describe('senderLabelFor', () => {
     expect(senderLabelFor(msg({ sender_type: 'bot', origin: 'ai' }), ctx)).toMatchObject({ kind: 'ai', text: 'AI' });
     expect(senderLabelFor(msg({ sender_type: 'bot', origin: 'flow' }), ctx)).toMatchObject({ text: 'Bot' });
     expect(senderLabelFor(msg({ origin: 'system' }), ctx)).toMatchObject({ text: 'System' });
+    expect(senderLabelFor(msg({ sender_type: 'bot', origin: 'csat' }), ctx)).toMatchObject({ kind: 'survey', text: 'Survey' });
+    expect(translateLiteral('Survey', 'pt-BR')).toBe('Pesquisa');
   });
 
   it('legacy bot rows without origin read "Automation"', () => {

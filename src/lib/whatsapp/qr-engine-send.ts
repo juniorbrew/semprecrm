@@ -85,7 +85,7 @@ export interface EngineQrSendInput {
   /** Conversation-list preview; defaults to `text`. */
   preview?: string
   /** Which engine sent it — drives the bubble's sender label (migration 059). */
-  origin?: 'automation' | 'flow' | 'ai'
+  origin?: 'automation' | 'flow' | 'ai' | 'csat'
 }
 
 /**
@@ -140,6 +140,9 @@ export async function engineSendViaQr(
   if (msgErr && !claimed) {
     throw new Error(`sent via gateway but DB insert failed: ${msgErr.message}`)
   }
+
+  // Survey bubbles go out on closed conversations: no list reorder, no preview.
+  if (input.origin === 'csat') return { whatsapp_message_id: message_id }
 
   await db
     .from('conversations')

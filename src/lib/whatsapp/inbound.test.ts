@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
     conversationRace: null as Record<string, unknown> | null,
   },
   flows: { consumed: false },
+  csat: null as { consumed: true; conversationId: string; kind: 'score' | 'comment' | 'declined' } | null,
+  csatCalls: [] as Record<string, unknown>[],
   automationCalls: [] as Record<string, unknown>[],
   cancelledWaits: [] as string[],
   drains: [] as Record<string, unknown>[],
@@ -75,6 +77,13 @@ vi.mock('@/lib/automations/meta-send', () => ({
     h.sendCalls.push(args)
     if (h.sendError) throw h.sendError
     return { whatsapp_message_id: 'bot-1' }
+  }),
+}))
+
+vi.mock('@/lib/support/csat-inbound', () => ({
+  tryConsumeCsat: vi.fn(async (_db: unknown, input: Record<string, unknown>) => {
+    h.csatCalls.push(input)
+    return h.csat ?? { consumed: false }
   }),
 }))
 
@@ -248,6 +257,8 @@ beforeEach(() => {
   h.state.profiles = []
   h.state.flowRuns = []
   h.flows.consumed = false
+  h.csat = null
+  h.csatCalls = []
   h.automationCalls = []
   h.cancelledWaits = []
   h.drains = []
@@ -987,6 +998,75 @@ describe('ingestInboundMessage — after a resolved conversation (review round)'
       }),
     ])
     expect(h.drains).toEqual([{ accountId: 'acct-1' }])
+  })
+
+  describe('satisfaction survey answers (migration 074)', () => {
+    const csatAnswer = { consumed: true as const, conversationId: 'conv-1', kind: 'score' as const }
+    beforeEach(() => vi.mocked(dispatchInboundToFlows).mockClear())
+
+    it('is asked BEFORE the conversation is chosen, with the closed conversations of the contact', async () => {
+      seedClosed({ sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) })
+      await ingestInboundMessage({ ...BASE, text: '5' }, makeDb())
+      expect(h.csatCalls).toHaveLength(1)
+      expect(h.csatCalls[0]).toMatchObject({
+        accountId: 'acct-1',
+        contactId: 'c-1',
+        text: '5',
+        type: 'text',
+        messageId: 'wamid-1',
+        conversations: [{ id: 'conv-1', status: 'closed' }],
+      })
+    })
+
+    it('a consumed answer is the exception to the 24 h reply rule: no reopen, no new conversation, nothing else runs', async () => {
+      seedClosed({ sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) }, { assigned_agent_id: 'agent-1', unread_count: 0 })
+      h.csat = csatAnswer
+      const res = await ingestInboundMessage({ ...BASE, text: '5' }, makeDb())
+      expect(res).toMatchObject({ ok: true, conversationId: 'conv-1', csat: 'score' })
+      expect(res.reopened).toBeUndefined()
+      expect(res.newConversation).toBeUndefined()
+      // The pipeline did not store the message, touch the conversation, or run anything.
+      expect(h.state.conversations).toHaveLength(1)
+      expect(h.state.conversations[0]).toMatchObject({ status: 'closed', unread_count: 0 })
+      expect(h.state.updates).toEqual([])
+      expect(h.state.messages.filter((m) => m.message_id === 'wamid-1')).toEqual([])
+      expect(h.state.events).toEqual([])
+      expect(vi.mocked(dispatchInboundToFlows)).not.toHaveBeenCalled()
+      expect(h.automationCalls).toEqual([])
+      expect(h.cancelledWaits).toEqual([])
+      expect(h.drains).toEqual([])
+      expect(h.roundRobinCalls).toBe(0)
+      expect(h.sendCalls).toEqual([])
+    })
+
+    it('survey traffic is not "our outbound": a non-score reply after only the survey never reopens, it is a new conversation', async () => {
+      seedClosed({ sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) })
+      const res = await ingestInboundMessage({ ...BASE, text: 'meu problema voltou' }, makeDb())
+      expect(res.reopened).toBeUndefined()
+      expect(res.csat).toBeUndefined()
+      expect(res.newConversation).toBe(true)
+      expect(h.state.conversations.find((c) => c.id === 'conv-1')?.status).toBe('closed')
+      expect(h.automationCalls.map((c) => c.triggerType)).toContain('first_inbound_message')
+    })
+
+    it('the survey, the thanks and the answers do not hide a REAL agent message before them: within 24 h it still reopens', async () => {
+      seedClosed({ sender_type: 'agent', origin: null, created_at: hoursAgo(3) })
+      h.state.messages.push(
+        { id: 'm-s', conversation_id: 'conv-1', sender_type: 'bot', origin: 'csat', created_at: hoursAgo(2) },
+        { id: 'm-a', conversation_id: 'conv-1', sender_type: 'customer', origin: 'csat', created_at: hoursAgo(1.5) },
+        { id: 'm-t', conversation_id: 'conv-1', sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) },
+      )
+      const res = await ingestInboundMessage({ ...BASE, text: 'preciso de outra coisa' }, makeDb())
+      expect(res).toMatchObject({ ok: true, conversationId: 'conv-1', reopened: true })
+    })
+
+    it('a redelivery of an already stored message is a duplicate before the survey is consulted', async () => {
+      seedClosed({ sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) })
+      h.state.messages.push({ id: 'm-dup', conversation_id: 'conv-1', message_id: 'wamid-1', sender_type: 'customer', created_at: hoursAgo(0.5) })
+      const res = await ingestInboundMessage({ ...BASE, text: '5' }, makeDb())
+      expect(res.reason).toBe('duplicate')
+      expect(h.csatCalls).toEqual([])
+    })
   })
 
   it('also for an outbound sent from the inbox (no origin)', async () => {

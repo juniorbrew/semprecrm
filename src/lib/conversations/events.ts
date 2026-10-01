@@ -75,6 +75,8 @@ export interface ConversationEvent {
   kind?: 'first_response' | 'resolution'
   /** `team_changed`: null = team removed. */
   team_name?: string | null
+  /** `csat_answered` */
+  score?: number
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -144,6 +146,7 @@ export function eventFromRecord(
     source: payload.source,
     kind: payload.kind,
     team_name: payload.team_name,
+    score: payload.score,
     reason:
       row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
@@ -456,6 +459,10 @@ export function formatConversationEvent(
           : `${actor} set the team to ${event.team_name}`
         : tc.eventTeamSet(event.team_name)
     }
+    case 'csat_sent':
+      return pt ? 'Pesquisa de satisfação enviada' : 'Satisfaction survey sent'
+    case 'csat_answered':
+      return pt ? `Avaliação do cliente: nota ${event.score ?? '—'}` : `Customer rating: ${event.score ?? '—'}`
     default:
       return ''
   }

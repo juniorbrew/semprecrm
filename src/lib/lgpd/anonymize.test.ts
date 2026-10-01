@@ -252,6 +252,12 @@ describe('anonymizeContact', () => {
     })
     expect(contactUpdate.filters).toContainEqual(['eq', 'account_id', ['acc']])
 
+    // Satisfaction survey (074): only the free-text comment goes; the score stays.
+    const csatUpdate = calls.find((c) => c.table === 'csat_responses')!
+    expect(csatUpdate).toMatchObject({ op: 'update', payload: { comment: null } })
+    expect(csatUpdate.filters).toContainEqual(['eq', 'contact_id', ['c1']])
+    expect(csatUpdate.filters).toContainEqual(['eq', 'account_id', ['acc']])
+
     // Contact row is rewritten last.
     const lastCall = calls[calls.length - 1]
     expect(lastCall.table).toBe('contacts')

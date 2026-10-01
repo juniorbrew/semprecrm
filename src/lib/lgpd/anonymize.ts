@@ -7,6 +7,7 @@
 //      (content_text → "[conteúdo removido]", media_url → null) and
 //      removes the `chat-media` objects those URLs pointed at.
 //      The triage subject / sentiment (migration 071) are cleared too.
+//      The satisfaction-survey comment (migration 074) is cleared as well.
 //   2. Deletes contact_notes, contact_custom_values and the AI contact
 //      memory (`ai_contact_memories`, migration 064), the automatic-reply
 //      hand-overs and jobs (`ai_handoffs` / `ai_reply_jobs`, 066), and the stored
@@ -257,6 +258,17 @@ export async function anonymizeContact(
   for (const table of ['ai_handoffs', 'ai_reply_jobs'] as const) {
     const { error } = await admin.from(table).delete().eq('contact_id', contactId).eq('account_id', accountId)
     if (error) warnings.push(`${table}: ${error.message}`)
+  }
+
+  // Satisfaction survey (migration 074): the free-text comment may name or
+  // describe the customer. The score stays for the statistics.
+  {
+    const { error } = await admin
+      .from('csat_responses')
+      .update({ comment: null })
+      .eq('contact_id', contactId)
+      .eq('account_id', accountId)
+    if (error) warnings.push(`csat comments: ${error.message}`)
   }
 
   // 3. The contact row itself — last on purpose (see header). The

@@ -34,6 +34,7 @@ import { plainMessageText, vcardPreview } from '@/lib/inbox/vcard'
 import { notifyInboundMessage } from '@/lib/push/notify'
 import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { triageDueOnInbound } from '@/lib/support/ai-triage'
+import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
@@ -122,6 +123,8 @@ export interface IngestResult {
    * Only a hint — `runTriageQuietly` re-checks every condition.
    */
   triageDue?: boolean
+  /** The message answered a satisfaction survey (migration 074) and was consumed: nothing else ran. */
+  csat?: 'score' | 'comment' | 'declined' | 'polite'
 }
 
 // ------------------------------------------------------------
@@ -240,7 +243,7 @@ export const OUTBOUND_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000
  * Did WE write last in this conversation, less than 24 h ago? Outbound
  * means an agent, automation, flow or broadcast message — not a phone
  * echo (the WhatsApp Business app's greeting / a personal reply) and
- * not the customer. Then the customer's message is an answer to it, and
+ * not the customer, not a satisfaction survey. Then the customer's message is an answer to it, and
  * the conversation continues even though it was resolved.
  */
 export async function lastMessageIsRecentOutbound(
@@ -253,12 +256,15 @@ export async function lastMessageIsRecentOutbound(
     .select('sender_type, origin, created_at')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(8)
   if (error) {
     console.error('[inbound] last message lookup failed:', error.message)
     return false
   }
-  const last = ((data ?? []) as Row[])[0]
+  // Satisfaction-survey traffic (the survey, the thanks, the comment question and
+  // the answers they drew, origin 'csat') is not a conversation WE started: it
+  // never makes a later reply reopen the resolved conversation (migration 074).
+  const last = ((data ?? []) as Row[]).find((m) => m.origin !== 'csat')
   if (!last || last.sender_type === 'customer' || last.origin === 'phone') return false
   const sentAt = new Date(last.created_at).getTime()
   if (!Number.isFinite(sentAt)) return false
@@ -782,6 +788,33 @@ export async function ingestInboundMessage(
         conversationId: stored.conversation_id,
         contactCreated: contactOutcome.wasCreated,
       }
+    }
+  }
+
+  // Satisfaction survey (migration 074): the answer to our survey is taken
+  // HERE, before the conversation is chosen. So it never reopens the resolved
+  // conversation (the reply-to-our-outbound rule below), never opens a new
+  // one, and never reaches flows, automations, the AI, triage or the unread
+  // counters. Only a lone score / the one comment is consumed; anything else
+  // falls through as a normal message.
+  const csat = await tryConsumeCsat(db, {
+    accountId,
+    contactId: contact.id,
+    conversations: knownConversations.map((c) => ({ id: c.id as string, status: c.status as string })),
+    type: input.type,
+    text: input.text ?? null,
+    messageId: input.messageId,
+    createdAt: toIsoTimestamp(input.timestamp),
+    channel,
+    userId: ownerUserId,
+  })
+  if (csat.consumed) {
+    return {
+      ok: true,
+      contactId: contact.id,
+      conversationId: csat.conversationId,
+      contactCreated: contactOutcome.wasCreated,
+      csat: csat.kind,
     }
   }
 

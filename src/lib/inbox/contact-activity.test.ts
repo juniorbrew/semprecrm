@@ -88,4 +88,11 @@ describe("describeActivity — support events (071)", () => {
     )
     expect(at("conv_resolution_set", { resolution: "not_applicable" })?.text).toBe("Ana resolveu como: não procede")
   })
+
+  it("shows the satisfaction survey: sent and the rating (migration 074)", () => {
+    const at = (type: string, payload: Record<string, unknown>) =>
+      describeActivity(row({ type, payload, actor_name: null, link_kind: "conversation", link_id: "c1", conversation_id: "c1" }), "pt-BR")
+    expect(at("conv_csat_sent", {})?.text).toBe("Pesquisa de satisfação enviada")
+    expect(at("conv_csat_answered", { score: 2 })).toEqual({ icon: "conversation", text: "Avaliação do cliente: nota 2", href: "/inbox?c=c1" })
+  })
 })

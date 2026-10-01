@@ -1324,7 +1324,7 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   return data.id as string
 }
 
-function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
+export function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
   if (automation.trigger_type === 'lead_captured') {
     // Optional per-source filter (migration 029): an empty source_id
     // means "any source"; otherwise the webhook's context must name it.
@@ -1345,6 +1345,13 @@ function triggerMatches(automation: Automation, ctx: AutomationContext | undefin
     // event (migration 072) carries `kind` in its context.
     const wanted = (automation.trigger_config as { kind?: string } | null)?.kind
     return !wanted || ctx?.vars?.kind === wanted
+  }
+  if (automation.trigger_type === 'csat_received') {
+    // Optional ceiling (migration 074): "score 2 or lower". The event carries `score`.
+    const max = (automation.trigger_config as { max_score?: number | string } | null)?.max_score
+    if (max === undefined || max === null || max === '') return true
+    const score = Number(ctx?.vars?.score)
+    return Number.isFinite(score) && score <= Number(max)
   }
   if (automation.trigger_type === 'tag_added') {
     // The rule names one tag; the event carries the tag that was added.

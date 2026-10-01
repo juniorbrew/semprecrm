@@ -14,6 +14,7 @@ export const DICT_INBOX: Record<string, string> = {
   'Mobile phone': 'Celular',
   'Sent from the phone or WhatsApp Web': 'Enviada pelo celular ou pelo WhatsApp Web',
   Bot: 'Bot',
+  Survey: 'Pesquisa',
   'Deleted by customer': 'Apagada pelo cliente',
   'Deleted from the phone': 'Apagada pelo celular',
 

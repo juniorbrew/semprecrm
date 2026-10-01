@@ -6,6 +6,11 @@ export const DICT_API: Record<string, string> = {
   // ---- generic ----------------------------------------------------------
   Unauthorized: 'Você precisa entrar para continuar',
   'Not found': 'Não encontrado',
+  Forbidden: 'Você não tem permissão para fazer isso',
+  'Invalid request': 'Requisição inválida',
+  // ---- reports export (migration 075) ----
+  'Invalid period': 'Período inválido: use datas reais, de até um ano',
+  'Invalid channel': 'Canal inválido',
   'Invalid JSON': 'O corpo da requisição não é um JSON válido',
   'Invalid JSON body.': 'O corpo da requisição não é um JSON válido.',
   'Body must be a JSON object': 'O corpo da requisição deve ser um objeto JSON',

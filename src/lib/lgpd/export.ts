@@ -40,6 +40,8 @@ export interface ContactExport {
   ai_memories: Record<string, unknown>[]
   /** Automatic-reply hand-overs (migration 066): reason, what the customer wanted, their last words. */
   ai_handoffs: Record<string, unknown>[]
+  /** Satisfaction survey (migration 074): score and the customer's free-text comment. */
+  csat: Record<string, unknown>[]
   /** Consent-related audit events (export / anonymisation) for this contact. */
   consent_events: Record<string, unknown>[]
   /** Tables that failed to load (RLS gap, missing migration) — never fatal. */
@@ -90,7 +92,7 @@ export async function buildContactExport(
     }
   }
 
-  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows, handoffRows] =
+  const [customRows, tagRows, convRows, noteRows, dealRows, taskRows, auditRows, memoryRows, handoffRows, csatRows] =
     await Promise.all([
       load('custom_fields', () =>
         db
@@ -157,6 +159,14 @@ export async function buildContactExport(
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: true }),
+      ),
+      load('csat', () =>
+        db
+          .from('csat_responses')
+          .select('id, conversation_id, status, score, comment, sent_at, answered_at')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('sent_at', { ascending: true }),
       ),
     ])
 
@@ -237,6 +247,7 @@ export async function buildContactExport(
     tasks: taskRows,
     ai_memories: memoryRows,
     ai_handoffs: handoffRows,
+    csat: csatRows,
     consent_events: auditRows,
     warnings,
   }

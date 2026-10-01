@@ -312,8 +312,14 @@ export const DICT_AI: Record<string, string> = {
   'Consultative: understands the need and leads to a demo or proposal.':
     'Consultivo: entende a necessidade e conduz para demonstração ou proposta.',
   Support: 'Suporte',
-  'Empathetic: collects the details and escalates when needed.':
-    'Empático: coleta os detalhes e passa para o time quando precisa.',
+  'Empathetic: guides step by step, confirms it worked and asks to close.':
+    'Empático: orienta passo a passo, confirma se resolveu e pede para encerrar.',
+  Triage: 'Triagem',
+  'Collects what is missing and hands over with a short briefing. Never solves.':
+    'Reúne o que falta e passa para o time com um resumo curto. Não resolve.',
+  Finance: 'Financeiro',
+  'Billing and payment questions from the knowledge base. Never promises refunds.':
+    'Dúvidas de cobrança e pagamento pela base de conhecimento. Não promete reembolso.',
   'General service': 'Atendimento geral',
   'Friendly receptionist: welcomes, answers the basics and routes.':
     'Recepção simpática: acolhe, responde o básico e direciona.',

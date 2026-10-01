@@ -12,6 +12,8 @@ import {
   Clock,
   DollarSign,
   Flag,
+  Send,
+  Star,
   Timer,
   Users,
 } from "lucide-react";
@@ -57,6 +59,10 @@ function EventIcon({ event }: { event: ConversationEvent }) {
       return <Timer className={cn(cls, "text-red-500")} />;
     case "team_changed":
       return <Users className={cls} />;
+    case "csat_sent":
+      return <Send className={cls} />;
+    case "csat_answered":
+      return <Star className={cls} />;
     case "contact_opted_out":
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":

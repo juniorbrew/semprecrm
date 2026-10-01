@@ -44,7 +44,7 @@ interface SendTextArgs {
   contactId: string
   text: string
   /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
-  origin?: 'automation' | 'ai'
+  origin?: 'automation' | 'ai' | 'csat'
   /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
   skipPacing?: boolean
 }
@@ -234,6 +234,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     // the send failed. The engine wraps this in a log line.
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
   }
+
+  // Satisfaction-survey bubbles (origin 'csat') go out on CLOSED conversations:
+  // they must not move the conversation in the list nor become its preview.
+  if (input.kind === 'text' && input.origin === 'csat') return { whatsapp_message_id: waMessageId }
 
   await db
     .from('conversations')

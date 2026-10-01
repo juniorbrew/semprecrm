@@ -78,7 +78,7 @@ export function NewAgentDialog({
           <DialogDescription>{t("Choose a starting point. Everything can be adjusted afterwards.")}</DialogDescription>
         </DialogHeader>
 
-        <div role="radiogroup" aria-label={t("Starting template")} className="grid gap-2 sm:grid-cols-2">
+        <div role="radiogroup" aria-label={t("Starting template")} className="divide-y divide-border border-y border-border">
           {AGENT_PRESETS.map((p) => {
             const selected = p.id === presetId;
             return (
@@ -89,12 +89,16 @@ export function NewAgentDialog({
                 aria-checked={selected}
                 onClick={() => pick(p.id)}
                 className={cn(
-                  "rounded-lg border px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                  selected ? "border-primary bg-primary-soft" : "border-border hover:bg-muted/50",
+                  "flex w-full items-baseline gap-3 px-1 py-2 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                  selected ? "bg-muted/60" : "hover:bg-muted/40",
                 )}
               >
-                <span>
-                  <span className="block text-sm font-medium text-foreground">{t(p.label)}</span>
+                <span
+                  aria-hidden
+                  className={cn("size-1.5 shrink-0 translate-y-[-1px] rounded-full", selected ? "bg-primary" : "bg-transparent")}
+                />
+                <span className="min-w-0">
+                  <span className={cn("block text-sm text-foreground", selected && "font-medium")}>{t(p.label)}</span>
                   <span className="block text-xs text-muted-foreground">{t(p.summary)}</span>
                 </span>
               </button>

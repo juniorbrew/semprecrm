@@ -19,6 +19,7 @@ import { teamCopy } from "@/lib/support/teams";
 import { activeSlaTarget } from "@/lib/support/sla";
 import { useTriageSettings } from "@/hooks/use-triage-settings";
 import { DEFAULT_RESOLUTION, RESOLVE_AS_OPTIONS, resolutionNote, supportCopy } from "@/lib/support/model";
+import { csatCopy, latestCsatScore } from "@/lib/support/csat";
 import { manualTriagePatch, triageEvents, type TriageChange } from "@/lib/support/triage-fields";
 import { EventDrawer } from "@/components/calendar";
 import type {
@@ -1850,6 +1851,9 @@ export function MessageThread({
   const showSla = hasPolicies || !!activeSlaTarget(conversation);
   const resolutionNoteKey = resolutionNote(status, conversation.resolution);
   const resolutionLabel = resolutionNoteKey ? support.resolutions[resolutionNoteKey] : null;
+  // Satisfaction survey (migration 074): the customer's rating, from the thread's own event log.
+  const csatScore = status === "closed" ? latestCsatScore(eventRecords) : null;
+  const csatLabel = csatScore ? csatCopy(language).rating(csatScore) : null;
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the
@@ -2312,7 +2316,7 @@ export function MessageThread({
 
         {/* Triage chips: own full-width row under name + actions, so they
             never share a line (or get covered by) the action buttons. */}
-        {(supportMode || showTeamChip || showSla) && (
+        {(supportMode || showTeamChip || showSla || csatLabel) && (
           <div className="flex w-full basis-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             {supportMode && (
               <TriageChips
@@ -2337,6 +2341,11 @@ export function MessageThread({
             {resolutionLabel && (
               <span data-no-translate className="truncate text-xs text-muted-foreground">
                 {resolutionLabel}
+              </span>
+            )}
+            {csatLabel && (
+              <span data-no-translate className="truncate text-xs text-muted-foreground">
+                {csatLabel}
               </span>
             )}
           </div>

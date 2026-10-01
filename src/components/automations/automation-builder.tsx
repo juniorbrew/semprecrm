@@ -219,6 +219,11 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
     label: "Team Changed",
     hint: "When a conversation is assigned to a team, manually or by a routing rule",
   },
+  {
+    value: "csat_received",
+    label: "Rating Received",
+    hint: "When a customer answers the satisfaction survey (Settings → Support). Filter by a maximum score to react to low ratings.",
+  },
 ]
 
 /** Kept only so old rows still render a name; not offered in the picker. */
@@ -247,6 +252,11 @@ const PT_COPY: Record<string, string> = {
   "Category Set": "Categoria definida",
   "Priority Changed": "Prioridade alterada",
   "Team Changed": "Equipe alterada",
+  "Rating Received": "Avaliação recebida",
+  "When a customer answers the satisfaction survey (Settings → Support). Filter by a maximum score to react to low ratings.":
+    "Quando um cliente responde à pesquisa de satisfação (Configurações → Suporte). Filtre por nota máxima para reagir a notas baixas.",
+  "Maximum score": "Nota máxima",
+  "Any score": "Qualquer nota",
   "When 80% of a conversation's deadline has passed (Settings → Support → Deadlines). Once per conversation and deadline.":
     "Quando 80% do prazo de uma conversa já passou (Configurações → Suporte → Prazos). Uma vez por conversa e prazo.",
   "When a conversation misses its first-response or resolution deadline. Once per conversation and deadline.":
@@ -1078,6 +1088,8 @@ function triggerSummary(
         : cfg.kind === "resolution"
           ? pt ? "Prazo de resolução" : "Resolution deadline"
           : pt ? "Qualquer prazo" : "Either deadline"
+    case "csat_received":
+      return cfg.max_score ? (pt ? `Nota ${cfg.max_score} ou menos` : `Score ${cfg.max_score} or lower`) : pt ? "Qualquer nota" : "Any score"
     case "lead_captured":
       return cfg.source_id ? (pt ? "Somente uma fonte" : "One source only") : pt ? "Qualquer fonte" : "Any source"
     case "conversation_inactive": {
@@ -2192,6 +2204,22 @@ function TriggerEditor({
       )}
       {type === "conversation_inactive" && (
         <ConversationInactiveConfig key={type} config={config} onChange={onConfigChange} />
+      )}
+      {type === "csat_received" && (
+        <FieldBlock label={copy("Maximum score", language, t)}>
+          <select
+            value={config.max_score === undefined || config.max_score === null ? "" : String(config.max_score)}
+            onChange={(e) => onConfigChange(e.target.value ? { ...config, max_score: Number(e.target.value) } : { ...config, max_score: undefined })}
+            className={SELECT_CLASS}
+          >
+            <option value="">{copy("Any score", language, t)}</option>
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </FieldBlock>
       )}
       {(type === "sla_warning" || type === "sla_breached") && (
         <FieldBlock label={copy("Deadline", language, t)}>

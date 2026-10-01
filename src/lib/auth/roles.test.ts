@@ -8,6 +8,7 @@ import {
   canSendMessages,
   canTransferOwnership,
   canViewOnly,
+  canViewReports,
   hasMinRole,
   isAccountRole,
   roleRank,
@@ -119,6 +120,13 @@ describe("capability predicates", () => {
     expect(canDeleteAccount("admin")).toBe(false);
     expect(canDeleteAccount("agent")).toBe(false);
     expect(canDeleteAccount("viewer")).toBe(false);
+  });
+
+  it("canViewReports: owner and admin", () => {
+    expect(canViewReports("owner")).toBe(true);
+    expect(canViewReports("admin")).toBe(true);
+    expect(canViewReports("agent")).toBe(false);
+    expect(canViewReports("viewer")).toBe(false);
   });
 
   it("canTransferOwnership: owner only", () => {
