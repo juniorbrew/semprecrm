@@ -174,6 +174,8 @@ export const DICT_API: Record<string, string> = {
   'Failed to fetch media': 'Não foi possível baixar a mídia',
   'Invalid media id': 'Identificador de mídia inválido',
   'Failed to delete message': 'Não foi possível apagar a mensagem',
+  'Failed to send read receipts': 'Não foi possível confirmar a leitura no WhatsApp',
+  'Simulation failed': 'Não foi possível simular a automação',
 
   // ---- WhatsApp: send ---------------------------------------------------
   'conversation_id and message_type are required':

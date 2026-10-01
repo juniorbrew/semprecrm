@@ -7,6 +7,7 @@ import {
   toErrorResponse,
 } from '@/lib/auth/account'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { submitMessageTemplate } from '@/lib/whatsapp/meta-api'
 import {
   validateTemplatePayload,
@@ -100,6 +101,8 @@ export async function POST(request: Request) {
     // approval — an external side effect RLS can't roll back — before the
     // local upsert was refused.
     const { supabase, accountId, userId } = await requireRole('admin')
+    const limit = checkRateLimit(`wa-templates:submit:${userId}`, RATE_LIMITS.adminAction)
+    if (!limit.success) return rateLimitResponse(limit)
 
     let payload: TemplatePayload
     try {

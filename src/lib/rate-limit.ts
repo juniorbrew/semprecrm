@@ -213,6 +213,9 @@ export const RATE_LIMITS = {
   /** Mark-as-read (per user): fired on every conversation open and
    *  forwards a read receipt to Meta / the QR gateway. */
   markRead: { limit: 120, windowMs: 60_000 },
+  /** Manual automation trigger (per user). One call can fan out to
+   *  every matching automation's outbound sends. */
+  automationTrigger: { limit: 20, windowMs: 60_000 },
   /** Meta webhook verification handshake (public, per IP). Meta calls
    *  it once when the URL is saved; anything more is probing. */
   webhookVerify: { limit: 20, windowMs: 60_000 },

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { ConversationNotFoundError, sendReadReceipts } from '@/lib/whatsapp/read-receipts'
 
 /**
@@ -15,11 +16,15 @@ export async function POST(
 ) {
   const { id } = await params
   let accountId: string
+  let userId: string
   try {
-    accountId = (await getCurrentAccount()).accountId
+    ;({ accountId, userId } = await getCurrentAccount())
   } catch (err) {
     return toErrorResponse(err)
   }
+  // Each call forwards a read receipt to Meta / the QR gateway.
+  const limit = checkRateLimit(`conversation-read:${userId}`, RATE_LIMITS.markRead)
+  if (!limit.success) return rateLimitResponse(limit)
 
   try {
     // Service client: the conversation lookup inside is scoped to the
@@ -32,6 +37,6 @@ export async function POST(
     }
     const message = err instanceof Error ? err.message : String(err)
     console.error('[read-receipts] failed:', id, message)
-    return NextResponse.json({ error: message }, { status: 502 })
+    return NextResponse.json({ error: 'Failed to send read receipts' }, { status: 502 })
   }
 }

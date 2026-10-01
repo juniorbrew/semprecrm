@@ -31,7 +31,7 @@ export async function POST(
     .eq('id', id)
     .eq('user_id', user.id)
     .maybeSingle()
-  if (origErr) return NextResponse.json({ error: origErr.message }, { status: 500 })
+  if (origErr) return toErrorResponse(origErr)
   if (!original) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { data: copy, error: copyErr } = await admin
@@ -81,7 +81,7 @@ export async function POST(
       position: row.position,
     }))
     const { error: insErr } = await admin.from('automation_steps').insert(rows)
-    if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 })
+    if (insErr) return toErrorResponse(insErr)
   }
 
   return NextResponse.json({ automation: copy }, { status: 201 })
