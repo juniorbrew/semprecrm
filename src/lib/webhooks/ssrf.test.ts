@@ -191,3 +191,62 @@ describe('DNS rebinding — o IP conferido é o IP conectado', () => {
     await new Promise((r) => server.close(r));
   });
 });
+
+describe('requestFixado — respostas hostis', () => {
+  const loopback: Parameters<typeof requestFixado>[2] = (_h, opts, cb) => {
+    if (opts.all) cb(null, [{ address: '127.0.0.1', family: 4 }]);
+    else cb(null, '127.0.0.1', 4);
+  };
+  async function servidorBruto(resposta: string | null, onReq?: (raw: string) => void) {
+    const net = await import('node:net');
+    const server = net.createServer((sock) => {
+      sock.on('data', (d) => {
+        onReq?.(d.toString());
+        if (resposta !== null) sock.write(resposta);
+      });
+      sock.on('error', () => {});
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    return { url: `http://h.example:${port}/`, close: () => new Promise((r) => server.close(r)) };
+  }
+
+  it('status 999 rejeita (não fica pendurado)', async () => {
+    const s = await servidorBruto('HTTP/1.1 999 Weird\r\nContent-Length: 0\r\n\r\n');
+    await expect(requestFixado(s.url, {}, loopback)).rejects.toThrow(/invalid HTTP status 999/);
+    await s.close();
+  });
+
+  it('101 Switching Protocols rejeita e fecha o socket', async () => {
+    const s = await servidorBruto('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+    await expect(
+      requestFixado(s.url, { headers: { upgrade: 'websocket', connection: 'Upgrade' } }, loopback),
+    ).rejects.toThrow(/upgrade refused/);
+    await s.close();
+  });
+
+  it('abort rejeita mesmo se o servidor nunca responde', async () => {
+    const s = await servidorBruto(null);
+    const ctrl = new AbortController();
+    const p = requestFixado(s.url, { signal: ctrl.signal }, loopback);
+    setTimeout(() => ctrl.abort(new Error('timeout')), 30);
+    await expect(p).rejects.toThrow(/timeout/);
+    await s.close();
+  });
+
+  it('envia User-Agent padrão e descarta Host/Transfer-Encoding/Content-Length da conta', async () => {
+    let raw = '';
+    const s = await servidorBruto('HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n', (r) => (raw += r));
+    const res = await requestFixado(
+      s.url,
+      { method: 'POST', body: 'oi', headers: { host: 'evil.internal', 'transfer-encoding': 'chunked', 'content-length': '999' } },
+      loopback,
+    );
+    expect(res.status).toBe(200);
+    expect(raw).toMatch(/user-agent: SempreCRM-Webhook\/1\.0/i);
+    expect(raw).not.toMatch(/evil\.internal/);
+    expect(raw).not.toMatch(/content-length: 999/i);
+    expect(raw).not.toMatch(/transfer-encoding: chunked/i);
+    await s.close();
+  });
+});

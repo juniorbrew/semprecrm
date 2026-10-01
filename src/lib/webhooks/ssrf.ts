@@ -179,37 +179,70 @@ export function requestFixado(rawUrl: string, init: RequestInit, lookupFn: Looku
   if (body != null && typeof body !== 'string' && !(body instanceof Uint8Array)) {
     return Promise.reject(new TypeError('fetchSeguro: unsupported body type'));
   }
+  const signal = init.signal ?? undefined;
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  // Framing / routing headers are ours to set, never the account's.
+  const headers = Object.fromEntries(
+    [...new Headers(init.headers).entries()].filter(([nome]) => !CABECALHOS_PROIBIDOS.has(nome)),
+  );
+  headers['user-agent'] ??= USER_AGENT_PADRAO;
   const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
     method,
-    headers: Object.fromEntries(new Headers(init.headers).entries()),
+    headers,
     lookup: lookupFn,
     // Fresh socket every time: a pooled keep-alive socket to the same host
     // may have been opened without this lookup (unvetted address).
     agent: false,
-    signal: init.signal ?? undefined,
   });
   return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      req.destroy(signal?.reason);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const falha = (err: unknown) => {
+      req.destroy();
+      reject(err);
+    };
     req.on('error', reject);
+    // 101 Switching Protocols: never hand a raw socket back.
+    req.on('upgrade', (_res, socket) => {
+      socket.destroy();
+      falha(new Error('fetchSeguro: protocol upgrade refused'));
+    });
     req.on('response', (res) => {
-      const headers = new Headers();
-      for (const [nome, valor] of Object.entries(res.headers)) {
-        if (valor === undefined) continue;
-        for (const v of Array.isArray(valor) ? valor : [valor]) headers.append(nome, v);
+      const status = res.statusCode ?? 0;
+      if (status < 200 || status > 599) {
+        res.destroy();
+        falha(new Error(`fetchSeguro: invalid HTTP status ${status}`));
+        return;
       }
-      const status = res.statusCode ?? 502;
-      const semCorpo = method === 'HEAD' || status === 204 || status === 205 || status === 304;
-      if (semCorpo) res.resume();
-      resolve(
-        new Response(semCorpo ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>), {
-          status,
-          statusText: res.statusMessage,
-          headers,
-        }),
-      );
+      try {
+        const respHeaders = new Headers();
+        for (const [nome, valor] of Object.entries(res.headers)) {
+          if (valor === undefined) continue;
+          for (const v of Array.isArray(valor) ? valor : [valor]) respHeaders.append(nome, v);
+        }
+        const semCorpo = method === 'HEAD' || status === 204 || status === 205 || status === 304;
+        if (semCorpo) res.resume();
+        resolve(
+          new Response(semCorpo ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>), {
+            status,
+            statusText: res.statusMessage,
+            headers: respHeaders,
+          }),
+        );
+      } catch (err) {
+        res.destroy();
+        falha(err);
+      }
     });
     req.end(body ?? undefined);
   });
 }
+
+const CABECALHOS_PROIBIDOS = new Set(['host', 'transfer-encoding', 'content-length', 'connection']);
+const USER_AGENT_PADRAO = 'SempreCRM-Webhook/1.0';
 
 /** Cabeçalhos que podem atravessar para OUTRA origem num redirect. */
 const CABECALHOS_ENTRE_ORIGENS = new Set(['content-type', 'accept']);

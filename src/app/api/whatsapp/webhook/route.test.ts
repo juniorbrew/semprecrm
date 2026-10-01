@@ -102,7 +102,12 @@ vi.mock('@supabase/supabase-js', () => ({
         in: (k: string, v: unknown[]) => (k === 'status' ? (inFilter = v) : filters.push([k, v]), b),
         maybeSingle: async () =>
           table === 'broadcast_recipients'
-            ? { data: h.recipient, error: null }
+            ? {
+                data: filters.some(([k, v]) => k === 'broadcasts.account_id' && v === h.messageAccount)
+                  ? h.recipient
+                  : null,
+                error: null,
+              }
             : { data: null, error: null },
         then: (f: (v: unknown) => unknown, r?: (e: unknown) => unknown) =>
           Promise.resolve(resolve()).then(f, r),
@@ -231,6 +236,21 @@ describe('status webhook — failure reason (wacrm #535)', () => {
       status: 'failed',
       error_message: `[131049] ${errors[0].title}: Per-user marketing message limit reached.`,
     })
+  })
+
+  it('never updates a broadcast recipient of another account, nor without an account', async () => {
+    h.recipient = { id: 'rec-1', status: 'sent' }
+    h.messageAccount = 'acct-other'
+    await post(statusPayload({ status: 'delivered' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'broadcast_recipients')).toEqual([])
+
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.messageAccount = 'acct-1'
+    h.configRows = []
+    await post(statusPayload({ status: 'delivered' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'broadcast_recipients')).toEqual([])
   })
 
   it('updates only status for a failed status without errors', async () => {

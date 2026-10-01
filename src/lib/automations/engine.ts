@@ -1199,6 +1199,8 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         if (err instanceof DestinoNaoPermitido) throw new Error('send_webhook: destination not allowed')
         throw err
       }
+      // The body is never read: release the connection.
+      await res.body?.cancel().catch(() => undefined)
       if (!res.ok) throw new Error(`webhook returned ${res.status}`)
       return `webhook ${res.status}`
     }
