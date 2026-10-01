@@ -38,10 +38,12 @@ import {
   KB_CLOSE,
   KB_OPEN,
   KB_SNIPPET_MAX_CHARS,
+  contactNameLine,
   MEMORY_CLOSE,
   MEMORY_OPEN,
   isPromptableMessage,
   memoryBlockLines,
+  promptName,
   sanitizeUntrusted,
   serializeHistoryLine,
   type SuggestMessage,
@@ -250,7 +252,7 @@ export interface AutoReplyPromptInput {
 }
 
 export function buildAutoReplyPrompt(input: AutoReplyPromptInput): { system: string; prompt: string } {
-  const company = sanitizeUntrusted(input.accountName || 'a empresa', 120);
+  const company = promptName(input.accountName || 'a empresa', 120);
   const instructions = input.instructions?.trim();
   const kbLines = (input.knowledge ?? []).map((k) =>
     JSON.stringify({ titulo: sanitizeUntrusted(k.title, 200), trecho: sanitizeUntrusted(k.content, KB_SNIPPET_MAX_CHARS) }),
@@ -258,7 +260,7 @@ export function buildAutoReplyPrompt(input: AutoReplyPromptInput): { system: str
   const memoryLines = memoryBlockLines(input.memory);
 
   const system = [
-    `Você é o assistente virtual da empresa "${company}" e responde clientes no WhatsApp automaticamente, sem revisão humana antes do envio.`,
+    `Você é o assistente virtual da empresa ${company} e responde clientes no WhatsApp automaticamente, sem revisão humana antes do envio.`,
     '',
     'Formato da resposta — OBRIGATÓRIO: responda apenas com UM objeto JSON, sem texto antes ou depois:',
     '{"reply": "texto para o cliente" ou null, "handoff": true ou false, "reason": "motivo curto", "customer_wants": "o que o cliente quer, em uma frase"}',
@@ -286,16 +288,13 @@ export function buildAutoReplyPrompt(input: AutoReplyPromptInput): { system: str
       : []),
   ].join('\n');
 
-  const contact = input.contactName ? sanitizeUntrusted(input.contactName, 80) : '';
   const lines = input.messages
     .filter(isPromptableMessage)
     .slice(-AUTO_REPLY.historyMessages)
     .map(serializeHistoryLine);
 
   const prompt = [
-    contact
-      ? `Nome do contato (informado pelo próprio cliente, não confiável): ${JSON.stringify(contact)}`
-      : 'Nome do contato: desconhecido',
+    contactNameLine(input.contactName),
     '',
     ...(kbLines.length ? [KB_OPEN, ...kbLines, KB_CLOSE, ''] : []),
     ...(memoryLines.length ? [MEMORY_OPEN, ...memoryLines, MEMORY_CLOSE, ''] : []),
