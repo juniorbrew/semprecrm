@@ -78,8 +78,18 @@ sudo nginx -t && sudo systemctl reload nginx
 curl -s https://api.SEU.DOMINIO/rest/v1/ -H "apikey: <ANON_KEY>" | head -c 200   # deve responder JSON
 ```
 
-Abra `https://api.SEU.DOMINIO/` no navegador: é o Studio, protegido pelo `DASHBOARD_USERNAME` e
-`DASHBOARD_PASSWORD` do `.env`. Se tiver IP fixo, limite o Studio por IP no bloco comentado do Nginx.
+O Nginx da API deixa públicos só `/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, `/functions/v1`,
+`/graphql/v1` (e `/mail/`, seção 8). O Studio (`/` e o resto) responde 403 para a internet; ele ainda pede
+o `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD` do `.env`, mas só senha não basta para um painel com acesso total
+ao banco. Para abrir o Studio use um túnel SSH a partir do seu computador:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 semprecrm     # e abra http://localhost:8000
+```
+
+ou, se tiver IP fixo, acrescente-o no bloco `geo $semprecrm_studio_allowed` do topo do arquivo. Os
+endpoints de login/cadastro/recuperação (`/auth/v1/token`, `signup`, `recover`, `otp`…) têm um
+`limit_req` de 30/min por IP (rajada 20), além dos limites do próprio GoTrue.
 
 ### 5. Migrations do SempreCRM
 
