@@ -35,11 +35,19 @@ export function LeadSourceSelect({
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const { data } = await supabase
-        // Token-less view: lead_sources itself is admin-only (migration 076).
+      // Token-less view: lead_sources itself is admin-only (migration 076).
+      // Before 076 the view does not exist yet: fall back to the table,
+      // still without the token column.
+      let { data, error } = await supabase
         .from("lead_sources_public")
         .select("id, name, is_active")
         .order("name")
+      if (error) {
+        ;({ data, error } = await supabase
+          .from("lead_sources")
+          .select("id, name, is_active")
+          .order("name"))
+      }
       if (cancelled) return
       setSources((data as SourceOption[] | null) ?? [])
       setLoaded(true)
