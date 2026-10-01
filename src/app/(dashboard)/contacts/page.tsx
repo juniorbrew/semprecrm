@@ -3,8 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { AUDIT_ACTIONS } from '@/lib/audit';
-import { recordAudit } from '@/lib/audit-client';
 import {
   findConversationByContact,
   inboxConversationHref,
@@ -65,6 +63,41 @@ const PAGE_SIZE = 25;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
+}
+
+/**
+ * Deletes go through DELETE /api/contacts (admin+): the server removes
+ * the contacts' chat media and profile photos, scrubs the personal text
+ * the delete would leave behind and writes the audit row. Chunks of 50
+ * (the route's cap). Returns the deleted ids and the first error.
+ */
+async function deleteContactsOnServer(
+  ids: string[],
+): Promise<{ deleted: string[]; error: string | null }> {
+  const deleted: string[] = [];
+  let error: string | null = null;
+  for (let i = 0; i < ids.length; i += 50) {
+    try {
+      const res = await fetch('/api/contacts', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: ids.slice(i, i + 50) }),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        deleted?: string[];
+        failed?: { error?: string }[];
+        error?: string;
+      } | null;
+      deleted.push(...(body?.deleted ?? []));
+      error ??= body?.error ?? body?.failed?.[0]?.error ?? (res.ok ? null : `HTTP ${res.status}`);
+      // 403 (agent) / 429: the next chunks would fail the same way.
+      if (res.status === 403 || res.status === 429) break;
+    } catch {
+      error ??= 'Falha de conexão ao excluir.';
+      break;
+    }
+  }
+  return { deleted, error };
 }
 
 export default function ContactsPage() {
@@ -241,38 +274,15 @@ export default function ContactsPage() {
     setDeleteConfirmOpen(true);
   }
 
-  /**
-   * Stored WhatsApp profile photos of deleted contacts live in a
-   * service-role-only bucket (migration 055); the server removes them.
-   * Best effort — a failure only leaves an orphaned image behind.
-   */
-  function purgeDeletedAvatars(ids: string[]) {
-    void fetch('/api/contacts/avatars/purge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    }).catch(() => {});
-  }
-
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
 
-    const { error } = await supabase
-      .from('contacts')
-      .delete()
-      .eq('id', deleteTarget.id);
+    const { deleted, error } = await deleteContactsOnServer([deleteTarget.id]);
 
-    if (error) {
-      toast.error('Failed to delete contact');
+    if (deleted.length === 0) {
+      toast.error(error ?? 'Não foi possível excluir o contato.');
     } else {
-      void recordAudit({
-        action: AUDIT_ACTIONS.CONTACT_DELETED,
-        entityType: 'contact',
-        entityId: deleteTarget.id,
-        metadata: { contact_name: deleteTarget.name ?? null, phone: deleteTarget.phone },
-      });
-      if (deleteTarget.avatar_url) purgeDeletedAvatars([deleteTarget.id]);
       toast.success(t('Contact deleted'));
       // The detail sheet may be showing the contact we just removed.
       if (detailContactId === deleteTarget.id) {
@@ -317,21 +327,16 @@ export default function ContactsPage() {
     if (ids.length === 0) return;
     setDeleting(true);
 
-    const { error } = await supabase.from('contacts').delete().in('id', ids);
+    const { deleted, error } = await deleteContactsOnServer(ids);
 
-    if (error) {
-      toast.error('Failed to delete contacts');
-    } else {
-      // One trail entry for the whole batch — the ids are in the metadata.
-      void recordAudit({
-        action: AUDIT_ACTIONS.CONTACT_DELETED,
-        entityType: 'contact',
-        entityId: ids.length === 1 ? ids[0] : null,
-        metadata: { count: ids.length, ids: ids.slice(0, 200), bulk: true },
+    if (error) toast.error(error);
+    if (deleted.length > 0) {
+      toast.success(`${deleted.length} contact${deleted.length === 1 ? '' : 's'} deleted`);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        deleted.forEach((id) => next.delete(id));
+        return next;
       });
-      for (let i = 0; i < ids.length; i += 500) purgeDeletedAvatars(ids.slice(i, i + 500));
-      toast.success(`${ids.length} contact${ids.length === 1 ? '' : 's'} deleted`);
-      setSelected(new Set());
       fetchContacts();
     }
 
