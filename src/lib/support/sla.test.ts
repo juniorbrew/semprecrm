@@ -5,8 +5,10 @@ import {
   formatSlaSpan,
   isSlaBreached,
   joinMinutes,
+  slaFractionLeft,
   slaLabel,
   slaLevel,
+  slaTone,
   splitMinutes,
   type SlaFields,
 } from './sla'
@@ -61,6 +63,29 @@ describe('slaLevel', () => {
     const noWarn = activeSlaTarget(fresh({ first_response_warn_at: null }))!
     expect(slaLevel(noWarn, NOW + 59 * 60_000)).toBe('ok')
     expect(slaLevel(noWarn, NOW + 60 * 60_000)).toBe('breached')
+  })
+})
+
+describe('slaFractionLeft / slaTone (list progress line)', () => {
+  // 60 min target from NOW (warn at 48 min = 80%).
+  const t = activeSlaTarget(fresh())!
+  it.each([
+    [0, 1, 'ok'],
+    [30, 0.5, 'ok'],
+    [37, 23 / 60, 'warn'],
+    [52, 8 / 60, 'critical'],
+    [60, 0, 'critical'],
+    [90, 0, 'critical'],
+  ])('at +%i min: %f left, %s', (min, left, tone) => {
+    expect(slaFractionLeft(t, NOW + min * 60_000)).toBeCloseTo(left as number)
+    expect(slaTone(t, NOW + min * 60_000)).toBe(tone)
+  })
+
+  it('without a warning stamp: no line, tone follows the level', () => {
+    const noWarn = activeSlaTarget(fresh({ first_response_warn_at: null }))!
+    expect(slaFractionLeft(noWarn, NOW)).toBeNull()
+    expect(slaTone(noWarn, NOW + 59 * 60_000)).toBe('ok')
+    expect(slaTone(noWarn, NOW + 60 * 60_000)).toBe('critical')
   })
 })
 

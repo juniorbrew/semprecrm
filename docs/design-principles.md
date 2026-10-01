@@ -59,10 +59,20 @@ Barra lateral e cabeçalho (`src/components/layout/`, itens em `nav-config.ts`).
 
 Mesmas regras aplicadas à lista, ao histórico e ao painel do contato.
 
-- **Lista:** uma linha de metadados (categoria · empresa), etiquetas como ponto + texto, canal "Oficial/QR" como texto discreto, situação (pendente, resolvida) e SLA como ponto + texto. O único preenchido é o contador de não lidas.
+- **Lista:** ver "Lista de conversas" abaixo.
 - **Cabeçalho da conversa:** só Resolver/Reabrir é preenchido; Assumir, Transferir, Pausar IA e utilitários são ghost. Situação, canal e janela de 24 h são texto, sem pílula.
 - **Fundo do chat liso** (sem desenho repetido). Separador de data e eventos do sistema são texto pequeno e discreto, sem fundo.
 - **Balões:** remetente e hora em 10 px; os ticks herdam a cor do balão (`opacity-70`), o lido fica em tom cheio. Nota interna: borda e fundo âmbar leves, sem tracejado nem sombra.
 - **Compositor:** campo `bg-background` com uma única borda; barra de formatação sem divisória; Enviar é o único botão preenchido.
 - **Painel:** ações rápidas são uma linha de texto com ícone (`size-3.5`), sem blocos com borda. Títulos de seção em frase (`text-xs font-medium`), contagem em texto simples, sem caixa alta. Etiquetas, notas e memória sem borda tracejada.
 - Sem ícone decorativo de IA no aviso de sugestão pendente.
+
+### Lista de conversas
+
+Substitui, para a lista, as regras de "situação como pílula" e "sem caixa alta" acima (protótipo Atendimento aprovado).
+
+- **Faixas:** Minhas e Todas agrupam as linhas em faixas fixas no topo ao rolar, cada uma com ponto + rótulo curto em caixa alta (`text-[10.5px] tracking-wider`) e a contagem: Agora (SLA estourado ou vencendo em até 15 min), Esperando por você (pendente, sem responsável ou nunca respondida), Em andamento, Aguardando cliente (nossa mensagem foi a última). Dentro da faixa, o prazo mais próximo primeiro, depois a mais recente. Fila mantém a ordem de espera; Encerradas e Arquivadas não têm faixas. A regra fica em `src/lib/inbox/bands.ts`.
+- **Linha:** avatar, nome, prévia e hora; uma única linha de metadados (pílula de SLA, situação, categoria em pílula neutra, empresa, etiquetas). O contador de não lidas continua sendo o único elemento preenchido. Selecionada: `bg-primary/10` com acento de 3 px em `bg-primary` à esquerda.
+- **SLA:** pílula com o tempo restante em palavras ("SLA 12min", "estourado há 5min") e uma linha fina na base da linha com a fração restante: verde, âmbar abaixo de 40%, vermelho abaixo de 15% ou vencido. O tempo anda num relógio único da lista (1 s, pausado com a aba oculta); só a pílula e a linha re-renderizam.
+- **Ações rápidas:** ao passar o mouse ou com o foco dentro da linha, uma barra pequena com Resolver (Reabrir nas encerradas) e Assumir, só ícones `size-3.5` com `aria-label`. Só ações que já existem no cabeçalho; sem Adiar. Leitores não veem a barra.
+- **Densidade:** confortável ou compacta (sem a linha de metadados, padding menor), salva por usuário neste aparelho. Abas e filtros ativos em pílula `bg-primary/15 text-primary`.

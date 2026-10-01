@@ -870,6 +870,8 @@ export default function InboxPage() {
             countsToken={countsToken}
             onListStateChange={handleListState}
             onShowShortcuts={() => setShortcutsOpen(true)}
+            onStatusChange={handleStatusChange}
+            onAssignChange={handleAssignChange}
           />
         </div>
 
