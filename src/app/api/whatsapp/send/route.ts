@@ -25,7 +25,6 @@ import {
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
 import { maskPhone } from '@/lib/log-redact'
-import { extractChatMediaPath, isAccountMediaPath } from '@/lib/lgpd/anonymize'
 import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard'
 import {
   resolveTemplateRow,
@@ -39,7 +38,12 @@ import {
   sendViaGateway,
 } from '@/lib/whatsapp/qr-gateway'
 import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
-import { mediaUrlForPublic, mediaUrlForServer } from '@/lib/storage/media-url'
+import {
+  MediaUrlNaoPermitida,
+  assertAccountMediaUrl,
+  storageUrlForPublic,
+  storageUrlForServer,
+} from '@/lib/storage/media-url'
 
 export async function POST(request: Request) {
   try {
@@ -148,15 +152,21 @@ export async function POST(request: Request) {
       )
     }
 
-    // A chat-media object of ANOTHER account must never be stored on our
-    // message: the LGPD scrub of this account would then delete (or keep
-    // pointing at) a file that is not ours.
-    const chatMediaPath = extractChatMediaPath(typeof media_url === 'string' ? media_url : null)
-    if (chatMediaPath && !isAccountMediaPath(chatMediaPath, accountId)) {
-      return NextResponse.json(
-        { error: 'media_url must be a file of this account', code: 'media_not_owned' },
-        { status: 400 }
-      )
+    // Só mídia do storage da PRÓPRIA conta: o gateway do canal QR baixa a URL
+    // no servidor (arquivo local / rede interna se fosse livre) e a Meta a
+    // busca de fora — nos dois canais a URL tem de ser um objeto nosso.
+    // O que sai do servidor é sempre reconstruído deste caminho validado,
+    // nunca a string do cliente.
+    let mediaObjectPath = ''
+    if (isMediaKind) {
+      try {
+        mediaObjectPath = assertAccountMediaUrl(media_url, accountId)
+      } catch (err) {
+        if (err instanceof MediaUrlNaoPermitida) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 400 })
+        }
+        throw err
+      }
     }
 
     // Meta caps media captions at 1024 chars; reject before the upload is
@@ -279,10 +289,9 @@ export async function POST(request: Request) {
           ...(isMediaKind
             ? {
                 media: {
-                  // Stored URLs may be origin-relative (`/supabase/...`);
-                  // the gateway fetches the bytes, so hand it an absolute
-                  // URL it can reach (internal Supabase route).
-                  url: mediaUrlForServer(media_url),
+                  // Validated above; rebuilt on the internal Supabase route
+                  // the gateway can reach (and allowlists).
+                  url: storageUrlForServer(mediaObjectPath),
                   mimetype: mimeFromUrl(message_type, media_url, filename || undefined),
                   filename: filename || undefined,
                   caption: message_type !== 'audio' && content_text ? content_text : undefined,
@@ -503,7 +512,7 @@ export async function POST(request: Request) {
           to: phone,
           kind: message_type as MediaKind,
           // Meta fetches the link from the outside → public site origin.
-          link: mediaUrlForPublic(media_url),
+          link: storageUrlForPublic(mediaObjectPath),
           caption: content_text || undefined,
           filename: filename || undefined,
           contextMessageId,

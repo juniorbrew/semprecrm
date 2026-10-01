@@ -8,6 +8,7 @@ import {
   CHAT_ATTACHMENT_MAX_BYTES,
   formatBytes,
   formatDuration,
+  isChatAttachmentPathFor,
   resolveAttachmentMime,
   safeAttachmentName,
   validateChatAttachment,
@@ -102,5 +103,24 @@ describe('formatting', () => {
     expect(formatBytes(-1)).toBe('');
     expect(formatDuration(0)).toBe('0:00');
     expect(formatDuration(65.4)).toBe('1:05');
+  });
+});
+
+describe('isChatAttachmentPathFor', () => {
+  const acct = '11111111-1111-1111-1111-111111111111';
+  const thread = '22222222-2222-2222-2222-222222222222';
+
+  it('accepts the path buildChatAttachmentPath produces', () => {
+    const path = buildChatAttachmentPath(acct, thread, 'Relatório final.pdf', 'abc-123');
+    expect(isChatAttachmentPathFor(path, acct, thread)).toBe(true);
+  });
+
+  it('rejects another tenant, another thread, traversal and nesting', () => {
+    expect(isChatAttachmentPathFor(`account-other/chat/${thread}/x.pdf`, acct, thread)).toBe(false);
+    expect(isChatAttachmentPathFor(`account-${acct}/chat/other-thread/x.pdf`, acct, thread)).toBe(false);
+    expect(isChatAttachmentPathFor(`account-${acct}/chat/${thread}/../../../account-b/x`, acct, thread)).toBe(false);
+    expect(isChatAttachmentPathFor(`account-${acct}/chat/${thread}/a/b.pdf`, acct, thread)).toBe(false);
+    expect(isChatAttachmentPathFor(`account-${acct}/chat/${thread}/`, acct, thread)).toBe(false);
+    expect(isChatAttachmentPathFor(`account-${acct}/chat/${thread}/..`, acct, thread)).toBe(false);
   });
 });

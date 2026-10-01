@@ -16,6 +16,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendMail } from "@/lib/mail/smtp";
 import { buildContactNotification, contactNotifyRecipient } from "@/lib/marketing/notify";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/request-ip";
 import { supabaseServerUrl } from "@/lib/supabase/url";
 import { validateContactSubmission } from "@/lib/marketing/contact";
 
@@ -28,14 +29,6 @@ function supabaseAdmin() {
     _adminClient = createClient(supabaseServerUrl(), process.env.SUPABASE_SERVICE_ROLE_KEY!);
   }
   return _adminClient;
-}
-
-function getClientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  const xri = request.headers.get("x-real-ip");
-  if (xri) return xri.trim();
-  return "unknown";
 }
 
 export async function POST(request: Request) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { APICallError, RetryError } from 'ai';
 
 import { decrypt } from '@/lib/whatsapp/encryption';
-import { budgetMonthKey, isBudgetExhausted, monthStartInTimeZone } from './budget';
+import { budgetMonthKey, crossesBudgetAlert, isBudgetExhausted, monthStartInTimeZone } from './budget';
 import { AiError, mapProviderError } from './errors';
 import { computeCostCents, MODEL_PRICES, resolveModelPrice, UNKNOWN_MODEL_PRICE } from './pricing';
 import { AI_DEFAULT_MODELS, isValidModelId, modelMatchesProvider, parseBudgetInput } from './providers';
@@ -61,6 +61,12 @@ describe('monthly budget window (America/Sao_Paulo)', () => {
     expect(isBudgetExhausted(99.99, 100)).toBe(false);
     expect(isBudgetExhausted(100, 100)).toBe(true);
     expect(isBudgetExhausted(0, 0)).toBe(true);
+    // 80% alert line: before the call below it, after the call at / above it
+    expect(crossesBudgetAlert(79, 80, 100)).toBe(true);
+    expect(crossesBudgetAlert(79, 95, 100)).toBe(true); // parallel calls landed meanwhile
+    expect(crossesBudgetAlert(70, 75, 100)).toBe(false);
+    expect(crossesBudgetAlert(80, 81, 100)).toBe(false);
+    expect(crossesBudgetAlert(0, 0, 0)).toBe(false);
   });
 });
 

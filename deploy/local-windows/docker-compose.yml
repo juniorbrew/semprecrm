@@ -67,6 +67,9 @@ services:
       APP_URL: http://semprecrm:3101
       WA_DATA_DIR: /data
       WA_GATEWAY_PORT: "3201"
+      # The app reaches it as http://wa-gateway:3201 over the compose network,
+      # so it must listen on all container interfaces (no host port published).
+      GATEWAY_BIND: 0.0.0.0
       # Same split as the app: reach Supabase via the host gateway, but stamp
       # media URLs with the browser-facing base ("/supabase" → relative URLs
       # that work from any address the app is opened on).

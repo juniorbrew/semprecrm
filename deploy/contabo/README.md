@@ -94,6 +94,11 @@ sudo certbot --nginx -d SEU.DOMINIO
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+O `nginx.conf` esconde a versão (`server_tokens off`), repassa ao app só o IP real do cliente
+(`X-Real-IP` e `X-Forwarded-For` = `$remote_addr`, nunca o valor que o cliente mandou), responde 403 da
+internet para os endpoints de cron (o `semprecrm-cron` chama por loopback, sem passar pelo Nginx) e aplica
+`limit_req` no formulário de contato (5/min por IP) e em `/api/invitations/` e `/api/auth/` (30/min).
+
 ## 6. Meta / WhatsApp
 
 No app da Meta, configure o webhook para `https://SEU.DOMINIO/api/whatsapp/webhook` com o verify token
@@ -107,6 +112,11 @@ sob o PM2 e conversa com o app por loopback. Passos:
 
 1. Crie `services/wa-gateway/.env` a partir de `services/wa-gateway/.env.example` (`APP_URL`,
    `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WA_GATEWAY_SECRET`, `WA_DATA_DIR=/var/lib/semprecrm/wa`).
+   **Envio de mídia:** o gateway só baixa mídia de origens permitidas. A origem de `SUPABASE_URL` ou
+   `SUPABASE_PUBLIC_URL` do gateway tem de ser igual à que o app usa — `SUPABASE_INTERNAL_URL` do app, se
+   definida; senão `NEXT_PUBLIC_SUPABASE_URL`. Se o app não tem `SUPABASE_INTERNAL_URL`, defina no gateway
+   `SUPABASE_PUBLIC_URL=https://api.semprecrm.com.br`. Sem isso todo envio de mídia pelo QR falha com 400.
+   `MEDIA_ALLOWED_ORIGINS` (opcional) só acrescenta origens públicas extras.
 2. No `.env.local` do app, defina `WA_GATEWAY_URL=http://127.0.0.1:3201` e o **mesmo**
    `WA_GATEWAY_SECRET`. Sem eles a opção QR aparece desabilitada em Configurações → WhatsApp.
 3. Rode o `deploy.sh` normalmente — ele faz `npm ci && npm run build` no gateway e sobe/recarrega o app
@@ -135,8 +145,10 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
   (padrão 300000 = 5 min). Sem conexões ativas a chamada responde `connections=0` e não custa nada.
 - Logs: `pm2 logs semprecrm-cron` ou `/var/log/semprecrm/cron.*.log` — uma linha por chamada
   (`GET /api/automations/cron 200 85ms processed=0 inactive_fired=2`).
-- Se preferir um cron externo (Vercel Cron, UptimeRobot, crontab com `curl -H "x-cron-secret: …"`),
-  remova o app `semprecrm-cron` do arquivo antes do `pm2 start`.
+- Se preferir um crontab com `curl -H "x-cron-secret: …"`, chame `http://127.0.0.1:3000/...` na própria
+  VPS e remova o app `semprecrm-cron` do arquivo antes do `pm2 start`. Pelo domínio público os endpoints de
+  cron respondem 403 (bloqueio no `nginx.conf`); um cron externo de verdade (Vercel Cron, UptimeRobot)
+  exige remover esse bloco.
 
 ## 7. Redeploys
 

@@ -1,7 +1,7 @@
 import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import { MEDIA_HEADER_SPECS, isMediaHeaderKind } from '@/lib/whatsapp/media-header-types'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
-import { isRelativeMediaUrl, mediaUrlForServer } from '@/lib/storage/media-url'
+import { isRelativeMediaUrl, storageObjectPath, storageUrlForServer } from '@/lib/storage/media-url'
 import { fetchSeguro } from '@/lib/webhooks/ssrf'
 
 /**
@@ -81,7 +81,7 @@ export async function ensureMediaHeaderHandle(
   // fetch é do servidor: fetchSeguro recusa destino interno (loopback, rede
   // privada, metadata de nuvem) antes de sair e a cada redirect. A URL
   // RELATIVA é mídia do próprio SempreCRM e vai pela rota interna do storage
-  // (mediaUrlForServer) — mas só para o caminho de objeto público do storage,
+  // (storageUrlForServer) — mas só para o caminho de objeto público do storage,
   // senão `/supabase/../rest/v1/…` alcançaria qualquer rota do gateway interno.
   // Toda recusa usa a mensagem do host inalcançável (a falha não vira oráculo)
   // — a MESMA para imagem, vídeo e documento, senão o tipo vira um bit a mais.
@@ -89,14 +89,11 @@ export async function ensureMediaHeaderHandle(
   let res: Response
   try {
     if (isRelativeMediaUrl(payload.header_media_url)) {
-      // O caminho é conferido ANTES de resolver (normalizado, sem `..`), contra
-      // o prefixo público do Supabase: vale com SUPABASE_INTERNAL_URL ou só com
-      // NEXT_PUBLIC_SITE_URL, as duas formas que mediaUrlForServer aceita.
-      const caminho = new URL(payload.header_media_url, 'http://x').pathname
-      const publico = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? ''
-      const prefixo = publico.startsWith('/') ? publico.replace(/\/+$/, '') : ''
-      if (!caminho.startsWith(`${prefixo}/storage/v1/object/public/`)) throw new Error(INALCANCAVEL)
-      res = await fetch(mediaUrlForServer(caminho), { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
+      // Mesma régua do envio de mídia (storageObjectPath): só objeto público
+      // do storage, sem `..`/`//`/traversal codificado; a URL buscada é
+      // reconstruída sobre a rota interna (ou NEXT_PUBLIC_SITE_URL).
+      const objeto = storageObjectPath(payload.header_media_url)
+      res = await fetch(storageUrlForServer(objeto), { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
     } else {
       res = await fetchSeguro(payload.header_media_url, { signal: AbortSignal.timeout(10_000) })
     }

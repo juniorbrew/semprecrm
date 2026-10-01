@@ -699,3 +699,29 @@ export async function notifySlaBreached(
     return { ...NOOP }
   }
 }
+
+// ------------------------------------------------------------
+// (i) Account security / spend notices (AI key changed, AI budget)
+// ------------------------------------------------------------
+
+/**
+ * Every owner and admin of the account — the actor included (a hijacked
+ * session pushes to the real user's own devices too). Not subject to
+ * `notification_prefs`: a security notice cannot be switched off.
+ */
+export async function notifyAccountAdmins(
+  admin: SupabaseClient,
+  accountId: string,
+  payload: { title: string; body: string; url: string; tag?: string },
+): Promise<SendPushResult> {
+  try {
+    const recipients = (await loadProfiles(admin, accountId, null))
+      .filter((p) => ['owner', 'admin'].includes(p.account_role))
+      .map((p) => p.user_id)
+    if (recipients.length === 0) return { ...NOOP }
+    return await sendPushToUsers(admin, recipients, payload)
+  } catch (err) {
+    console.error('[push] notifyAccountAdmins threw:', err)
+    return { ...NOOP }
+  }
+}

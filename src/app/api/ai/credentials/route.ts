@@ -12,6 +12,10 @@
 // the provider, `last4` and `validated_at`. Writes use the service
 // role because the credentials table is closed to every signed-in
 // user (migration 058); the account comes from the session.
+//
+// Saving or removing a key changes where every customer message goes,
+// so besides the audit row each owner and admin gets a push (the actor
+// too: a hijacked session reaches the real user's devices).
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -23,7 +27,7 @@ import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { validateProviderKey } from '@/lib/ai/client';
 import { AI_ERROR_MESSAGES } from '@/lib/ai/errors';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { isAiProvider } from '@/lib/ai/providers';
+import { AI_PROVIDER_LABELS, isAiProvider } from '@/lib/ai/providers';
 import {
   deleteCredential,
   isPlausibleApiKey,
@@ -31,7 +35,10 @@ import {
   markCredentialValidated,
   saveCredential,
 } from '@/lib/ai/store';
+import { notifyAccountAdmins } from '@/lib/push/notify';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
+
+const AI_SETTINGS_URL = '/settings?tab=ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,6 +94,12 @@ export async function POST(request: Request) {
         entityId: null,
         metadata: { provider, last4: credential.last4 },
       });
+      await notifyAccountAdmins(db, ctx.accountId, {
+        title: 'Chave de IA alterada',
+        body: `Uma chave ${AI_PROVIDER_LABELS[provider]} (final ${credential.last4}) foi salva. Se não foi você, remova-a em Configurações › IA.`,
+        url: AI_SETTINGS_URL,
+        tag: `ai-key:${provider}`,
+      });
       return NextResponse.json({ credential, models: check.models });
     }
 
@@ -110,7 +123,8 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Unknown AI provider' }, { status: 400 });
     }
 
-    const removed = await deleteCredential(supabaseAdmin(), ctx.accountId, provider);
+    const db = supabaseAdmin();
+    const removed = await deleteCredential(db, ctx.accountId, provider);
 
     // Without a key the provider can't be used: switch AI off if it
     // was running on it (RLS client — admin policy).
@@ -130,6 +144,12 @@ export async function DELETE(request: Request) {
         entityType: 'ai_credential',
         entityId: null,
         metadata: { provider },
+      });
+      await notifyAccountAdmins(db, ctx.accountId, {
+        title: 'Chave de IA removida',
+        body: `A chave ${AI_PROVIDER_LABELS[provider]} foi removida. Se não foi você, revise em Configurações › IA.`,
+        url: AI_SETTINGS_URL,
+        tag: `ai-key:${provider}`,
       });
     }
     return NextResponse.json({ ok: true, removed });

@@ -13,6 +13,7 @@ import {
 } from '@/lib/whatsapp/template-body'
 import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard'
 import {
+  assertConversationOwned,
   conversationChannel,
   engineSendViaQr,
   loadTemplateBody,
@@ -133,6 +134,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
+  await assertConversationOwned(db, input.accountId, input.contactId, input.conversationId)
 
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
@@ -250,6 +252,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
+    .eq('account_id', input.accountId)
 
   return { whatsapp_message_id: waMessageId }
 }

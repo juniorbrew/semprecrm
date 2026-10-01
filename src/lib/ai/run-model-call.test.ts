@@ -15,6 +15,8 @@ const store = vi.hoisted(() => ({
   recordUsage: vi.fn(),
 }));
 vi.mock('./store', () => store);
+const notifyAccountAdmins = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/push/notify', () => ({ notifyAccountAdmins }));
 
 import { AiError } from './errors';
 import { callProfile, runModelCall } from './run-model-call';
@@ -52,6 +54,41 @@ beforeEach(() => {
   store.loadDecryptedKey.mockResolvedValue('sk-test-key-000000000000000000');
   store.usageSummarySince.mockResolvedValue({ calls: 3, errors: 0, inputTokens: 0, outputTokens: 0, costCents: 10 });
   store.recordUsage.mockResolvedValue(undefined);
+});
+
+describe('runModelCall — 80% budget alert', () => {
+  const spend = (costCents: number) => ({ calls: 3, errors: 0, inputTokens: 0, outputTokens: 0, costCents });
+
+  it('the call that crosses 80% of the budget warns owners / admins once', async () => {
+    generateText.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1000, outputTokens: 50 } });
+    store.usageSummarySince.mockResolvedValueOnce(spend(79.99)).mockResolvedValueOnce(spend(80.04));
+    await call();
+    expect(store.usageSummarySince).toHaveBeenCalledTimes(2);
+    expect(store.usageSummarySince.mock.calls[1][2]).toEqual(new Date('2026-09-01T03:00:00.000Z'));
+    expect(notifyAccountAdmins).toHaveBeenCalledOnce();
+    expect(notifyAccountAdmins.mock.calls[0][1]).toBe('acc-1');
+    expect(notifyAccountAdmins.mock.calls[0][2]).toMatchObject({ title: 'Orçamento de IA em 80%', tag: 'ai-budget:2026-09' });
+  });
+
+  it('parallel calls: the line crossed by another call meanwhile still warns (re-read after recording)', async () => {
+    generateText.mockResolvedValue({ text: 'ok', usage: { inputTokens: 10, outputTokens: 1 } });
+    store.usageSummarySince.mockResolvedValueOnce(spend(70)).mockResolvedValueOnce(spend(85));
+    await call();
+    expect(notifyAccountAdmins).toHaveBeenCalledOnce();
+  });
+
+  it('below or already past the line: no alert (and no re-read once past it)', async () => {
+    generateText.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1000, outputTokens: 50 } });
+    store.usageSummarySince.mockResolvedValueOnce(spend(10)).mockResolvedValueOnce(spend(10.05));
+    await call();
+    for (const costCents of [80, 95]) {
+      store.usageSummarySince.mockReset();
+      store.usageSummarySince.mockResolvedValue(spend(costCents));
+      await call();
+      expect(store.usageSummarySince).toHaveBeenCalledOnce();
+    }
+    expect(notifyAccountAdmins).not.toHaveBeenCalled();
+  });
 });
 
 describe('runModelCall', () => {

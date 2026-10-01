@@ -29,6 +29,7 @@ import {
 import { jidToPhone, mapInboundMessage } from "./inbound-mapper.js";
 import type { Logger } from "./logger.js";
 import type { MediaStore } from "./media.js";
+import { MediaUrlRejected, downloadOutboundMedia, type MediaPolicy } from "./outbound-media.js";
 import type {
   AckStatus,
   AvatarRequest,
@@ -175,6 +176,10 @@ export interface SessionManagerOptions {
   avatarThrottle?: AvatarThrottle;
   /** Download da foto na CDN do WhatsApp (injeção para testes). */
   downloadAvatar?: (url: string) => Promise<DownloadedAvatar>;
+  /** De onde a mídia de envio pode ser baixada (sem política: nenhuma origem). */
+  mediaPolicy?: MediaPolicy;
+  /** Download da mídia de envio (injeção para testes). */
+  downloadMedia?: (url: string, mimetype: string) => Promise<Buffer>;
   /** injeção para testes */
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
@@ -284,11 +289,14 @@ export class SessionManager {
   private versionPromise?: Promise<WAVersion | undefined>;
   private readonly avatarThrottle: AvatarThrottle;
   private readonly downloadAvatar: (url: string) => Promise<DownloadedAvatar>;
+  private readonly downloadMedia: (url: string, mimetype: string) => Promise<Buffer>;
 
   constructor(private readonly opts: SessionManagerOptions) {
     this.log = opts.logger.child({ module: "session-manager" });
     this.avatarThrottle = opts.avatarThrottle ?? new AvatarThrottle();
     this.downloadAvatar = opts.downloadAvatar ?? ((url) => defaultDownloadAvatar(url));
+    const policy = opts.mediaPolicy ?? { storageOrigins: [], extraOrigins: [] };
+    this.downloadMedia = opts.downloadMedia ?? ((url, mimetype) => downloadOutboundMedia(url, mimetype, policy));
     this.reconnectBaseMs = opts.reconnectBaseMs ?? 2000;
     this.reconnectMaxMs = opts.reconnectMaxMs ?? 60_000;
     this.sendWaitMs = opts.sendWaitMs ?? 15_000;
@@ -363,6 +371,23 @@ export class SessionManager {
   }
 
   /**
+   * Baixa a mídia de um envio. O Baileys nunca recebe a URL: com `{ url }` ele
+   * leria um caminho local qualquer (ver outbound-media.ts).
+   */
+  private async fetchSendMedia(accountId: string, media: NonNullable<SendRequest["media"]>): Promise<Buffer> {
+    try {
+      return await this.downloadMedia(media.url, media.mimetype);
+    } catch (err) {
+      if (err instanceof MediaUrlRejected) {
+        this.log.warn({ accountId, err: err.message }, "mídia de envio recusada");
+        throw new GatewayError(err.message, "invalid_request", 400);
+      }
+      this.log.warn({ accountId, err: (err as Error).message }, "falha ao baixar mídia de envio");
+      throw new GatewayError(`não foi possível baixar a mídia: ${(err as Error).message}`, "send_failed", 502);
+    }
+  }
+
+  /**
    * Envia texto/mídia. Se a sessão está reconectando (`connecting`/`qr` com
    * socket, ou `disconnected` com reconexão agendada), espera até
    * `sendWaitMs` pela volta antes de responder 409. Se o socket cair no meio
@@ -378,7 +403,7 @@ export class SessionManager {
       throw new GatewayError("informe text ou media", "invalid_request", 400);
     }
     const dialed = toJid(req.to);
-    const content = buildContent(req);
+    const content = buildContent(req, req.media ? await this.fetchSendMedia(accountId, req.media) : undefined);
     // jid já resolvido num envio anterior (número cujo jid difere do discado)
     let jid = s.jidCache.get(dialed) ?? dialed;
 
@@ -572,7 +597,7 @@ export class SessionManager {
     try {
       const accountId = s.accountId;
       const dir = this.authDir(accountId);
-      await fs.mkdir(dir, { recursive: true });
+      await ensurePrivateAuthDir(this.opts.dataDir, dir);
       const { state, saveCreds } = await useMultiFileAuthState(dir);
       const version = await this.getVersion();
 
@@ -980,26 +1005,48 @@ export class SessionManager {
   }
 }
 
-export function buildContent(req: SendRequest): AnyMessageContent {
+/**
+ * Conteúdo do Baileys. Mídia vai SEMPRE como Buffer já baixado (`data`) —
+ * nunca `{ url }`, que o Baileys abriria como arquivo local se não fosse http(s).
+ */
+export function buildContent(req: SendRequest, data?: Buffer): AnyMessageContent {
   if (req.media) {
-    const { url, mimetype, filename, caption, ptt } = req.media;
+    if (!Buffer.isBuffer(data)) {
+      throw new GatewayError("mídia não baixada", "invalid_request", 400);
+    }
+    const { mimetype, filename, caption, ptt } = req.media;
     const kind = mimetype.split("/")[0];
     const text = caption ?? req.text;
     if (kind === "image") {
-      return { image: { url }, mimetype, ...(text ? { caption: text } : {}) };
+      return { image: data, mimetype, ...(text ? { caption: text } : {}) };
     }
     if (kind === "video") {
-      return { video: { url }, mimetype, ...(text ? { caption: text } : {}) };
+      return { video: data, mimetype, ...(text ? { caption: text } : {}) };
     }
     if (kind === "audio") {
-      return { audio: { url }, mimetype, ptt: ptt ?? false };
+      return { audio: data, mimetype, ptt: ptt ?? false };
     }
     return {
-      document: { url },
+      document: data,
       mimetype,
       fileName: filename ?? "arquivo",
       ...(text ? { caption: text } : {}),
     };
   }
   return { text: req.text ?? "" };
+}
+
+/**
+ * Credenciais da sessão (chaves Signal, creds.json) só para o dono do
+ * processo: diretórios 0700 e arquivos já existentes 0600. Os novos saem
+ * 0600 pelo umask 077 do processo (index.ts) — o useMultiFileAuthState do
+ * Baileys não aceita modo.
+ */
+export async function ensurePrivateAuthDir(dataDir: string, dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.chmod(dataDir, 0o700);
+  await fs.chmod(dir, 0o700);
+  for (const name of await fs.readdir(dir)) {
+    await fs.chmod(path.join(dir, name), 0o600).catch(() => undefined);
+  }
 }

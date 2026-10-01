@@ -9,12 +9,14 @@
 //   5. record the call in `ai_usage` — on success AND on error — with
 //      tokens/cost/status only (no prompt, no response text)
 //   6. map provider failures to our error codes (see ./errors.ts)
+//   7. warn owners and admins (push) when a call crosses 80% of the budget
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { generateText } from 'ai';
 
-import { monthStartInTimeZone, isBudgetExhausted } from './budget';
+import { notifyAccountAdmins } from '@/lib/push/notify';
+import { AI_BUDGET_ALERT_RATIO, budgetMonthKey, crossesBudgetAlert, monthStartInTimeZone, isBudgetExhausted } from './budget';
 import { createLanguageModel } from './client';
 import { AiError, mapProviderError, type AiErrorCode } from './errors';
 import { computeCostCents } from './pricing';
@@ -101,6 +103,19 @@ export interface RunModelCallResult {
   costCents: number;
 }
 
+async function warnIfBudgetCrossed(input: RunModelCallInput, spentBefore: number, budget: number, monthStart: Date) {
+  // Already past the line (or no budget): nothing to re-read.
+  if (!(budget > 0) || spentBefore >= budget * AI_BUDGET_ALERT_RATIO) return;
+  const after = await usageSummarySince(input.db, input.accountId, monthStart);
+  if (!crossesBudgetAlert(spentBefore, after.costCents, budget)) return;
+  await notifyAccountAdmins(input.db, input.accountId, {
+    title: 'Orçamento de IA em 80%',
+    body: 'A IA já usou 80% do orçamento deste mês. Ao chegar a 100%, sugestões e respostas automáticas param até o mês virar ou o orçamento subir.',
+    url: '/settings?tab=ai',
+    tag: `ai-budget:${budgetMonthKey(monthStart)}`,
+  });
+}
+
 export async function runModelCall(input: RunModelCallInput): Promise<RunModelCallResult> {
   const now = input.now ?? (() => new Date());
   const settings = await loadAiSettings(input.db, input.accountId);
@@ -133,7 +148,8 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     kbUsed: input.kbUsed ?? false,
   };
 
-  const spent = await usageSummarySince(input.db, input.accountId, monthStartInTimeZone(now()));
+  const monthStart = monthStartInTimeZone(now());
+  const spent = await usageSummarySince(input.db, input.accountId, monthStart);
   if (isBudgetExhausted(spent.costCents, settings.monthly_budget_cents)) {
     await recordUsage(input.db, {
       ...base,
@@ -187,6 +203,7 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
       errorCode: text ? null : 'empty_response',
       latencyMs: Date.now() - started,
     });
+    await warnIfBudgetCrossed(input, spent.costCents, settings.monthly_budget_cents, monthStart);
     if (!text) throw new AiError('empty_response');
 
     return { text, provider, model, inputTokens, outputTokens, costCents };
@@ -195,15 +212,17 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     const code: AiErrorCode = mapProviderError(err, { timedOut });
     const billed = !NOT_BILLED.has(code);
     const inputTokens = billed ? estimateTokens(input.system) + estimateTokens(input.prompt) : 0;
+    const costCents = billed ? computeCostCents(model, inputTokens, 0) : 0;
     await recordUsage(input.db, {
       ...base,
       inputTokens,
       outputTokens: 0,
-      costCents: billed ? computeCostCents(model, inputTokens, 0) : 0,
+      costCents,
       status: 'error',
       errorCode: code,
       latencyMs: Date.now() - started,
     });
+    await warnIfBudgetCrossed(input, spent.costCents, settings.monthly_budget_cents, monthStart);
     throw new AiError(code);
   } finally {
     clearTimeout(timer);

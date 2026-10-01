@@ -75,7 +75,16 @@ async function until(pred: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-function makeManager(dataDir: string, extra: { sendWaitMs?: number; markOnline?: boolean } = {}) {
+const MEDIA_BYTES = Buffer.from("bytes-da-midia");
+
+function makeManager(
+  dataDir: string,
+  extra: {
+    sendWaitMs?: number;
+    markOnline?: boolean;
+    downloadMedia?: (url: string, mimetype: string) => Promise<Buffer>;
+  } = {},
+) {
   const appClient = {
     sendInbound: vi.fn(async (_p: unknown) => true),
     sendEcho: vi.fn(async (_p: unknown) => true),
@@ -94,6 +103,7 @@ function makeManager(dataDir: string, extra: { sendWaitMs?: number; markOnline?:
     reconnectBaseMs: 5,
     reconnectMaxMs: 20,
     sendWaitMs: 300,
+    downloadMedia: vi.fn(async () => MEDIA_BYTES),
     ...extra,
   });
   return { manager, appClient, mediaStore };
@@ -618,8 +628,8 @@ describe("SessionManager — mensagens", () => {
 });
 
 describe("SessionManager — envio", () => {
-  async function connected() {
-    const ctx = makeManager(dataDir);
+  async function connected(extra: Parameters<typeof makeManager>[1] = {}) {
+    const ctx = makeManager(dataDir, extra);
     await ctx.manager.connect(ACCOUNT);
     const sock = mocks.sockets[0];
     sock.user = { id: "5511999999999@s.whatsapp.net" };
@@ -643,24 +653,67 @@ describe("SessionManager — envio", () => {
     expect(sock.sendMessage).toHaveBeenCalledWith("5511988887777@s.whatsapp.net", { text: "olá" }, SEND_OPTS);
   });
 
-  it("mídia: monta image/video/audio/document", () => {
-    expect(buildContent({ to: "1", media: { url: "u", mimetype: "image/png", caption: "c" } })).toEqual({
-      image: { url: "u" },
+  it("mídia: monta image/video/audio/document com o Buffer baixado, nunca com a URL", () => {
+    const b = MEDIA_BYTES;
+    expect(buildContent({ to: "1", media: { url: "u", mimetype: "image/png", caption: "c" } }, b)).toEqual({
+      image: b,
       mimetype: "image/png",
       caption: "c",
     });
-    expect(buildContent({ to: "1", media: { url: "u", mimetype: "video/mp4" } })).toEqual({
-      video: { url: "u" },
+    expect(buildContent({ to: "1", media: { url: "u", mimetype: "video/mp4" } }, b)).toEqual({
+      video: b,
       mimetype: "video/mp4",
     });
-    expect(buildContent({ to: "1", media: { url: "u", mimetype: "audio/ogg", ptt: true } })).toEqual({
-      audio: { url: "u" },
+    expect(buildContent({ to: "1", media: { url: "u", mimetype: "audio/ogg", ptt: true } }, b)).toEqual({
+      audio: b,
       mimetype: "audio/ogg",
       ptt: true,
     });
     expect(
-      buildContent({ to: "1", media: { url: "u", mimetype: "application/pdf", filename: "a.pdf" }, text: "seg" }),
-    ).toEqual({ document: { url: "u" }, mimetype: "application/pdf", fileName: "a.pdf", caption: "seg" });
+      buildContent({ to: "1", media: { url: "u", mimetype: "application/pdf", filename: "a.pdf" }, text: "seg" }, b),
+    ).toEqual({ document: b, mimetype: "application/pdf", fileName: "a.pdf", caption: "seg" });
+  });
+
+  it("mídia sem Buffer baixado → recusa (a URL nunca vai para o Baileys)", () => {
+    expect(() => buildContent({ to: "1", media: { url: "./.env", mimetype: "application/pdf" } })).toThrow(GatewayError);
+  });
+
+  it("send: URL de mídia recusada pela política → 400 e nada é enviado", async () => {
+    const { MediaUrlRejected } = await import("./outbound-media.js");
+    const { manager, sock } = await connected({
+      downloadMedia: vi.fn(async () => {
+        throw new MediaUrlRejected("origem fora da lista permitida");
+      }),
+    });
+    await expect(
+      manager.send(ACCOUNT, { to: "5511988887777", media: { url: "https://evil.example/a.jpg", mimetype: "image/jpeg" } }),
+    ).rejects.toMatchObject({ code: "invalid_request", httpStatus: 400 });
+    expect(sock.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("send: falha ao baixar a mídia → 502 send_failed", async () => {
+    const { manager, sock } = await connected({
+      downloadMedia: vi.fn(async () => {
+        throw new Error("mídia respondeu HTTP 404");
+      }),
+    });
+    await expect(
+      manager.send(ACCOUNT, { to: "5511988887777", media: { url: "https://sb.local/a.jpg", mimetype: "image/jpeg" } }),
+    ).rejects.toMatchObject({ code: "send_failed", httpStatus: 502 });
+    expect(sock.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sem política de mídia configurada, nenhuma origem é aceita", async () => {
+    const appClient = { sendInbound: vi.fn(), sendStatus: vi.fn(), sendAck: vi.fn() };
+    const m = new SessionManager({ dataDir, appClient, mediaStore: { storeInbound: vi.fn() }, logger });
+    await m.connect(ACCOUNT);
+    const s = mocks.sockets[mocks.sockets.length - 1];
+    s.user = { id: "5511999999999@s.whatsapp.net" };
+    s.emit("connection.update", { connection: "open" });
+    await expect(
+      m.send(ACCOUNT, { to: "5511988887777", media: { url: "https://qualquer.example/a.jpg", mimetype: "image/jpeg" } }),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+    expect(s.sendMessage).not.toHaveBeenCalled();
   });
 
   it("not-on-whatsapp: resolve via onWhatsApp e reenvia com o jid certo", async () => {
@@ -771,7 +824,7 @@ describe("SessionManager — envio", () => {
     expect(sock2.sendMessage).toHaveBeenCalledTimes(1);
     expect(sock2.sendMessage).toHaveBeenCalledWith(
       "5511988887777@s.whatsapp.net",
-      { image: { url: "https://x/a.jpg" }, mimetype: "image/jpeg" },
+      { image: MEDIA_BYTES, mimetype: "image/jpeg" },
       SEND_OPTS,
     );
     // a nova tentativa reusa o MESMO id: o WhatsApp deduplica e o eco é descartado
@@ -949,5 +1002,24 @@ describe("MemoryCache", () => {
     expect(c.get("c")).toBeUndefined();
     await new Promise((r) => setTimeout(r, 60));
     expect(c.get("b")).toBeUndefined();
+  });
+});
+
+describe("ensurePrivateAuthDir (permissões das credenciais)", () => {
+  it.skipIf(process.platform === "win32")("deixa diretórios 0700 e arquivos 0600", async () => {
+    const { ensurePrivateAuthDir } = await import("./session-manager.js");
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const p = await import("node:path");
+    const root = await fsp.mkdtemp(p.join(os.tmpdir(), "wa-perm-"));
+    await fsp.chmod(root, 0o755);
+    const dir = p.join(root, "acct");
+    await fsp.mkdir(dir, { mode: 0o755 });
+    await fsp.writeFile(p.join(dir, "creds.json"), "{}", { mode: 0o644 });
+    await ensurePrivateAuthDir(root, dir);
+    expect((await fsp.stat(root)).mode & 0o777).toBe(0o700);
+    expect((await fsp.stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await fsp.stat(p.join(dir, "creds.json"))).mode & 0o777).toBe(0o600);
+    await fsp.rm(root, { recursive: true, force: true });
   });
 });

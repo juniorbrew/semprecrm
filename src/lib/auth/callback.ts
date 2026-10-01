@@ -6,6 +6,8 @@
 
 import type { EmailOtpType } from '@supabase/supabase-js'
 
+import { sameOriginPath } from './safe-redirect'
+
 const OTP_TYPES: ReadonlySet<string> = new Set<EmailOtpType>([
   'signup',
   'invite',
@@ -39,9 +41,9 @@ export function safeNextPath(raw: string | null, origin: string, type: EmailOtpT
       return '/dashboard'
     }
   }
-  if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/\\')) return '/dashboard'
-  if (path.startsWith('/auth/callback')) return '/dashboard'
-  return path
+  const safe = sameOriginPath(path, origin)
+  if (!safe || safe.startsWith('/auth/callback')) return '/dashboard'
+  return safe
 }
 
 /**

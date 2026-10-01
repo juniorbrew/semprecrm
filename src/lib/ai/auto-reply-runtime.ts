@@ -53,6 +53,7 @@ import {
   typingDelayMs,
   unverifiedCommercialTerms,
 } from './auto-reply';
+import { automaticCapReached, warnAccountCapReached } from './automatic-cap';
 import { AiError, type AiErrorCode } from './errors';
 import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from './knowledge';
 import { runModelCall } from './run-model-call';
@@ -109,6 +110,8 @@ export function defaultAutoReplyDeps(): AutoReplyDeps {
 const AI_HANDOFF_CODES = new Set<AiErrorCode>(['budget_exceeded', 'quota', 'invalid_key', 'model_not_found']);
 /** AI switched off for the account: stay quiet. */
 const AI_OFF_CODES = new Set<AiErrorCode>(['module_not_included', 'not_enabled', 'no_key']);
+/** A job held back by the account-wide hourly cap tries again after this. */
+const ACCOUNT_CAP_RETRY_MS = 15 * 60_000;
 
 export { isUncertainSend };
 
@@ -447,6 +450,21 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     return handOff(ctx, { reason: 'O cliente pediu para falar com uma pessoa', customerWants: 'Falar com uma pessoa da equipe', lastWords: words, notify: true });
   }
 
+  // Hourly cap on automatic calls (cost burn by a customer or a flood of
+  // numbers). One contact over its cap: the team takes that conversation,
+  // silently, and the AI stays paused on it. The whole account over its
+  // cap: nothing is paused — the job waits and the admins are told once.
+  const capped = await automaticCapReached(db, { accountId: job.account_id, contactId: contact.id, now: started });
+  if (capped === 'account') {
+    await warnAccountCapReached(db, job.account_id, started);
+    // Waiting for the cap to clear is not a failed attempt.
+    await requeue(db, job, new Date(started.getTime() + ACCOUNT_CAP_RETRY_MS), { skip_reason: 'account_hourly_cap', attempts: Math.max(0, job.attempts - 1) });
+    return 'rescheduled';
+  }
+  if (capped === 'contact') {
+    return handOff(ctx, { reason: 'Limite por hora de respostas automáticas para este contato', lastWords: words, notify: false });
+  }
+
   // ---- prompt ----
   const { data: rows, error: msgErr } = await db
     .from('messages')
@@ -516,11 +534,16 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     return fail('A resposta da IA não coube no limite de mensagens');
   }
   if (!agentCfg.split_messages && out.reply.length > AUTO_REPLY.maxSingleReplyChars) return fail('A resposta da IA ficou longa demais');
-  if (leaksInstructions(out.reply, instructions)) return fail('A resposta da IA repetia as instruções internas');
+  const customerTexts = [...history, ...pending]
+    .filter((m) => m.sender_type === 'customer')
+    .map((m) => plainMessageText(m.content_text));
+  if (leaksInstructions(out.reply, instructions, { memory, customerTexts })) {
+    return fail('A resposta da IA repetia as instruções internas');
+  }
   const ground = [instructions ?? '', businessHoursGround(agentCfg.business_hours), ...knowledge.map((k) => `${k.title}\n${k.content}`)];
-  const unverified = unverifiedCommercialTerms(out.reply, ground);
+  const unverified = unverifiedCommercialTerms(out.reply, ground, customerTexts);
   if (unverified.length > 0) {
-    return fail(`A IA ia citar condição comercial que não está na base (${unverified.slice(0, 3).join(', ')})`);
+    return fail(`A IA ia citar condição comercial ou contato que não está na base (${unverified.slice(0, 3).join(', ')})`);
   }
 
   await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0, reply_message_ids: job.inbound_message_ids });

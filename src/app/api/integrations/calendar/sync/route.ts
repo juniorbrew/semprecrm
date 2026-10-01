@@ -7,6 +7,7 @@
 // (`syncDueConnections`), and answers with the per-connection counts.
 // ============================================================
 
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
@@ -17,7 +18,11 @@ export async function POST(request: Request) {
   if (!expected) {
     return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
   }
-  if (request.headers.get('x-cron-secret') !== expected) {
+  // Same constant-time check as the other cron routes; the length
+  // pre-check is required by timingSafeEqual and leaks only the length.
+  const suppliedBuf = Buffer.from(request.headers.get('x-cron-secret') ?? '')
+  const expectedBuf = Buffer.from(expected)
+  if (suppliedBuf.length !== expectedBuf.length || !timingSafeEqual(suppliedBuf, expectedBuf)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {

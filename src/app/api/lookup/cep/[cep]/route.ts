@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/request-ip";
 import { lookupCep, type LookupFailure } from "@/lib/br/lookup-server";
 
 // ============================================================
@@ -21,14 +22,6 @@ const STATUS: Record<LookupFailure, number> = {
   not_found: 404,
   upstream_error: 502,
 };
-
-function getClientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  const xri = request.headers.get("x-real-ip");
-  if (xri) return xri.trim();
-  return "unknown";
-}
 
 export async function GET(
   request: Request,

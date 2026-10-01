@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
-  conversation: { category_id: null as string | null, priority: 'normal', team_id: null as string | null } as Record<string, unknown> | null,
+  conversation: { id: 'c1', category_id: null as string | null, priority: 'normal', team_id: null as string | null } as Record<string, unknown> | null,
   rpc: vi.fn<(name: string, args: Record<string, unknown>) => Promise<{ data: boolean; error: { message: string } | null }>>(async () => ({ data: true, error: null })),
   inserts: [] as { table: string; payload: Record<string, unknown> }[],
   routing: vi.fn(async () => ({ status: 'routed' })),
@@ -13,6 +13,9 @@ vi.mock('./admin-client', () => {
     Object.assign(b, {
       select: () => b,
       eq: () => b,
+      order: () => b,
+      limit: () => b,
+      then: (f: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(f),
       maybeSingle: async () => ({
         data:
           table === 'conversations'
@@ -50,7 +53,7 @@ const args = (over: Record<string, unknown> = {}) =>
 
 describe('support actions of the automation engine', () => {
   beforeEach(() => {
-    h.conversation = { category_id: null, priority: 'normal', team_id: null }
+    h.conversation = { id: 'c1', category_id: null, priority: 'normal', team_id: null }
     h.rpc.mockClear()
     h.routing.mockClear()
     h.inserts.length = 0
@@ -79,7 +82,7 @@ describe('support actions of the automation engine', () => {
   })
 
   it('an unchanged value logs nothing (idempotent)', async () => {
-    h.conversation = { category_id: 'cat', priority: 'high', team_id: 'team' }
+    h.conversation = { id: 'c1', category_id: 'cat', priority: 'high', team_id: 'team' }
     await expect(runSupportStep(step('set_priority', { priority: 'high' }), args())).resolves.toBe('priority already set')
     await expect(runSupportStep(step('set_category', { category_id: 'cat' }), args())).resolves.toBe('category already set')
     await expect(runSupportStep(step('assign_team', { team_id: 'team' }), args())).resolves.toBe('team already set')
@@ -104,8 +107,10 @@ describe('support actions of the automation engine', () => {
     await expect(runSupportStep(step('set_category', {}), args())).rejects.toThrow('set_category needs a category')
     await expect(runSupportStep(step('set_priority', { priority: 'critical' }), args())).rejects.toThrow('valid priority')
     await expect(runSupportStep(step('assign_team', {}), args())).rejects.toThrow('assign_team needs a team')
+    // A context id that is not this account's/contact's is ignored; the
+    // contact has no conversation of its own either.
     h.conversation = null
-    await expect(runSupportStep(step('set_priority', { priority: 'low' }), args())).rejects.toThrow('conversation not found')
+    await expect(runSupportStep(step('set_priority', { priority: 'low' }), args())).rejects.toThrow('no conversation for contact')
     expect(h.rpc).not.toHaveBeenCalled()
   })
 
