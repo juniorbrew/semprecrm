@@ -43,13 +43,13 @@ describe('sticker detection', () => {
     const html = renderToString(<MessageBubble message={msg({ content_type: 'image', media_url: 'https://cdn/s.webp' })} />);
     expect(html).toContain('data-sticker');
     expect(html).not.toContain('bg-muted text-foreground');
-    expect(html).not.toContain('rounded-2xl');
+    expect(html).not.toContain('rounded-[calc(var(--radius)+2px)]');
   });
 
   it('a regular photo keeps its bubble', () => {
     const html = renderToString(<MessageBubble message={msg({ content_type: 'image', media_url: 'https://cdn/p.jpg' })} />);
     expect(html).not.toContain('data-sticker');
-    expect(html).toContain('rounded-2xl');
+    expect(html).toContain('rounded-[calc(var(--radius)+2px)]');
   });
 });
 

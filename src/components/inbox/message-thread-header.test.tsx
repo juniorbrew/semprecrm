@@ -142,3 +142,28 @@ describe("MessageThread header — Assumir when already mine", () => {
     }
   })
 })
+
+describe("MessageThread header — one status line and the panel toggle", () => {
+  it("puts SLA, state, channel and company on one line; the toggle is labelled and pressed", () => {
+    const due = new Date(Date.now() + 40 * 60_000).toISOString()
+    const html = renderToString(
+      <MessageThread
+        conversation={{ ...conversation, first_response_due_at: due }}
+        contact={{ ...contact, company: "Casa Lima" }}
+        messages={[]}
+        onMessagesLoaded={noop}
+        onNewMessage={noop}
+        onUpdateMessage={noop}
+        onStatusChange={noop}
+        onAssignChange={noop}
+        contactPanelOpen
+        onToggleContactPanel={noop}
+      />,
+    )
+    const at = html.indexOf('data-testid="thread-status-line"')
+    const line = html.slice(at, html.indexOf("</div>", html.indexOf("Casa Lima", at)))
+    expect(at).toBeGreaterThan(0)
+    for (const part of ['data-testid="sla-line"', "Aberta", "Oficial", "Casa Lima"]) expect(line).toContain(part)
+    expect(buttonWith(html, 'aria-label="Ocultar painel do contato"')).toContain('aria-pressed="true"')
+  })
+})

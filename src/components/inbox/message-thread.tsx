@@ -13,7 +13,6 @@ import { SubjectLine, TriageChips } from "@/components/inbox/triage-chips";
 import { SlaLine } from "@/components/inbox/sla-indicator";
 import { TeamChip } from "@/components/inbox/team-chip";
 import { useConversationCategories } from "@/hooks/use-conversation-categories";
-import { useSlaPolicies } from "@/hooks/use-sla-policies";
 import { useTeams } from "@/hooks/use-teams";
 import { teamCopy } from "@/lib/support/teams";
 import { activeSlaTarget } from "@/lib/support/sla";
@@ -118,6 +117,7 @@ import {
 import {
   buildThreadTimeline,
   groupTimelineByDay,
+  isFreshMessage,
 } from "@/lib/conversations/timeline";
 import { toast } from "sonner";
 import { renderTemplateBody } from "@/lib/whatsapp/template-body";
@@ -291,6 +291,9 @@ const THREAD_STATUS_COPY: Record<
     archivedLabel: string;
     cancel: string;
     readOnly: string;
+    /** Contact-panel toggle (state remembered per user). */
+    panelShow: string;
+    panelHide: string;
   }
 > = {
   "pt-BR": {
@@ -350,6 +353,8 @@ const THREAD_STATUS_COPY: Record<
     archivedLabel: "Arquivada",
     cancel: "Cancelar",
     readOnly: "Somente leitura — seu perfil não pode alterar conversas",
+    panelShow: "Mostrar painel do contato",
+    panelHide: "Ocultar painel do contato",
   },
   "en-US": {
     labels: { open: "Open", pending: "Pending", closed: "Resolved" },
@@ -408,6 +413,8 @@ const THREAD_STATUS_COPY: Record<
     archivedLabel: "Archived",
     cancel: "Cancel",
     readOnly: "Read-only — your role can't change conversations",
+    panelShow: "Show contact panel",
+    panelHide: "Hide contact panel",
   },
 };
 
@@ -465,7 +472,6 @@ export function MessageThread({
   const support = supportCopy(language);
   const { active: activeCategories, byId: categoryById } = useConversationCategories();
   const { active: activeTeams, byId: teamById } = useTeams();
-  const { hasPolicies } = useSlaPolicies();
   const teams = teamCopy(language);
   const triageSettings = useTriageSettings();
   const [classifying, setClassifying] = useState(false);
@@ -1786,6 +1792,10 @@ export function MessageThread({
     );
   }, [conversation, messages, notes, eventRecords, profiles, hasOlder]);
   const timelineNow = Date.now();
+  // When this thread was opened: messages newer than this arrived live
+  // and get the entrance animation; the page loaded on open does not.
+  const [opened, setOpened] = useState(() => ({ id: conversationId, at: timelineNow }));
+  if (opened.id !== conversationId) setOpened({ id: conversationId, at: timelineNow });
 
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
@@ -1843,7 +1853,7 @@ export function MessageThread({
     triageSettings.aiEnabled &&
     triageSettings.triageEnabled;
   const showTeamChip = activeTeams.length > 0 || !!conversation.team_id;
-  const showSla = hasPolicies || !!activeSlaTarget(conversation);
+  const slaTarget = activeSlaTarget(conversation);
   const resolutionNoteKey = resolutionNote(status, conversation.resolution);
   const resolutionLabel = resolutionNoteKey ? support.resolutions[resolutionNoteKey] : null;
   // Satisfaction survey (migration 074): the customer's rating, from the thread's own event log.
@@ -1893,47 +1903,46 @@ export function MessageThread({
             <h2 className="truncate text-sm font-semibold leading-5 text-foreground">
               {displayName}
             </h2>
-            {supportMode && (
-              <SubjectLine
-                subject={conversation.subject}
-                canEdit={canTriage}
-                onSave={(subject) => void handleTriageChange({ subject })}
-              />
-            )}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-4 text-muted-foreground">
-              {/* Phone truncates on phones; the status + window badges
-                  are the parts that must stay visible. */}
-              <p
-                data-no-translate
-                className="min-w-0 truncate tabular-nums"
-                title={contact.phone}
-              >
-                {contact.phone}
-              </p>
-              {/* Status — read-only badge; changed via the split button. */}
+            {/* ONE status line: SLA · state · channel · company · 24 h
+                window · phone. Never wraps; the phone truncates first. */}
+            <div
+              data-testid="thread-status-line"
+              className="flex min-w-0 items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-xs leading-4 text-muted-foreground"
+            >
+              {slaTarget && (
+                <>
+                  {/* SLA first and never squeezed; company / phone truncate instead. */}
+                  <span className="flex shrink-0">
+                    <SlaLine conversation={conversation} />
+                  </span>
+                  <span aria-hidden>·</span>
+                </>
+              )}
+              {/* Status — read-only; changed via the split button. */}
               <span
                 data-no-translate
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-1 text-xs leading-4",
-                  STATUS_COLOR[status]
-                )}
+                className={cn("inline-flex shrink-0 items-center gap-1", STATUS_COLOR[status])}
               >
-                <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])} />
+                <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])} aria-hidden />
                 {isArchived ? statusCopy.archivedLabel : statusCopy.labels[status]}
               </span>
-              {/* Channel chip — QR vs official (migration 026). */}
+              <span aria-hidden>·</span>
+              {/* Channel — QR vs official (migration 026). */}
               <span
                 data-no-translate
                 title={statusCopy.channelTitle[channel]}
-                className={cn(
-                  "inline-flex shrink-0 items-center text-xs leading-4",
-                  channel === "qr"
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-muted-foreground"
-                )}
+                className={cn("shrink-0", channel === "qr" && "text-amber-600 dark:text-amber-400")}
               >
                 {statusCopy.channelChip[channel]}
               </span>
+              {contact.company && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span data-no-translate className="min-w-0 max-w-[12rem] shrink truncate" title={contact.company}>
+                    {contact.company}
+                  </span>
+                </>
+              )}
               {/* 24 h session window — official channel only, and only
                   when the thread is >= 32rem wide; the composer banner
                   explains an expired window. */}
@@ -1951,6 +1960,14 @@ export function MessageThread({
                   {sessionInfo.short}
                 </Badge>
               )}
+              <span aria-hidden>·</span>
+              <span
+                data-no-translate
+                className="min-w-0 truncate tabular-nums"
+                title={contact.phone}
+              >
+                {contact.phone}
+              </span>
             </div>
           </div>
         </div>
@@ -2085,103 +2102,6 @@ export function MessageThread({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Resolve / Reopen split button — THE queue action. Main part
-              flips open ⇄ resolved; the chevron opens the full lifecycle
-              picker (open / pending / resolved). Copy comes from
-              THREAD_STATUS_COPY so it matches the list chips. */}
-          <div
-            data-no-translate
-            className={cn(
-              "ml-1 inline-flex h-8 items-stretch overflow-hidden rounded-md text-xs font-medium",
-              isResolved
-                ? "border border-border bg-card text-foreground"
-                : "bg-primary text-primary-foreground"
-            )}
-          >
-            <button
-              type="button"
-              onClick={() => void handleResolveToggle()}
-              disabled={!actions.close.enabled}
-              aria-label={isResolved ? statusCopy.reopen : statusCopy.resolve}
-              title={
-                !actions.canWrite
-                  ? statusCopy.readOnly
-                  : isResolved
-                    ? statusCopy.reopen
-                    : statusCopy.resolve
-              }
-              className={cn(
-                "inline-flex items-center gap-1.5 pl-2.5 pr-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60 @md:pr-2.5",
-                isResolved ? "hover:bg-muted" : "hover:bg-primary/90"
-              )}
-            >
-              {isResolved ? (
-                <RotateCcw className="h-3.5 w-3.5" />
-              ) : (
-                <CheckCheck className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden @md:inline">
-                {isResolved ? statusCopy.reopen : statusCopy.resolve}
-              </span>
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                disabled={!actions.close.enabled}
-                aria-label={statusCopy.changeStatus}
-                title={actions.canWrite ? statusCopy.changeStatus : statusCopy.readOnly}
-                className={cn(
-                  "inline-flex w-6 items-center justify-center border-l transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                  isResolved
-                    ? "border-border hover:bg-muted"
-                    : "border-primary-foreground/20 hover:bg-primary/90"
-                )}
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                data-no-translate
-                className="min-w-36 border-border bg-popover"
-              >
-                {STATUS_ORDER.map((value) => (
-                  <DropdownMenuItem
-                    key={value}
-                    onClick={() => handleStatusChange(value)}
-                    className={cn(
-                      "gap-2 text-sm",
-                      status === value ? "text-primary" : "text-popover-foreground"
-                    )}
-                  >
-                    <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[value])} />
-                    <span className="flex-1">{statusCopy.labels[value]}</span>
-                    {status === value && <Check className="h-3 w-3" />}
-                  </DropdownMenuItem>
-                ))}
-                {supportMode && (
-                  <>
-                    <DropdownMenuSeparator className="bg-border" />
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel>{support.resolveAs}</DropdownMenuLabel>
-                    </DropdownMenuGroup>
-                    {RESOLVE_AS_OPTIONS.map((value) => (
-                      <DropdownMenuItem
-                        key={value}
-                        onClick={() => void handleResolveAs(value)}
-                        className={cn(
-                          "gap-2 text-sm",
-                          isResolved && conversation.resolution === value ? "text-primary" : "text-popover-foreground"
-                        )}
-                      >
-                        <span className="flex-1">{support.resolutions[value]}</span>
-                        {isResolved && conversation.resolution === value && <Check className="h-3 w-3" />}
-                      </DropdownMenuItem>
-                    ))}
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
           {/* Lembrar — reminder task at a chosen time (Tasks module). */}
           {actions.remind.visible && (
             <ConversationReminder
@@ -2290,11 +2210,10 @@ export function MessageThread({
             <button
               type="button"
               onClick={onToggleContactPanel}
-              aria-label={
-                contactPanelOpen ? "Hide contact panel" : "Show contact panel"
-              }
+              data-no-translate
+              aria-label={contactPanelOpen ? statusCopy.panelHide : statusCopy.panelShow}
               aria-pressed={contactPanelOpen}
-              title={contactPanelOpen ? "Hide contact" : "Show contact"}
+              title={contactPanelOpen ? statusCopy.panelHide : statusCopy.panelShow}
               className={cn(
                 "hidden h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground xl:inline-flex",
                 contactPanelOpen ? "text-foreground" : "text-muted-foreground",
@@ -2307,12 +2226,108 @@ export function MessageThread({
               )}
             </button>
           )}
+          {/* Resolve / Reopen split button — THE queue action. Main part
+              flips open ⇄ resolved; the chevron opens the full lifecycle
+              picker (open / pending / resolved). Copy comes from
+              THREAD_STATUS_COPY so it matches the list chips. */}
+          <div
+            data-no-translate
+            className={cn(
+              "ml-1 inline-flex h-8 shrink-0 items-stretch overflow-hidden rounded-md text-xs font-medium",
+              isResolved
+                ? "border border-border bg-card text-foreground"
+                : "bg-primary text-primary-foreground"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => void handleResolveToggle()}
+              disabled={!actions.close.enabled}
+              aria-label={isResolved ? statusCopy.reopen : statusCopy.resolve}
+              title={
+                !actions.canWrite
+                  ? statusCopy.readOnly
+                  : isResolved
+                    ? statusCopy.reopen
+                    : statusCopy.resolve
+              }
+              className={cn(
+                "inline-flex items-center gap-1.5 pl-2.5 pr-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60 @md:pr-2.5",
+                isResolved ? "hover:bg-muted" : "hover:bg-primary/90"
+              )}
+            >
+              {isResolved ? (
+                <RotateCcw className="h-3.5 w-3.5" />
+              ) : (
+                <CheckCheck className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden @md:inline">
+                {isResolved ? statusCopy.reopen : statusCopy.resolve}
+              </span>
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={!actions.close.enabled}
+                aria-label={statusCopy.changeStatus}
+                title={actions.canWrite ? statusCopy.changeStatus : statusCopy.readOnly}
+                className={cn(
+                  "inline-flex w-6 items-center justify-center border-l transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                  isResolved
+                    ? "border-border hover:bg-muted"
+                    : "border-primary-foreground/20 hover:bg-primary/90"
+                )}
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                data-no-translate
+                className="min-w-36 border-border bg-popover"
+              >
+                {STATUS_ORDER.map((value) => (
+                  <DropdownMenuItem
+                    key={value}
+                    onClick={() => handleStatusChange(value)}
+                    className={cn(
+                      "gap-2 text-sm",
+                      status === value ? "text-primary" : "text-popover-foreground"
+                    )}
+                  >
+                    <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[value])} />
+                    <span className="flex-1">{statusCopy.labels[value]}</span>
+                    {status === value && <Check className="h-3 w-3" />}
+                  </DropdownMenuItem>
+                ))}
+                {supportMode && (
+                  <>
+                    <DropdownMenuSeparator className="bg-border" />
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>{support.resolveAs}</DropdownMenuLabel>
+                    </DropdownMenuGroup>
+                    {RESOLVE_AS_OPTIONS.map((value) => (
+                      <DropdownMenuItem
+                        key={value}
+                        onClick={() => void handleResolveAs(value)}
+                        className={cn(
+                          "gap-2 text-sm",
+                          isResolved && conversation.resolution === value ? "text-primary" : "text-popover-foreground"
+                        )}
+                      >
+                        <span className="flex-1">{support.resolutions[value]}</span>
+                        {isResolved && conversation.resolution === value && <Check className="h-3 w-3" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         {/* Triage chips: own full-width row under name + actions, so they
             never share a line (or get covered by) the action buttons. */}
-        {(supportMode || showTeamChip || showSla || csatLabel) && (
-          <div className="flex w-full basis-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        {(supportMode || showTeamChip || resolutionLabel || csatLabel) && (
+          <div className="flex w-full basis-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pl-11 sm:pl-12">
             {supportMode && (
               <TriageChips
                 conversation={conversation}
@@ -2332,7 +2347,15 @@ export function MessageThread({
                 onChange={(id) => void handleTeamChange(id)}
               />
             )}
-            {showSla && <SlaLine conversation={conversation} />}
+            {supportMode && (
+              <div className="min-w-0 max-w-[16rem]">
+                <SubjectLine
+                  subject={conversation.subject}
+                  canEdit={canTriage}
+                  onSave={(subject) => void handleTriageChange({ subject })}
+                />
+              </div>
+            )}
             {resolutionLabel && (
               <span data-no-translate className="truncate text-xs text-muted-foreground">
                 {resolutionLabel}
@@ -2473,8 +2496,11 @@ export function MessageThread({
             {timelineGroups.map((group) => (
               <div key={group.date}>
                 {/* Date separator */}
-                <div className="mb-4 flex items-center justify-center">
-                  <span className="text-[11px] font-medium text-muted-foreground">
+                <div className="mb-3 flex items-center justify-center">
+                  <span
+                    data-testid="day-separator"
+                    className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  >
                     {formatDateSeparator(group.date, language)}
                   </span>
                 </div>
@@ -2545,6 +2571,7 @@ export function MessageThread({
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
                           onOpenConversation={onOpenConversation ? openConversation : undefined}
+                          fresh={opened.id === conversation.id && isFreshMessage(msg.created_at, opened.at)}
                           senderLabel={senderLabelFor(msg, {
                             currentUserId: user?.id,
                             nameFor: profileNameFor,
