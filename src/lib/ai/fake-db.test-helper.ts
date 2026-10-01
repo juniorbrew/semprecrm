@@ -38,7 +38,8 @@ export function makeFakeDb(tables: Record<string, Row[]>, onRpc?: (fn: string, a
           rows = [...rows].sort((a, z) => String(a[col]).localeCompare(String(z[col])) * (asc ? 1 : -1));
         }
         if (max !== null) rows = rows.slice(0, max);
-        return { data: head ? null : rows, error: null, count: rows.length };
+        // Copies: a later update must not rewrite what an earlier read returned.
+        return { data: head ? null : rows.map((r) => ({ ...r })), error: null, count: rows.length };
       }
 
       const b = {
@@ -54,6 +55,20 @@ export function makeFakeDb(tables: Record<string, Row[]>, onRpc?: (fn: string, a
         update: (p: Row) => {
           op = 'update';
           payload = p;
+          return b;
+        },
+        // Single-row upsert on one conflict column: merge into the match or insert.
+        upsert: (p: Row, opts?: { onConflict?: string }) => {
+          const key = opts?.onConflict ?? 'id';
+          const hit = all().find((r) => r[key] === p[key]);
+          if (hit) {
+            op = 'update';
+            payload = p;
+            filters.push((r) => r === hit);
+          } else {
+            op = 'insert';
+            payload = p;
+          }
           return b;
         },
         delete: () => {

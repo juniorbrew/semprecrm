@@ -156,8 +156,9 @@ export async function PUT(request: Request) {
         metadata: { keys, changes },
       });
     }
-    // Customer text now goes to another provider: tell every owner / admin.
-    if (changes.provider && next.provider && isAiProvider(next.provider)) {
+    // Customer text now goes to another provider: tell every owner / admin
+    // (not on the first setup, when there was no provider before).
+    if (changes.provider && current?.provider && next.provider && isAiProvider(next.provider)) {
       await notifyAccountAdmins(supabaseAdmin(), ctx.accountId, {
         title: 'Provedor de IA alterado',
         body: `A IA passou a usar ${AI_PROVIDER_LABELS[next.provider]}. Se não foi você, revise em Configurações › IA.`,
