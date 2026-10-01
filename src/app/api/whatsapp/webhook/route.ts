@@ -20,6 +20,9 @@ import { buildVCards } from '@/lib/inbox/vcard'
 import { supabaseServerUrl } from '@/lib/supabase/url'
 import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
 import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/request-ip'
+import { createVerifyTokenMatcher } from '@/lib/whatsapp/verify-token-cache'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,6 +119,18 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
+// Verify-token lookup for the GET handshake (cached, constant-time).
+const verifyTokens = createVerifyTokenMatcher(async () => {
+  const { data, error } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('id, verify_token')
+  if (error || !data) {
+    console.error('Error fetching configs for verification:', error)
+    return null
+  }
+  return data as { id: string; verify_token: string | null }[]
+}, decrypt)
+
 // GET - Webhook verification
 export async function GET(request: Request) {
   try {
@@ -124,47 +139,35 @@ export async function GET(request: Request) {
     const challenge = searchParams.get('hub.challenge')
     const verifyToken = searchParams.get('hub.verify_token')
 
-    if (mode !== 'subscribe' || !challenge || !verifyToken) {
+    // Public and unauthenticated: bound it per client IP first.
+    const limit = checkRateLimit(`wa-webhook-verify:${getClientIp(request)}`, RATE_LIMITS.webhookVerify)
+    if (!limit.success) return rateLimitResponse(limit)
+
+    if (
+      mode !== 'subscribe' ||
+      !challenge ||
+      !verifyToken ||
+      challenge.length > 256 ||
+      verifyToken.length > 512
+    ) {
       return NextResponse.json(
         { error: 'Missing verification parameters' },
         { status: 400 }
       )
     }
 
-    // Fetch all whatsapp configs to check verify tokens
-    const { data: configs, error: configError } = await supabaseAdmin()
-      .from('whatsapp_config')
-      .select('id, verify_token')
-
-    if (configError || !configs) {
-      console.error('Error fetching configs for verification:', configError)
+    const matchedConfig = await verifyTokens.find(verifyToken)
+    if (matchedConfig === undefined) {
       return NextResponse.json(
         { error: 'Verification failed' },
         { status: 403 }
       )
     }
 
-    // Check if any config's verify_token matches. Also collect the
-    // matching row so we can opportunistically upgrade its token to
-    // GCM if it was still in the legacy CBC format.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let matchedConfig: any = null
-    for (const config of configs) {
-      if (!config.verify_token) continue
-      try {
-        if (decrypt(config.verify_token) === verifyToken) {
-          matchedConfig = config
-          break
-        }
-      } catch {
-        // Malformed / wrong-key token row — skip it and keep checking.
-      }
-    }
-
     if (matchedConfig) {
       // Fire-and-forget GCM upgrade. Safe to run on every subscribe
       // since it's a no-op once the column is already GCM.
-      if (isLegacyFormat(matchedConfig.verify_token)) {
+      if (isLegacyFormat(matchedConfig.raw)) {
         void supabaseAdmin()
           .from('whatsapp_config')
           .update({ verify_token: encrypt(verifyToken) })
