@@ -21,6 +21,7 @@ import {
 } from '@/lib/contacts/resolve-import-tags';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { applySuppressions } from '@/lib/contacts/apply-suppressions';
 import {
   Dialog,
   DialogContent,
@@ -340,6 +341,7 @@ export function ImportModal({
       //    unique index is the backstop: a 23505 (race, or a format
       //    that normalizes equal) counts as skipped, not failed.
       const chunkSize = 50;
+      const insertedIds: string[] = [];
 
       for (let i = 0; i < toInsert.length; i += chunkSize) {
         const chunk = toInsert.slice(i, i + chunkSize);
@@ -371,6 +373,7 @@ export function ImportModal({
 
             if (!singleErr && singleData) {
               imported++;
+              insertedIds.push(singleData.id);
               if (source.tagNames.length > 0) {
                 tagAssignments.push({
                   contactId: singleData.id,
@@ -402,6 +405,7 @@ export function ImportModal({
         } else {
           const inserted = data ?? [];
           imported += inserted.length;
+          insertedIds.push(...inserted.map((row) => row.id));
           // inserted[j] ↔ chunk[j] only holds because a single INSERT
           // preserves RETURNING order. If this path is ever split into
           // parallel inserts, zip by phone or returned id instead.
@@ -427,6 +431,23 @@ export function ImportModal({
         );
       } catch {
         toast.warning('Contacts imported, but some tag assignments failed.');
+      }
+
+      // Numbers that opted out before being anonymised come back opted out
+      // (suppression list, migration 077 — checked server-side only).
+      let reOptedOut = 0;
+      try {
+        reOptedOut = await applySuppressions(insertedIds);
+      } catch (err) {
+        console.error('[contacts import] suppression check failed:', err);
+        toast.warning(
+          'Não foi possível verificar a lista de descadastrados. Confira os contatos importados antes de enviar campanhas.'
+        );
+      }
+      if (reOptedOut > 0) {
+        toast.info(
+          `${reOptedOut} contato(s) importado(s) já tinham pedido para não receber mensagens e foram marcados como descadastrados.`
+        );
       }
 
       setResult({

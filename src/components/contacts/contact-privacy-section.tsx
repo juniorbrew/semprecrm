@@ -32,7 +32,13 @@ import { cn } from '@/lib/utils';
 export interface ContactPrivacySectionProps {
   contact: Pick<
     Contact,
-    'id' | 'name' | 'phone' | 'consent_status' | 'consent_updated_at' | 'anonymized_at'
+    | 'id'
+    | 'name'
+    | 'phone'
+    | 'consent_status'
+    | 'consent_updated_at'
+    | 'anonymized_at'
+    | 'anonymization_completed_at'
   >;
   /** Tighter spacing and smaller controls for the inbox side panel. */
   compact?: boolean;
@@ -63,6 +69,8 @@ export function ContactPrivacySection({
   const canAdmin = useCan('edit-settings');
 
   const anonymized = !!contact.anonymized_at;
+  // Marked but the scrub did not finish (migration 077): admins can re-run it.
+  const incomplete = anonymized && !contact.anonymization_completed_at;
   const [consent, setConsent] = useState<ConsentStatus>(contact.consent_status ?? 'unknown');
   const [savingConsent, setSavingConsent] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -135,14 +143,17 @@ export function ContactPrivacySection({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ confirm: confirm.trim() }),
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
-      toast.success(t('Contact anonymized'));
+      const body = (await res.json().catch(() => null)) as { error?: string; ok?: boolean } | null;
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       setDialogOpen(false);
       setConfirm('');
       onChanged?.();
+      // 207: marked, but some data could not be removed yet — say so.
+      if (body?.ok === false) {
+        toast.warning(body.error ?? t('Anonymization incomplete. Run it again to finish.'));
+        return;
+      }
+      toast.success(t('Contact anonymized'));
     } catch (err) {
       console.error('[privacy] anonymize failed:', err);
       toast.error(t('Could not anonymize the contact'));
@@ -221,7 +232,7 @@ export function ContactPrivacySection({
             )}
             {t('Export data')}
           </Button>
-          {!anonymized && (
+          {(!anonymized || incomplete) && (
             <Button
               type="button"
               variant="outline"
@@ -230,7 +241,7 @@ export function ContactPrivacySection({
               className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
               <UserX className="size-3.5" />
-              {t('Anonymize')}
+              {incomplete ? t('Finish anonymization') : t('Anonymize')}
             </Button>
           )}
         </div>

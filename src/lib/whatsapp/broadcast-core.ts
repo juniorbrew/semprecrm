@@ -31,7 +31,8 @@ import {
   DELIVERY_LOCK_STALE_MS,
   renewDeliveryLock,
 } from '@/lib/broadcast-delivery-lock';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
+import { supabaseAdmin } from '@/lib/automations/admin-client';
+import { findSuppressedPhones } from '@/lib/lgpd/suppression';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { isUncertainSendError, sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import {
@@ -264,6 +265,12 @@ export async function sendClaimedRows(
     for (const r of (optedOutRows ?? []) as { phone_normalized?: string | null }[]) {
       if (r.phone_normalized) blocked.add(r.phone_normalized);
     }
+    // Opted-out numbers whose contact was anonymised (suppression list,
+    // migration 077). Throws on a lookup failure: fail CLOSED — the claimed
+    // rows are left unsent (they turn 'uncertain' and are never sent blind).
+    // The list is service-role only (RLS, no member grants): always read it
+    // with the service client, whatever client the caller passed in.
+    for (const n of await findSuppressedPhones(supabaseAdmin(), ctx.accountId, chunkNumbers)) blocked.add(n);
   }
 
   const messageParams = ctx.headerMediaUrl ? { headerMediaUrl: ctx.headerMediaUrl } : undefined;
@@ -279,7 +286,11 @@ export async function sendClaimedRows(
       results.push({ id: row.id, outcome: 'failed', error });
       continue;
     }
-    if (contact?.opted_out_at || blocked.has(normalizePhone(phone))) {
+    if (
+      contact?.opted_out_at ||
+      blocked.has(normalizePhone(phone)) ||
+      blocked.has(normalizePhone(contact?.phone ?? ''))
+    ) {
       const error = 'Contact opted out';
       await stamp(db, row.id, { status: 'failed', error_message: error });
       results.push({ id: row.id, outcome: 'failed', error });

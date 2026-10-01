@@ -97,8 +97,14 @@ vi.mock('@/lib/contacts/dedupe', () => ({
     typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505',
 }))
 
+// Suppression list (migration 077): no number is suppressed unless a test says so.
+vi.mock('@/lib/lgpd/suppression', () => ({
+  findSuppressedPhones: vi.fn(async () => new Set<string>()),
+}))
+
 import { ingestInboundMessage, toContentType, toIsoTimestamp } from './inbound'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 
 let idSeq = 0
 const nextId = (prefix: string) => `${prefix}-${++idSeq}`
@@ -611,6 +617,47 @@ describe('ingestInboundMessage — opt-out', () => {
     expect(res.optedOut).toBe(true)
     expect(h.state.events).toHaveLength(0)
     expect(h.state.contacts[0].opted_out_at).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('an opted-out contact writing again gets no flow and no out-of-hours notice', async () => {
+    vi.useFakeTimers({ now: new Date('2026-09-12T14:00:00Z'), toFake: ['Date'] }) // Saturday, closed
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true, out_of_hours_message: 'Voltamos segunda!' }
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Maria', opted_out_at: '2026-01-01T00:00:00.000Z' })
+    vi.mocked(dispatchInboundToFlows).mockClear()
+
+    const res = await ingestInboundMessage({ ...BASE, text: 'tenho uma dúvida' }, db)
+
+    expect(res.ok).toBe(true)
+    expect(res.outOfHoursReply).toBeUndefined()
+    expect(h.sendCalls).toHaveLength(0)
+    expect(dispatchInboundToFlows).not.toHaveBeenCalled()
+    // The message itself is stored for the agents.
+    expect(h.state.messages.filter((m) => m.message_id === 'wamid-1')).toHaveLength(1)
+  })
+
+  it('an anonymised contact gets no flow either', async () => {
+    const db = makeDb()
+    h.state.contacts.push({ id: 'c-1', account_id: 'acct-1', phone: '5511999990000', name: 'Contato anonimizado', anonymized_at: '2026-01-01T00:00:00.000Z' })
+    vi.mocked(dispatchInboundToFlows).mockClear()
+    await ingestInboundMessage(BASE, db)
+    expect(dispatchInboundToFlows).not.toHaveBeenCalled()
+  })
+
+  it('a number on the suppression list is created already opted out', async () => {
+    const db = makeDb()
+    vi.mocked(findSuppressedPhones).mockResolvedValueOnce(new Set(['5511999990000']))
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.contactCreated).toBe(true)
+    expect(h.state.contacts[0].opted_out_at).toEqual(expect.any(String))
+  })
+
+  it('creates the contact normally when the suppression lookup fails (fail-open)', async () => {
+    const db = makeDb()
+    vi.mocked(findSuppressedPhones).mockRejectedValueOnce(new Error('down'))
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.contactCreated).toBe(true)
+    expect(h.state.contacts[0].opted_out_at).toBeUndefined()
   })
 
   it('leaves normal messages alone', async () => {
