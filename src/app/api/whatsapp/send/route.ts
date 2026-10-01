@@ -37,7 +37,12 @@ import {
   sendViaGateway,
 } from '@/lib/whatsapp/qr-gateway'
 import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
-import { mediaUrlForPublic, mediaUrlForServer } from '@/lib/storage/media-url'
+import {
+  MediaUrlNaoPermitida,
+  accountMediaUrlForServer,
+  assertAccountMediaUrl,
+  mediaUrlForPublic,
+} from '@/lib/storage/media-url'
 
 export async function POST(request: Request) {
   try {
@@ -146,6 +151,20 @@ export async function POST(request: Request) {
       )
     }
 
+    // Só mídia do storage da PRÓPRIA conta: o gateway do canal QR baixa a URL
+    // no servidor (arquivo local / rede interna se fosse livre) e a Meta a
+    // busca de fora — nos dois canais a URL tem de ser um objeto nosso.
+    if (isMediaKind) {
+      try {
+        assertAccountMediaUrl(media_url, accountId)
+      } catch (err) {
+        if (err instanceof MediaUrlNaoPermitida) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 400 })
+        }
+        throw err
+      }
+    }
+
     // Meta caps media captions at 1024 chars; reject before the upload is
     // wasted at the Meta call. (Audio carries no caption — see meta-api.)
     if (
@@ -240,10 +259,9 @@ export async function POST(request: Request) {
           ...(isMediaKind
             ? {
                 media: {
-                  // Stored URLs may be origin-relative (`/supabase/...`);
-                  // the gateway fetches the bytes, so hand it an absolute
-                  // URL it can reach (internal Supabase route).
-                  url: mediaUrlForServer(media_url),
+                  // Validated above; rebuilt on the internal Supabase route
+                  // the gateway can reach (and allowlists).
+                  url: accountMediaUrlForServer(media_url, accountId),
                   mimetype: mimeFromUrl(message_type, media_url, filename || undefined),
                   filename: filename || undefined,
                   caption: message_type !== 'audio' && content_text ? content_text : undefined,
