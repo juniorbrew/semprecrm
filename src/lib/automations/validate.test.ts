@@ -407,4 +407,13 @@ describe("support actions and SLA triggers (migrations 072-073)", () => {
       expect(validateTriggerForActivation(type, {})).toEqual([]);
     }
   });
+
+  it("csat_received takes an optional max_score from 1 to 5", () => {
+    expect(validateTriggerForActivation("csat_received", {})).toEqual([]);
+    expect(validateTriggerForActivation("csat_received", { max_score: 2 })).toEqual([]);
+    expect(validateTriggerForActivation("csat_received", { max_score: "3" })).toEqual([]);
+    for (const bad of [0, 6, 2.5, "x"]) {
+      expect(validateTriggerForActivation("csat_received", { max_score: bad }).map((i) => i.path)).toEqual(["trigger.max_score"]);
+    }
+  });
 });

@@ -34,6 +34,7 @@ import { plainMessageText, vcardPreview } from '@/lib/inbox/vcard'
 import { notifyInboundMessage } from '@/lib/push/notify'
 import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { triageDueOnInbound } from '@/lib/support/ai-triage'
+import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
@@ -122,6 +123,8 @@ export interface IngestResult {
    * Only a hint — `runTriageQuietly` re-checks every condition.
    */
   triageDue?: boolean
+  /** The message answered a satisfaction survey (migration 074) and was consumed: nothing else ran. */
+  csat?: 'score' | 'comment' | 'declined'
 }
 
 // ------------------------------------------------------------
@@ -782,6 +785,33 @@ export async function ingestInboundMessage(
         conversationId: stored.conversation_id,
         contactCreated: contactOutcome.wasCreated,
       }
+    }
+  }
+
+  // Satisfaction survey (migration 074): the answer to our survey is taken
+  // HERE, before the conversation is chosen. So it never reopens the resolved
+  // conversation (the reply-to-our-outbound rule below), never opens a new
+  // one, and never reaches flows, automations, the AI, triage or the unread
+  // counters. Only a lone score / the one comment is consumed; anything else
+  // falls through as a normal message.
+  const csat = await tryConsumeCsat(db, {
+    accountId,
+    contactId: contact.id,
+    conversations: knownConversations.map((c) => ({ id: c.id as string, status: c.status as string })),
+    type: input.type,
+    text: input.text ?? null,
+    messageId: input.messageId,
+    createdAt: toIsoTimestamp(input.timestamp),
+    channel,
+    userId: ownerUserId,
+  })
+  if (csat.consumed) {
+    return {
+      ok: true,
+      contactId: contact.id,
+      conversationId: csat.conversationId,
+      contactCreated: contactOutcome.wasCreated,
+      csat: csat.kind,
     }
   }
 

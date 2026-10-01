@@ -7,7 +7,7 @@ import type { Message } from "@/types";
  * name that must be rendered as is.
  */
 export interface SenderLabel {
-  kind: "you" | "agent" | "phone" | "automation" | "bot" | "system" | "ai";
+  kind: "you" | "agent" | "phone" | "automation" | "bot" | "system" | "ai" | "survey";
   text: string;
   translate: boolean;
   /** Longer explanation for the tooltip (a dictionary key). */
@@ -41,6 +41,8 @@ export function senderLabelFor(
       return { kind: "bot", text: "Bot", translate: true };
     case "system":
       return { kind: "system", text: "System", translate: true };
+    case "csat":
+      return { kind: "survey", text: "Survey", translate: true };
     case "ai":
       return { kind: "ai", text: "AI", translate: true, hint: "Sent automatically by the AI agent" };
   }

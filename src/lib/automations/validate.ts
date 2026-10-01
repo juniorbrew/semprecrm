@@ -235,6 +235,14 @@ export function validateTriggerForActivation(
     if (nonEmpty(cfg.kind) && !['first_response', 'resolution'].includes(String(cfg.kind))) {
       issues.push({ path: 'trigger.kind', message: 'kind must be "first_response" or "resolution"' })
     }
+  } else if (triggerType === 'csat_received') {
+    // max_score is optional ("any rating"); when present it is a whole number 1-5.
+    if (cfg.max_score !== undefined && cfg.max_score !== null && cfg.max_score !== '') {
+      const n = typeof cfg.max_score === 'string' ? Number(cfg.max_score) : cfg.max_score
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 5) {
+        issues.push({ path: 'trigger.max_score', message: 'max score must be a whole number from 1 to 5' })
+      }
+    }
   } else if (triggerType === 'lead_captured') {
     // source_id is optional ("any source"); when present it must be a uuid.
     if (cfg.source_id !== undefined && cfg.source_id !== null && cfg.source_id !== '') {

@@ -84,3 +84,21 @@ describe('buildContactExport — support triage (071)', () => {
     expect(out.conversations[0]).toMatchObject(row)
   })
 })
+
+describe('buildContactExport — satisfaction survey (074)', () => {
+  it('exports the score and the comment of the contact, scoped to the account', async () => {
+    const { db, filters } = makeDb({
+      contacts: [{ id: 'c1', name: 'Maria' }],
+      csat_responses: [{ id: 's1', conversation_id: 'conv1', status: 'answered', score: 4, comment: 'Atendimento rápido, falei com a Joana' }],
+    })
+    const out = await buildContactExport(db, 'acc', 'c1')
+    expect(out.csat).toEqual([
+      { id: 's1', conversation_id: 'conv1', status: 'answered', score: 4, comment: 'Atendimento rápido, falei com a Joana' },
+    ])
+    expect(filters.csat_responses).toEqual([
+      ['account_id', 'acc'],
+      ['contact_id', 'c1'],
+    ])
+    expect(out.warnings).toEqual([])
+  })
+})

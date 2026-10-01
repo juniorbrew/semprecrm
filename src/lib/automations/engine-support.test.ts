@@ -36,7 +36,7 @@ vi.mock('./admin-client', () => {
 vi.mock('@/lib/support/routing', () => ({ applyRouting: h.routing }))
 vi.mock('@/lib/assignment/round-robin', () => ({ pickRoundRobinAssignee: vi.fn() }))
 
-import { runSupportStep } from './engine'
+import { runSupportStep, triggerMatches } from './engine'
 
 const step = (step_type: string, step_config: Record<string, unknown>) => ({ id: 's1', step_type, step_config }) as never
 const args = (over: Record<string, unknown> = {}) =>
@@ -118,5 +118,27 @@ describe('support actions of the automation engine', () => {
 
   it('needs a conversation: from the trigger context or the contact', async () => {
     await expect(runSupportStep(step('set_priority', { priority: 'low' }), args({ context: {}, contactId: null }))).rejects.toThrow('no contact')
+  })
+})
+
+describe('csat_received trigger filter (migration 074)', () => {
+  const rule = (trigger_config: Record<string, unknown> | null) =>
+    ({ id: 'a1', account_id: 'acc', trigger_type: 'csat_received', trigger_config }) as never
+  const ctx = (score: unknown) => ({ conversation_id: 'c1', vars: { score } }) as never
+
+  it('without max_score every rating matches', () => {
+    for (const cfg of [null, {}, { max_score: '' }]) expect(triggerMatches(rule(cfg), ctx(5))).toBe(true)
+  })
+
+  it('max_score is a ceiling: 2 matches 1 and 2, not 3', () => {
+    expect(triggerMatches(rule({ max_score: 2 }), ctx(1))).toBe(true)
+    expect(triggerMatches(rule({ max_score: 2 }), ctx(2))).toBe(true)
+    expect(triggerMatches(rule({ max_score: 2 }), ctx(3))).toBe(false)
+    expect(triggerMatches(rule({ max_score: '2' }), ctx(2))).toBe(true)
+  })
+
+  it('a filter with no usable score does not match', () => {
+    expect(triggerMatches(rule({ max_score: 2 }), ctx(undefined))).toBe(false)
+    expect(triggerMatches(rule({ max_score: 2 }), { conversation_id: 'c1' } as never)).toBe(false)
   })
 })

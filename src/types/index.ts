@@ -349,7 +349,7 @@ export type SenderType = 'customer' | 'agent' | 'bot';
  * 059). `phone` = sent from the connected phone / WhatsApp Web (QR echo,
  * sender_type 'agent', no sender_id). NULL/absent = inbox send or legacy.
  */
-export type MessageOrigin = 'phone' | 'automation' | 'flow' | 'system' | 'ai';
+export type MessageOrigin = 'phone' | 'automation' | 'flow' | 'system' | 'ai' | 'csat';
 export type ContentType =
   | 'text'
   | 'image'
@@ -439,7 +439,10 @@ export type ConversationEventType =
   | 'sla_warning'
   | 'sla_breached'
   /** Team (migration 073). */
-  | 'team_changed';
+  | 'team_changed'
+  /** Satisfaction survey (migration 074): sent after resolving / answered by the customer. */
+  | 'csat_sent'
+  | 'csat_answered';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -485,6 +488,8 @@ export interface ConversationEventPayload {
   /** `team_changed` — name snapshot (null = team removed). */
   team_id?: string | null;
   team_name?: string | null;
+  /** `csat_answered` — the score, 1 to 5. */
+  score?: number;
 }
 
 /** Row of `conversation_events` (migration 024). */
@@ -754,7 +759,9 @@ export type AutomationTriggerType =
   | 'sla_breached'
   | 'category_set'
   | 'priority_changed'
-  | 'team_changed';
+  | 'team_changed'
+  /** The customer answered the satisfaction survey (migration 074); optional `max_score` filter. */
+  | 'csat_received';
 
 /**
  * How often one automation may run for the same contact (migration 048).

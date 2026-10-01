@@ -72,6 +72,10 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Team Changed',
     pillClass: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
   },
+  csat_received: {
+    label: 'Rating Received',
+    pillClass: 'border-teal-500/30 bg-teal-500/10 text-teal-300',
+  },
 };
 
 const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
@@ -91,6 +95,7 @@ const PT_BR_TRIGGER_LABELS: Partial<Record<AutomationTriggerType, string>> = {
   category_set: 'Categoria definida',
   priority_changed: 'Prioridade alterada',
   team_changed: 'Equipe alterada',
+  csat_received: 'Avaliação recebida',
 };
 
 export function triggerMeta(
