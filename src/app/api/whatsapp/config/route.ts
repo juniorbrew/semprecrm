@@ -26,6 +26,8 @@ import { canAddChannel } from '@/lib/plans'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
 import { supabaseServerUrl } from '@/lib/supabase/url'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -143,6 +145,10 @@ export async function GET() {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Each call is up to two Meta round trips with the stored token.
+    const limit = checkRateLimit(`wa-config:get:${user.id}`, RATE_LIMITS.adminAction)
+    if (!limit.success) return rateLimitResponse(limit)
 
     const accountId = await resolveAccountId(supabase, user.id)
     if (!accountId) {
@@ -289,25 +295,19 @@ export async function GET() {
  * `warnings`) with the same { error, error_pt, meta } shape.
  */
 export async function POST(request: Request) {
+  // Admin up front: RLS would refuse a non-admin's write only after the
+  // Meta calls below had already run with the supplied token.
+  let ctx
   try {
-    const supabase = await createClient()
+    ctx = await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+  const limit = checkRateLimit(`wa-config:save:${ctx.userId}`, RATE_LIMITS.adminAction)
+  if (!limit.success) return rateLimitResponse(limit)
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
-      return NextResponse.json(
-        { error: 'Your profile is not linked to an account.' },
-        { status: 403 },
-      )
-    }
+  try {
+    const { supabase, accountId } = ctx
 
     const body = await request.json()
     const { phone_number_id, waba_id, access_token, verify_token, pin } = body
@@ -379,8 +379,9 @@ export async function POST(request: Request) {
     if (claimed) {
       return NextResponse.json(
         {
-          error:
-            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one SempreCRM user.',
+          // Generic on purpose: must not confirm which numbers other
+          // tenants have connected.
+          error: 'This phone number cannot be connected. Contact support if you believe this is a mistake.',
         },
         { status: 409 }
       )
@@ -634,7 +635,7 @@ export async function POST(request: Request) {
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
-          user_id: user.id,
+          user_id: ctx.userId,
           ...baseRow,
         })
 
@@ -649,7 +650,7 @@ export async function POST(request: Request) {
 
     await audit({
       accountId,
-      actorUserId: user.id,
+      actorUserId: ctx.userId,
       action: AUDIT_ACTIONS.WHATSAPP_OFFICIAL_SAVED,
       entityType: 'whatsapp_config',
       entityId: phone_number_id,
@@ -704,25 +705,17 @@ export async function POST(request: Request) {
  * encrypted token (mismatched ENCRYPTION_KEY across environments).
  */
 export async function DELETE() {
+  let ctx
   try {
-    const supabase = await createClient()
+    ctx = await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+  const limit = checkRateLimit(`wa-config:delete:${ctx.userId}`, RATE_LIMITS.adminAction)
+  if (!limit.success) return rateLimitResponse(limit)
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
-      return NextResponse.json(
-        { error: 'Your profile is not linked to an account.' },
-        { status: 403 },
-      )
-    }
+  try {
+    const { supabase, accountId } = ctx
 
     const { data: removedRows, error: deleteError } = await supabase
       .from('whatsapp_config')
@@ -741,7 +734,7 @@ export async function DELETE() {
     if (removedRows && removedRows.length > 0) {
       await audit({
         accountId,
-        actorUserId: user.id,
+        actorUserId: ctx.userId,
         action: AUDIT_ACTIONS.WHATSAPP_OFFICIAL_REMOVED,
         entityType: 'whatsapp_config',
         entityId: (removedRows[0] as { phone_number_id?: string }).phone_number_id ?? null,

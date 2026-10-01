@@ -20,6 +20,9 @@ const h = vi.hoisted(() => ({
     /** Existing whatsapp_config row for the account (null = none). */
     existing: null as Record<string, unknown> | null,
     channels: 0,
+    role: "admin" as string,
+    /** phone_number_id already held by another account. */
+    claimed: false,
     writes: [] as { type: string; payload: unknown }[],
   },
 }));
@@ -41,7 +44,12 @@ function userBuilder(table: string) {
       Promise.resolve(resolve()).then(onF, onR),
   };
   function resolve() {
-    if (table === "profiles") return { data: { account_id: "acct-1" }, error: null };
+    if (table === "profiles") {
+      return {
+        data: { account_id: "acct-1", account_role: h.state.role, account: { id: "acct-1", name: "Acme" } },
+        error: null,
+      };
+    }
     if (table === "accounts") return { data: h.state.account, error: null };
     if (table === "whatsapp_config") {
       if (ops.type === "insert" || ops.type === "update") {
@@ -72,7 +80,8 @@ vi.mock("@supabase/supabase-js", () => ({
         select: () => b,
         eq: () => b,
         neq: () => b,
-        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        maybeSingle: () =>
+          Promise.resolve({ data: h.state.claimed ? { account_id: "acct-other" } : null, error: null }),
       };
       return b;
     },
@@ -88,7 +97,8 @@ vi.mock("@/lib/whatsapp/meta-api", () => ({
   getSubscribedApps: vi.fn(async () => []),
 }));
 
-import { POST } from "./route";
+import { __resetRateLimitForTests } from "@/lib/rate-limit";
+import { DELETE, POST } from "./route";
 import * as metaApi from "@/lib/whatsapp/meta-api";
 
 function request(body: unknown) {
@@ -116,7 +126,10 @@ beforeEach(() => {
   };
   h.state.existing = null;
   h.state.channels = 0;
+  h.state.role = "admin";
+  h.state.claimed = false;
   h.state.writes = [];
+  __resetRateLimitForTests();
   vi.mocked(metaApi.verifyPhoneNumber).mockReset();
   vi.mocked(metaApi.verifyPhoneNumber).mockImplementation(
     async () => ({ id: "123456", display_phone_number: "+55 11 99999-0000" }),
@@ -340,5 +353,31 @@ describe("POST /api/whatsapp/config — Meta connection errors (wacrm #505)", ()
     const res = await POST(request(VALID));
     expect(res.status).toBe(502);
     expect(((await res.json()) as ConfigError).error_pt).toMatch(/graph\.facebook\.com/);
+  });
+});
+
+describe("/api/whatsapp/config — role and disclosure", () => {
+  it("refuses a non-admin before any Meta call", async () => {
+    for (const role of ["agent", "viewer"]) {
+      h.state.role = role;
+      const res = await POST(request(VALID));
+      expect(res.status).toBe(403);
+    }
+    expect(metaApi.verifyPhoneNumber).not.toHaveBeenCalled();
+    expect(h.state.writes).toHaveLength(0);
+  });
+
+  it("refuses DELETE for a non-admin", async () => {
+    h.state.role = "agent";
+    expect((await DELETE()).status).toBe(403);
+  });
+
+  it("answers a generic 409 when the number belongs to another account", async () => {
+    h.state.claimed = true;
+    const res = await POST(request(VALID));
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as ConfigError;
+    expect(json.error).not.toMatch(/another account|already linked/i);
+    expect(metaApi.verifyPhoneNumber).not.toHaveBeenCalled();
   });
 });
