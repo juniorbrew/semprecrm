@@ -38,6 +38,16 @@ docker compose up -d
 docker compose ps        # todos "healthy" em 1 a 2 minutos
 ```
 
+> **Docker ignora o ufw.** Porta publicada por container (`ports:` no compose) é aberta por regras de
+> iptables do próprio Docker, antes das regras do ufw: `ufw deny 5432` não fecha nada. Por isso o
+> instalador publica o gateway (8000) e o Supavisor (5432/6543) só em `127.0.0.1` — o Supavisor por meio
+> do arquivo `docker-compose.semprecrm.yml`, incluído em `COMPOSE_FILE` no `.env` (não remova). Depois de
+> todo `docker compose up` confira:
+>
+> ```bash
+> ss -ltn | grep -E ':(5432|6543|8000) '    # só 127.0.0.1; 0.0.0.0, [::] ou * = exposto à internet
+> ```
+
 #### Verificação em duas etapas (MFA TOTP)
 
 O app usa o MFA nativo do Supabase Auth (Configurações → Login e segurança → "Verificação em duas
