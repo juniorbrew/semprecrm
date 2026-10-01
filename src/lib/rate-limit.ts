@@ -57,6 +57,7 @@ let callsSinceSweep = 0;
  *  evicted (Map iterates in insertion order), so a flood of distinct
  *  keys costs bounded memory instead of growing until the next sweep. */
 export const MAX_BUCKETS = 50_000;
+let maxBuckets = MAX_BUCKETS;
 
 /** Keys longer than this are hashed, so a caller-influenced key part
  *  (a token, a header) can't make each Map entry arbitrarily large. */
@@ -73,13 +74,11 @@ function sweepExpired(now: number) {
   }
 }
 
-function evictOverflow() {
-  let excess = buckets.size - MAX_BUCKETS;
-  if (excess <= 0) return;
-  for (const k of buckets.keys()) {
-    buckets.delete(k);
-    if (--excess <= 0) break;
-  }
+/** O(1): drop the oldest-inserted key. Expired keys are left to the
+ *  periodic sweep, so a flood never triggers a full scan per insert. */
+function evictOldest() {
+  const oldest = buckets.keys().next();
+  if (!oldest.done) buckets.delete(oldest.value);
 }
 
 export function checkRateLimit(
@@ -102,10 +101,7 @@ export function checkRateLimit(
     // insertion order, so eviction drops genuinely stale keys first.
     buckets.delete(key);
     buckets.set(key, { count: 1, resetAt: now + windowMs });
-    if (buckets.size > MAX_BUCKETS) {
-      sweepExpired(now);
-      evictOverflow();
-    }
+    if (buckets.size > maxBuckets) evictOldest();
     return { success: true, remaining: limit - 1, reset: now + windowMs, limit };
   }
 
@@ -226,6 +222,12 @@ export const RATE_LIMITS = {
 export function __resetRateLimitForTests() {
   buckets.clear();
   callsSinceSweep = 0;
+  maxBuckets = MAX_BUCKETS;
+}
+
+/** Test-only: shrink the bucket cap so eviction is cheap to exercise. */
+export function __setMaxBucketsForTests(n: number) {
+  maxBuckets = n;
 }
 
 /** Test-only: number of live buckets. */

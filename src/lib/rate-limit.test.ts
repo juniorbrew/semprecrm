@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __rateLimitBucketCountForTests,
   __resetRateLimitForTests,
+  __setMaxBucketsForTests,
   checkRateLimit,
-  MAX_BUCKETS,
   rateLimitResponse,
 } from "./rate-limit";
 
@@ -130,11 +130,13 @@ describe("checkRateLimit memory bounds", () => {
     expect(checkRateLimit(long + "y", OPTS).success).toBe(true);
   });
 
-  it("never holds more than MAX_BUCKETS keys", () => {
-    for (let i = 0; i < MAX_BUCKETS + 500; i++) checkRateLimit(`flood:${i}`, OPTS);
-    expect(__rateLimitBucketCountForTests()).toBeLessThanOrEqual(MAX_BUCKETS);
-    // The newest key survives eviction.
-    expect(checkRateLimit(`flood:${MAX_BUCKETS + 499}`, OPTS).remaining).toBe(1);
+  it("never holds more than the bucket cap, evicting the oldest key", () => {
+    __setMaxBucketsForTests(100);
+    for (let i = 0; i < 150; i++) checkRateLimit(`flood:${i}`, OPTS);
+    expect(__rateLimitBucketCountForTests()).toBe(100);
+    // The newest key survives eviction; the oldest was dropped (fresh budget).
+    expect(checkRateLimit("flood:149", OPTS).remaining).toBe(1);
+    expect(checkRateLimit("flood:0", OPTS).remaining).toBe(2);
   });
 });
 
