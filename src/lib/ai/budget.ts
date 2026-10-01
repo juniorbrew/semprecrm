@@ -70,6 +70,20 @@ export function budgetMonthKey(now: Date, timeZone: string = AI_BUDGET_TIME_ZONE
   return `${year}-${String(month).padStart(2, '0')}`;
 }
 
+/** Share of the monthly budget at which owners and admins are warned. */
+export const AI_BUDGET_ALERT_RATIO = 0.8;
+
+/**
+ * This call took the month's spend across the alert line. Spend only
+ * grows inside a month, so the line is crossed once — no state to keep
+ * (raising the budget later moves the line and may warn again).
+ */
+export function crossesBudgetAlert(spentBeforeCents: number, costCents: number, budgetCents: number): boolean {
+  if (!(budgetCents > 0) || !(costCents > 0)) return false;
+  const line = budgetCents * AI_BUDGET_ALERT_RATIO;
+  return spentBeforeCents < line && spentBeforeCents + costCents >= line;
+}
+
 /** True when this month's spend has used up the budget (0 blocks everything). */
 export function isBudgetExhausted(spentCents: number, budgetCents: number): boolean {
   const spent = Number.isFinite(spentCents) ? spentCents : 0;

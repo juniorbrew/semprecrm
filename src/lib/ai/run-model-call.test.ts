@@ -15,6 +15,8 @@ const store = vi.hoisted(() => ({
   recordUsage: vi.fn(),
 }));
 vi.mock('./store', () => store);
+const notifyAccountAdmins = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/push/notify', () => ({ notifyAccountAdmins }));
 
 import { AiError } from './errors';
 import { callProfile, runModelCall } from './run-model-call';
@@ -52,6 +54,26 @@ beforeEach(() => {
   store.loadDecryptedKey.mockResolvedValue('sk-test-key-000000000000000000');
   store.usageSummarySince.mockResolvedValue({ calls: 3, errors: 0, inputTokens: 0, outputTokens: 0, costCents: 10 });
   store.recordUsage.mockResolvedValue(undefined);
+});
+
+describe('runModelCall — 80% budget alert', () => {
+  it('the call that crosses 80% of the budget warns owners / admins once', async () => {
+    generateText.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1000, outputTokens: 50 } });
+    store.usageSummarySince.mockResolvedValue({ calls: 3, errors: 0, inputTokens: 0, outputTokens: 0, costCents: 79.99 });
+    await call();
+    expect(notifyAccountAdmins).toHaveBeenCalledOnce();
+    expect(notifyAccountAdmins.mock.calls[0][1]).toBe('acc-1');
+    expect(notifyAccountAdmins.mock.calls[0][2]).toMatchObject({ title: 'Orçamento de IA em 80%', tag: 'ai-budget:2026-09' });
+  });
+
+  it('below or already past the line: no alert', async () => {
+    generateText.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1000, outputTokens: 50 } });
+    for (const costCents of [10, 80, 95]) {
+      store.usageSummarySince.mockResolvedValue({ calls: 3, errors: 0, inputTokens: 0, outputTokens: 0, costCents });
+      await call();
+    }
+    expect(notifyAccountAdmins).not.toHaveBeenCalled();
+  });
 });
 
 describe('runModelCall', () => {
