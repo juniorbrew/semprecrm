@@ -140,15 +140,20 @@ export async function sendPushToUsers(
   }
   const excluded = new Set(delivery?.excludeSubscriptionIds ?? [])
   const loaded = ((data ?? []) as PushSubscriptionRow[]).filter((row) => !excluded.has(row.id))
-  // Rows saved before the endpoint allowlist existed are never POSTed to.
-  const rows = loaded.filter((row) => isAllowedPushEndpoint(row.endpoint))
-  let failed = loaded.length - rows.length
-  if (failed) console.warn('[push] skipped subscriptions with a non push-service endpoint:', failed)
-  if (rows.length === 0) return { ...EMPTY, failed }
+  // Rows saved before the endpoint allowlist existed are never POSTed
+  // to; they are pruned with the 404 / 410 ones below.
+  const rows: PushSubscriptionRow[] = []
+  const gone: string[] = []
+  for (const row of loaded) {
+    if (isAllowedPushEndpoint(row.endpoint)) rows.push(row)
+    else gone.push(row.id)
+  }
+  if (gone.length) console.warn('[push] pruning subscriptions with a non push-service endpoint:', gone.length)
+  if (loaded.length === 0) return { ...EMPTY }
 
   const message = buildPushMessage(payload)
-  const gone: string[] = []
   const ok: string[] = []
+  let failed = 0
 
   await Promise.all(
     rows.map(async (row) => {
