@@ -74,14 +74,16 @@ export function budgetMonthKey(now: Date, timeZone: string = AI_BUDGET_TIME_ZONE
 export const AI_BUDGET_ALERT_RATIO = 0.8;
 
 /**
- * This call took the month's spend across the alert line. Spend only
- * grows inside a month, so the line is crossed once — no state to keep
- * (raising the budget later moves the line and may warn again).
+ * The month's spend went from below the alert line (read before this
+ * call) to at or above it (re-read after this call was recorded, so
+ * calls running in parallel are included). Two parallel calls may both
+ * see it — the push tag collapses them. Spend only grows inside a month,
+ * so no state is kept (raising the budget later moves the line).
  */
-export function crossesBudgetAlert(spentBeforeCents: number, costCents: number, budgetCents: number): boolean {
-  if (!(budgetCents > 0) || !(costCents > 0)) return false;
+export function crossesBudgetAlert(spentBeforeCents: number, spentAfterCents: number, budgetCents: number): boolean {
+  if (!(budgetCents > 0)) return false;
   const line = budgetCents * AI_BUDGET_ALERT_RATIO;
-  return spentBeforeCents < line && spentBeforeCents + costCents >= line;
+  return spentBeforeCents < line && spentAfterCents >= line;
 }
 
 /** True when this month's spend has used up the budget (0 blocks everything). */

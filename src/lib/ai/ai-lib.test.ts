@@ -61,12 +61,12 @@ describe('monthly budget window (America/Sao_Paulo)', () => {
     expect(isBudgetExhausted(99.99, 100)).toBe(false);
     expect(isBudgetExhausted(100, 100)).toBe(true);
     expect(isBudgetExhausted(0, 0)).toBe(true);
-    // 80% alert line: crossed by this call only
-    expect(crossesBudgetAlert(79, 1, 100)).toBe(true);
-    expect(crossesBudgetAlert(70, 5, 100)).toBe(false);
-    expect(crossesBudgetAlert(80, 1, 100)).toBe(false);
+    // 80% alert line: before the call below it, after the call at / above it
+    expect(crossesBudgetAlert(79, 80, 100)).toBe(true);
+    expect(crossesBudgetAlert(79, 95, 100)).toBe(true); // parallel calls landed meanwhile
+    expect(crossesBudgetAlert(70, 75, 100)).toBe(false);
+    expect(crossesBudgetAlert(80, 81, 100)).toBe(false);
     expect(crossesBudgetAlert(0, 0, 0)).toBe(false);
-    expect(crossesBudgetAlert(79, 0, 100)).toBe(false);
   });
 });
 
