@@ -107,6 +107,11 @@ sob o PM2 e conversa com o app por loopback. Passos:
 
 1. Crie `services/wa-gateway/.env` a partir de `services/wa-gateway/.env.example` (`APP_URL`,
    `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WA_GATEWAY_SECRET`, `WA_DATA_DIR=/var/lib/semprecrm/wa`).
+   **Envio de mídia:** o gateway só baixa mídia de origens permitidas. A origem de `SUPABASE_URL` ou
+   `SUPABASE_PUBLIC_URL` do gateway tem de ser igual à que o app usa — `SUPABASE_INTERNAL_URL` do app, se
+   definida; senão `NEXT_PUBLIC_SUPABASE_URL`. Se o app não tem `SUPABASE_INTERNAL_URL`, defina no gateway
+   `SUPABASE_PUBLIC_URL=https://api.semprecrm.com.br`. Sem isso todo envio de mídia pelo QR falha com 400.
+   `MEDIA_ALLOWED_ORIGINS` (opcional) só acrescenta origens públicas extras.
 2. No `.env.local` do app, defina `WA_GATEWAY_URL=http://127.0.0.1:3201` e o **mesmo**
    `WA_GATEWAY_SECRET`. Sem eles a opção QR aparece desabilitada em Configurações → WhatsApp.
 3. Rode o `deploy.sh` normalmente — ele faz `npm ci && npm run build` no gateway e sobe/recarrega o app

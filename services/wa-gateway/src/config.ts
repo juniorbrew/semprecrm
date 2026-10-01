@@ -1,4 +1,5 @@
 import path from "node:path";
+import { httpOrigin, type MediaPolicy } from "./outbound-media.js";
 
 export interface GatewayConfig {
   port: number;
@@ -31,6 +32,13 @@ export interface GatewayConfig {
    * celular principal. `WA_MARK_ONLINE=false` volta ao comportamento antigo.
    */
   markOnline: boolean;
+  /**
+   * De onde o gateway aceita baixar mídia para enviar: sempre as origens do
+   * storage (SUPABASE_URL / SUPABASE_PUBLIC_URL, quando absoluta) mais as de
+   * MEDIA_ALLOWED_ORIGINS (lista separada por vírgula, ex.
+   * `https://cdn.exemplo.com`) — essas extras não podem apontar para rede interna.
+   */
+  mediaPolicy: MediaPolicy;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -54,15 +62,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   if (secret.length < 16) {
     throw new Error("WA_GATEWAY_SECRET precisa ter pelo menos 16 caracteres");
   }
+  const supabaseUrl = required(env, "SUPABASE_URL").replace(/\/+$/, "");
+  const supabasePublicUrl = (env.SUPABASE_PUBLIC_URL?.trim() || supabaseUrl).replace(/\/+$/, "");
+  const extraOrigins = (env.MEDIA_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((raw) => {
+      const origin = httpOrigin(raw);
+      if (!origin) throw new Error(`MEDIA_ALLOWED_ORIGINS inválida: ${raw}`);
+      return origin;
+    });
+  const storageOrigins = [...new Set([supabaseUrl, supabasePublicUrl].map(httpOrigin).filter((o): o is string => !!o))];
   return {
     port,
     secret,
     appUrl: required(env, "APP_URL").replace(/\/+$/, ""),
-    supabaseUrl: required(env, "SUPABASE_URL").replace(/\/+$/, ""),
-    supabasePublicUrl: (env.SUPABASE_PUBLIC_URL?.trim() || required(env, "SUPABASE_URL")).replace(/\/+$/, ""),
+    supabaseUrl,
+    supabasePublicUrl,
     supabaseServiceRoleKey: required(env, "SUPABASE_SERVICE_ROLE_KEY"),
     dataDir: path.resolve(env.WA_DATA_DIR?.trim() || "./data"),
     logLevel: env.LOG_LEVEL?.trim() || "info",
     markOnline: !/^(false|0|no|off)$/i.test(env.WA_MARK_ONLINE?.trim() ?? ""),
+    mediaPolicy: { storageOrigins, extraOrigins },
   };
 }

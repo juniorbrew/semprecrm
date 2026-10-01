@@ -15,7 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WhatsAppChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
 import { sendViaGateway, type GatewayMedia } from './qr-gateway'
-import { mediaUrlForServer } from '@/lib/storage/media-url'
+import { accountMediaUrlForServer } from '@/lib/storage/media-url'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from './phone-echo'
 
@@ -74,9 +74,10 @@ export interface EngineQrSendInput {
   text?: string
   /**
    * Media as stored in the DB (`url` may be origin-relative, e.g.
-   * `/supabase/storage/...`). The gateway fetches the bytes itself, so the
-   * URL is absolutised (`mediaUrlForServer`) for the send only — the row
-   * keeps the stored form.
+   * `/supabase/storage/...`). Only objects of this account's media storage
+   * are accepted (`accountMediaUrlForServer` throws `MediaUrlNaoPermitida`,
+   * status 400, before the gateway is called); the URL is rebuilt on the
+   * internal storage route for the send only — the row keeps the stored form.
    */
   media?: GatewayMedia
   /** What to persist on `messages.content_type`. */
@@ -96,6 +97,10 @@ export async function engineSendViaQr(
   db: SupabaseClient,
   input: EngineQrSendInput,
 ): Promise<{ whatsapp_message_id: string }> {
+  const media = input.media
+    ? { ...input.media, url: accountMediaUrlForServer(input.media.url, input.accountId) }
+    : undefined
+
   const { data: contact, error: contactErr } = await db
     .from('contacts')
     .select('id, phone')
@@ -115,7 +120,7 @@ export async function engineSendViaQr(
     accountId: input.accountId,
     to,
     ...(input.text !== undefined ? { text: input.text } : {}),
-    ...(input.media ? { media: { ...input.media, url: mediaUrlForServer(input.media.url) } } : {}),
+    ...(media ? { media } : {}),
   })
 
   const row = {

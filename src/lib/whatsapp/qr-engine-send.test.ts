@@ -163,4 +163,45 @@ describe('engineSendViaQr', () => {
     ).rejects.toThrow(/gateway/i)
     expect(state.inserted).toHaveLength(0)
   })
+
+  describe('send_media (flows / automations)', () => {
+    beforeEach(() => {
+      vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase')
+      vi.stubEnv('SUPABASE_INTERNAL_URL', 'http://kong.internal:8000')
+    })
+    afterEach(() => vi.unstubAllEnvs())
+
+    const send = (url: string, state = { contact: { id: 'c-1', phone: '5511999990000' }, inserted: [] as Record<string, unknown>[], updates: [] }) =>
+      engineSendViaQr(makeDb(state), {
+        accountId: 'acct-1',
+        conversationId: 'conv-1',
+        contactId: 'c-1',
+        media: { url, mimetype: 'application/pdf', filename: 'a.pdf' },
+        contentType: 'document',
+      })
+
+    it('own flow-media object → internal storage URL to the gateway, stored form in the row', async () => {
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ message_id: 'B-9' }), { status: 200 }))
+      const state = { contact: { id: 'c-1', phone: '5511999990000' }, inserted: [] as Record<string, unknown>[], updates: [] }
+      const stored = '/supabase/storage/v1/object/public/flow-media/account-acct-1/1-a.pdf'
+      await send(stored, state)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).media.url).toBe(
+        'http://kong.internal:8000/storage/v1/object/public/flow-media/account-acct-1/1-a.pdf',
+      )
+      expect(state.inserted[0]).toMatchObject({ media_url: stored })
+    })
+
+    it.each([
+      './.env',
+      '//etc/passwd',
+      'file:///etc/passwd',
+      'http://169.254.169.254/latest/meta-data/',
+      'https://evil.example/a.pdf',
+      '/supabase/storage/v1/object/public/flow-media/account-outra/1-a.pdf',
+      '/supabase/../rest/v1/contacts',
+    ])('refuses %s with status 400 and never calls the gateway', async (url) => {
+      await expect(send(url)).rejects.toMatchObject({ status: 400, code: 'invalid_media_url' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+  })
 })
