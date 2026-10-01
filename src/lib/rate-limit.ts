@@ -14,12 +14,14 @@
  * change.
  *
  * Memory: entries are ~50 bytes each. With LIGHT_SWEEP below, expired
- * keys get cleared opportunistically on every ~1 000th call, so a
+ * keys get cleared opportunistically on every ~200th call (and the
+ * Map is hard-capped at MAX_BUCKETS), so a
  * healthy instance stays in the low-MB range even with thousands of
  * distinct users. No background timer — works in serverless edge
  * runtimes that don't keep timers alive across requests.
  */
 
+import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
 export interface RateLimitOptions {
@@ -48,8 +50,22 @@ const buckets = new Map<string, Entry>();
 // Opportunistic cleanup. Running a sweep on every call would be
 // quadratic; running it 1-in-N lets the Map self-drain without a
 // background timer.
-const LIGHT_SWEEP_EVERY = 1000;
+const LIGHT_SWEEP_EVERY = 200;
 let callsSinceSweep = 0;
+
+/** Hard cap on live buckets. Past it the oldest-inserted keys are
+ *  evicted (Map iterates in insertion order), so a flood of distinct
+ *  keys costs bounded memory instead of growing until the next sweep. */
+export const MAX_BUCKETS = 50_000;
+
+/** Keys longer than this are hashed, so a caller-influenced key part
+ *  (a token, a header) can't make each Map entry arbitrarily large. */
+export const MAX_KEY_LENGTH = 128;
+
+function normalizeKey(key: string): string {
+  if (key.length <= MAX_KEY_LENGTH) return key;
+  return 'h:' + createHash('sha256').update(key).digest('hex');
+}
 
 function sweepExpired(now: number) {
   for (const [k, v] of buckets) {
@@ -57,11 +73,21 @@ function sweepExpired(now: number) {
   }
 }
 
+function evictOverflow() {
+  let excess = buckets.size - MAX_BUCKETS;
+  if (excess <= 0) return;
+  for (const k of buckets.keys()) {
+    buckets.delete(k);
+    if (--excess <= 0) break;
+  }
+}
+
 export function checkRateLimit(
-  key: string,
+  rawKey: string,
   { limit, windowMs }: RateLimitOptions,
 ): RateLimitResult {
   const now = Date.now();
+  const key = normalizeKey(rawKey);
 
   callsSinceSweep += 1;
   if (callsSinceSweep >= LIGHT_SWEEP_EVERY) {
@@ -72,7 +98,14 @@ export function checkRateLimit(
   const entry = buckets.get(key);
 
   if (!entry || entry.resetAt <= now) {
+    // delete-then-set moves a refreshed key to the end of the
+    // insertion order, so eviction drops genuinely stale keys first.
+    buckets.delete(key);
     buckets.set(key, { count: 1, resetAt: now + windowMs });
+    if (buckets.size > MAX_BUCKETS) {
+      sweepExpired(now);
+      evictOverflow();
+    }
     return { success: true, remaining: limit - 1, reset: now + windowMs, limit };
   }
 
@@ -180,4 +213,9 @@ export const RATE_LIMITS = {
 export function __resetRateLimitForTests() {
   buckets.clear();
   callsSinceSweep = 0;
+}
+
+/** Test-only: number of live buckets. */
+export function __rateLimitBucketCountForTests(): number {
+  return buckets.size;
 }
