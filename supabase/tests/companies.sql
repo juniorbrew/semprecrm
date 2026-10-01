@@ -132,6 +132,8 @@ INSERT INTO deals(id, user_id, account_id, pipeline_id, stage_id, title, company
  '54000000-0000-4000-8000-0000000000f1', '54000000-0000-4000-8000-0000000000a1', 'Pão para o ano', '54000000-0000-4000-8000-0000000000e3' FROM ids;
 
 -- ---- RLS: owner of account B sees nothing of A ---------------
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '54000000-0000-4000-8000-00000000000b', true);
 SELECT pg_temp.assert_true((SELECT count(*) = 1 FROM companies), 'B sees only its own company');

@@ -32,7 +32,7 @@ export const DEFAULT_BRANDING: Branding = {
 
 export const BRANDING_LIMITS = {
   app_name: { max: 40 },
-  logo: { maxBytes: 512 * 1024, mimeTypes: ['image/png', 'image/svg+xml', 'image/webp'] },
+  logo: { maxBytes: 512 * 1024, mimeTypes: ['image/png', 'image/webp'] },
 } as const;
 
 /** Curated palette offered in Settings → Marca next to the free hex field. */

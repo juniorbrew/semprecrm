@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -40,9 +41,10 @@ export async function GET() {
   }
   const limit = checkRateLimit(`wa-config:verify:${ctx.userId}`, RATE_LIMITS.adminAction)
   if (!limit.success) return rateLimitResponse(limit)
-  const { supabase, accountId } = ctx
+  const { accountId } = ctx
 
-  const { data: config } = await supabase
+  // Service role: the token columns are server-only (migration 076).
+  const { data: config } = await supabaseAdmin()
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', accountId)

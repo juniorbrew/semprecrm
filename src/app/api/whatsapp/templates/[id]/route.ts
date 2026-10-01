@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { createClient } from '@/lib/supabase/server'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   deleteMessageTemplate,
@@ -152,7 +153,8 @@ export async function PATCH(
     }
 
     if (!isDryRun()) {
-      const { data: config, error: configError } = await supabase
+      // Service role: the token is server-only (migration 076).
+      const { data: config, error: configError } = await supabaseAdmin()
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
@@ -305,7 +307,8 @@ export async function DELETE(
     }
 
     if (existing.meta_template_id && !isDryRun()) {
-      const { data: config, error: configError } = await supabase
+      // Service role: the token is server-only (migration 076).
+      const { data: config, error: configError } = await supabaseAdmin()
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)

@@ -57,6 +57,8 @@ BEGIN
 END $$;
 GRANT EXECUTE ON FUNCTION pg_temp.page_n(uuid[], text, text, text), pg_temp.count_of(text, uuid[], text) TO authenticated;
 
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-00000000000a', true);
 

@@ -56,6 +56,8 @@ INSERT INTO conversations(id, user_id, account_id, contact_id, status, last_mess
  ((SELECT conv_b FROM ids), '71000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ids), '71000000-0000-4000-8000-0000000000d4', 'open', now(), now());
 
 -- ---- categories: RLS ------------------------------------------------
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '71000000-0000-4000-8000-00000000000a', true);
 INSERT INTO conversation_categories(id, account_id, name, description, color, default_priority) VALUES

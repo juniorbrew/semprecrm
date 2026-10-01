@@ -9,6 +9,15 @@ const h = vi.hoisted(() => ({ role: 'viewer' as string | null }))
 
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
 
+// The token is read with the service role (migration 076).
+vi.mock('@/lib/flows/admin-client', () => {
+  const b: Record<string, unknown> = {}
+  b.select = () => b
+  b.eq = () => b
+  b.single = async () => ({ data: { access_token: 'enc' }, error: null })
+  return { supabaseAdmin: () => ({ from: () => b }) }
+})
+
 vi.mock('@/lib/auth/account', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/account')>()
   const b: Record<string, unknown> = {}

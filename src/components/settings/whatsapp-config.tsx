@@ -250,7 +250,7 @@ function WhatsAppOfficialConfig() {
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
-  const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
+  const [config, setConfig] = useState<Omit<WhatsAppConfigType, 'access_token' | 'verify_token'> | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -338,10 +338,11 @@ function WhatsAppOfficialConfig() {
       // original author) to `account_id` so every member of the
       // account sees the same saved configuration. UNIQUE(account_id)
       // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
+      // remains accurate. The token columns are not readable by the
+      // browser (migration 076); the form shows a masked placeholder.
       const { data, error } = await supabase
         .from('whatsapp_config')
-        .select('*')
+        .select('id, user_id, phone_number_id, waba_id, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, created_at, updated_at')
         .eq('account_id', acctId)
         .maybeSingle();
 

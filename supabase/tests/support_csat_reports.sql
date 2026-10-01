@@ -56,6 +56,8 @@ INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
 -- =====================================================================
 -- 074: settings, RLS
 -- =====================================================================
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '75000000-0000-4000-8000-00000000000a', true);
 INSERT INTO csat_settings(account_id, enabled, delay_minutes) VALUES ((SELECT acc_a FROM ids), true, 5);

@@ -5,6 +5,7 @@ import {
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
@@ -138,7 +139,8 @@ export async function POST() {
     const limit = checkRateLimit(`wa-templates:sync:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
-    const { data: config, error: configError } = await supabase
+    // Service role: the token is server-only (migration 076).
+    const { data: config, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('*')
       .eq('account_id', accountId)

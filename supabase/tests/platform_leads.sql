@@ -27,6 +27,8 @@ DO $$ BEGIN
   RAISE EXCEPTION 'wrong source accepted';
 EXCEPTION WHEN check_violation THEN NULL; END $$;
 
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET LOCAL ROLE anon;
 DO $$ BEGIN PERFORM * FROM public.leads; RAISE EXCEPTION 'anon select accepted'; EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 DO $$ BEGIN PERFORM public.platform_list_leads(); RAISE EXCEPTION 'anon rpc accepted'; EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;

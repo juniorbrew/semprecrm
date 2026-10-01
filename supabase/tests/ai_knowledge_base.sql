@@ -75,6 +75,8 @@ SELECT pg_temp.assert_true(
   'search without a session returns nothing');
 
 -- ---- admin (owner A) -----------------------------------------
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-00000000000a', true);
 

@@ -100,7 +100,7 @@ export function BrandingSettings() {
     e.target.value = '';
     if (!file) return;
     if (!(BRANDING_LIMITS.logo.mimeTypes as readonly string[]).includes(file.type)) {
-      toast.error(t('Use a PNG, SVG or WebP image.'));
+      toast.error(t('Use a PNG or WebP image.'));
       return;
     }
     if (file.size > BRANDING_LIMITS.logo.maxBytes) {
@@ -266,7 +266,7 @@ export function BrandingSettings() {
             <CardHeader>
               <CardTitle className="text-foreground">{t('Logo')}</CardTitle>
               <CardDescription className="text-muted-foreground">
-                {t('Square works best. PNG, SVG or WebP up to 512 KB; it replaces the default mark in the sidebar.')}
+                {t('Square works best. PNG or WebP up to 512 KB; it replaces the default mark in the sidebar.')}
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-3">

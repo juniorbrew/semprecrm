@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
+// The service client (WhatsApp token, suppression list) reads the same fake database.
+const svc = vi.hoisted(() => ({ db: null as null | { client: (o?: { service?: boolean }) => unknown } }));
+vi.mock('@/lib/automations/admin-client', () => ({
+  supabaseAdmin: () => svc.db!.client({ service: true }),
+}));
 
 import {
   newLockToken,
@@ -28,6 +33,7 @@ function seed(
   bodyText = 'Olá {{1}}',
 ): FakeDb {
   const db = new FakeDb();
+  svc.db = db;
   db.seed('broadcasts', [
     {
       id: BC,

@@ -80,6 +80,8 @@ SELECT pg_temp.assert_true((SELECT last_agent_message_at IS NOT NULL FROM conver
 UPDATE conversations SET assigned_agent_id = '66000000-0000-4000-8000-00000000000d', ai_paused_until = NULL WHERE id = (SELECT conv_a FROM ids);
 SELECT pg_temp.assert_true((SELECT ai_paused_until IS NULL FROM conversations WHERE id = (SELECT conv_a FROM ids)), 'service-role assign (round-robin) does not pause');
 UPDATE conversations SET assigned_agent_id = NULL WHERE id = (SELECT conv_a FROM ids);
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '66000000-0000-4000-8000-00000000000d', true);
 UPDATE conversations SET assigned_agent_id = '66000000-0000-4000-8000-00000000000d' WHERE id = (SELECT conv_a FROM ids);

@@ -266,12 +266,15 @@ async function maybeCreateDeal(
   if (open && (open as Row[]).length > 0) return null
 
   // deals.assigned_to points at profiles.id, the source stores auth uid.
+  // A removed member is no longer in this account: leave the deal
+  // unassigned instead of tripping the same-account guard (migration 076).
   let assignedTo: string | null = null
   if (source.assignee_user_id) {
     const { data: prof } = await db
       .from('profiles')
       .select('id')
       .eq('user_id', source.assignee_user_id)
+      .eq('account_id', source.account_id)
       .maybeSingle()
     assignedTo = ((prof as Row | null)?.id as string | undefined) ?? null
   }

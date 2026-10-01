@@ -115,6 +115,8 @@ UPDATE conversations SET priority = 'urgent' WHERE id = (SELECT conv_1 FROM ids)
 SELECT pg_temp.assert_true((SELECT first_response_due_at IS NULL AND resolution_due_at IS NULL FROM conversations WHERE id = (SELECT conv_1 FROM ids)), 'no policy: a priority change stamps nothing');
 
 -- ---- sla_policies: RLS + CHECKs -------------------------------------------
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '72000000-0000-4000-8000-00000000000a', true);
 INSERT INTO sla_policies(account_id, priority, first_response_minutes, resolution_minutes) VALUES

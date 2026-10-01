@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
+// The WhatsApp token is read with the service role: same fake database.
 
 // The service client reads the same in-memory DB as the test's member client.
 const svc = vi.hoisted(() => ({ db: null as null | { client: (o?: { service?: boolean }) => unknown } }));

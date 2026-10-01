@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import {
   getMediaUrl,
@@ -34,7 +35,9 @@ export async function GET(
   }
 
   try {
-    const { data: config, error: configError } = await ctx.supabase
+    // Service role: the token columns are server-only (migration 076);
+    // the session's account is the access rule.
+    const { data: config, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('access_token')
       .eq('account_id', ctx.accountId)

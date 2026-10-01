@@ -75,6 +75,8 @@ SELECT (SELECT acc_a FROM ids), '70000000-0000-4000-8000-0000000000f3', 'T' || g
 INSERT INTO contact_notes(contact_id, user_id, account_id, note_text) VALUES
  ((SELECT c2 FROM ids), '70000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ids), 'segredo B');
 
+-- 076 closes new functions by default: open this script's pg_temp helpers.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '70000000-0000-4000-8000-00000000000a', true);
 

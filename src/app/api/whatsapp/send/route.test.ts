@@ -46,7 +46,9 @@ vi.mock('@/lib/rate-limit', () => ({
 }))
 vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => ({
-    from: () => {
+    from: (table: string) => {
+      // The WhatsApp token is read with the service role (migration 076).
+      if (table === 'whatsapp_config') return builder(table)
       const b: Record<string, unknown> = {
         update: () => b,
         eq: () => b,
