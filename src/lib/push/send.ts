@@ -18,6 +18,8 @@ import webpush, { WebPushError, type PushSubscription as WebPushSubscription } f
 
 import { mediaUrlForPublic } from '@/lib/storage/media-url'
 
+import { isAllowedPushEndpoint } from './endpoint'
+
 export interface PushPayload {
   title: string
   body: string
@@ -137,13 +139,16 @@ export async function sendPushToUsers(
     return { ...EMPTY, failed: 1 }
   }
   const excluded = new Set(delivery?.excludeSubscriptionIds ?? [])
-  const rows = ((data ?? []) as PushSubscriptionRow[]).filter((row) => !excluded.has(row.id))
-  if (rows.length === 0) return { ...EMPTY }
+  const loaded = ((data ?? []) as PushSubscriptionRow[]).filter((row) => !excluded.has(row.id))
+  // Rows saved before the endpoint allowlist existed are never POSTed to.
+  const rows = loaded.filter((row) => isAllowedPushEndpoint(row.endpoint))
+  let failed = loaded.length - rows.length
+  if (failed) console.warn('[push] skipped subscriptions with a non push-service endpoint:', failed)
+  if (rows.length === 0) return { ...EMPTY, failed }
 
   const message = buildPushMessage(payload)
   const gone: string[] = []
   const ok: string[] = []
-  let failed = 0
 
   await Promise.all(
     rows.map(async (row) => {
