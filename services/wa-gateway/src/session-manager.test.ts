@@ -951,3 +951,22 @@ describe("MemoryCache", () => {
     expect(c.get("b")).toBeUndefined();
   });
 });
+
+describe("ensurePrivateAuthDir (permissões das credenciais)", () => {
+  it.skipIf(process.platform === "win32")("deixa diretórios 0700 e arquivos 0600", async () => {
+    const { ensurePrivateAuthDir } = await import("./session-manager.js");
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const p = await import("node:path");
+    const root = await fsp.mkdtemp(p.join(os.tmpdir(), "wa-perm-"));
+    await fsp.chmod(root, 0o755);
+    const dir = p.join(root, "acct");
+    await fsp.mkdir(dir, { mode: 0o755 });
+    await fsp.writeFile(p.join(dir, "creds.json"), "{}", { mode: 0o644 });
+    await ensurePrivateAuthDir(root, dir);
+    expect((await fsp.stat(root)).mode & 0o777).toBe(0o700);
+    expect((await fsp.stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await fsp.stat(p.join(dir, "creds.json"))).mode & 0o777).toBe(0o600);
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+});
