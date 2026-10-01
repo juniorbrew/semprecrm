@@ -22,7 +22,7 @@ export async function GET() {
     .from('automations')
     .select('*')
     .order('created_at', { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return toErrorResponse(error)
   return NextResponse.json({ automations: data ?? [] })
 }
 

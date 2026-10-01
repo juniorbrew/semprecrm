@@ -57,11 +57,12 @@ function makeDb(state: {
 }) {
   function builder(table: string) {
     const ops = { type: 'select' as string, payload: undefined as Record<string, unknown> | undefined }
+    const filters: [string, unknown][] = []
     const b: Record<string, unknown> = {
       select: () => b,
       insert: (p: Record<string, unknown>) => ((ops.type = 'insert'), (ops.payload = p), b),
       update: (p: Record<string, unknown>) => ((ops.type = 'update'), (ops.payload = p), b),
-      eq: () => b,
+      eq: (c: string, v: unknown) => (filters.push([c, v]), b),
       limit: () => b,
       maybeSingle: () => Promise.resolve(resolve()),
       then: (onF: (v: unknown) => unknown) => Promise.resolve(resolve()).then(onF),
@@ -71,7 +72,7 @@ function makeDb(state: {
         return { data: state.channel === undefined ? null : { channel: state.channel }, error: null }
       }
       if (table === 'conversations' && ops.type === 'update') {
-        state.updates.push(ops.payload ?? {})
+        state.updates.push({ ...(ops.payload ?? {}), __filters: filters })
         return { data: null, error: null }
       }
       if (table === 'contacts') return { data: state.contact ?? null, error: null }
@@ -111,6 +112,7 @@ describe('engineSendViaQr', () => {
       new Response(JSON.stringify({ message_id: 'B-1' }), { status: 200 }),
     )
     const state = {
+      channel: 'qr',
       contact: { id: 'c-1', phone: '+55 (11) 99999-0000' },
       inserted: [] as Record<string, unknown>[],
       updates: [] as Record<string, unknown>[],
@@ -133,6 +135,24 @@ describe('engineSendViaQr', () => {
       channel: 'qr',
     })
     expect(state.updates[0]).toMatchObject({ last_message_text: 'Bem-vindo!' })
+    expect(state.updates[0].__filters).toContainEqual(['account_id', 'acct-1'])
+  })
+
+  it('refuses a conversation outside the account/contact before sending', async () => {
+    // No conversation row matches id + account_id + contact_id.
+    const state = { contact: { id: 'c-1', phone: '5511999990000' }, inserted: [], updates: [] }
+    await expect(
+      engineSendViaQr(makeDb(state), {
+        accountId: 'acct-1',
+        conversationId: 'conv-of-other-tenant',
+        contactId: 'c-1',
+        text: 'x',
+        contentType: 'text',
+      }),
+    ).rejects.toThrow(/conversation not found/)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(state.inserted).toHaveLength(0)
+    expect(state.updates).toHaveLength(0)
   })
 
   it('refuses a contact outside the account', async () => {
@@ -151,7 +171,7 @@ describe('engineSendViaQr', () => {
 
   it('surfaces a gateway outage as an error without persisting', async () => {
     fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'))
-    const state = { contact: { id: 'c-1', phone: '5511999990000' }, inserted: [], updates: [] }
+    const state = { channel: 'qr', contact: { id: 'c-1', phone: '5511999990000' }, inserted: [], updates: [] }
     await expect(
       engineSendViaQr(makeDb(state), {
         accountId: 'acct-1',
@@ -162,5 +182,46 @@ describe('engineSendViaQr', () => {
       }),
     ).rejects.toThrow(/gateway/i)
     expect(state.inserted).toHaveLength(0)
+  })
+
+  describe('send_media (flows / automations)', () => {
+    beforeEach(() => {
+      vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase')
+      vi.stubEnv('SUPABASE_INTERNAL_URL', 'http://kong.internal:8000')
+    })
+    afterEach(() => vi.unstubAllEnvs())
+
+    const send = (url: string, state = { channel: 'qr', contact: { id: 'c-1', phone: '5511999990000' }, inserted: [] as Record<string, unknown>[], updates: [] }) =>
+      engineSendViaQr(makeDb(state), {
+        accountId: 'acct-1',
+        conversationId: 'conv-1',
+        contactId: 'c-1',
+        media: { url, mimetype: 'application/pdf', filename: 'a.pdf' },
+        contentType: 'document',
+      })
+
+    it('own flow-media object → internal storage URL to the gateway, stored form in the row', async () => {
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ message_id: 'B-9' }), { status: 200 }))
+      const state = { channel: 'qr', contact: { id: 'c-1', phone: '5511999990000' }, inserted: [] as Record<string, unknown>[], updates: [] }
+      const stored = '/supabase/storage/v1/object/public/flow-media/account-acct-1/1-a.pdf'
+      await send(stored, state)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).media.url).toBe(
+        'http://kong.internal:8000/storage/v1/object/public/flow-media/account-acct-1/1-a.pdf',
+      )
+      expect(state.inserted[0]).toMatchObject({ media_url: stored })
+    })
+
+    it.each([
+      './.env',
+      '//etc/passwd',
+      'file:///etc/passwd',
+      'http://169.254.169.254/latest/meta-data/',
+      'https://evil.example/a.pdf',
+      '/supabase/storage/v1/object/public/flow-media/account-outra/1-a.pdf',
+      '/supabase/../rest/v1/contacts',
+    ])('refuses %s with status 400 and never calls the gateway', async (url) => {
+      await expect(send(url)).rejects.toMatchObject({ status: 400, code: 'invalid_media_url' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
   })
 })

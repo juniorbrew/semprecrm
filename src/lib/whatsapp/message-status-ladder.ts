@@ -9,6 +9,8 @@
 // `failed` is a side branch that is only valid from `sending`/`sent`.
 // ============================================================
 
+import type { SupabaseClient } from '@supabase/supabase-js'
+
 import type { MessageStatus } from '@/types'
 
 export const MESSAGE_STATUS_LADDER: readonly MessageStatus[] = ['sending', 'sent', 'delivered', 'read']
@@ -34,4 +36,40 @@ export function statusesBefore(incoming: MessageAckStatus): MessageStatus[] {
 export function isForwardStatusMove(current: MessageStatus | null | undefined, incoming: MessageAckStatus): boolean {
   if (current == null) return true
   return statusesBefore(incoming).includes(current)
+}
+
+/**
+ * Forward-only status update for the row(s) with provider id `messageId`,
+ * limited to conversations of `accountId`. Provider ids are not unique
+ * across tenants (and the QR ack's id comes from the gateway body), so an
+ * unscoped `.eq('message_id', …)` could touch another account's message.
+ * Two steps because PostgREST cannot filter an UPDATE through a join; the
+ * `.in('status', allowedFrom)` guard stays atomic in the second step.
+ */
+export async function updateAccountMessageStatus(
+  db: SupabaseClient,
+  args: {
+    accountId: string
+    messageId: string
+    channel?: 'qr' | 'official'
+    patch: Record<string, unknown>
+    allowedFrom: readonly string[]
+  },
+): Promise<{ error: { message: string; code?: string } | null }> {
+  let query = db
+    .from('messages')
+    .select('id, conversations!inner(account_id)')
+    .eq('message_id', args.messageId)
+    .eq('conversations.account_id', args.accountId)
+  if (args.channel) query = query.eq('channel', args.channel)
+  const { data, error } = await query
+  if (error) return { error }
+  const ids = ((data ?? []) as { id: string }[]).map((r) => r.id)
+  if (ids.length === 0) return { error: null }
+  const { error: updErr } = await db
+    .from('messages')
+    .update(args.patch)
+    .in('id', ids)
+    .in('status', [...args.allowedFrom])
+  return { error: updErr }
 }

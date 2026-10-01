@@ -61,6 +61,9 @@ const notFound = () => NextResponse.json({ ok: false, error: 'Source not found' 
 
 export async function GET(_request: Request, { params }: RouteContext) {
   const { token } = await params
+  // Shape check first: a malformed token must not mint a rate-limit
+  // bucket (unbounded keys) nor reach the DB.
+  if (!isLeadSourceToken(token)) return notFound()
   const limit = checkRateLimit(`lead-webhook:${token}`, LEAD_WEBHOOK_LIMIT)
   if (!limit.success) return rateLimitResponse(limit)
 
@@ -71,6 +74,9 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
 export async function POST(request: Request, { params }: RouteContext) {
   const { token } = await params
+  // Shape check first: a malformed token must not mint a rate-limit
+  // bucket (unbounded keys) nor reach the DB.
+  if (!isLeadSourceToken(token)) return notFound()
   const limit = checkRateLimit(`lead-webhook:${token}`, LEAD_WEBHOOK_LIMIT)
   if (!limit.success) return rateLimitResponse(limit)
 

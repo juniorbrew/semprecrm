@@ -10,6 +10,7 @@ import {
   isAuditAction,
   logAudit,
   sanitizeAuditMetadata,
+  sanitizeClientAuditMetadata,
 } from './audit'
 
 type Row = Record<string, unknown>
@@ -182,5 +183,37 @@ describe('logAudit', () => {
     })
     expect(ok).toBe(false)
     expect(inserted).toHaveLength(0)
+  })
+})
+
+describe('sanitizeClientAuditMetadata', () => {
+  it('keeps only the allowlisted scalar fields for the action', () => {
+    expect(
+      sanitizeClientAuditMetadata(AUDIT_ACTIONS.DEAL_DELETED, {
+        name: 'Deal',
+        value: 10,
+        contact_id: null,
+        note: 'admin approved a refund of R$ 10.000',
+        nested: { a: 1 },
+      }),
+    ).toEqual({ name: 'Deal', value: 10, contact_id: null })
+  })
+
+  it('drops objects as values, clips strings and bounds ids', () => {
+    const out = sanitizeClientAuditMetadata(AUDIT_ACTIONS.CONTACT_DELETED, {
+      contact_name: { evil: true },
+      phone: 'x'.repeat(5000),
+      ids: [...Array.from({ length: 500 }, (_, i) => `id-${i}`), 42, 'y'.repeat(100)],
+      bulk: true,
+    })
+    expect(out.contact_name).toBeUndefined()
+    expect((out.phone as string).length).toBe(200)
+    expect((out.ids as string[]).length).toBe(200)
+    expect(out.bulk).toBe(true)
+  })
+
+  it('returns {} for non-objects', () => {
+    expect(sanitizeClientAuditMetadata(AUDIT_ACTIONS.COMPANY_DELETED, 'x')).toEqual({})
+    expect(sanitizeClientAuditMetadata(AUDIT_ACTIONS.COMPANY_DELETED, [1])).toEqual({})
   })
 })

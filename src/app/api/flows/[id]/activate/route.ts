@@ -113,7 +113,7 @@ export async function POST(
     .select()
     .maybeSingle()
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return toErrorResponse(error)
   }
   return NextResponse.json({ flow: updated })
 }

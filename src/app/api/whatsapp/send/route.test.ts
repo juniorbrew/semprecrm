@@ -148,11 +148,19 @@ beforeEach(() => {
   h.state.activeOther = null
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = 'shh'
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://sb.test')
+  vi.stubEnv('SUPABASE_INTERNAL_URL', 'http://kong.internal:8000')
   vi.stubGlobal('fetch', fetchMock)
   fetchMock.mockReset()
+  h.meta.sendMediaMessage.mockClear()
 })
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
+
+const OWN_MEDIA = 'https://sb.test/storage/v1/object/public/chat-media/account-acct-1/1-foto.png'
 
 describe('POST /api/whatsapp/send — QR conversations', () => {
   it('sends text through the gateway and stores channel=qr with the gateway id', async () => {
@@ -185,16 +193,43 @@ describe('POST /api/whatsapp/send — QR conversations', () => {
       request({
         conversation_id: 'conv-1',
         message_type: 'image',
-        media_url: 'https://x/chat-media/foto.png',
+        media_url: OWN_MEDIA,
         content_text: 'legenda',
       }),
     )
     expect(res.status).toBe(200)
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
       to: '5511999990000',
-      media: { url: 'https://x/chat-media/foto.png', mimetype: 'image/png', caption: 'legenda' },
+      media: {
+        // rebuilt on the internal storage route the gateway allowlists
+        url: 'http://kong.internal:8000/storage/v1/object/public/chat-media/account-acct-1/1-foto.png',
+        mimetype: 'image/png',
+        caption: 'legenda',
+      },
     })
-    expect(h.state.inserted[0]).toMatchObject({ content_type: 'image', channel: 'qr' })
+    // the row keeps the stored form
+    expect(h.state.inserted[0]).toMatchObject({ content_type: 'image', channel: 'qr', media_url: OWN_MEDIA })
+  })
+
+  it.each([
+    './.env',
+    '//etc/passwd',
+    '/etc/passwd',
+    'file:///etc/passwd',
+    'data:image/png;base64,AAAA',
+    'http://127.0.0.1:3201/health',
+    'http://169.254.169.254/latest/meta-data/',
+    'https://evil.example/foto.png',
+    'https://sb.test@evil.example/storage/v1/object/public/chat-media/account-acct-1/x.png',
+    'https://sb.test/storage/v1/object/public/chat-media/account-acct-1/../../../rest/v1/x',
+    'https://sb.test/storage/v1/object/public/chat-media/account-OUTRA/1-foto.png',
+  ])('400 for media_url %s, gateway never called, nothing stored', async (media_url) => {
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'document', media_url }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ code: 'invalid_media_url' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(h.meta.sendMediaMessage).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
   })
 
   it('400 for a template on a QR conversation', async () => {
@@ -264,6 +299,31 @@ describe('POST /api/whatsapp/send — official conversations (unchanged)', () =>
     expect(h.meta.sendTextMessage).toHaveBeenCalledTimes(1)
     expect(h.state.inserted[0]).toMatchObject({ message_id: 'wamid.META' })
     expect(h.state.inserted[0]).not.toHaveProperty('channel')
+  })
+
+  it('media link sent to Meta is rebuilt from the validated object path', async () => {
+    h.state.conversation.channel = 'official'
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://www.semprecrm.com.br')
+    const stored = '/supabase/storage/v1/object/public/chat-media/account-acct-1/1-a.pdf'
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'document', media_url: stored }))
+    expect(res.status).toBe(200)
+    expect(h.meta.sendMediaMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ link: `https://www.semprecrm.com.br${stored}` }),
+    )
+  })
+
+  it('backslash traversal is refused on the Meta channel too', async () => {
+    h.state.conversation.channel = 'official'
+    const res = await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'document',
+        media_url: 'https://sb.test/storage/v1/object/public/chat-media/account-acct-1/a\\..\\..\\..\\x',
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(h.meta.sendMediaMessage).not.toHaveBeenCalled()
   })
 
   it('treats a row without channel (pre-026) as official', async () => {

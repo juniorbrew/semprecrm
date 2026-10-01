@@ -403,6 +403,50 @@ export const CLIENT_AUDIT_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditActio
   AUDIT_ACTIONS.AUTOMATION_DEACTIVATED,
 ])
 
+/**
+ * Metadata keys a client may send per client-recordable action (the
+ * fields the pages actually pass to `recordAudit`). Anything else is
+ * dropped, so an agent cannot plant free-form text in the admin log.
+ */
+const CLIENT_AUDIT_METADATA_KEYS: Partial<Record<AuditAction, readonly string[]>> = {
+  [AUDIT_ACTIONS.CONTACT_DELETED]: ['contact_name', 'phone', 'count', 'ids', 'bulk'],
+  [AUDIT_ACTIONS.DEAL_DELETED]: ['name', 'value', 'contact_id'],
+  [AUDIT_ACTIONS.COMPANY_DELETED]: ['name', 'cnpj'],
+  [AUDIT_ACTIONS.AUTOMATION_ACTIVATED]: ['name'],
+  [AUDIT_ACTIONS.AUTOMATION_DEACTIVATED]: ['name'],
+}
+const CLIENT_AUDIT_STRING_MAX = 200
+const CLIENT_AUDIT_IDS_MAX = 200
+
+/**
+ * Reduce client-supplied metadata to the per-action allowlist: scalar
+ * values only (strings clipped), plus `ids` as a bounded string list.
+ */
+export function sanitizeClientAuditMetadata(
+  action: AuditAction,
+  raw: unknown,
+): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const allowed = CLIENT_AUDIT_METADATA_KEYS[action] ?? []
+  const src = raw as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of allowed) {
+    const v = src[key]
+    if (key === 'ids') {
+      if (Array.isArray(v)) {
+        out.ids = v
+          .filter((x): x is string => typeof x === 'string' && x.length <= 64)
+          .slice(0, CLIENT_AUDIT_IDS_MAX)
+      }
+    } else if (typeof v === 'string') {
+      out[key] = v.slice(0, CLIENT_AUDIT_STRING_MAX)
+    } else if (v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) {
+      out[key] = v
+    }
+  }
+  return out
+}
+
 /** Metadata is bounded so a rogue caller cannot stuff megabytes in. */
 export const AUDIT_METADATA_MAX_BYTES = 8 * 1024
 

@@ -21,7 +21,7 @@ import { audit } from '@/lib/audit-server';
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { budgetMonthKey, monthStartInTimeZone } from '@/lib/ai/budget';
 import { aiErrorResponse } from '@/lib/ai/http';
-import { AI_LIMITS, isAiProvider, type AiProvider } from '@/lib/ai/providers';
+import { AI_LIMITS, AI_PROVIDER_LABELS, isAiProvider, type AiProvider } from '@/lib/ai/providers';
 import { parseAiSettingsUpdate } from '@/lib/ai/settings';
 import {
   AI_SETTINGS_COLUMNS,
@@ -29,6 +29,8 @@ import {
   type AiCredentialPublic,
   type AiSettingsRow,
 } from '@/lib/ai/store';
+import { supabaseAdmin } from '@/lib/automations/admin-client';
+import { notifyAccountAdmins } from '@/lib/push/notify';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -152,6 +154,16 @@ export async function PUT(request: Request) {
         entityType: 'ai_settings',
         entityId: ctx.accountId,
         metadata: { keys, changes },
+      });
+    }
+    // Customer text now goes to another provider: tell every owner / admin
+    // (not on the first setup, when there was no provider before).
+    if (changes.provider && current?.provider && next.provider && isAiProvider(next.provider)) {
+      await notifyAccountAdmins(supabaseAdmin(), ctx.accountId, {
+        title: 'Provedor de IA alterado',
+        body: `A IA passou a usar ${AI_PROVIDER_LABELS[next.provider]}. Se não foi você, revise em Configurações › IA.`,
+        url: '/settings?tab=ai',
+        tag: 'ai-provider',
       });
     }
 

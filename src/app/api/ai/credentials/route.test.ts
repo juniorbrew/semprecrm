@@ -8,11 +8,18 @@ const h = vi.hoisted(() => ({
   saved: [] as Record<string, unknown>[],
   audits: [] as Record<string, unknown>[],
   settingsUpdates: [] as Record<string, unknown>[],
+  pushes: [] as Record<string, unknown>[],
 }));
 
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn() }));
 vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => ({}) }));
 vi.mock('@/lib/audit-server', () => ({ audit: vi.fn(async (e: Record<string, unknown>) => h.audits.push(e)) }));
+vi.mock('@/lib/push/notify', () => ({
+  notifyAccountAdmins: vi.fn(async (_db: unknown, accountId: string, payload: Record<string, unknown>) => {
+    h.pushes.push({ accountId, ...payload });
+    return { users: 1, sent: 1, failed: 0, removed: 0, configured: true };
+  }),
+}));
 vi.mock('@/lib/ai/client', () => ({ validateProviderKey: h.validate }));
 vi.mock('@/lib/ai/store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/ai/store')>();
@@ -61,6 +68,7 @@ beforeEach(() => {
   h.saved = [];
   h.audits = [];
   h.settingsUpdates = [];
+  h.pushes = [];
   h.validate.mockResolvedValue({ ok: true, models: ['gpt-4.1-mini'] });
 });
 
@@ -76,6 +84,17 @@ describe('/api/ai/credentials', () => {
     expect(String(h.saved[0].api_key_enc)).not.toContain('SUPERSECRET');
     expect(JSON.stringify(h.audits)).not.toContain('SUPERSECRET');
     expect(h.audits[0]).toMatchObject({ action: 'ai.key_saved', metadata: { provider: 'openai', last4: 'LAST' } });
+    // owners / admins are told; the key itself never goes in the push
+    expect(h.pushes).toHaveLength(1);
+    expect(h.pushes[0]).toMatchObject({ accountId: 'acc-1', title: 'Chave de IA alterada', url: '/settings?tab=ai' });
+    expect(String(h.pushes[0].body)).toContain('final LAST');
+    expect(JSON.stringify(h.pushes)).not.toContain('SUPERSECRET');
+  });
+
+  it('a re-test of the saved key or a rejected key notifies nobody', async () => {
+    h.validate.mockResolvedValue({ ok: false, code: 'invalid_key' });
+    await post({ provider: 'openai', api_key: KEY });
+    expect(h.pushes).toHaveLength(0);
   });
 
   it('does not save a key the provider rejects', async () => {
@@ -100,5 +119,6 @@ describe('/api/ai/credentials', () => {
     expect(res.status).toBe(200);
     expect(h.settingsUpdates[0]).toMatchObject({ enabled: false });
     expect(h.audits[0]).toMatchObject({ action: 'ai.key_removed' });
+    expect(h.pushes[0]).toMatchObject({ accountId: 'acc-1', title: 'Chave de IA removida' });
   });
 });

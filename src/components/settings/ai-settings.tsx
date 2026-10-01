@@ -564,6 +564,7 @@ export function AiSettings() {
             />
             <p className="text-sm text-muted-foreground">
               {t("Tone, what the company does, what the assistant may and may not say.")}{" "}
+              {t("No passwords or confidential data: the assistant may repeat them.")}{" "}
               <span data-no-translate className="tabular-nums">
                 {instructions.length}/{AI_LIMITS.instructionsMaxChars}
               </span>

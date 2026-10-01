@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/flows/admin-client'
-import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
+import {
+  isMessageAckStatus,
+  statusesBefore,
+  updateAccountMessageStatus,
+} from '@/lib/whatsapp/message-status-ladder'
 import { isGatewayRequest } from '@/lib/whatsapp/qr-gateway'
 
 /**
@@ -36,12 +40,15 @@ export async function POST(request: Request) {
     )
   }
 
-  const { error } = await supabaseAdmin()
-    .from('messages')
-    .update({ status })
-    .eq('message_id', messageId)
-    .eq('channel', 'qr')
-    .in('status', statusesBefore(status))
+  // Scoped to the account's conversations: the id alone could match a
+  // message of another tenant.
+  const { error } = await updateAccountMessageStatus(supabaseAdmin(), {
+    accountId,
+    messageId,
+    channel: 'qr',
+    patch: { status },
+    allowedFrom: statusesBefore(status),
+  })
 
   if (error) {
     console.error('[channels/qr/ack] update failed:', error.message)

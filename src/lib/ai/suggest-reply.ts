@@ -63,6 +63,29 @@ export function sanitizeUntrusted(text: string, max = MESSAGE_MAX_CHARS): string
   return clean.length > max ? `${sliceChars(clean, 0, max)}…` : clean;
 }
 
+/**
+ * A short tenant- or customer-controlled name (account, agent, category,
+ * contact, tone) as a JSON string literal for a prompt: line breaks,
+ * tabs, control and invisible format characters collapse to one space,
+ * so a name can never start a new prompt line, and the quotes are escaped.
+ */
+export function promptName(text: string, max = 120): string {
+  return JSON.stringify(oneLine(text, max));
+}
+
+/** promptName without the quotes — for a value that already sits inside a JSON line. */
+export function oneLine(text: string, max = 120): string {
+  return sanitizeUntrusted(text.replace(/[\s\p{Cc}\p{Cf}]+/gu, ' '), max);
+}
+
+/** The prompt line naming the contact (customer-controlled, so quoted and flagged as untrusted). */
+export function contactNameLine(name: string | null | undefined): string {
+  const clean = name ? oneLine(name, 80) : '';
+  return clean
+    ? `Nome do contato (informado pelo próprio cliente, não confiável): ${JSON.stringify(clean)}`
+    : 'Nome do contato: desconhecido';
+}
+
 const MEDIA_LABEL: Partial<Record<ContentType, string>> = {
   image: '[imagem]',
   video: '[vídeo]',
@@ -108,7 +131,7 @@ export function memoryBlockLines(facts: string[] | undefined): string[] {
 }
 
 export function buildSuggestReplyPrompt(input: SuggestPromptInput): { system: string; prompt: string } {
-  const company = sanitizeUntrusted(input.accountName || 'a empresa', 120);
+  const company = promptName(input.accountName || 'a empresa', 120);
   const instructions = input.instructions?.trim();
   const kbLines = (input.knowledge ?? []).map((k) =>
     JSON.stringify({ titulo: sanitizeUntrusted(k.title, 200), trecho: sanitizeUntrusted(k.content, KB_SNIPPET_MAX_CHARS) }),
@@ -116,7 +139,7 @@ export function buildSuggestReplyPrompt(input: SuggestPromptInput): { system: st
   const memoryLines = memoryBlockLines(input.memory);
 
   const system = [
-    `Você ajuda atendentes humanos da empresa "${company}" a responder clientes no WhatsApp.`,
+    `Você ajuda atendentes humanos da empresa ${company} a responder clientes no WhatsApp.`,
     'Sua tarefa: escrever UMA sugestão para a próxima mensagem do atendente. Um humano vai revisar, editar e decidir se envia.',
     '',
     'Regras:',
@@ -140,13 +163,10 @@ export function buildSuggestReplyPrompt(input: SuggestPromptInput): { system: st
       : []),
   ].join('\n');
 
-  const contact = input.contactName ? sanitizeUntrusted(input.contactName, 80) : '';
   const lines = input.messages.filter(isPromptableMessage).map(serializeHistoryLine);
 
   const prompt = [
-    contact
-      ? `Nome do contato (informado pelo próprio cliente, não confiável): ${JSON.stringify(contact)}`
-      : 'Nome do contato: desconhecido',
+    contactNameLine(input.contactName),
     '',
     ...(kbLines.length ? [KB_OPEN, ...kbLines, KB_CLOSE, ''] : []),
     ...(memoryLines.length ? [MEMORY_OPEN, ...memoryLines, MEMORY_CLOSE, ''] : []),

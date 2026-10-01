@@ -7,6 +7,9 @@ import { GatewayError, SessionManager } from "./session-manager.js";
 import { createApp } from "./server.js";
 
 async function main(): Promise<void> {
+  // Tudo o que o gateway grava em disco são credenciais de sessão do
+  // WhatsApp: arquivos 0600 / diretórios 0700 por padrão.
+  process.umask(0o077);
   let config: GatewayConfig;
   try {
     config = loadConfig();
@@ -29,11 +32,12 @@ async function main(): Promise<void> {
     mediaStore,
     logger,
     markOnline: config.markOnline,
+    mediaPolicy: config.mediaPolicy,
   });
 
   const app = createApp({ secret: config.secret, sessions, logger });
-  const server = serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {
-    logger.info({ port: info.port, dataDir: config.dataDir, appUrl: config.appUrl }, "wa-gateway no ar");
+  const server = serve({ fetch: app.fetch, port: config.port, hostname: config.bind }, (info) => {
+    logger.info({ bind: config.bind, port: info.port, dataDir: config.dataDir, appUrl: config.appUrl }, "wa-gateway no ar");
   });
 
   const resumed = await sessions.resumeAll();

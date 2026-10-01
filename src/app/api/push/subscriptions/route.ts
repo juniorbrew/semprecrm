@@ -17,6 +17,7 @@ import { NextResponse } from 'next/server'
 
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { isAllowedPushEndpoint } from '@/lib/push/endpoint'
 import { isPushConfigured } from '@/lib/push/send'
 
 const MAX_ENDPOINT = 2048
@@ -70,9 +71,11 @@ export async function POST(request: Request) {
     }
     const sub = body.subscription
     const keys = isPlainObject(sub.keys) ? sub.keys : null
-    if (!isHttpsUrl(sub.endpoint)) {
+    // The server later POSTs to this URL (web-push): only browser push
+    // services are accepted, never an arbitrary / internal host.
+    if (!isAllowedPushEndpoint(sub.endpoint)) {
       return NextResponse.json(
-        { error: "'subscription.endpoint' must be an https URL" },
+        { error: "'subscription.endpoint' must be a browser push service URL" },
         { status: 400 },
       )
     }
