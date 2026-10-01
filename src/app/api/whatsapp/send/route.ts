@@ -25,6 +25,7 @@ import {
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
 import { maskPhone } from '@/lib/log-redact'
+import { extractChatMediaPath, isAccountMediaPath } from '@/lib/lgpd/anonymize'
 import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard'
 import {
   resolveTemplateRow,
@@ -143,6 +144,17 @@ export async function POST(request: Request) {
     if (isMediaKind && !media_url) {
       return NextResponse.json(
         { error: 'media_url is required for media messages' },
+        { status: 400 }
+      )
+    }
+
+    // A chat-media object of ANOTHER account must never be stored on our
+    // message: the LGPD scrub of this account would then delete (or keep
+    // pointing at) a file that is not ours.
+    const chatMediaPath = extractChatMediaPath(typeof media_url === 'string' ? media_url : null)
+    if (chatMediaPath && !isAccountMediaPath(chatMediaPath, accountId)) {
+      return NextResponse.json(
+        { error: 'media_url must be a file of this account', code: 'media_not_owned' },
         { status: 400 }
       )
     }

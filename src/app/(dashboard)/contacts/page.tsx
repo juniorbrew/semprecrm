@@ -60,6 +60,7 @@ import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
 
 const PAGE_SIZE = 25;
+const DELETE_CHUNK = 10;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
@@ -68,20 +69,20 @@ interface ContactWithTags extends Contact {
 /**
  * Deletes go through DELETE /api/contacts (admin+): the server removes
  * the contacts' chat media and profile photos, scrubs the personal text
- * the delete would leave behind and writes the audit row. Chunks of 50
- * (the route's cap). Returns the deleted ids and the first error.
+ * the delete would leave behind and writes the audit row. Chunks of 10
+ * (each contact is several storage + DB round trips; keeps a request short). Returns the deleted ids and the first error.
  */
 async function deleteContactsOnServer(
   ids: string[],
 ): Promise<{ deleted: string[]; error: string | null }> {
   const deleted: string[] = [];
   let error: string | null = null;
-  for (let i = 0; i < ids.length; i += 50) {
+  for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
     try {
       const res = await fetch('/api/contacts', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: ids.slice(i, i + 50) }),
+        body: JSON.stringify({ ids: ids.slice(i, i + DELETE_CHUNK) }),
       });
       const body = (await res.json().catch(() => null)) as {
         deleted?: string[];

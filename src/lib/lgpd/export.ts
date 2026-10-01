@@ -148,7 +148,10 @@ export async function buildContactExport(
         db.from('contact_tags').select('tag_id, tag:tags(id, name, color)').eq('contact_id', contactId).order('tag_id', { ascending: true }),
       ),
       load('companies', () =>
-        ordered(byContact('contact_companies', 'company_id, is_primary, created_at, company:companies(id, name)'), 'company_id'),
+        // contact_companies has no id column (PK contact_id, company_id).
+        byContact('contact_companies', 'company_id, is_primary, created_at, company:companies(id, name)').order('company_id', {
+          ascending: true,
+        }),
       ),
       load('conversations', () => ordered(byContact('conversations', '*'))),
       load('notes', () => ordered(byContact('contact_notes', 'id, note_text, user_id, created_at', false))),
@@ -185,7 +188,10 @@ export async function buildContactExport(
       load('csat', () => ordered(byContact('csat_responses', 'id, conversation_id, status, score, comment, sent_at, answered_at'), 'sent_at')),
       load('calendar_events', () =>
         ordered(
-          byContact('calendar_events', 'id, title, description, location, starts_at, ends_at, all_day, status, conversation_id, deal_id, task_id, source, created_at'),
+          byContact(
+            'calendar_events',
+            'id, title, description, location, starts_at, ends_at, all_day, status, conversation_id, deal_id, task_id, source, created_at',
+          ),
           'starts_at',
         ),
       ),
@@ -196,7 +202,9 @@ export async function buildContactExport(
     ])
 
   const conversationIds = convRows.map((r) => r.id as string)
-  const [messageRows, eventRows, convTaskRows] = await Promise.all([
+  const calendarCols =
+    'id, title, description, location, starts_at, ends_at, all_day, status, conversation_id, deal_id, task_id, source, created_at'
+  const [messageRows, eventRows, convTaskRows, convCalendarRows] = await Promise.all([
     load(
       'messages',
       (ids) =>
@@ -231,8 +239,21 @@ export async function buildContactExport(
         ),
       conversationIds,
     ),
+    load(
+      'calendar_by_conversation',
+      (ids) =>
+        ordered(db.from('calendar_events').select(calendarCols).eq('account_id', accountId).in('conversation_id', ids), 'starts_at'),
+      conversationIds,
+    ),
   ])
   delete manifest.tasks_by_conversation
+  delete manifest.calendar_by_conversation
+  const seenEvents = new Set(calendarByContact.map((e) => e.id))
+  const calendarRows = [...calendarByContact, ...convCalendarRows.filter((e) => !seenEvents.has(e.id))]
+  manifest.calendar_events = {
+    count: calendarRows.length,
+    complete: manifest.calendar_events.complete && !warnings.some((w) => w.startsWith('calendar_by_conversation')),
+  }
   const seenTasks = new Set(taskRowsByContact.map((t) => t.id))
   const taskRows = [...taskRowsByContact, ...convTaskRows.filter((t) => !seenTasks.has(t.id))]
   manifest.tasks = { count: taskRows.length, complete: manifest.tasks.complete && !warnings.some((w) => w.startsWith('tasks_by_conversation')) }
@@ -304,7 +325,7 @@ export async function buildContactExport(
     deals: dealRows,
     tasks: taskRows,
     task_comments: commentRows,
-    calendar_events: calendarByContact,
+    calendar_events: calendarRows,
     flow_runs: flowRows,
     lead_events: leadRows,
     ai_memories: memoryRows,

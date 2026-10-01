@@ -24,7 +24,7 @@ const now = () => new Date('2026-09-13T12:00:00.000Z')
 const NOW = '2026-09-13T12:00:00.000Z'
 
 const PUBLIC =
-  'http://127.0.0.1:56021/storage/v1/object/public/chat-media/account-abc/1700000000-foto.jpg'
+  'http://127.0.0.1:56021/storage/v1/object/public/chat-media/account-acc/1700000000-foto.jpg'
 
 type Row = Record<string, unknown>
 
@@ -86,7 +86,7 @@ function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Ro
 
 describe('extractChatMediaPath', () => {
   it('extracts the object path from a public URL', () => {
-    expect(extractChatMediaPath(PUBLIC)).toBe('account-abc/1700000000-foto.jpg')
+    expect(extractChatMediaPath(PUBLIC)).toBe('account-acc/1700000000-foto.jpg')
   })
   it('strips query strings and decodes percent-escapes', () => {
     expect(
@@ -107,11 +107,12 @@ describe('extractChatMediaPath', () => {
 })
 
 describe('generateAnonymousPhone', () => {
-  it('uses the anon- prefix with 8 hex chars by default', () => {
-    expect(generateAnonymousPhone()).toMatch(/^anon-[0-9a-f]{8}$/)
+  it('is anon- plus 8 letters — no digits, so phone_normalized is empty', () => {
+    expect(generateAnonymousPhone()).toMatch(/^anon-[a-p]{8}$/)
   })
-  it('accepts an injected generator', () => {
-    expect(generateAnonymousPhone(() => 'deadbeef')).toBe('anon-deadbeef')
+  it('maps an injected hex generator onto a–p', () => {
+    expect(generateAnonymousPhone(() => '0123abcf')).toBe('anon-abcdklmp')
+    expect(generateAnonymousPhone(() => 'deadbeef').replace(/\D/g, '')).toBe('')
   })
 })
 
@@ -137,7 +138,7 @@ describe('anonymizeContact', () => {
     expect(writes[0]).toMatchObject({ table: 'contacts', op: 'update' })
     expect(tables.contacts[0]).toMatchObject({
       name: ANONYMIZED_NAME,
-      phone: 'anon-deadbeef',
+      phone: 'anon-noknloop',
       email: null,
       company: null,
       avatar_url: null,
@@ -147,7 +148,7 @@ describe('anonymizeContact', () => {
     })
     // Chat media first, then the stored WhatsApp profile photo (migration 055).
     expect(removed).toEqual([
-      { bucket: 'chat-media', paths: ['account-abc/1700000000-foto.jpg'] },
+      { bucket: 'chat-media', paths: ['account-acc/1700000000-foto.jpg'] },
       { bucket: 'contact-avatars', paths: ['account-acc/c1'] },
     ])
     expect(tables.messages.map((m) => [m.content_text, m.media_url, m.error_details])).toEqual([
@@ -262,42 +263,90 @@ describe('anonymizeContact', () => {
     expect(tables.contacts[0].anonymized_at).toBeNull()
   })
 
-  it('retries the phone on a unique violation and gives up on other errors', async () => {
-    let n = 0
-    let calls = 0
-    const { db, tables } = makeFakeDb(seed(), {
-      fail: (t, op) => (t === 'contacts' && op === 'update' && calls++ === 0 ? { code: '23505', message: 'dup' } : null),
+  it('detects a concurrent anonymisation of the same contact (mark matched no row)', async () => {
+    const tables = seed()
+    const { db } = makeFakeDb(tables, {
+      fail: (t, op) => {
+        // Another request marks the contact between our read and our update.
+        if (t === 'contacts' && op === 'update' && !tables.contacts[0].anonymized_at) tables.contacts[0].anonymized_at = 'x'
+        return null
+      },
     })
-    await anonymizeContact(db, ACC, C1, { now, randomHex: () => `0000000${n++}`, secret: SECRET })
-    expect(tables.contacts[0].phone).toBe('anon-00000001')
+    await expect(anonymizeContact(db, ACC, C1, { now, secret: SECRET })).rejects.toMatchObject({ code: 'in_progress' })
+  })
 
-    const failing = makeFakeDb(seed(), { fail: (t, op) => (t === 'contacts' && op === 'update' ? { code: '42501', message: 'denied' } : null) })
-    await expect(anonymizeContact(failing.db, ACC, C1, { now, secret: SECRET })).rejects.toMatchObject({ code: 'db_error' })
+  it('never removes a chat-media object of another account — only drops the reference', async () => {
+    const foreign = PUBLIC.replace('account-acc/', 'account-other/')
+    const { db, tables, removed } = makeFakeDb(
+      seed({ messages: [{ id: 'm1', conversation_id: 'conv1', content_text: 'x', media_url: foreign }] }),
+    )
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(true)
+    expect(removed.filter((x) => x.bucket === 'chat-media')).toEqual([])
+    expect(tables.messages[0].media_url).toBeNull()
+  })
+
+  it('verifies before completing: data left behind by a racing writer gets another pass', async () => {
+    const tables = seed()
+    let injected = false
+    const { db } = makeFakeDb(tables, {
+      fail: (t, op) => {
+        // Right after the first scrub of tasks, a writer re-adds a named task.
+        if (t === 'tasks' && op === 'update' && !injected) {
+          injected = true
+          queueMicrotask(() => tables.tasks.push({ id: 't9', account_id: ACC, contact_id: C1, title: 'Ligar Ana' }))
+        }
+        return null
+      },
+    })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(true)
+    expect(tables.tasks.find((x) => x.id === 't9')?.title).toBe(ANONYMIZED_TASK_TITLE)
+  })
+
+  it('leaves the anonymisation incomplete when verification still finds data', async () => {
+    const tables = seed()
+    const { db } = makeFakeDb(tables, {
+      fail: (t, op) => {
+        // A writer keeps putting the name back right after each scrub.
+        if (t === 'deals' && op === 'update') queueMicrotask(() => (tables.deals[0].title = 'Ana Souza'))
+        return null
+      },
+    })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(false)
+    expect(res.warnings).toEqual(['verification: personal data remains in deals'])
+    expect(tables.contacts[0].anonymization_completed_at).toBeNull()
   })
 })
 
 describe('deleteContact', () => {
-  it('removes media, scrubs the SET NULL tables, detaches deals and deletes the row', async () => {
-    const { db, tables, removed } = makeFakeDb(seed())
+  it('removes own media, then deletes in one SQL transaction (detach deals, scrub, delete)', async () => {
+    const { db, tables, removed, rpcCalls, writes } = makeFakeDb(seed())
     const report = await deleteContact(db, ACC, C1)
     expect(report.warnings).toEqual([])
     expect(removed.map((r) => r.bucket)).toEqual(['chat-media', 'contact-avatars'])
+    // Messages cascade away: only media_url is touched before the delete.
+    const msgWrites = writes.filter((w) => w.table === 'messages')
+    expect(msgWrites.every((w) => JSON.stringify(w.payload) === JSON.stringify({ media_url: null }))).toBe(true)
+    expect(rpcCalls).toEqual([{ fn: 'lgpd_delete_contact', args: { p_account_id: ACC, p_contact_id: C1 } }])
     expect(tables.contacts).toHaveLength(0)
     expect(tables.deals[0]).toMatchObject({ title: ANONYMIZED_DEAL_TITLE, conversation_id: null })
-    expect(tables.tasks[0].title).toBe(ANONYMIZED_TASK_TITLE)
-    expect(tables.calendar_events[0].title).toBe(ANONYMIZED_EVENT_TITLE)
-    expect(tables.flow_runs[0].vars).toEqual({})
-    expect(tables.lead_source_events[0].payload).toEqual({})
-    expect(tables.broadcast_recipients[0].template_params).toBeNull()
-    expect(tables.automation_logs[0].error_message).toBeNull()
-    expect(tables.audit_log[0].metadata).toEqual({ count: 1 })
   })
 
-  it('refuses to delete when a media object could not be removed', async () => {
-    const { db, tables } = makeFakeDb(seed(), { failStorage: (b) => (b === 'chat-media' ? { message: 'down' } : null) })
+  it('refuses to delete (no SQL call) when a media object could not be removed', async () => {
+    const { db, tables, rpcCalls } = makeFakeDb(seed(), { failStorage: (b) => (b === 'chat-media' ? { message: 'down' } : null) })
     await expect(deleteContact(db, ACC, C1)).rejects.toBeInstanceOf(DeleteContactError)
+    expect(rpcCalls).toHaveLength(0)
     expect(tables.contacts).toHaveLength(1)
     expect(tables.messages[0].media_url).toBe(PUBLIC)
+  })
+
+  it('a failed SQL delete leaves the contact untouched (all-or-nothing)', async () => {
+    const { db, tables } = makeFakeDb(seed(), { rpc: () => ({ data: null, error: { message: 'deadlock' } }) })
+    await expect(deleteContact(db, ACC, C1)).rejects.toMatchObject({ code: 'db_error' })
+    expect(tables.contacts[0].name).toBe('Ana Souza')
+    expect(tables.deals[0].title).toMatch(/Ana/)
   })
 
   it('404s a contact outside the account', async () => {

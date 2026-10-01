@@ -89,7 +89,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     } catch (err) {
       if (err instanceof AnonymizeError) {
         const status =
-          err.code === 'not_found' ? 404 : err.code === 'already_anonymized' ? 409 : 500
+          err.code === 'not_found' ? 404 : err.code === 'already_anonymized' || err.code === 'in_progress' ? 409 : 500
         return NextResponse.json({ error: err.message, code: err.code }, { status })
       }
       console.error('[POST /api/contacts/:id/anonymize] failed:', err)

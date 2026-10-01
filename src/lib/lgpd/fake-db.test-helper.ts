@@ -12,7 +12,20 @@ export interface FakeDbOptions {
   /** Return an error for a Storage remove in `bucket`. */
   failStorage?: (bucket: string, paths: string[]) => Err | null
   maxRows?: number
+  /** `rpc(fn, args)` handler; gets the live tables. */
+  rpc?: (fn: string, args: Record<string, unknown>, tables: Record<string, Row[]>) => { data: unknown; error: Err | null }
 }
+
+/** `col` or a PostgREST JSON path `col->>key`. */
+function val(r: Row, c: string): unknown {
+  const m = c.match(/^(\w+)->>(\w+)$/)
+  if (!m) return r[c]
+  const v = (r[m[1]] as Row | null | undefined)?.[m[2]]
+  return v === undefined || v === null ? null : String(v)
+}
+
+const same = (a: unknown, b: unknown) =>
+  a !== null && typeof a === 'object' ? JSON.stringify(a) === (typeof b === 'string' ? b : JSON.stringify(b)) : a === b
 
 export interface FakeWrite {
   table: string
@@ -33,6 +46,7 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
     let payload: unknown
     let countMode = false
     let head = false
+    let returning = false
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } | undefined
     const filters: ((r: Row) => boolean)[] = []
     const inSizes: number[] = []
@@ -60,7 +74,7 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
         const rows = match()
         for (const r of rows) Object.assign(r, payload as Row)
         writes.push({ table, op, payload, rows: rows.length })
-        return { data: null, error: null, count: countMode ? rows.length : null }
+        return { data: returning ? rows.map((x) => ({ ...x })) : null, error: null, count: countMode ? rows.length : null }
       }
       if (op === 'delete') {
         const rows = match()
@@ -84,6 +98,7 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
 
     const b: Record<string, unknown> = {
       select: (_cols?: string, o?: { count?: string; head?: boolean }) => {
+        if (op !== 'select') returning = true
         if (o?.count) countMode = true
         if (o?.head) head = true
         return b
@@ -92,8 +107,9 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
       upsert: (p: unknown, o?: typeof upsertOpts) => ((op = 'upsert'), (payload = p), (upsertOpts = o), b),
       update: (p: unknown, o?: { count?: string }) => ((op = 'update'), (payload = p), (countMode = !!o?.count), b),
       delete: (o?: { count?: string }) => ((op = 'delete'), (countMode = !!o?.count), b),
-      eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), b),
-      neq: (c: string, v: unknown) => (filters.push((r) => r[c] !== v), b),
+      eq: (c: string, v: unknown) => (filters.push((r) => val(r, c) === v), b),
+      // SQL semantics: NULL <> x is not true.
+      neq: (c: string, v: unknown) => (filters.push((r) => val(r, c) !== null && val(r, c) !== undefined && !same(val(r, c), v)), b),
       gt: (c: string, v: unknown) => (filters.push((r) => String(r[c]) > String(v)), b),
       lt: (c: string, v: unknown) => (filters.push((r) => String(r[c]) < String(v)), b),
       lte: (c: string, v: unknown) => (filters.push((r) => String(r[c]) <= String(v)), b),
@@ -125,8 +141,15 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
     return b
   }
 
+  const rpcCalls: { fn: string; args: Record<string, unknown> }[] = []
   const db = {
     from: (table: string) => builder(table),
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args })
+      if (opts.rpc) return opts.rpc(fn, args, tables)
+      if (fn === 'lgpd_delete_contact') return fakeDeleteContact(args, tables)
+      return { data: null, error: { message: `no rpc ${fn}` } }
+    },
     storage: {
       from: (bucket: string) => ({
         remove: async (paths: string[]) => {
@@ -139,5 +162,29 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
     },
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { db: db as any, tables, writes, reads, removed }
+  return { db: db as any, tables, writes, reads, removed, rpcCalls }
+}
+
+/**
+ * Stand-in for SQL lgpd_delete_contact (migration 077, smoke-tested on
+ * Postgres separately): the parts the TS tests assert on.
+ */
+function fakeDeleteContact(args: Record<string, unknown>, tables: Record<string, Row[]>) {
+  const acc = args.p_account_id
+  const id = args.p_contact_id
+  const contacts = tables.contacts ?? []
+  if (!contacts.some((c) => c.id === id && c.account_id === acc)) return { data: false, error: null }
+  const convs = new Set((tables.conversations ?? []).filter((c) => c.contact_id === id).map((c) => c.id))
+  for (const d of tables.deals ?? []) {
+    if (convs.has(d.conversation_id)) d.conversation_id = null
+    if (d.contact_id === id) Object.assign(d, { title: 'Negócio anonimizado', notes: null, lost_note: null, contact_id: null })
+  }
+  for (const a of tables.audit_log ?? []) {
+    const m = a.metadata as Row | null
+    if (m && (a.entity_id === id || m.contact_id === id)) for (const k of ['contact_name', 'phone', 'email', 'name']) delete m[k]
+  }
+  tables.contacts = contacts.filter((c) => c.id !== id)
+  tables.conversations = (tables.conversations ?? []).filter((c) => c.contact_id !== id)
+  tables.messages = (tables.messages ?? []).filter((m) => !convs.has(m.conversation_id))
+  return { data: true, error: null }
 }

@@ -30,10 +30,10 @@
 // their remote copy until the next sync pushes the neutral title (the
 // local text is cleared here).
 //
-// scrubContactData(mode 'delete') is the same scrub minus what the
-// contact delete cascades anyway (conversations, notes, memories, …):
-// media objects and the ON DELETE SET NULL tables (deals, tasks,
-// calendar, flows, lead events, broadcasts, automation logs).
+// scrubContactData(mode 'delete') only removes the contact's media (this
+// account's chat-media objects + profile photo); deleteContact then runs
+// SQL lgpd_delete_contact (migration 077), which scrubs the ON DELETE SET
+// NULL tables and deletes the contact in ONE transaction.
 //
 // Callers pass the service-role client: the storage delete and the
 // cross-table updates cross RLS boundaries a member session cannot.
@@ -106,10 +106,20 @@ const PII_PAYLOAD_KEYS = [
 ]
 const AUDIT_PII_KEYS = ['contact_name', 'phone', 'email', 'name']
 
+/**
+ * `anon-<8 letters>`: random hex mapped onto a–p, so the placeholder has
+ * NO digits — `phone_normalized` is '' (outside the per-account unique
+ * index) and it can never suffix-match a real number in the dedupe.
+ */
 export function generateAnonymousPhone(
   randomHex: () => string = () => randomBytes(4).toString('hex'),
 ): string {
-  return `anon-${randomHex()}`
+  return `anon-${randomHex().replace(/[0-9a-f]/gi, (c) => 'abcdefghijklmnop'[parseInt(c, 16)])}`
+}
+
+/** Is a chat-media object path inside this account's own folder? */
+export function isAccountMediaPath(path: string, accountId: string): boolean {
+  return path.startsWith(`account-${accountId}/`) && !path.split('/').includes('..')
 }
 
 function safeDecode(s: string): string {
@@ -240,14 +250,24 @@ export async function scrubContactData(
   })
   const convChunks = chunk(conversationIds, ID_CHUNK)
 
-  // Messages: remove media objects, then scrub the rows.
+  // Messages: remove this account's media objects, then scrub the rows.
+  // A chat-media URL pointing into ANOTHER account's folder is never
+  // removed (not ours to delete) — only the reference is dropped. On a
+  // hard delete the rows cascade away, so only media is handled there.
   if (conversationsOk) {
     await step('messages', async () => {
       for (const ids of convChunks) {
         await eachPage<{ id: string; media_url: string | null }>(
-          () => admin.from('messages').select('id, media_url').in('conversation_id', ids),
+          () => {
+            const q = admin.from('messages').select('id, media_url').in('conversation_id', ids)
+            return anonymize ? q : q.not('media_url', 'is', null)
+          },
           async (rows) => {
-            const paths = [...new Set(rows.map((r) => extractChatMediaPath(r.media_url)).filter((p): p is string => !!p))]
+            const own = (url: string | null) => {
+              const p = extractChatMediaPath(url)
+              return p && isAccountMediaPath(p, accountId) ? p : null
+            }
+            const paths = [...new Set(rows.map((r) => own(r.media_url)).filter((p): p is string => !!p))]
             const failed = new Set<string>()
             for (const batch of chunk(paths, STORAGE_CHUNK)) {
               const { data, error } = await admin.storage.from(CHAT_MEDIA_BUCKET).remove(batch)
@@ -258,28 +278,25 @@ export async function scrubContactData(
                 mediaDeleted += Array.isArray(data) ? data.length : batch.length
               }
             }
-            const kept = rows.filter((r) => {
-              const p = extractChatMediaPath(r.media_url)
-              return p !== null && failed.has(p)
-            })
-            const keptIds = new Set(kept.map((r) => r.id))
+            const keptIds = new Set(
+              rows.filter((r) => {
+                const p = own(r.media_url)
+                return p !== null && failed.has(p)
+              }).map((r) => r.id),
+            )
             const done = rows.filter((r) => !keptIds.has(r.id)).map((r) => r.id)
+            const scrubbed = anonymize ? { content_text: REMOVED_CONTENT, error_details: null } : {}
             for (const part of chunk(done, ID_CHUNK)) {
               must(
-                await admin
-                  .from('messages')
-                  .update({ content_text: REMOVED_CONTENT, media_url: null, error_details: null })
-                  .in('id', part),
+                await admin.from('messages').update({ ...scrubbed, media_url: null }).in('id', part),
                 'messages scrub',
               )
               add('messages', part.length)
             }
+            if (!anonymize) return
             for (const part of chunk([...keptIds], ID_CHUNK)) {
               must(
-                await admin
-                  .from('messages')
-                  .update({ content_text: REMOVED_CONTENT, error_details: null })
-                  .in('id', part),
+                await admin.from('messages').update(scrubbed).in('id', part),
                 'messages scrub (media kept)',
               )
               add('messages', part.length)
@@ -351,178 +368,202 @@ export async function scrubContactData(
     })
   }
 
-  // Tasks of the contact or of its conversations; their comments.
-  await step('tasks', async () => {
-    const taskIds = new Set<string>()
-    const collect = async (rows: { id: string }[]) => {
-      rows.forEach((r) => taskIds.add(r.id))
-    }
-    await eachPage(() => byContact('tasks'), collect, 'tasks lookup')
-    if (conversationsOk) {
-      for (const ids of convChunks) {
-        await eachPage(
-          () => admin.from('tasks').select('id').eq('account_id', accountId).in('conversation_id', ids),
-          collect,
-          'tasks lookup',
-        )
+  // The ON DELETE SET NULL tables below: on a hard delete the SQL function
+  // lgpd_delete_contact (migration 077) scrubs them in the same
+  // transaction as the delete.
+  if (anonymize) {
+    // Tasks of the contact or of its conversations; their comments.
+    await step('tasks', async () => {
+      const taskIds = new Set<string>()
+      const collect = async (rows: { id: string }[]) => {
+        rows.forEach((r) => taskIds.add(r.id))
       }
-    }
-    for (const part of chunk([...taskIds], ID_CHUNK)) {
-      must(
-        await admin.from('tasks').update({ title: ANONYMIZED_TASK_TITLE, description: null }).in('id', part),
-        'tasks scrub',
-      )
-      add('tasks', part.length)
+      await eachPage(() => byContact('tasks'), collect, 'tasks lookup')
+      if (conversationsOk) {
+        for (const ids of convChunks) {
+          await eachPage(
+            () => admin.from('tasks').select('id').eq('account_id', accountId).in('conversation_id', ids),
+            collect,
+            'tasks lookup',
+          )
+        }
+      }
+      for (const part of chunk([...taskIds], ID_CHUNK)) {
+        must(
+          await admin.from('tasks').update({ title: ANONYMIZED_TASK_TITLE, description: null }).in('id', part),
+          'tasks scrub',
+        )
+        add('tasks', part.length)
+        const res = must(
+          await admin
+            .from('task_comments')
+            .update({ body: REMOVED_CONTENT }, { count: 'exact' })
+            .in('task_id', part),
+          'task_comments scrub',
+        )
+        add('task_comments', res.count)
+      }
+    })
+
+    // Calendar events of the contact or of its conversations.
+    await step('calendar_events', async () => {
+      const payload = { title: ANONYMIZED_EVENT_TITLE, description: null, location: null }
       const res = must(
         await admin
-          .from('task_comments')
-          .update({ body: REMOVED_CONTENT }, { count: 'exact' })
-          .in('task_id', part),
-        'task_comments scrub',
+          .from('calendar_events')
+          .update(payload, { count: 'exact' })
+          .eq('contact_id', contactId)
+          .eq('account_id', accountId),
+        'calendar_events scrub',
       )
-      add('task_comments', res.count)
-    }
-  })
-
-  // Calendar events of the contact or of its conversations.
-  await step('calendar_events', async () => {
-    const payload = { title: ANONYMIZED_EVENT_TITLE, description: null, location: null }
-    const res = must(
-      await admin
-        .from('calendar_events')
-        .update(payload, { count: 'exact' })
-        .eq('contact_id', contactId)
-        .eq('account_id', accountId),
-      'calendar_events scrub',
-    )
-    add('calendar_events', res.count)
-    if (conversationsOk) {
-      for (const ids of convChunks) {
-        const r = must(
-          await admin
-            .from('calendar_events')
-            .update(payload, { count: 'exact' })
-            .eq('account_id', accountId)
-            .in('conversation_id', ids),
-          'calendar_events scrub',
-        )
-        add('calendar_events', r.count)
-      }
-    }
-  })
-
-  // Deals (lead capture titles them with the person's name / phone).
-  await step('deals', async () => {
-    const res = must(
-      await admin
-        .from('deals')
-        .update({ title: ANONYMIZED_DEAL_TITLE, notes: null, lost_note: null }, { count: 'exact' })
-        .eq('contact_id', contactId)
-        .eq('account_id', accountId),
-      'deals scrub',
-    )
-    add('deals', res.count)
-  })
-
-  // Flow runs: collected variables (answers typed by the customer) and
-  // the per-run event log.
-  await step('flow_runs', async () => {
-    await eachPage<{ id: string }>(
-      () => byContact('flow_runs'),
-      async (rows) => {
-        for (const part of chunk(rows.map((r) => r.id), ID_CHUNK)) {
-          must(await admin.from('flow_runs').update({ vars: {} }).in('id', part), 'flow_runs scrub')
-          add('flow_runs', part.length)
-          const res = must(
-            await admin.from('flow_run_events').update({ payload: {} }, { count: 'exact' }).in('flow_run_id', part),
-            'flow_run_events scrub',
+      add('calendar_events', res.count)
+      if (conversationsOk) {
+        for (const ids of convChunks) {
+          const r = must(
+            await admin
+              .from('calendar_events')
+              .update(payload, { count: 'exact' })
+              .eq('account_id', accountId)
+              .in('conversation_id', ids),
+            'calendar_events scrub',
           )
-          add('flow_run_events', res.count)
+          add('calendar_events', r.count)
         }
-      },
-      'flow_runs lookup',
-    )
-  })
+      }
+    })
 
-  await step('lead_source_events', async () => {
-    const res = must(
-      await admin
-        .from('lead_source_events')
-        .update({ payload: {} }, { count: 'exact' })
-        .eq('contact_id', contactId)
-        .eq('account_id', accountId),
-      'lead_source_events scrub',
-    )
-    add('lead_source_events', res.count)
-  })
+    // Deals (lead capture titles them with the person's name / phone).
+    await step('deals', async () => {
+      const res = must(
+        await admin
+          .from('deals')
+          .update({ title: ANONYMIZED_DEAL_TITLE, notes: null, lost_note: null }, { count: 'exact' })
+          .eq('contact_id', contactId)
+          .eq('account_id', accountId),
+        'deals scrub',
+      )
+      add('deals', res.count)
+    })
 
-  // broadcast_recipients has no account_id; the contact id is account-scoped.
-  await step('broadcast_recipients', async () => {
-    const res = must(
-      await admin
-        .from('broadcast_recipients')
-        .update({ template_params: null }, { count: 'exact' })
-        .eq('contact_id', contactId),
-      'broadcast_recipients scrub',
-    )
-    add('broadcast_recipients', res.count)
-  })
+    // Flow runs: collected variables (answers typed by the customer) and
+    // the per-run event log.
+    await step('flow_runs', async () => {
+      await eachPage<{ id: string }>(
+        () => byContact('flow_runs'),
+        async (rows) => {
+          for (const part of chunk(rows.map((r) => r.id), ID_CHUNK)) {
+            must(await admin.from('flow_runs').update({ vars: {} }).in('id', part), 'flow_runs scrub')
+            add('flow_runs', part.length)
+            const res = must(
+              await admin.from('flow_run_events').update({ payload: {} }, { count: 'exact' }).in('flow_run_id', part),
+              'flow_run_events scrub',
+            )
+            add('flow_run_events', res.count)
+          }
+        },
+        'flow_runs lookup',
+      )
+    })
 
-  await step('automation_pending_executions', async () => {
-    must(
-      await admin
-        .from('automation_pending_executions')
-        .update({ status: 'cancelled' })
-        .eq('contact_id', contactId)
-        .eq('account_id', accountId)
-        .eq('status', 'pending'),
-      'automation_pending_executions cancel',
-    )
-    const res = must(
-      await admin
-        .from('automation_pending_executions')
-        .update({ context: {} }, { count: 'exact' })
-        .eq('contact_id', contactId)
-        .eq('account_id', accountId),
-      'automation_pending_executions scrub',
-    )
-    add('automation_pending_executions', res.count)
-  })
+    await step('lead_source_events', async () => {
+      const res = must(
+        await admin
+          .from('lead_source_events')
+          .update({ payload: {} }, { count: 'exact' })
+          .eq('contact_id', contactId)
+          .eq('account_id', accountId),
+        'lead_source_events scrub',
+      )
+      add('lead_source_events', res.count)
+    })
 
-  await step('automation_logs', async () => {
-    const res = must(
-      await admin
-        .from('automation_logs')
-        .update({ error_message: null }, { count: 'exact' })
-        .eq('contact_id', contactId)
-        .eq('account_id', accountId)
-        .not('error_message', 'is', null),
-      'automation_logs scrub',
-    )
-    add('automation_logs', res.count)
-  })
+    // broadcast_recipients has no account_id; the contact id is account-scoped.
+    await step('broadcast_recipients', async () => {
+      const res = must(
+        await admin
+          .from('broadcast_recipients')
+          .update({ template_params: null }, { count: 'exact' })
+          .eq('contact_id', contactId),
+        'broadcast_recipients scrub',
+      )
+      add('broadcast_recipients', res.count)
+    })
 
-  // Audit trail: rows stay, the name / phone snapshot goes.
-  await step('audit_log', async () => {
-    await eachPage<{ id: string; metadata: Record<string, unknown> | null }>(
-      () =>
-        admin
-          .from('audit_log')
-          .select('id, metadata')
+    await step('automation_pending_executions', async () => {
+      must(
+        await admin
+          .from('automation_pending_executions')
+          .update({ status: 'cancelled' })
+          .eq('contact_id', contactId)
           .eq('account_id', accountId)
-          .eq('entity_type', 'contact')
-          .eq('entity_id', contactId),
-      async (rows) => {
-        for (const row of rows) {
-          const next = stripKeys(row.metadata, AUDIT_PII_KEYS)
-          if (!next) continue
-          must(await admin.from('audit_log').update({ metadata: next }).eq('id', row.id), `audit ${row.id}`)
-          add('audit_log', 1)
-        }
-      },
-      'audit_log lookup',
-    )
-  })
+          .eq('status', 'pending'),
+        'automation_pending_executions cancel',
+      )
+      const res = must(
+        await admin
+          .from('automation_pending_executions')
+          .update({ context: {} }, { count: 'exact' })
+          .eq('contact_id', contactId)
+          .eq('account_id', accountId),
+        'automation_pending_executions scrub',
+      )
+      add('automation_pending_executions', res.count)
+    })
+
+    await step('automation_logs', async () => {
+      const res = must(
+        await admin
+          .from('automation_logs')
+          .update({ error_message: null }, { count: 'exact' })
+          .eq('contact_id', contactId)
+          .eq('account_id', accountId)
+          .not('error_message', 'is', null),
+        'automation_logs scrub',
+      )
+      add('automation_logs', res.count)
+    })
+
+    // Audit trail: rows stay, the name / phone snapshot goes.
+    await step('audit_log', async () => {
+      await eachPage<{ id: string; metadata: Record<string, unknown> | null }>(
+        () =>
+          admin
+            .from('audit_log')
+            .select('id, metadata')
+            .eq('account_id', accountId)
+            .eq('entity_type', 'contact')
+            .eq('entity_id', contactId),
+        async (rows) => {
+          for (const row of rows) {
+            const next = stripKeys(row.metadata, AUDIT_PII_KEYS)
+            if (!next) continue
+            must(await admin.from('audit_log').update({ metadata: next }).eq('id', row.id), `audit ${row.id}`)
+            add('audit_log', 1)
+          }
+        },
+        'audit_log lookup',
+      )
+      // Other entities' rows that name the contact (deal.deleted keeps the deal
+      // title, which lead capture builds from the person's name / phone).
+      await eachPage<{ id: string; metadata: Record<string, unknown> | null }>(
+        () =>
+          admin
+            .from('audit_log')
+            .select('id, metadata')
+            .eq('account_id', accountId)
+            .eq('metadata->>contact_id', contactId),
+        async (rows) => {
+          for (const row of rows) {
+            const next = stripKeys(row.metadata, AUDIT_PII_KEYS)
+            if (!next) continue
+            must(await admin.from('audit_log').update({ metadata: next }).eq('id', row.id), `audit ${row.id}`)
+            add('audit_log', 1)
+          }
+        },
+        'audit_log lookup (linked)',
+      )
+    })
+  }
 
   if (anonymize) {
     for (const table of [
@@ -601,7 +642,7 @@ export interface AnonymizeResult {
 }
 
 export class AnonymizeError extends Error {
-  readonly code: 'not_found' | 'already_anonymized' | 'db_error'
+  readonly code: 'not_found' | 'already_anonymized' | 'in_progress' | 'db_error'
   constructor(code: AnonymizeError['code'], message: string) {
     super(message)
     this.name = 'AnonymizeError'
@@ -660,37 +701,46 @@ export async function anonymizeContact(
       }
     }
 
-    // 1. Mark. The per-account UNIQUE on `phone_normalized` could in
-    //    theory collide on the digit projection of the random hex, so a
-    //    23505 gets a fresh value and a retry.
-    let updErr: { code?: string; message: string } | null = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await admin
-        .from('contacts')
-        .update({
-          name: ANONYMIZED_NAME,
-          phone: generateAnonymousPhone(opts.randomHex),
-          email: null,
-          company: null,
-          avatar_url: null,
-          opted_out_at: row.opted_out_at ?? now,
-          anonymized_at: now,
-          updated_at: now,
-        })
-        .eq('id', contactId)
-        .eq('account_id', accountId)
-        .is('anonymized_at', null)
-      updErr = res.error
-      if (!updErr || updErr.code !== '23505') break
-    }
+    // 1. Mark. The guard on anonymized_at + returning the row detects a
+    //    concurrent anonymisation of the same contact (0 rows → it won).
+    const { data: marked, error: updErr } = await admin
+      .from('contacts')
+      .update({
+        name: ANONYMIZED_NAME,
+        phone: generateAnonymousPhone(opts.randomHex),
+        email: null,
+        company: null,
+        avatar_url: null,
+        opted_out_at: row.opted_out_at ?? now,
+        anonymized_at: now,
+        updated_at: now,
+      })
+      .eq('id', contactId)
+      .eq('account_id', accountId)
+      .is('anonymized_at', null)
+      .select('id')
     if (updErr) throw new AnonymizeError('db_error', updErr.message)
+    if (!marked || (marked as unknown[]).length === 0) {
+      throw new AnonymizeError('in_progress', 'Contact is being anonymized by another request')
+    }
   }
 
-  // 2. Scrub.
-  const report = await scrubContactData(admin, accountId, contactId, { mode: 'anonymize' })
+  // 2. Scrub, then 3. verify. A scrub that reported no failure is checked
+  //    against the data itself; anything left gets one more pass, and
+  //    still-remaining data leaves the anonymisation incomplete.
+  let report = await scrubContactData(admin, accountId, contactId, { mode: 'anonymize' })
   const warnings = [...report.warnings]
+  if (warnings.length === 0) {
+    let left = await remainingPersonalData(admin, accountId, contactId)
+    if (left.length > 0) {
+      report = await scrubContactData(admin, accountId, contactId, { mode: 'anonymize' })
+      warnings.push(...report.warnings)
+      left = await remainingPersonalData(admin, accountId, contactId)
+    }
+    if (left.length > 0) warnings.push(`verification: personal data remains in ${left.join(', ')}`)
+  }
 
-  // 3. Complete — only when nothing failed.
+  // 4. Complete — only when nothing failed and nothing remains.
   let completed = false
   if (warnings.length === 0) {
     const { error } = await admin
@@ -718,6 +768,58 @@ export async function anonymizeContact(
   }
 }
 
+/**
+ * Tables that still hold personal data of the contact after a scrub
+ * (verification before anonymization_completed_at). Never throws: a
+ * failed check counts as "remains".
+ */
+export async function remainingPersonalData(
+  admin: SupabaseClient,
+  accountId: string,
+  contactId: string,
+): Promise<string[]> {
+  const left = new Set<string>()
+  const any = async (label: string, q: Query) => {
+    const res = (await q.limit(1)) as Res
+    if (res.error || ((res.data as unknown[] | null) ?? []).length > 0) left.add(label)
+  }
+  try {
+    const conversationIds: string[] = []
+    await eachPage<{ id: string }>(
+      () => admin.from('conversations').select('id').eq('contact_id', contactId).eq('account_id', accountId),
+      async (rows) => {
+        conversationIds.push(...rows.map((r) => r.id))
+      },
+      'conversations lookup',
+    )
+    for (const ids of chunk(conversationIds, ID_CHUNK)) {
+      const msgs = () => admin.from('messages').select('id').in('conversation_id', ids)
+      await any('messages', msgs().not('media_url', 'is', null))
+      await any('messages', msgs().neq('content_text', REMOVED_CONTENT))
+      await any('messages', msgs().is('content_text', null))
+      await any('conversations', admin.from('conversations').select('id').in('id', ids).not('subject', 'is', null))
+      await any(
+        'conversation_events',
+        admin
+          .from('conversation_events')
+          .select('id')
+          .in('conversation_id', ids)
+          .in('event_type', ['ai_handoff', 'deal_stage_changed'])
+          .neq('payload', '{}'),
+      )
+    }
+  } catch {
+    left.add('conversations')
+  }
+  const byContact = (table: string) =>
+    admin.from(table).select('id').eq('contact_id', contactId).eq('account_id', accountId)
+  await any('deals', byContact('deals').neq('title', ANONYMIZED_DEAL_TITLE))
+  await any('tasks', byContact('tasks').neq('title', ANONYMIZED_TASK_TITLE))
+  await any('calendar_events', byContact('calendar_events').neq('title', ANONYMIZED_EVENT_TITLE))
+  for (const table of ['contact_notes', 'ai_contact_memories', 'ai_handoffs']) await any(table, byContact(table))
+  return [...left]
+}
+
 export class DeleteContactError extends Error {
   readonly code: 'not_found' | 'scrub_incomplete' | 'db_error'
   readonly warnings: string[]
@@ -730,11 +832,16 @@ export class DeleteContactError extends Error {
 }
 
 /**
- * Hard delete: scrub (media objects + SET NULL tables), detach deals from
- * the conversations about to cascade away (deals.conversation_id has no
- * ON DELETE action and would block the delete), then delete the row.
- * Refuses to delete when the scrub was incomplete — a removed contact
- * would leave its public media behind with no way to find it again.
+ * Hard delete, in two phases:
+ *  1. media: this account's chat-media objects of the contact's messages
+ *     and the stored profile photo are removed (media_url nulled once
+ *     gone). A failed removal aborts — nothing is deleted or scrubbed.
+ *  2. one transaction (SQL `lgpd_delete_contact`, migration 077): detach
+ *     deals from the conversations about to cascade (deals.conversation_id
+ *     has no ON DELETE action), scrub the ON DELETE SET NULL tables (deals,
+ *     tasks + comments, calendar, flows, lead events, broadcasts,
+ *     automations, audit snapshots) and delete the contact. All of it
+ *     happens or none — a failed delete never leaves a wiped contact.
  */
 export async function deleteContact(
   admin: SupabaseClient,
@@ -755,28 +862,11 @@ export async function deleteContact(
     throw new DeleteContactError('scrub_incomplete', 'Personal data scrub incomplete', report.warnings)
   }
 
-  try {
-    await eachPage<{ id: string }>(
-      () => admin.from('conversations').select('id').eq('contact_id', contactId).eq('account_id', accountId),
-      async (rows) => {
-        for (const part of chunk(rows.map((r) => r.id), ID_CHUNK)) {
-          must(
-            await admin.from('deals').update({ conversation_id: null }).eq('account_id', accountId).in('conversation_id', part),
-            'deals detach',
-          )
-        }
-      },
-      'conversations lookup',
-    )
-  } catch (err) {
-    throw new DeleteContactError('db_error', err instanceof Error ? err.message : String(err))
-  }
-
-  const { error: delErr } = await admin
-    .from('contacts')
-    .delete()
-    .eq('id', contactId)
-    .eq('account_id', accountId)
-  if (delErr) throw new DeleteContactError('db_error', delErr.message)
+  const { data: deleted, error: rpcErr } = await admin.rpc('lgpd_delete_contact', {
+    p_account_id: accountId,
+    p_contact_id: contactId,
+  })
+  if (rpcErr) throw new DeleteContactError('db_error', rpcErr.message)
+  if (deleted !== true) throw new DeleteContactError('not_found', 'Contact not found')
   return report
 }

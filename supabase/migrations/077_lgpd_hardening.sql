@@ -76,3 +76,78 @@ CREATE INDEX IF NOT EXISTS idx_csat_jobs_processed
   ON public.csat_jobs (processed_at) WHERE processed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ai_handoffs_words_created
   ON public.ai_handoffs (created_at) WHERE last_customer_words IS NOT NULL;
+
+-- 5. Hard delete in one transaction -------------------------------------
+-- Called by DELETE /api/contacts (service role) AFTER the contact's media
+-- objects were removed from Storage. Detaches deals from the
+-- conversations about to cascade (deals.conversation_id has no ON DELETE
+-- action and would block the delete), scrubs the personal text of every
+-- ON DELETE SET NULL table, then deletes the contact. All or nothing: a
+-- failure rolls the scrub back, so a contact is never left wiped but
+-- present. Returns false when the contact is not in the account.
+-- SECURITY INVOKER + EXECUTE for service_role only (default grants are
+-- closed by 076).
+CREATE OR REPLACE FUNCTION public.lgpd_delete_contact(p_account_id uuid, p_contact_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_conversations uuid[];
+  v_tasks uuid[];
+  v_runs uuid[];
+BEGIN
+  PERFORM 1 FROM public.contacts WHERE id = p_contact_id AND account_id = p_account_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+
+  SELECT coalesce(array_agg(id), '{}') INTO v_conversations
+    FROM public.conversations WHERE contact_id = p_contact_id AND account_id = p_account_id;
+
+  UPDATE public.deals SET conversation_id = NULL
+   WHERE account_id = p_account_id AND conversation_id = ANY (v_conversations);
+  UPDATE public.deals SET title = 'Negócio anonimizado', notes = NULL, lost_note = NULL
+   WHERE account_id = p_account_id AND contact_id = p_contact_id;
+
+  SELECT coalesce(array_agg(id), '{}') INTO v_tasks
+    FROM public.tasks
+   WHERE account_id = p_account_id
+     AND (contact_id = p_contact_id OR conversation_id = ANY (v_conversations));
+  UPDATE public.tasks SET title = 'Tarefa anonimizada', description = NULL WHERE id = ANY (v_tasks);
+  UPDATE public.task_comments SET body = '[conteúdo removido]' WHERE task_id = ANY (v_tasks);
+
+  UPDATE public.calendar_events
+     SET title = 'Compromisso anonimizado', description = NULL, location = NULL
+   WHERE account_id = p_account_id
+     AND (contact_id = p_contact_id OR conversation_id = ANY (v_conversations));
+
+  SELECT coalesce(array_agg(id), '{}') INTO v_runs
+    FROM public.flow_runs WHERE account_id = p_account_id AND contact_id = p_contact_id;
+  UPDATE public.flow_runs SET vars = '{}'::jsonb WHERE id = ANY (v_runs);
+  UPDATE public.flow_run_events SET payload = '{}'::jsonb WHERE flow_run_id = ANY (v_runs);
+
+  UPDATE public.lead_source_events SET payload = '{}'::jsonb
+   WHERE account_id = p_account_id AND contact_id = p_contact_id;
+  UPDATE public.broadcast_recipients SET template_params = NULL WHERE contact_id = p_contact_id;
+  UPDATE public.automation_pending_executions
+     SET context = '{}'::jsonb,
+         status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END
+   WHERE account_id = p_account_id AND contact_id = p_contact_id;
+  UPDATE public.automation_logs SET error_message = NULL
+   WHERE account_id = p_account_id AND contact_id = p_contact_id AND error_message IS NOT NULL;
+
+  UPDATE public.audit_log SET metadata = metadata - 'contact_name' - 'phone' - 'email' - 'name'
+   WHERE account_id = p_account_id
+     AND ((entity_type = 'contact' AND entity_id = p_contact_id::text)
+          OR metadata->>'contact_id' = p_contact_id::text)
+     AND metadata ?| ARRAY['contact_name', 'phone', 'email', 'name'];
+
+  DELETE FROM public.contacts WHERE id = p_contact_id AND account_id = p_account_id;
+  RETURN true;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.lgpd_delete_contact(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.lgpd_delete_contact(uuid, uuid) TO service_role;

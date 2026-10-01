@@ -76,7 +76,10 @@ describe('buildContactExport — newly covered sections', () => {
         { id: 't2', account_id: ACC, contact_id: null, conversation_id: 'conv1', title: 'Lembrar' },
       ],
       task_comments: [{ id: 'tc1', task_id: 't2', body: 'ela pediu desconto' }],
-      calendar_events: [{ id: 'ev1', account_id: ACC, contact_id: 'c1', title: 'Visita' }],
+      calendar_events: [
+        { id: 'ev1', account_id: ACC, contact_id: 'c1', title: 'Visita' },
+        { id: 'ev2', account_id: ACC, contact_id: null, conversation_id: 'conv1', title: 'Retorno' },
+      ],
       flow_runs: [{ id: 'fr1', account_id: ACC, contact_id: 'c1', vars: { cpf: '123' } }],
       lead_source_events: [{ id: 'l1', account_id: ACC, contact_id: 'c1', payload: { nome: 'Maria' } }],
       contact_companies: [{ company_id: 'co1', account_id: ACC, contact_id: 'c1', is_primary: true }],
@@ -86,7 +89,7 @@ describe('buildContactExport — newly covered sections', () => {
     expect(out.deals.map((d) => d.id)).toEqual(['d1'])
     expect(out.tasks.map((t) => t.id)).toEqual(['t1', 't2'])
     expect(out.task_comments.map((c) => c.body)).toEqual(['ela pediu desconto'])
-    expect(out.calendar_events.map((e) => e.id)).toEqual(['ev1'])
+    expect(out.calendar_events.map((e) => e.id)).toEqual(['ev1', 'ev2'])
     expect(out.flow_runs[0].vars).toEqual({ cpf: '123' })
     expect(out.lead_events[0].payload).toEqual({ nome: 'Maria' })
     expect(out.companies).toEqual([{ id: 'co1', name: null, is_primary: true }])
