@@ -19,6 +19,7 @@ import {
   onContactCompaniesChanged,
 } from "@/lib/companies";
 import { useLanguage } from "@/hooks/use-language";
+import { publishInboxNav } from "@/hooks/use-inbox-nav";
 import {
   classifyConversation,
   formatWaitingAge,
@@ -412,6 +413,12 @@ export function ConversationList({
   useEffect(() => {
     deepLinkIdRef.current = deepLinkId;
   });
+  // ?tab= (the sidebar's inbox shortcuts) picks a tab: applied before the
+  // first fetch, then dropped from the URL (effect below) so clicking the
+  // same shortcut again after switching tabs here still works.
+  const tabParam = searchParams.get("tab");
+  const urlTab = INBOX_TABS.includes(tabParam as InboxTab) ? (tabParam as InboxTab) : null;
+  const urlTabRef = useRef(urlTab);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -437,6 +444,7 @@ export function ConversationList({
       } catch {
         // localStorage can throw in private-browsing / sandboxed contexts.
       }
+      if (urlTabRef.current) setTab(urlTabRef.current);
       const linkedId = deepLinkIdRef.current;
       if (linkedId) {
         const linked = await findConversationById(createClient(), linkedId);
@@ -466,6 +474,15 @@ export function ConversationList({
     },
     [persistTriage, liveFilter, tagIds, channelFilter]
   );
+
+  useEffect(() => {
+    if (!ready || !urlTab) return;
+    handleTabChange(urlTab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("tab");
+    const qs = params.toString();
+    router.replace(qs ? `/inbox?${qs}` : "/inbox", { scroll: false });
+  }, [ready, urlTab, handleTabChange, router, searchParams]);
 
   const handleLiveChange = useCallback(
     (next: LiveFilter) => {
@@ -752,6 +769,11 @@ export function ConversationList({
     () => debounceWithMaxWait(() => void fetchCountsRef.current(), 300, 2000),
     [],
   );
+  // Sidebar inbox shortcuts mirror this tab / Radar / counts (no own query).
+  useEffect(() => {
+    publishInboxNav({ tab, radar, counts: counts === EMPTY_COUNTS ? null : counts });
+  }, [tab, radar, counts]);
+  useEffect(() => () => publishInboxNav(null), []);
   const lastCountsTokenRef = useRef(countsToken);
   useEffect(() => {
     if (lastCountsTokenRef.current === countsToken) return;
