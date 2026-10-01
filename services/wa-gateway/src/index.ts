@@ -7,6 +7,9 @@ import { GatewayError, SessionManager } from "./session-manager.js";
 import { createApp } from "./server.js";
 
 async function main(): Promise<void> {
+  // Tudo o que o gateway grava em disco são credenciais de sessão do
+  // WhatsApp: arquivos 0600 / diretórios 0700 por padrão.
+  process.umask(0o077);
   let config: GatewayConfig;
   try {
     config = loadConfig();

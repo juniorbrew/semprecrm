@@ -1221,22 +1221,105 @@ export interface DownloadMediaArgs {
   accessToken: string
 }
 
+/** Hard cap on proxied Meta media (WhatsApp media tops out well below this). */
+export const MAX_MEDIA_DOWNLOAD_BYTES = 25 * 1024 * 1024
+
+/** Thrown when a media download exceeds MAX_MEDIA_DOWNLOAD_BYTES → HTTP 413. */
+export class MediaTooLargeError extends Error {
+  constructor() {
+    super('Media exceeds the download size limit')
+    this.name = 'MediaTooLargeError'
+  }
+}
+
+const META_MEDIA_HOST_SUFFIXES = ['.fbsbx.com', '.whatsapp.net', '.facebook.com', '.fbcdn.net']
+
+/**
+ * The Graph `url` is the only place besides graph.facebook.com that
+ * receives our Bearer token — refuse anything not https on a Meta CDN.
+ */
+export function isAllowedMetaMediaUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'https:' || u.username || u.password) return false
+  const host = u.hostname.toLowerCase()
+  return META_MEDIA_HOST_SUFFIXES.some((s) => host.endsWith(s))
+}
+
+/** MIME types safe to render inline on our origin. Everything else downloads. */
+const INLINE_MEDIA_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr',
+  'video/mp4', 'video/3gpp',
+])
+
+/**
+ * Response headers for proxied media. The Content-Type is chosen by the
+ * (untrusted) sender, so only allowlisted types are served inline;
+ * text/html, SVG, XHTML, unknown etc. become an octet-stream attachment.
+ */
+export function mediaProxyHeaders(
+  contentType: string | null | undefined,
+  filenameBase: string,
+): Record<string, string> {
+  const base = (contentType || '').split(';')[0].trim().toLowerCase()
+  const headers: Record<string, string> = {
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': 'sandbox',
+  }
+  if (INLINE_MEDIA_TYPES.has(base)) {
+    headers['Content-Type'] = base
+  } else {
+    const safe = filenameBase.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 100) || 'media'
+    headers['Content-Type'] = 'application/octet-stream'
+    headers['Content-Disposition'] = `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`
+  }
+  return headers
+}
+
 /**
  * Fetch the binary bytes for a media URL obtained from getMediaUrl.
- * Step two of the media-proxy flow.
+ * Step two of the media-proxy flow. Only Meta CDN hosts receive the
+ * token, and the body is capped at MAX_MEDIA_DOWNLOAD_BYTES.
  */
 export async function downloadMedia(
   args: DownloadMediaArgs
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const { downloadUrl, accessToken } = args
+  if (!isAllowedMetaMediaUrl(downloadUrl)) {
+    throw new Error('Media download URL is not an allowed Meta host')
+  }
   const response = await fetch(downloadUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   if (!response.ok) {
     throw new Error(`Media download failed: ${response.status}`)
   }
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > MAX_MEDIA_DOWNLOAD_BYTES) {
+    await response.body?.cancel().catch(() => {})
+    throw new MediaTooLargeError()
+  }
   const contentType =
     response.headers.get('content-type') || 'application/octet-stream'
-  const buffer = Buffer.from(await response.arrayBuffer())
-  return { buffer, contentType }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  if (response.body) {
+    const reader = response.body.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_MEDIA_DOWNLOAD_BYTES) {
+        await reader.cancel().catch(() => {})
+        throw new MediaTooLargeError()
+      }
+      chunks.push(value)
+    }
+  }
+  return { buffer: Buffer.concat(chunks), contentType }
 }

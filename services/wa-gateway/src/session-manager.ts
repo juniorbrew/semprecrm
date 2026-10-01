@@ -597,7 +597,7 @@ export class SessionManager {
     try {
       const accountId = s.accountId;
       const dir = this.authDir(accountId);
-      await fs.mkdir(dir, { recursive: true });
+      await ensurePrivateAuthDir(this.opts.dataDir, dir);
       const { state, saveCreds } = await useMultiFileAuthState(dir);
       const version = await this.getVersion();
 
@@ -1034,4 +1034,19 @@ export function buildContent(req: SendRequest, data?: Buffer): AnyMessageContent
     };
   }
   return { text: req.text ?? "" };
+}
+
+/**
+ * Credenciais da sessão (chaves Signal, creds.json) só para o dono do
+ * processo: diretórios 0700 e arquivos já existentes 0600. Os novos saem
+ * 0600 pelo umask 077 do processo (index.ts) — o useMultiFileAuthState do
+ * Baileys não aceita modo.
+ */
+export async function ensurePrivateAuthDir(dataDir: string, dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.chmod(dataDir, 0o700);
+  await fs.chmod(dir, 0o700);
+  for (const name of await fs.readdir(dir)) {
+    await fs.chmod(path.join(dir, name), 0o600).catch(() => undefined);
+  }
 }

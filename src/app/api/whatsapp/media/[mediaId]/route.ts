@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { getMediaUrl, downloadMedia, isMetaMediaId } from '@/lib/whatsapp/meta-api'
+import {
+  getMediaUrl,
+  downloadMedia,
+  isMetaMediaId,
+  mediaProxyHeaders,
+  MediaTooLargeError,
+} from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 export async function GET(
@@ -55,13 +61,15 @@ export async function GET(
     return new Response(new Uint8Array(buffer), {
       status: 200,
       headers: {
-        'Content-Type': contentType || mediaInfo.mimeType || 'application/octet-stream',
+        ...mediaProxyHeaders(contentType || mediaInfo.mimeType, `media-${mediaId}`),
         // Customer media: browser cache only, never a shared proxy/CDN.
         'Cache-Control': 'private, max-age=86400',
-        'X-Content-Type-Options': 'nosniff',
       },
     })
   } catch (error) {
+    if (error instanceof MediaTooLargeError) {
+      return NextResponse.json({ error: 'Media too large' }, { status: 413 })
+    }
     console.error('Error in WhatsApp media GET:', error)
     return NextResponse.json(
       { error: 'Failed to fetch media' },

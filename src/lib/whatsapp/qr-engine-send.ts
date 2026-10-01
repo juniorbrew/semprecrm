@@ -33,6 +33,27 @@ export async function conversationChannel(
   return data.channel === 'qr' ? 'qr' : 'official'
 }
 
+/**
+ * Engine senders run on the service role, and the conversation id can
+ * come from caller-supplied automation context — refuse to write into a
+ * conversation that is not this account's AND this contact's.
+ */
+export async function assertConversationOwned(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  conversationId: string,
+): Promise<void> {
+  const { data, error } = await db
+    .from('conversations')
+    .select('id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .maybeSingle()
+  if (error || !data) throw new Error('conversation not found for this account/contact')
+}
+
 export interface InteractiveAsTextInput {
   bodyText: string
   options: string[]
@@ -115,6 +136,7 @@ export async function engineSendViaQr(
   if (!isValidE164(to)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
+  await assertConversationOwned(db, input.accountId, input.contactId, input.conversationId)
 
   const { message_id } = await sendViaGateway({
     accountId: input.accountId,
@@ -157,6 +179,7 @@ export async function engineSendViaQr(
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
+    .eq('account_id', input.accountId)
 
   return { whatsapp_message_id: message_id }
 }

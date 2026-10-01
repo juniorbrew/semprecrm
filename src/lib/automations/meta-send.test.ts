@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   templates: [] as Record<string, unknown>[],
   inserts: [] as { table: string; row: Record<string, unknown> }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
+  assertConversationOwned: vi.fn(async () => {}),
   sendTemplateMessage: vi.fn<(...a: unknown[]) => Promise<{ messageId: string }>>(async () => ({
     messageId: 'wamid.TPL',
   })),
@@ -22,6 +23,7 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
 vi.mock('./qr-pacing', () => ({ paceAutomatedQrSend: vi.fn(async () => {}) }))
 vi.mock('@/lib/whatsapp/qr-engine-send', () => ({
+  assertConversationOwned: (...a: unknown[]) => h.assertConversationOwned(...(a as [])),
   conversationChannel: vi.fn(async () => 'official'),
   engineSendViaQr: vi.fn(),
   loadTemplateBody: vi.fn(),
@@ -79,6 +81,19 @@ beforeEach(() => {
   h.inserts = []
   h.updates = []
   h.sendTemplateMessage.mockClear()
+  h.assertConversationOwned.mockReset()
+  h.assertConversationOwned.mockImplementation(async () => {})
+})
+
+describe('engineSendTemplate — tenant scope', () => {
+  it('refuses a conversation of another account/contact before calling Meta', async () => {
+    h.assertConversationOwned.mockRejectedValueOnce(new Error('conversation not found for this account/contact'))
+    await expect(engineSendTemplate(ARGS)).rejects.toThrow(/conversation not found/)
+    expect(h.assertConversationOwned).toHaveBeenCalledWith(expect.anything(), 'acct-1', 'c-1', 'conv-1')
+    expect(h.sendTemplateMessage).not.toHaveBeenCalled()
+    expect(h.inserts).toHaveLength(0)
+    expect(h.updates).toHaveLength(0)
+  })
 })
 
 describe('engineSendTemplate — body persistence (wacrm #483)', () => {

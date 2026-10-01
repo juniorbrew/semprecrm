@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
   updates: [] as { table: string; payload: Record<string, unknown>; filters: [string, unknown][] }[],
   /** Current messages.status for the wamid (drives the `.in` guard). */
   messageStatus: 'sent' as string,
+  /** Account whose conversation holds the wamid (messages → conversations join). */
+  messageAccount: 'acct-1' as string,
   /** Error the next N messages updates resolve with. */
   messageUpdateErrors: [] as ({ code: string; message: string } | null)[],
   ingest: vi.fn<(...args: unknown[]) => Promise<{ ok: boolean }>>(async () => ({ ok: true })),
@@ -87,16 +89,25 @@ vi.mock('@supabase/supabase-js', () => ({
           return { data: null, error: null }
         }
         if (table === 'whatsapp_config') return { data: h.configRows, error: null }
+        if (table === 'messages') {
+          const scoped = filters.some(([k, v]) => k === 'conversations.account_id' && v === h.messageAccount)
+          return { data: scoped ? [{ id: 'msg-1' }] : [], error: null }
+        }
         return { data: [], error: null }
       }
       const b: Record<string, unknown> = {
         select: () => b,
         update: (p: Record<string, unknown>) => ((payload = p), b),
         eq: (k: string, v: unknown) => (filters.push([k, v]), b),
-        in: (_k: string, v: unknown[]) => ((inFilter = v), b),
+        in: (k: string, v: unknown[]) => (k === 'status' ? (inFilter = v) : filters.push([k, v]), b),
         maybeSingle: async () =>
           table === 'broadcast_recipients'
-            ? { data: h.recipient, error: null }
+            ? {
+                data: filters.some(([k, v]) => k === 'broadcasts.account_id' && v === h.messageAccount)
+                  ? h.recipient
+                  : null,
+                error: null,
+              }
             : { data: null, error: null },
         then: (f: (v: unknown) => unknown, r?: (e: unknown) => unknown) =>
           Promise.resolve(resolve()).then(f, r),
@@ -175,6 +186,7 @@ beforeEach(() => {
   h.recipient = null
   h.updates = []
   h.messageStatus = 'sent'
+  h.messageAccount = 'acct-1'
   h.messageUpdateErrors = []
   h.ingest.mockClear()
   h.templateChange.mockClear()
@@ -211,7 +223,7 @@ describe('status webhook — failure reason (wacrm #535)', () => {
       error_title: errors[0].title,
       error_details: 'Per-user marketing message limit reached.',
     })
-    expect(msg?.filters).toEqual([['message_id', 'wamid.X']])
+    expect(msg?.filters).toEqual([['id', ['msg-1']]])
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('wamid.X'))).toHaveLength(1)
   })
 
@@ -225,6 +237,21 @@ describe('status webhook — failure reason (wacrm #535)', () => {
       status: 'failed',
       error_message: `[131049] ${errors[0].title}: Per-user marketing message limit reached.`,
     })
+  })
+
+  it('never updates a broadcast recipient of another account, nor without an account', async () => {
+    h.recipient = { id: 'rec-1', status: 'sent' }
+    h.messageAccount = 'acct-other'
+    await post(statusPayload({ status: 'delivered' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'broadcast_recipients')).toEqual([])
+
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.messageAccount = 'acct-1'
+    h.configRows = []
+    await post(statusPayload({ status: 'delivered' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'broadcast_recipients')).toEqual([])
   })
 
   it('updates only status for a failed status without errors', async () => {
@@ -267,6 +294,22 @@ describe('status webhook — forward-only messages.status (review fix)', () => {
     await post(statusPayload({ status: 'read' }))
     await settle()
     expect(h.messageStatus).toBe('read')
+  })
+
+  it('never touches a message whose conversation belongs to another account', async () => {
+    h.messageAccount = 'acct-other'
+    await post(statusPayload({ status: 'read' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'messages')).toEqual([])
+    expect(h.messageStatus).toBe('sent')
+  })
+
+  it('skips the messages update when the number maps to no single account', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.configRows = []
+    await post(statusPayload({ status: 'read' }))
+    await settle()
+    expect(h.updates.filter((u) => u.table === 'messages')).toEqual([])
   })
 
   it('ignores statuses that are not on the ladder', async () => {
