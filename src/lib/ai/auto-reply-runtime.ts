@@ -53,7 +53,7 @@ import {
   typingDelayMs,
   unverifiedCommercialTerms,
 } from './auto-reply';
-import { automaticCapReached } from './automatic-cap';
+import { automaticCapReached, warnAccountCapReached } from './automatic-cap';
 import { AiError, type AiErrorCode } from './errors';
 import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from './knowledge';
 import { runModelCall } from './run-model-call';
@@ -110,6 +110,8 @@ export function defaultAutoReplyDeps(): AutoReplyDeps {
 const AI_HANDOFF_CODES = new Set<AiErrorCode>(['budget_exceeded', 'quota', 'invalid_key', 'model_not_found']);
 /** AI switched off for the account: stay quiet. */
 const AI_OFF_CODES = new Set<AiErrorCode>(['module_not_included', 'not_enabled', 'no_key']);
+/** A job held back by the account-wide hourly cap tries again after this. */
+const ACCOUNT_CAP_RETRY_MS = 15 * 60_000;
 
 export { isUncertainSend };
 
@@ -449,15 +451,18 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   }
 
   // Hourly cap on automatic calls (cost burn by a customer or a flood of
-  // numbers): the team takes the conversation, silently, and the AI stays
-  // paused on it — so this happens once per conversation.
+  // numbers). One contact over its cap: the team takes that conversation,
+  // silently, and the AI stays paused on it. The whole account over its
+  // cap: nothing is paused — the job waits and the admins are told once.
   const capped = await automaticCapReached(db, { accountId: job.account_id, contactId: contact.id, now: started });
-  if (capped) {
-    return handOff(ctx, {
-      reason: capped === 'contact' ? 'Limite por hora de respostas automáticas para este contato' : 'Limite por hora de respostas automáticas da conta',
-      lastWords: words,
-      notify: false,
-    });
+  if (capped === 'account') {
+    await warnAccountCapReached(db, job.account_id, started);
+    // Waiting for the cap to clear is not a failed attempt.
+    await requeue(db, job, new Date(started.getTime() + ACCOUNT_CAP_RETRY_MS), { skip_reason: 'account_hourly_cap', attempts: Math.max(0, job.attempts - 1) });
+    return 'rescheduled';
+  }
+  if (capped === 'contact') {
+    return handOff(ctx, { reason: 'Limite por hora de respostas automáticas para este contato', lastWords: words, notify: false });
   }
 
   // ---- prompt ----

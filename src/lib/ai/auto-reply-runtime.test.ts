@@ -8,6 +8,12 @@ vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => ({}) }))
 vi.mock('@/lib/automations/meta-send', () => ({ engineSendText: vi.fn() }));
 const h = vi.hoisted(() => ({ module: true }));
 vi.mock('@/lib/plans-server', () => ({ accountHasModule: async () => h.module }));
+const pushes = vi.hoisted(() => [] as { accountId: string; tag?: string }[]);
+vi.mock('@/lib/push/notify', () => ({
+  notifyAccountAdmins: async (_db: unknown, accountId: string, p: { tag?: string }) => {
+    pushes.push({ accountId, tag: p.tag });
+  },
+}));
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { MetaSendError } from '@/lib/whatsapp/meta-api';
@@ -22,6 +28,7 @@ import {
   type AiReplyJob,
   type AutoReplyDeps,
 } from './auto-reply-runtime';
+import { resetAccountCapWarnings } from './automatic-cap';
 import { AiError } from './errors';
 
 const NOW = new Date('2026-09-29T15:00:00Z');
@@ -81,6 +88,8 @@ const msg = (id: string, over: Row = {}): Row => ({
 
 beforeEach(() => {
   h.module = true;
+  pushes.length = 0;
+  resetAccountCapWarnings();
   resetAutoReplyConcurrency();
   db = new FakeDb();
   sent = [];
@@ -350,10 +359,7 @@ describe('runAutoReplyJob — stay out / hand over', () => {
     expect(prompts).toHaveLength(0);
   });
 
-  it.each([
-    ['contact', 30, 'conv'],
-    ['account', 300, 'conv-other'],
-  ])('hourly %s cap of automatic calls → silent hand-over, no model call', async (_label, n, convId) => {
+  const seedUsage = (n: number, convId: string) =>
     db.seed(
       'ai_usage',
       Array.from({ length: n }, (_, i) => ({
@@ -366,11 +372,30 @@ describe('runAutoReplyJob — stay out / hand over', () => {
         created_at: '2026-09-29T14:30:00Z',
       })),
     );
+
+  it('hourly contact cap → silent hand-over of that conversation, no model call', async () => {
+    seedUsage(30, 'conv');
     await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
     expect(prompts).toHaveLength(0);
     expect(sent).toEqual([]);
     expect(conv()).toMatchObject({ ai_paused_until: 'infinity' });
     expect(db.table('ai_handoffs')[0].reason).toContain('Limite por hora');
+    expect(pushes).toHaveLength(0);
+  });
+
+  it('hourly account cap → the job waits, the AI is NOT paused, admins get one push per hour', async () => {
+    seedUsage(300, 'conv-other');
+    await expect(runAutoReplyJob(job({ attempts: 2 }), deps())).resolves.toBe('rescheduled');
+    expect(prompts).toHaveLength(0);
+    expect(sent).toEqual([]);
+    expect(conv().ai_paused_until).toBeNull();
+    expect(conv().status).toBe('open');
+    expect(db.table('ai_handoffs')).toHaveLength(0);
+    expect(jobRow()).toMatchObject({ status: 'queued', skip_reason: 'account_hourly_cap', attempts: 1, run_after: '2026-09-29T15:15:00.000Z' });
+    expect(pushes).toEqual([{ accountId: 'acc', tag: 'ai-hourly-cap:2026-09-29T15' }]);
+    // a second job in the same hour does not push again
+    await runAutoReplyJob(job(), deps());
+    expect(pushes).toHaveLength(1);
   });
 
   it('calls older than an hour, by a person or below the cap do not stop the reply', async () => {

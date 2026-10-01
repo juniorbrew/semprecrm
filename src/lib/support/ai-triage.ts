@@ -18,7 +18,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { automaticCapReached } from '@/lib/ai/automatic-cap'
+import { automaticCapReached, warnAccountCapReached } from '@/lib/ai/automatic-cap'
 import { AiError } from '@/lib/ai/errors'
 import { runModelCall } from '@/lib/ai/run-model-call'
 import {
@@ -322,7 +322,9 @@ export async function runTriage(
 
   if (input.claim) {
     // Automatic run: hourly cap per contact / account (see automatic-cap.ts).
-    if (await automaticCapReached(db, { accountId, contactId: (c.contact_id as string | null) ?? null })) {
+    const capped = await automaticCapReached(db, { accountId, contactId: (c.contact_id as string | null) ?? null })
+    if (capped) {
+      if (capped === 'account') await warnAccountCapReached(db, accountId)
       return { status: 'skipped', reason: 'hourly_cap' }
     }
     const { data: won, error: claimErr } = await db.rpc('claim_triage_run', { p_conversation_id: conversationId })
