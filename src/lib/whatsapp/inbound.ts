@@ -124,7 +124,7 @@ export interface IngestResult {
    */
   triageDue?: boolean
   /** The message answered a satisfaction survey (migration 074) and was consumed: nothing else ran. */
-  csat?: 'score' | 'comment' | 'declined'
+  csat?: 'score' | 'comment' | 'declined' | 'polite'
 }
 
 // ------------------------------------------------------------
@@ -243,7 +243,7 @@ export const OUTBOUND_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000
  * Did WE write last in this conversation, less than 24 h ago? Outbound
  * means an agent, automation, flow or broadcast message — not a phone
  * echo (the WhatsApp Business app's greeting / a personal reply) and
- * not the customer. Then the customer's message is an answer to it, and
+ * not the customer, not a satisfaction survey. Then the customer's message is an answer to it, and
  * the conversation continues even though it was resolved.
  */
 export async function lastMessageIsRecentOutbound(
@@ -256,12 +256,15 @@ export async function lastMessageIsRecentOutbound(
     .select('sender_type, origin, created_at')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(8)
   if (error) {
     console.error('[inbound] last message lookup failed:', error.message)
     return false
   }
-  const last = ((data ?? []) as Row[])[0]
+  // Satisfaction-survey traffic (the survey, the thanks, the comment question and
+  // the answers they drew, origin 'csat') is not a conversation WE started: it
+  // never makes a later reply reopen the resolved conversation (migration 074).
+  const last = ((data ?? []) as Row[]).find((m) => m.origin !== 'csat')
   if (!last || last.sender_type === 'customer' || last.origin === 'phone') return false
   const sentAt = new Date(last.created_at).getTime()
   if (!Number.isFinite(sentAt)) return false

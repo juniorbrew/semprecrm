@@ -59,7 +59,7 @@ INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '75000000-0000-4000-8000-00000000000a', true);
 INSERT INTO csat_settings(account_id, enabled, delay_minutes) VALUES ((SELECT acc_a FROM ids), true, 5);
-SELECT pg_temp.assert_true((SELECT scale = 'stars5' AND ask_comment AND cooldown_days = 7 AND skip_resolutions = ARRAY['not_applicable','duplicate','expired'] AND message_text LIKE 'Como foi o atendimento%'
+SELECT pg_temp.assert_true((SELECT scale = 'stars5' AND ask_comment AND cooldown_days = 7 AND skip_resolutions = ARRAY['not_applicable','duplicate','expired'] AND max_age_hours = 72 AND message_text LIKE 'Como foi o atendimento%'
   FROM csat_settings WHERE account_id = (SELECT acc_a FROM ids)), 'csat_settings defaults');
 SELECT pg_temp.assert_fails(format('UPDATE csat_settings SET delay_minutes = 1441 WHERE account_id = %L', (SELECT acc_a FROM ids)), 'delay CHECK (0-1440)');
 SELECT pg_temp.assert_fails(format('UPDATE csat_settings SET scale = %L WHERE account_id = %L', 'emoji', (SELECT acc_a FROM ids)), 'scale CHECK');
@@ -110,7 +110,8 @@ SELECT pg_temp.assert_fails(format('INSERT INTO csat_jobs(account_id, conversati
 SET ROLE authenticated;
 SELECT pg_temp.assert_fails('SELECT * FROM public.csat_claim_jobs()', 'claim is not callable by users');
 SELECT pg_temp.assert_fails('SELECT public.csat_expire()', 'expire is not callable by users');
-SELECT pg_temp.assert_fails(format('SELECT * FROM public.csat_record_answer(%L, 5, true)', gen_random_uuid()), 'record_answer is not callable by users');
+SELECT pg_temp.assert_fails(format('SELECT * FROM public.csat_record_answer(%L, 5)', gen_random_uuid()), 'record_answer is not callable by users');
+SELECT pg_temp.assert_fails(format('SELECT public.csat_request_comment(%L)', gen_random_uuid()), 'request_comment is not callable by users');
 SELECT pg_temp.assert_fails(format('SELECT public.csat_record_comment(%L, %L)', gen_random_uuid(), 'x'), 'record_comment is not callable by users');
 RESET ROLE;
 SET ROLE anon;
@@ -137,18 +138,50 @@ SELECT pg_temp.assert_fails(format('UPDATE csat_responses SET status = %L WHERE 
 INSERT INTO automations(user_id, account_id, name, trigger_type, trigger_config, is_active)
 VALUES ('75000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), 'Nota baixa', 'csat_received', '{"max_score":2}', true);
 SET ROLE service_role;
-SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003a1', 6, true)), 0, 'a score out of range records nothing');
-SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003a1', 2, true)), 1, 'the first answer wins');
-SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003a1', 5, true)), 0, 'a second answer records nothing');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003a1', 6)), 0, 'a score out of range records nothing');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003a1', 2)), 1, 'the first answer wins');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003a1', 5)), 0, 'a second answer records nothing');
 RESET ROLE;
-SELECT pg_temp.assert_true((SELECT status = 'answered' AND score = 2 AND comment_requested_at IS NOT NULL AND answered_at IS NOT NULL FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003a1'), 'answer stored');
+SELECT pg_temp.assert_true((SELECT status = 'answered' AND score = 2 AND comment_requested_at IS NULL AND answered_at IS NOT NULL FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003a1'), 'answer stored (the comment question is asked later)');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM conversation_events WHERE conversation_id = '75000000-0000-4000-8000-0000000002e1' AND event_type = 'csat_answered' AND payload = '{"score":2}'), 1, 'one csat_answered event');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM automation_event_queue WHERE trigger_type = 'csat_received' AND conversation_id = '75000000-0000-4000-8000-0000000002e1' AND (context->>'score')::int = 2), 1, 'csat_received queued with the score');
 SET ROLE service_role;
+SELECT pg_temp.assert_true(NOT public.csat_record_comment('75000000-0000-4000-8000-0000000003a1', 'cedo demais'), 'no comment before the question was sent');
+SELECT pg_temp.assert_true(public.csat_request_comment('75000000-0000-4000-8000-0000000003a1'), 'the question is recorded once it went out');
+SELECT pg_temp.assert_true(NOT public.csat_request_comment('75000000-0000-4000-8000-0000000003a1'), 'asked only once');
 SELECT pg_temp.assert_true(public.csat_record_comment('75000000-0000-4000-8000-0000000003a1', '  Demorou, mas resolveram  '), 'the comment is recorded');
 SELECT pg_temp.assert_true(NOT public.csat_record_comment('75000000-0000-4000-8000-0000000003a1', 'outro'), 'a second comment is refused');
 RESET ROLE;
 SELECT pg_temp.assert_true((SELECT comment = 'Demorou, mas resolveram' AND comment_received_at IS NOT NULL FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003a1'), 'comment trimmed and stored once');
+-- A comment later than 10 minutes after the question is refused; score + comment in one message is stored at once.
+INSERT INTO csat_responses(id, account_id, conversation_id, contact_id, status, score, sent_at, answered_at, comment_requested_at) VALUES
+ ('75000000-0000-4000-8000-0000000003c1', (SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000002e2', '75000000-0000-4000-8000-000000000102', 'answered', 4, now() - interval '1 hour', now() - interval '30 minutes', now() - interval '11 minutes');
+SET ROLE service_role;
+SELECT pg_temp.assert_true(NOT public.csat_record_comment('75000000-0000-4000-8000-0000000003c1', 'tarde'), 'comment window is 10 minutes');
+RESET ROLE;
+DELETE FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003c1';
+INSERT INTO csat_responses(id, account_id, conversation_id, contact_id, status, sent_at) VALUES
+ ('75000000-0000-4000-8000-0000000003c2', (SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000002e2', '75000000-0000-4000-8000-000000000102', 'sent', now() - interval '1 hour');
+SET ROLE service_role;
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003c2', 5, 'mas demorou')), 1, 'score with a comment in one message');
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT comment = 'mas demorou' AND comment_received_at IS NOT NULL AND comment_requested_at IS NULL FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003c2'), 'comment stored with the score, no question needed');
+DELETE FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003c2';
+-- 'reserved' is the default and is not a survey sent.
+INSERT INTO csat_responses(id, account_id, conversation_id, contact_id) VALUES ('75000000-0000-4000-8000-0000000003c3', (SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000002e2', '75000000-0000-4000-8000-000000000102');
+SELECT pg_temp.assert_true((SELECT status = 'reserved' FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003c3'), 'new rows are reserved');
+SET ROLE service_role;
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.csat_record_answer('75000000-0000-4000-8000-0000000003c3', 5)), 0, 'a reserved (never sent) survey cannot be answered');
+RESET ROLE;
+DELETE FROM csat_responses WHERE id = '75000000-0000-4000-8000-0000000003c3';
+-- Survey traffic (origin csat) is invisible to the conversation bookkeeping.
+INSERT INTO conversations(id, user_id, account_id, contact_id, status, archived_at, resolved_at, last_customer_message_at) VALUES ('75000000-0000-4000-8000-0000000002e9', '75000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '75000000-0000-4000-8000-000000000109', 'closed', now(), now() - interval '1 day', now() - interval '2 days');
+INSERT INTO messages(conversation_id, sender_type, content_type, content_text, origin) VALUES ('75000000-0000-4000-8000-0000000002e9', 'bot', 'text', 'Como foi?', 'csat');
+INSERT INTO messages(conversation_id, sender_type, content_type, content_text, origin) VALUES ('75000000-0000-4000-8000-0000000002e9', 'customer', 'text', '5', 'csat');
+SELECT pg_temp.assert_true((SELECT first_response_at IS NULL AND last_agent_message_at IS NULL AND archived_at IS NOT NULL AND last_customer_message_at < now() - interval '1 day' FROM conversations WHERE id = '75000000-0000-4000-8000-0000000002e9'), 'csat messages: no first response, no agent bump, a consumed 5 does not un-archive');
+INSERT INTO messages(conversation_id, sender_type, content_type, content_text) VALUES ('75000000-0000-4000-8000-0000000002e9', 'customer', 'text', 'oi, voltei');
+SELECT pg_temp.assert_true((SELECT archived_at IS NULL FROM conversations WHERE id = '75000000-0000-4000-8000-0000000002e9'), 'a normal customer message still un-archives (056 unchanged)');
+DELETE FROM conversations WHERE id = '75000000-0000-4000-8000-0000000002e9';
 -- 48 h expiry; an answered survey never expires.
 INSERT INTO csat_responses(id, account_id, conversation_id, contact_id, status, sent_at) VALUES
  ('75000000-0000-4000-8000-0000000003b1', (SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000002e2', '75000000-0000-4000-8000-000000000102', 'sent', now() - interval '30 hours'),
@@ -236,12 +269,13 @@ UPDATE conversations SET first_response_due_at = created_at + interval '30 minut
 UPDATE conversations SET first_response_due_at = created_at + interval '1 minute', resolution_due_at = created_at + interval '30 minutes' WHERE id = '75000000-0000-4000-8000-0000000004c2';  -- missed + missed
 UPDATE conversations SET resolution_due_at = now() - interval '1 hour' WHERE id = '75000000-0000-4000-8000-0000000004c4';  -- open and late: missed
 UPDATE conversations SET resolution_due_at = now() + interval '5 hours' WHERE id = '75000000-0000-4000-8000-0000000004c5';  -- future: not judged
--- Surveys sent in the period: C1 answered 5, C2 answered 3, C3 sent (unanswered), C4 skipped (not counted).
+-- Surveys sent in the period: C1 answered 5, C2 answered 3, C3 sent (unanswered), C4 skipped and C5 reserved (a never-sent reservation) are not counted.
 INSERT INTO csat_responses(account_id, conversation_id, contact_id, team_id, category_id, priority, assigned_agent_id, score, status, sent_at) VALUES
  ((SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000004c1', '75000000-0000-4000-8000-000000000104', (SELECT team1 FROM ids), (SELECT cat1 FROM ids), 'high',   '75000000-0000-4000-8000-00000000000a', 5, 'answered', pg_temp.sp((SELECT today FROM d) - 3, 12.1)),
  ((SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000004c2', '75000000-0000-4000-8000-000000000105', (SELECT team1 FROM ids), (SELECT cat1 FROM ids), 'normal', '75000000-0000-4000-8000-00000000000d', 3, 'answered', pg_temp.sp((SELECT today FROM d) - 2, 11.1)),
  ((SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000004c3', '75000000-0000-4000-8000-000000000106', (SELECT team2 FROM ids), (SELECT cat2 FROM ids), 'normal', '75000000-0000-4000-8000-00000000000d', NULL, 'sent', pg_temp.sp((SELECT today FROM d) - 1, 9.1)),
- ((SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000004c4', '75000000-0000-4000-8000-000000000107', NULL, NULL, 'normal', NULL, NULL, 'skipped', pg_temp.sp((SELECT today FROM d) - 1, 10.1));
+ ((SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000004c4', '75000000-0000-4000-8000-000000000107', NULL, NULL, 'normal', NULL, NULL, 'skipped', pg_temp.sp((SELECT today FROM d) - 1, 10.1)),
+ ((SELECT acc_a FROM ids), '75000000-0000-4000-8000-0000000004c5', '75000000-0000-4000-8000-000000000108', NULL, NULL, 'normal', NULL, NULL, 'reserved', pg_temp.sp((SELECT today FROM d) - 1, 10.2));
 
 -- ---- grants ----------------------------------------------------------------
 SET ROLE anon;

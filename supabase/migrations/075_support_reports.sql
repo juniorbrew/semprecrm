@@ -186,7 +186,7 @@ BEGIN
     FROM public.csat_responses s
     JOIN public.conversations c2 ON c2.id = s.conversation_id
     WHERE s.account_id = p_account_id
-      AND s.status <> 'skipped'
+      AND s.status IN ('sent', 'answered', 'expired')
       AND s.sent_at >= v_from AND s.sent_at < v_to
       AND (p_team_id IS NULL OR s.team_id = p_team_id)
       AND (p_category_id IS NULL OR s.category_id = p_category_id)

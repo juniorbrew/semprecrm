@@ -235,6 +235,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
   }
 
+  // Satisfaction-survey bubbles (origin 'csat') go out on CLOSED conversations:
+  // they must not move the conversation in the list nor become its preview.
+  if (input.kind === 'text' && input.origin === 'csat') return { whatsapp_message_id: waMessageId }
+
   await db
     .from('conversations')
     .update({

@@ -226,6 +226,30 @@ export function CsatSettings({ readOnly }: { readOnly: boolean }) {
             <span className="text-muted-foreground">{copy.days}</span>
           </div>
 
+          <div className="flex items-center gap-2 text-sm">
+            <Label htmlFor="csat-max-age" className="font-normal">
+              {copy.maxAge}
+            </Label>
+            <Input
+              id="csat-max-age"
+              inputMode="numeric"
+              value={String(settings.max_age_hours)}
+              disabled={disabled}
+              className="h-8 w-16 px-2 tabular-nums"
+              onChange={(e) =>
+                change(
+                  { max_age_hours: number(e.target.value, CSAT_LIMITS.max_age_hours.min, CSAT_LIMITS.max_age_hours.max, settings.max_age_hours) },
+                  false,
+                )
+              }
+              onBlur={() => void commit(settings)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+            />
+            <span className="text-muted-foreground">{copy.hours}</span>
+          </div>
+
           <fieldset className="space-y-2">
             <legend className="text-sm text-foreground">{copy.skip}</legend>
             {CSAT_RESOLUTIONS.map((r) => (

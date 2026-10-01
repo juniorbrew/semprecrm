@@ -141,6 +141,9 @@ export async function engineSendViaQr(
     throw new Error(`sent via gateway but DB insert failed: ${msgErr.message}`)
   }
 
+  // Survey bubbles go out on closed conversations: no list reorder, no preview.
+  if (input.origin === 'csat') return { whatsapp_message_id: message_id }
+
   await db
     .from('conversations')
     .update({

@@ -1039,12 +1039,25 @@ describe('ingestInboundMessage — after a resolved conversation (review round)'
       expect(h.sendCalls).toEqual([])
     })
 
-    it('an answer that is not consumed is a normal message again: reopens within 24 h of our outbound', async () => {
+    it('survey traffic is not "our outbound": a non-score reply after only the survey never reopens, it is a new conversation', async () => {
       seedClosed({ sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) })
       const res = await ingestInboundMessage({ ...BASE, text: 'meu problema voltou' }, makeDb())
-      expect(res).toMatchObject({ ok: true, conversationId: 'conv-1', reopened: true })
+      expect(res.reopened).toBeUndefined()
       expect(res.csat).toBeUndefined()
-      expect(h.automationCalls.map((c) => c.triggerType)).toContain('new_message_received')
+      expect(res.newConversation).toBe(true)
+      expect(h.state.conversations.find((c) => c.id === 'conv-1')?.status).toBe('closed')
+      expect(h.automationCalls.map((c) => c.triggerType)).toContain('first_inbound_message')
+    })
+
+    it('the survey, the thanks and the answers do not hide a REAL agent message before them: within 24 h it still reopens', async () => {
+      seedClosed({ sender_type: 'agent', origin: null, created_at: hoursAgo(3) })
+      h.state.messages.push(
+        { id: 'm-s', conversation_id: 'conv-1', sender_type: 'bot', origin: 'csat', created_at: hoursAgo(2) },
+        { id: 'm-a', conversation_id: 'conv-1', sender_type: 'customer', origin: 'csat', created_at: hoursAgo(1.5) },
+        { id: 'm-t', conversation_id: 'conv-1', sender_type: 'bot', origin: 'csat', created_at: hoursAgo(1) },
+      )
+      const res = await ingestInboundMessage({ ...BASE, text: 'preciso de outra coisa' }, makeDb())
+      expect(res).toMatchObject({ ok: true, conversationId: 'conv-1', reopened: true })
     })
 
     it('a redelivery of an already stored message is a duplicate before the survey is consulted', async () => {

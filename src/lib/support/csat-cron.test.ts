@@ -174,3 +174,86 @@ describe('runCsatCron', () => {
     expect(out).toEqual({ claimed: 0, sent: 0, skipped: 0, errors: 0, expired: 0 })
   })
 })
+
+describe('runCsatCron: reserved, uncertain, active, recent, burst (review round)', () => {
+  it('the row is reserved first and only flips to sent after the send succeeded', async () => {
+    const { state, send, run } = setup()
+    let seenDuringSend: unknown = null
+    send.mockImplementationOnce(async () => {
+      seenDuringSend = state.tables.csat_responses.map((r) => r.status)
+      return { whatsapp_message_id: 'wamid-out' }
+    })
+    await run()
+    expect(seenDuringSend).toEqual(['reserved'])
+    expect(state.tables.csat_responses[0]).toMatchObject({ status: 'sent', message_id: 'wamid-out' })
+  })
+
+  it('an UNCERTAIN send keeps the reservation, finishes the job as uncertain and is never retried', async () => {
+    const { GatewayUnreachableError } = await import('@/lib/whatsapp/qr-gateway')
+    const { state, send, run } = setup()
+    send.mockRejectedValueOnce(new GatewayUnreachableError('timeout'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const out = await run()
+    warn.mockRestore()
+    expect(out).toMatchObject({ sent: 0, errors: 1 })
+    expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'reserved', conversation_id: 'conv-1' })])
+    expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'uncertain', processed_at: NOW.toISOString() })
+    // The next tick has nothing to claim and sends nothing.
+    expect(await run(new Date(NOW.getTime() + 60_000))).toMatchObject({ claimed: 0 })
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('a reservation that never became sent is not a survey sent (crash between reserve and send)', async () => {
+    const { state, run } = setup()
+    state.tables.csat_responses = [{ id: 'x', conversation_id: 'conv-0', contact_id: 'k1', status: 'reserved', sent_at: minutesAgo(5) }]
+    // No cooldown from a reserved row: this conversation is surveyed.
+    expect(await run()).toMatchObject({ sent: 1 })
+  })
+
+  it('cooldown counts expired surveys too (non-responders are not asked again)', async () => {
+    const { state, run } = setup({ extra: { csat_responses: [{ id: 'p', conversation_id: 'conv-0', contact_id: 'k1', status: 'expired', sent_at: minutesAgo(3 * 24 * 60) }] } })
+    expect(await run()).toMatchObject({ sent: 0, skipped: 1 })
+    expect(state.tables.csat_jobs[0].result).toBe('cooldown')
+  })
+
+  it('the contact wrote again since the resolve: a live conversation, no survey, no row', async () => {
+    const { state, send, run } = setup()
+    state.tables.conversations.push({ id: 'conv-new', account_id: 'acc', contact_id: 'k1', status: 'open', created_at: minutesAgo(1), last_customer_message_at: minutesAgo(1) })
+    expect(await run()).toMatchObject({ sent: 0, skipped: 1 })
+    expect(state.tables.csat_jobs[0].result).toBe('contact_active')
+    expect(state.tables.csat_responses ?? []).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('the Meta window uses the contact\'s newest customer message across conversations', async () => {
+    const { state, send, run } = setup({ conv: { last_customer_message_at: minutesAgo(26 * 60) } })
+    state.tables.conversations.push({ id: 'conv-newer', account_id: 'acc', contact_id: 'k1', status: 'closed', created_at: minutesAgo(60), last_customer_message_at: minutesAgo(20) })
+    expect(await run()).toMatchObject({ sent: 1 })
+    expect(send).toHaveBeenCalled()
+  })
+
+  it('nobody attended the conversation: skipped (no_agent_message)', async () => {
+    const { state, send, run } = setup({ conv: { last_agent_message_at: null } })
+    expect(await run()).toMatchObject({ sent: 0, skipped: 1 })
+    expect(state.tables.csat_responses[0]).toMatchObject({ status: 'skipped', skip_reason: 'no_agent_message' })
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('the customer wrote long before the close: stale, skipped', async () => {
+    const { state, run } = setup({ conv: { channel: 'qr', last_customer_message_at: minutesAgo(80 * 60), resolved_at: minutesAgo(5) } })
+    expect(await run()).toMatchObject({ sent: 0, skipped: 1 })
+    expect(state.tables.csat_responses[0]).toMatchObject({ skip_reason: 'stale' })
+  })
+
+  it('burst cap: past 20 surveys in the last hour the job is put back, not lost and not an attempt', async () => {
+    const recent = Array.from({ length: 20 }, (_, i) => ({ id: `b${i}`, account_id: 'acc', conversation_id: `cb${i}`, contact_id: `kb${i}`, status: 'sent', sent_at: minutesAgo(10) }))
+    const { state, send, run } = setup({ extra: { csat_responses: recent } })
+    expect(await run()).toMatchObject({ claimed: 1, sent: 0 })
+    expect(send).not.toHaveBeenCalled()
+    expect(state.tables.csat_jobs[0]).toMatchObject({ claimed_at: null, attempts: 0 })
+    expect(Date.parse(state.tables.csat_jobs[0].run_at as string)).toBeGreaterThan(NOW.getTime())
+    expect(state.tables.csat_jobs[0].processed_at).toBeUndefined()
+    // An hour later the window has emptied and it goes out.
+    expect(await run(new Date(NOW.getTime() + 2 * 3_600_000))).toMatchObject({ sent: 1 })
+  })
+})

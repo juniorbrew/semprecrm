@@ -9,16 +9,23 @@
 //    (csatSkipReason), reserve the survey row (unique per conversation —
 //    the second reservation of the same conversation finds a duplicate and
 //    sends nothing), send, then record message id + `csat_sent` event.
-//    A failed send removes the reservation and leaves the job to be tried
-//    again (3 attempts, see csat_claim_jobs / csat_expire).
+//    The row is reserved as 'reserved' and flips to 'sent' only after the
+//    send succeeded: a crash in between never counts as sent.
+//    An error raised BEFORE the request left removes the reservation and
+//    leaves the job to be tried again (3 attempts); an UNCERTAIN send
+//    (isUncertainSend: it may have reached WhatsApp) keeps the reservation,
+//    finishes the job as 'uncertain' and is never retried.
+//    A per-account burst cap (CSAT_LIMITS.burst_per_hour) delays the rest.
 // Idempotent: a repeated tick finds no due job and no new expiry.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
+import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import {
   CSAT_JOB_ONLY_REASONS,
+  CSAT_LIMITS,
   csatSkipReason,
   parseCsatSettings,
   surveyText,
@@ -41,6 +48,7 @@ interface Job {
   account_id: string
   conversation_id: string
   service_count: number
+  attempts?: number
 }
 
 type Send = (args: {
@@ -82,6 +90,7 @@ export async function runCsatCron(
     try {
       const result = await handleJob(db, job, now, send)
       if (result === 'sent') out.sent += 1
+      else if (result === 'uncertain') out.errors += 1
       else out.skipped += 1
     } catch (err) {
       out.errors += 1
@@ -98,12 +107,12 @@ async function finish(db: SupabaseClient, job: Job, result: string, now: Date) {
   if (error) throw new Error(`cannot finish job: ${error.message}`)
 }
 
-async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): Promise<'sent' | CsatSkipReason | 'duplicate'> {
+async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): Promise<'sent' | CsatSkipReason | 'duplicate' | 'delayed' | 'uncertain'> {
   const [convRes, settingsRes] = await Promise.all([
     db
       .from('conversations')
       .select(
-        'id, account_id, user_id, contact_id, status, service_count, resolution, category_id, team_id, priority, assigned_agent_id, channel, last_customer_message_at',
+        'id, account_id, user_id, contact_id, status, service_count, resolution, category_id, team_id, priority, assigned_agent_id, channel, last_customer_message_at, last_agent_message_at, resolved_at',
       )
       .eq('id', job.conversation_id)
       .eq('account_id', job.account_id)
@@ -119,7 +128,7 @@ async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): P
   }
   const settings = parseCsatSettings(settingsRes.data)
 
-  const [contactRes, lastRes] = await Promise.all([
+  const [contactRes, lastRes, liveRes] = await Promise.all([
     db
       .from('contacts')
       .select('id, phone, opted_out_at, anonymized_at')
@@ -130,13 +139,25 @@ async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): P
       .from('csat_responses')
       .select('sent_at')
       .eq('contact_id', conv.contact_id)
-      .in('status', ['sent', 'answered'])
+      .in('status', ['sent', 'answered', 'expired'])
       .neq('conversation_id', job.conversation_id)
       .order('sent_at', { ascending: false })
       .limit(1),
+    // Re-checked right before sending: the contact may have written again since the resolve.
+    db
+      .from('conversations')
+      .select('id, status, last_customer_message_at')
+      .eq('contact_id', conv.contact_id)
+      .eq('account_id', job.account_id)
+      .order('created_at', { ascending: false })
+      .limit(50),
   ])
   if (contactRes.error) throw new Error(`contact lookup: ${contactRes.error.message}`)
   if (lastRes.error) throw new Error(`cooldown lookup: ${lastRes.error.message}`)
+  if (liveRes.error) throw new Error(`conversations lookup: ${liveRes.error.message}`)
+  const contactConvs = (liveRes.data ?? []) as { id: string; status: string; last_customer_message_at: string | null }[]
+  const contactLastCustomerAt =
+    contactConvs.map((c) => c.last_customer_message_at).filter((x): x is string => !!x).sort().pop() ?? null
   const contact = contactRes.data as { id: string; phone: string | null; opted_out_at: string | null; anonymized_at: string | null } | null
   if (!contact) {
     await finish(db, job, 'missing', now)
@@ -149,6 +170,8 @@ async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): P
     jobServiceCount: job.service_count,
     contact,
     lastSentAt: ((lastRes.data ?? [])[0] as { sent_at: string } | undefined)?.sent_at ?? null,
+    hasActiveConversation: contactConvs.some((c) => c.status !== 'closed'),
+    contactLastCustomerAt,
     now,
   })
 
@@ -175,11 +198,31 @@ async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): P
     return reason
   }
 
+  // Burst cap per account: after a bulk resolve the rest waits (a QR number
+  // sending dozens of messages in a row is the pattern WhatsApp looks for).
+  const hourAgo = new Date(now.getTime() - 3_600_000).toISOString()
+  const recent = await db
+    .from('csat_responses')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', job.account_id)
+    .in('status', ['sent', 'answered', 'expired'])
+    .gte('sent_at', hourAgo)
+  if (recent.error) throw new Error(`burst count: ${recent.error.message}`)
+  if ((recent.count ?? 0) >= CSAT_LIMITS.burst_per_hour) {
+    // Not an attempt: put it back for the next quarter hour.
+    await db
+      .from('csat_jobs')
+      .update({ run_at: new Date(now.getTime() + 15 * 60_000).toISOString(), claimed_at: null, attempts: Math.max(0, (job.attempts ?? 1) - 1) })
+      .eq('id', job.id)
+    return 'delayed'
+  }
+
   // Reserve first: the unique row decides who sends, so a duplicate job or a
-  // concurrent tick cannot survey the same conversation twice.
+  // concurrent tick cannot survey the same conversation twice. It is only
+  // 'sent' once the send really went out.
   const reserved = await db
     .from('csat_responses')
-    .upsert({ ...snapshot, status: 'sent', sent_at: now.toISOString() }, { onConflict: 'conversation_id', ignoreDuplicates: true })
+    .upsert({ ...snapshot, status: 'reserved', sent_at: now.toISOString() }, { onConflict: 'conversation_id', ignoreDuplicates: true })
     .select('id')
   if (reserved.error) throw new Error(`reserve: ${reserved.error.message}`)
   const row = ((reserved.data ?? []) as { id: string }[])[0]
@@ -199,12 +242,23 @@ async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): P
       origin: 'csat',
     })
   } catch (err) {
-    await db.from('csat_responses').delete().eq('id', row.id).eq('status', 'sent').is('message_id', null)
+    if (isUncertainSend(err)) {
+      // It may have reached the customer: the reservation stays (nothing else is
+      // ever sent for this conversation) and the job is never retried.
+      console.warn('[csat] uncertain send, not retrying:', job.conversation_id, err instanceof Error ? err.message : err)
+      await finish(db, job, 'uncertain', now)
+      return 'uncertain'
+    }
+    await db.from('csat_responses').delete().eq('id', row.id).eq('status', 'reserved')
     throw err
   }
 
-  const upd = await db.from('csat_responses').update({ message_id: sent.whatsapp_message_id }).eq('id', row.id)
-  if (upd.error) console.error('[csat] message id not stored:', upd.error.message)
+  const flip = await db
+    .from('csat_responses')
+    .update({ status: 'sent', sent_at: new Date().toISOString(), message_id: sent.whatsapp_message_id })
+    .eq('id', row.id)
+    .eq('status', 'reserved')
+  if (flip.error) console.error('[csat] survey not marked sent:', flip.error.message)
   const ev = await db.from('conversation_events').insert({
     account_id: job.account_id,
     conversation_id: job.conversation_id,

@@ -7,8 +7,10 @@
 --    service role (cron sends, inbound pipeline records the answer).
 --    Members read. The row snapshots team / category / priority / agent
 --    at send time so the reports keep their meaning if the conversation
---    changes later. status: sent -> answered | expired; or skipped (final
---    reason in skip_reason, no message sent).
+--    changes later. status: reserved (row taken by the cron, nothing sent
+--    yet; a crash or an uncertain send leaves it here and it counts as
+--    NOT sent) -> sent (after a successful send) -> answered | expired;
+--    or skipped (final reason in skip_reason, no message sent).
 -- 3. csat_jobs: the small queue behind the survey. A trigger on
 --    conversations enqueues one job when a conversation is closed (when the
 --    survey is enabled) `delay_minutes` ahead; reopening cancels it. The
@@ -19,7 +21,8 @@
 --    csat_record_comment: service role only. Recording an answer is ONE
 --    atomic statement (status sent -> answered, event, automation trigger)
 --    so two deliveries of the same reply cannot both win.
--- 5. messages.origin: + 'csat' (059 + 066 list kept).
+-- 5. conversations_track_last_message(): ignores origin 'csat' rows.
+--    messages.origin: + 'csat' (059 + 066 list kept).
 --    conversation_events: + csat_sent, csat_answered (073 list kept).
 --    Automation trigger `csat_received` (context: score) is raised from
 --    the existing automation_event_queue (migration 048).
@@ -41,6 +44,7 @@ CREATE TABLE IF NOT EXISTS public.csat_settings (
   cooldown_days    INTEGER NOT NULL DEFAULT 7,
   only_categories  UUID[] NOT NULL DEFAULT '{}',
   skip_resolutions TEXT[] NOT NULL DEFAULT ARRAY['not_applicable', 'duplicate', 'expired'],
+  max_age_hours    INTEGER NOT NULL DEFAULT 72,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -50,6 +54,9 @@ ALTER TABLE public.csat_settings DROP CONSTRAINT IF EXISTS csat_settings_delay_c
 ALTER TABLE public.csat_settings ADD CONSTRAINT csat_settings_delay_check CHECK (delay_minutes BETWEEN 0 AND 1440);
 ALTER TABLE public.csat_settings DROP CONSTRAINT IF EXISTS csat_settings_cooldown_check;
 ALTER TABLE public.csat_settings ADD CONSTRAINT csat_settings_cooldown_check CHECK (cooldown_days BETWEEN 0 AND 365);
+ALTER TABLE public.csat_settings ADD COLUMN IF NOT EXISTS max_age_hours INTEGER NOT NULL DEFAULT 72;
+ALTER TABLE public.csat_settings DROP CONSTRAINT IF EXISTS csat_settings_max_age_check;
+ALTER TABLE public.csat_settings ADD CONSTRAINT csat_settings_max_age_check CHECK (max_age_hours BETWEEN 1 AND 720);
 ALTER TABLE public.csat_settings DROP CONSTRAINT IF EXISTS csat_settings_message_check;
 ALTER TABLE public.csat_settings ADD CONSTRAINT csat_settings_message_check CHECK (char_length(btrim(message_text)) BETWEEN 1 AND 1000);
 ALTER TABLE public.csat_settings DROP CONSTRAINT IF EXISTS csat_settings_thanks_check;
@@ -86,7 +93,7 @@ CREATE TABLE IF NOT EXISTS public.csat_responses (
   assigned_agent_id    UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   score                SMALLINT,
   comment              TEXT,
-  status               TEXT NOT NULL DEFAULT 'sent',
+  status               TEXT NOT NULL DEFAULT 'reserved',
   skip_reason          TEXT,
   sent_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   answered_at          TIMESTAMPTZ,
@@ -95,12 +102,13 @@ CREATE TABLE IF NOT EXISTS public.csat_responses (
   message_id           TEXT,
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE public.csat_responses ALTER COLUMN status SET DEFAULT 'reserved';
 ALTER TABLE public.csat_responses DROP CONSTRAINT IF EXISTS csat_responses_score_check;
 ALTER TABLE public.csat_responses ADD CONSTRAINT csat_responses_score_check CHECK (score IS NULL OR score BETWEEN 1 AND 5);
 ALTER TABLE public.csat_responses DROP CONSTRAINT IF EXISTS csat_responses_comment_check;
 ALTER TABLE public.csat_responses ADD CONSTRAINT csat_responses_comment_check CHECK (comment IS NULL OR char_length(comment) <= 500);
 ALTER TABLE public.csat_responses DROP CONSTRAINT IF EXISTS csat_responses_status_check;
-ALTER TABLE public.csat_responses ADD CONSTRAINT csat_responses_status_check CHECK (status IN ('sent', 'answered', 'expired', 'skipped'));
+ALTER TABLE public.csat_responses ADD CONSTRAINT csat_responses_status_check CHECK (status IN ('reserved', 'sent', 'answered', 'expired', 'skipped'));
 ALTER TABLE public.csat_responses DROP CONSTRAINT IF EXISTS csat_responses_answered_check;
 ALTER TABLE public.csat_responses ADD CONSTRAINT csat_responses_answered_check CHECK (status <> 'answered' OR score IS NOT NULL);
 ALTER TABLE public.csat_responses DROP CONSTRAINT IF EXISTS csat_responses_priority_check;
@@ -219,13 +227,16 @@ END;
 $$;
 
 -- The score: sent -> answered in ONE statement (a second delivery of the
--- same reply finds nothing to update). The event and the automation
--- trigger are best effort: they never undo the score.
+-- same reply finds nothing to update). `p_comment` is a comment that came
+-- in the same message ("5 mas demorou"). The comment QUESTION is asked later
+-- (csat_request_comment, after the thanks message really went out). The
+-- event and the automation trigger are best effort: they never undo the score.
 DROP FUNCTION IF EXISTS public.csat_record_answer(uuid, integer, boolean, timestamptz);
+DROP FUNCTION IF EXISTS public.csat_record_answer(uuid, integer, text, timestamptz);
 CREATE OR REPLACE FUNCTION public.csat_record_answer(
   p_response_id uuid,
   p_score       integer,
-  p_ask_comment boolean,
+  p_comment     text DEFAULT NULL,
   p_now         timestamptz DEFAULT clock_timestamp()
 ) RETURNS SETOF public.csat_responses
 LANGUAGE plpgsql
@@ -234,11 +245,13 @@ SET search_path = public
 AS $$
 DECLARE
   v public.csat_responses;
+  v_comment text := left(NULLIF(btrim(p_comment), ''), 500);
 BEGIN
   IF p_score IS NULL OR p_score < 1 OR p_score > 5 THEN RETURN; END IF;
   UPDATE public.csat_responses r
      SET status = 'answered', score = p_score, answered_at = p_now,
-         comment_requested_at = CASE WHEN p_ask_comment THEN p_now END
+         comment = v_comment,
+         comment_received_at = CASE WHEN v_comment IS NOT NULL THEN p_now END
    WHERE r.id = p_response_id AND r.status = 'sent' AND r.sent_at > p_now - INTERVAL '48 hours'
   RETURNING r.* INTO v;
   IF NOT FOUND THEN RETURN; END IF;
@@ -255,7 +268,28 @@ BEGIN
 END;
 $$;
 
--- The optional comment, once, within 24 h of being asked. NULL / blank =
+-- The comment question went out (thanks + prompt really sent): only now does
+-- the customer's next message count as a comment, for 10 minutes.
+DROP FUNCTION IF EXISTS public.csat_request_comment(uuid, timestamptz);
+CREATE OR REPLACE FUNCTION public.csat_request_comment(
+  p_response_id uuid,
+  p_now         timestamptz DEFAULT clock_timestamp()
+) RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH u AS (
+    UPDATE public.csat_responses r
+       SET comment_requested_at = p_now
+     WHERE r.id = p_response_id AND r.status = 'answered'
+       AND r.comment_requested_at IS NULL AND r.comment_received_at IS NULL
+    RETURNING 1
+  )
+  SELECT EXISTS (SELECT 1 FROM u);
+$$;
+
+-- The optional comment, once, within 10 minutes of the question. NULL / blank =
 -- the customer declined; either way the question is closed.
 DROP FUNCTION IF EXISTS public.csat_record_comment(uuid, text, timestamptz);
 CREATE OR REPLACE FUNCTION public.csat_record_comment(
@@ -272,11 +306,67 @@ AS $$
        SET comment = left(NULLIF(btrim(p_comment), ''), 500), comment_received_at = p_now
      WHERE r.id = p_response_id AND r.status = 'answered'
        AND r.comment_requested_at IS NOT NULL AND r.comment_received_at IS NULL
-       AND r.comment_requested_at > p_now - INTERVAL '24 hours'
+       AND r.comment_requested_at > p_now - INTERVAL '10 minutes'
     RETURNING 1
   )
   SELECT EXISTS (SELECT 1 FROM u);
 $$;
+
+-- Survey traffic (origin 'csat': the survey, the thanks, the comment question
+-- and the customer's consumed answers) is invisible to the conversation
+-- bookkeeping: no first_response_at, no last_agent_message_at /
+-- last_customer_message_at bump (the latter would also un-archive a closed,
+-- archived conversation, see 056). Everything else is the 059 definition.
+CREATE OR REPLACE FUNCTION public.conversations_track_last_message()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_last_customer TIMESTAMPTZ;
+  v_first_response TIMESTAMPTZ;
+BEGIN
+  IF NEW.origin = 'csat' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.sender_type = 'customer' THEN
+    UPDATE conversations
+    SET last_customer_message_at = GREATEST(COALESCE(last_customer_message_at, NEW.created_at), NEW.created_at)
+    WHERE id = NEW.conversation_id;
+  ELSIF NEW.sender_type IN ('agent', 'bot') THEN
+    SELECT last_customer_message_at, first_response_at
+      INTO v_last_customer, v_first_response
+    FROM conversations
+    WHERE id = NEW.conversation_id;
+
+    -- Greeting / away message from the WhatsApp Business app (059).
+    IF NEW.origin = 'phone'
+       AND NOT public.phone_echo_counts_as_reply(NEW.created_at, v_last_customer) THEN
+      RETURN NEW;
+    END IF;
+
+    UPDATE conversations
+    SET last_agent_message_at = GREATEST(COALESCE(last_agent_message_at, NEW.created_at), NEW.created_at)
+    WHERE id = NEW.conversation_id;
+
+    -- First reply: the customer has written, nobody answered yet, and
+    -- this message comes after (or at) the customer's message.
+    IF v_first_response IS NULL
+       AND v_last_customer IS NOT NULL
+       AND NEW.created_at >= v_last_customer THEN
+      UPDATE conversations
+      SET first_response_at      = NEW.created_at,
+          first_response_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NEW.created_at - v_last_customer)))::INTEGER),
+          first_response_by      = NEW.sender_id
+      WHERE id = NEW.conversation_id
+        AND first_response_at IS NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+ALTER FUNCTION public.conversations_track_last_message() OWNER TO postgres;
 
 -- ---- CHECK lists --------------------------------------------------------
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_origin_check;
@@ -318,8 +408,10 @@ REVOKE ALL ON FUNCTION public.csat_claim_jobs(timestamptz, integer) FROM PUBLIC,
 GRANT EXECUTE ON FUNCTION public.csat_claim_jobs(timestamptz, integer) TO service_role;
 REVOKE ALL ON FUNCTION public.csat_expire(timestamptz) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.csat_expire(timestamptz) TO service_role;
-REVOKE ALL ON FUNCTION public.csat_record_answer(uuid, integer, boolean, timestamptz) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.csat_record_answer(uuid, integer, boolean, timestamptz) TO service_role;
+REVOKE ALL ON FUNCTION public.csat_record_answer(uuid, integer, text, timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.csat_record_answer(uuid, integer, text, timestamptz) TO service_role;
+REVOKE ALL ON FUNCTION public.csat_request_comment(uuid, timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.csat_request_comment(uuid, timestamptz) TO service_role;
 REVOKE ALL ON FUNCTION public.csat_record_comment(uuid, text, timestamptz) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.csat_record_comment(uuid, text, timestamptz) TO service_role;
 
@@ -330,7 +422,8 @@ BEGIN
     'public.conversations_csat_enqueue()',
     'public.csat_claim_jobs(timestamptz, integer)',
     'public.csat_expire(timestamptz)',
-    'public.csat_record_answer(uuid, integer, boolean, timestamptz)',
+    'public.csat_record_answer(uuid, integer, text, timestamptz)',
+    'public.csat_request_comment(uuid, timestamptz)',
     'public.csat_record_comment(uuid, text, timestamptz)'
   ] LOOP
     IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('public', f, 'EXECUTE')

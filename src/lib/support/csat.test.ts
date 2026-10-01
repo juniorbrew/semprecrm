@@ -4,8 +4,11 @@ import {
   CSAT_COMMENT_PROMPT,
   CSAT_DEFAULTS,
   csatSkipReason,
-  isCommentCandidate,
+  hasRequestWords,
+  isPoliteReply,
+  judgeComment,
   latestCsatScore,
+  parseScoreWithComment,
   isCommentDecline,
   parseCsatScore,
   parseCsatSettings,
@@ -36,7 +39,6 @@ describe('parseCsatScore', () => {
     ['👍', 5],
     ['👍🏽', 5],
     ['👎', 1],
-    ['👍👍', 5],
   ])('%j is %i', (text, score) => {
     expect(parseCsatScore(text)).toBe(score)
   })
@@ -57,6 +59,9 @@ describe('parseCsatScore', () => {
     ['obrigado'],
     ['⭐⭐⭐⭐⭐⭐'],
     ['👍 e 👎'],
+    ['👍👍'],
+    ['uma'],
+    ['Uma estrela'],
     ['123456789012345678901234567890'],
   ])('%j is not a score (stays a normal message)', (text) => {
     expect(parseCsatScore(text)).toBeNull()
@@ -68,19 +73,43 @@ describe('parseCsatScore', () => {
   })
 })
 
+describe('polite replies, score + words and the comment verdict', () => {
+  it.each(['obrigado', 'Obrigada!', 'ótimo', 'valeu', '10', 'nota 10', '👍👍', 'muito obrigado', '🙏'])('%j is polite', (t) => {
+    expect(isPoliteReply(t)).toBe(true)
+  })
+  it.each(['5', '👍', 'obrigado pelo atendimento, mas meu boleto não chegou', 'quero cancelar', '', 'quando chega?'])('%j is not polite', (t) => {
+    expect(isPoliteReply(t)).toBe(false)
+  })
+  it('parseScoreWithComment reads a score followed by words', () => {
+    expect(parseScoreWithComment('5 mas demorou')).toEqual({ score: 5, comment: 'mas demorou' })
+    expect(parseScoreWithComment('nota 4, bom atendimento')).toEqual({ score: 4, comment: 'bom atendimento' })
+    expect(parseScoreWithComment('5 estrelas')).toBeNull()
+    expect(parseScoreWithComment('10 coisas')).toBeNull()
+    expect(parseScoreWithComment('5 e o meu pedido?')).toBeNull()
+    expect(parseScoreWithComment('5')).toBeNull()
+  })
+  it('request words', () => {
+    for (const t of ['preciso da segunda via', 'quero cancelar', 'meu pedido', 'não funciona', 'erro 500', 'boleto', 'nota fiscal', 'suporte']) expect(hasRequestWords(t)).toBe(true)
+    for (const t of ['atendimento rápido', 'a Joana foi ótima']) expect(hasRequestWords(t)).toBe(false)
+  })
+  it('judgeComment: when in doubt it flows', () => {
+    expect(judgeComment('foi rápido', 5)).toBe('consume')
+    expect(judgeComment('não', 5)).toBe('decline')
+    expect(judgeComment('5', 4)).toBe('decline')
+    expect(judgeComment('quero cancelar', 5)).toBe('record')
+    expect(judgeComment('demorou', 2)).toBe('record')
+    expect(judgeComment('e o prazo?', 5)).toBe('flow')
+    expect(judgeComment('a'.repeat(201), 5)).toBe('flow')
+    expect(judgeComment('', 5)).toBe('flow')
+  })
+})
+
 describe('comment reading', () => {
   it.each(['não', 'Não', 'nao', 'n', 'pular', 'sem comentário', 'não obrigado', 'obrigado', 'nada', 'ok'])('%j declines', (t) => {
     expect(isCommentDecline(t)).toBe(true)
   })
   it('a real comment is not a decline', () => {
     expect(isCommentDecline('não gostei da demora')).toBe(false)
-  })
-  it('takes plain text, not questions, not empty, not huge', () => {
-    expect(isCommentCandidate('A Joana resolveu rápido')).toBe(true)
-    expect(isCommentCandidate('Quando chega o meu pedido?')).toBe(false)
-    expect(isCommentCandidate('   ')).toBe(false)
-    expect(isCommentCandidate(null)).toBe(false)
-    expect(isCommentCandidate('a'.repeat(1001))).toBe(false)
   })
 })
 
@@ -191,5 +220,47 @@ describe('latestCsatScore', () => {
   it('ignores a malformed score', () => {
     expect(latestCsatScore([{ event_type: 'csat_answered', payload: { score: 9 } }])).toBeNull()
     expect(latestCsatScore([{ event_type: 'csat_answered', payload: null }])).toBeNull()
+  })
+})
+
+describe('csatSkipReason: attended, recent, still closed (D5-D7)', () => {
+  const NOW = new Date('2026-09-30T12:00:00Z')
+  const input = (conv: Partial<CsatEligibilityInput['conversation']> = {}, over: Partial<CsatEligibilityInput> = {}): CsatEligibilityInput => ({
+    settings: { ...CSAT_DEFAULTS, enabled: true },
+    jobServiceCount: 1,
+    lastSentAt: null,
+    now: NOW,
+    conversation: {
+      status: 'closed',
+      service_count: 1,
+      resolution: 'resolved',
+      category_id: null,
+      channel: 'official',
+      last_customer_message_at: '2026-09-30T10:00:00Z',
+      last_agent_message_at: '2026-09-30T10:05:00Z',
+      resolved_at: '2026-09-30T11:55:00Z',
+      ...conv,
+    },
+    contact: { opted_out_at: null, anonymized_at: null, phone: '5511999990000' },
+    ...over,
+  })
+
+  it('nobody answered: no survey', () => {
+    expect(csatSkipReason(input({ last_agent_message_at: null }))).toBe('no_agent_message')
+    expect(csatSkipReason(input({ last_agent_message_at: '2026-09-30T10:05:00Z' }))).toBeNull()
+  })
+  it('the customer wrote too long before the close (default 72 h): stale', () => {
+    expect(csatSkipReason(input({ last_customer_message_at: '2026-09-27T11:00:00Z' }))).toBe('stale')
+    expect(csatSkipReason(input({ last_customer_message_at: '2026-09-27T11:00:00Z', channel: 'qr' }))).toBe('stale')
+    expect(csatSkipReason(input({ last_customer_message_at: '2026-09-28T12:00:00Z', channel: 'qr' }))).toBeNull()
+    const long = { ...CSAT_DEFAULTS, enabled: true, max_age_hours: 200 }
+    expect(csatSkipReason(input({ last_customer_message_at: '2026-09-27T11:00:00Z', channel: 'qr' }, { settings: long }))).toBeNull()
+  })
+  it('the contact wrote again before the send: a live conversation wins', () => {
+    expect(csatSkipReason(input({}, { hasActiveConversation: true }))).toBe('contact_active')
+  })
+  it('the Meta window follows the contact\'s newest customer message, not the surveyed conversation', () => {
+    expect(csatSkipReason(input({ last_customer_message_at: '2026-09-29T09:00:00Z', resolved_at: '2026-09-29T10:00:00Z' }, { contactLastCustomerAt: '2026-09-30T11:00:00Z' }))).toBeNull()
+    expect(csatSkipReason(input({}, { contactLastCustomerAt: '2026-09-29T11:00:00Z' }))).toBe('window_closed')
   })
 })
