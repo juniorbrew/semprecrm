@@ -3,6 +3,12 @@ import { httpOrigin, type MediaPolicy } from "./outbound-media.js";
 
 export interface GatewayConfig {
   port: number;
+  /**
+   * Endereço em que o HTTP escuta (GATEWAY_BIND, padrão 127.0.0.1). O deploy
+   * PM2 roda no mesmo host do app, então loopback basta; containers que são
+   * chamados por outro serviço da rede Docker precisam de GATEWAY_BIND=0.0.0.0.
+   */
+  bind: string;
   secret: string;
   appUrl: string;
   supabaseUrl: string;
@@ -76,6 +82,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const storageOrigins = [...new Set([supabaseUrl, supabasePublicUrl].map(httpOrigin).filter((o): o is string => !!o))];
   return {
     port,
+    bind: env.GATEWAY_BIND?.trim() || "127.0.0.1",
     secret,
     appUrl: required(env, "APP_URL").replace(/\/+$/, ""),
     supabaseUrl,
