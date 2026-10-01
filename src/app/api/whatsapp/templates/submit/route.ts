@@ -6,6 +6,7 @@ import {
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { submitMessageTemplate } from '@/lib/whatsapp/meta-api'
 import {
@@ -138,7 +139,8 @@ export async function POST(request: Request) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
-      const { data: config, error: configError } = await supabase
+      // Service role: the token is server-only (migration 076).
+      const { data: config, error: configError } = await supabaseAdmin()
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)

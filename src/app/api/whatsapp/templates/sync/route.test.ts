@@ -16,6 +16,20 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
 
+// The WhatsApp token is read with the service role (migration 076).
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => ({
+    from: () => {
+      const b: Record<string, unknown> = {
+        select: () => b,
+        eq: () => b,
+        single: async () => ({ data: { waba_id: 'waba-1', access_token: 'enc' }, error: null }),
+      }
+      return b
+    },
+  }),
+}))
+
 vi.mock('@/lib/auth/account', () => {
   function builder(table: string) {
     const ops = { type: 'select', payload: {} as Record<string, unknown> }

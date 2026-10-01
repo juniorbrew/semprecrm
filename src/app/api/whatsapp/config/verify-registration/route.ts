@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   getSubscribedApps,
@@ -55,7 +56,8 @@ export async function GET() {
     })
   }
 
-  const { data: config } = await supabase
+  // Service role: the token columns are server-only (migration 076).
+  const { data: config } = await supabaseAdmin()
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', accountId)

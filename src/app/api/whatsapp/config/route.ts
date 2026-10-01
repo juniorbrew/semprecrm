@@ -156,7 +156,9 @@ export async function GET() {
       )
     }
 
-    const { data: config, error: configError } = await supabase
+    // Service role: the token columns are server-only (migration 076);
+    // the account filter is the access rule.
+    const { data: config, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('phone_number_id, waba_id, access_token, status')
       .eq('account_id', accountId)

@@ -31,6 +31,7 @@ import {
   DELIVERY_LOCK_STALE_MS,
   renewDeliveryLock,
 } from '@/lib/broadcast-delivery-lock';
+import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { isUncertainSendError, sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import {
@@ -122,7 +123,9 @@ export async function loadDeliveryContext(
     throw new BroadcastError('not_found', 'Broadcast not found', 404);
   }
 
-  const { data: config, error: configError } = await db
+  // Service role whatever `db` is: the token columns are server-only
+  // (migration 076). The account filter is the access rule.
+  const { data: config, error: configError } = await supabaseAdmin()
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', accountId)

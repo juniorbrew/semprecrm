@@ -319,8 +319,9 @@ export async function POST(request: Request) {
       })
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
+    // Fetch and decrypt WhatsApp config (service role: the token columns
+    // are server-only, migration 076; the account filter is the rule).
+    const { data: config, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('*')
       .eq('account_id', accountId)
@@ -341,7 +342,7 @@ export async function POST(request: Request) {
     // concurrent sends both produce valid GCM ciphertexts of the same
     // plaintext, last write wins.
     if (isLegacyFormat(config.access_token)) {
-      void supabase
+      void supabaseAdmin()
         .from('whatsapp_config')
         .update({ access_token: encrypt(accessToken) })
         .eq('id', config.id)

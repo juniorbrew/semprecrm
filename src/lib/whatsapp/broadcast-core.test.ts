@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
+// The WhatsApp token is read with the service role: same fake database.
+const admin = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('@/lib/flows/admin-client', () => ({ supabaseAdmin: () => admin.db }));
 
 const sendTemplateMessage = vi.fn();
 vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
@@ -37,6 +40,7 @@ function phoneOf(i: number): string {
 
 function seed(n: number, opts: { lock?: string | null; bodyText?: string } = {}): FakeDb {
   const db = new FakeDb();
+  admin.db = db.client();
   db.seed('broadcasts', [
     {
       id: BC,
