@@ -378,6 +378,42 @@ function unitOf(raw: string): string {
   return u;
 }
 
+/** pt-BR number words, folded. */
+const NUM_WORDS: Record<string, number> = {
+  zero: 0, um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9,
+  dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17,
+  dezoito: 18, dezenove: 19, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70,
+  oitenta: 80, noventa: 90, cem: 100, cento: 100, duzentos: 200, duzentas: 200, trezentos: 300, trezentas: 300,
+  quatrocentos: 400, quatrocentas: 400, quinhentos: 500, quinhentas: 500, seiscentos: 600, seiscentas: 600,
+  setecentos: 700, setecentas: 700, oitocentos: 800, oitocentas: 800, novecentos: 900, novecentas: 900, mil: 1000,
+};
+const NW = Object.keys(NUM_WORDS).sort((a, z) => z.length - a.length).join('|');
+const NUM_WORDS_RE = new RegExp(String.raw`\b(?:${NW})(?:(?:\s+e\s+|\s+)(?:${NW}))*\b`, 'g');
+/** A lone "um"/"uma" is an article ("um bom dia") unless a unit or currency follows. */
+const AFTER_LONE_ONE = /^\s+(?:semanas?|mes|meses|anos?|real|reais)\b/;
+
+/** "noventa e nove reais" → "99 reais", "uma semana" → "1 semana" (input already folded). */
+function numberWordsToDigits(text: string): string {
+  const t = text.replace(/\bpor cento\b/g, '%');
+  return t.replace(NUM_WORDS_RE, (m: string, offset: number) => {
+    const words = m.split(/\s+/).filter((w) => w !== 'e');
+    // "2 mil" stays: UNIT_RE reads it as "mil:2".
+    if (m === 'mil' && /\d\s*$/.test(t.slice(0, offset))) return m;
+    if (words.length === 1 && (words[0] === 'um' || words[0] === 'uma') && !AFTER_LONE_ONE.test(t.slice(offset + m.length))) {
+      return m;
+    }
+    let total = 0;
+    let cur = 0;
+    for (const w of words) {
+      if (w === 'mil') {
+        total += (cur || 1) * 1000;
+        cur = 0;
+      } else cur += NUM_WORDS[w];
+    }
+    return String(total + cur);
+  });
+}
+
 const NUM = String.raw`\d+(?:[.,]\d+)*`;
 const MONEY_RES: RegExp[] = [
   new RegExp(String.raw`(?:r\$|us\$|\$|€)\s*(${NUM})`, 'g'),
@@ -393,25 +429,57 @@ const DATE_RE = /\b(\d{1,2})\/(\d{1,2})\b/g;
 /** "sala 12/13", "nº 10/12": a room / house number, not a date. */
 const ADDRESS_BEFORE = /(?:sala|n[º°o]|numero|apto|ap|apartamento|loja|cj|conjunto|bloco|casa|lote|quadra|rua|av|avenida)\s*\.?\s*$/;
 const WORD_RE =
-  /\b(desconto|cupom|promo[a-z]*|frete|gratuit[ao]s?|gratis|de graca|brinde|sem juros|parcel[a-z]*)\b/g;
+  /\b(desconto|cupom|promo[a-z]*|frete|gratuit[ao]s?|gratis|de graca|brinde|sem juros|sem acrescimo|parcel[a-z]*|reembols(?:o|os|amos|ar|ado|ada)|estorn(?:o|os|amos|ar|ado|ada)|garanti(?:a|as|mos|do|da|dos|das)|vitalici[ao]s?|sem multa|cancelamos|cancelaremos)\b/g;
 /** "até sexta" only means a deadline promise next to a price / giveaway. */
 const UNTIL_RE = /\bate (?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g;
 const OFFER_KEY = /^(?:money:|%:|w:(?!ate ))/;
 /** A word negated in its sentence ("não temos desconto", "sem frete") is not an offer. */
-const NEGATED = /\b(?:nao|nunca|sem(?!\s+juros))(?:\s+[^\s.;!?,]+){1,4}/g;
+const NEGATED = /\b(?:nao|nunca|sem(?!\s+(?:juros|acrescimo|multa)))(?:\s+[^\s.;!?,]+){1,4}/g;
 const stripNegated = (t: string) => t.replace(NEGATED, (m) => m.replace(WORD_RE, ' '));
 
 function wordKey(w: string): string {
   if (/^promo/.test(w)) return 'w:promo';
   if (/^parcel/.test(w)) return 'w:parcel';
   if (/^gratuit|^de graca$/.test(w)) return 'w:gratis';
+  if (w === 'sem acrescimo') return 'w:sem juros';
+  if (/^reembols/.test(w)) return 'w:reembolso';
+  if (/^estorn/.test(w)) return 'w:estorno';
+  if (/^garanti/.test(w)) return 'w:garantia';
+  if (/^vitalici/.test(w)) return 'w:vitalicio';
+  if (/^cancela/.test(w)) return 'w:cancelamos';
   return `w:${w}`;
 }
 
-/** Normalized commercial claims: "money:99,90", "%:20", "h:24", "x:12", "date:5/10", "w:desconto". */
+const EMAIL_RE = /[a-z0-9._%+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})\b/g;
+/** A URL / domain. Bare ones ("loja.com.br") need labels of 2+ characters, so "p.ex." is not a domain. */
+const HOST_RE = /(?<![a-z0-9@.-])(https?:\/\/|www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?![a-z0-9-])/g;
+/** Phone / Pix key / account number: 8+ digits, optionally split by spaces, dots, dashes or parentheses. */
+const DIGIT_RUN_RE = /(?<![\d/])\+?\(?\d(?:[\s().-]?\d){7,}(?![\d/])/g;
+
+/** "host:", "email:" and "digits:" tokens — contact / payment details. */
+function contactTokens(t: string, out: Set<string>): void {
+  const withoutEmails = t.replace(EMAIL_RE, (m: string, domain: string) => {
+    out.add(`email:${m}`);
+    out.add(`host:${domain.replace(/^www\./, '')}`);
+    return ' ';
+  });
+  for (const m of withoutEmails.matchAll(HOST_RE)) {
+    const host = m[2].replace(/^www\./, '');
+    if (!m[1] && host.split('.').some((label) => label.length < 2)) continue;
+    out.add(`host:${host}`);
+  }
+  for (const m of t.matchAll(DIGIT_RUN_RE)) out.add(`digits:${m[0].replace(/\D/g, '')}`);
+}
+
+/**
+ * Normalized claims: "money:99,90", "%:20", "h:24", "x:12", "date:5/10",
+ * "w:desconto", "host:loja.com.br", "email:a@b.com", "digits:11999999999".
+ * Number words count as numbers ("noventa e nove reais" → "money:99").
+ */
 export function commercialTokens(text: string): string[] {
-  const t = fold(text);
+  const t = numberWordsToDigits(fold(text));
   const out = new Set<string>();
+  contactTokens(t, out);
   for (const re of MONEY_RES) for (const m of t.matchAll(re)) out.add(`money:${canonNumber(m[1])}`);
   for (const m of t.matchAll(UNIT_RE)) out.add(`${unitOf(m[2])}:${canonNumber(m[1])}`);
   for (const m of t.matchAll(DATE_RE)) {
@@ -442,11 +510,25 @@ function groundTokens(ground: readonly string[]): Set<string> {
  * normalized token ("money:99,90", "%:20", "h:24", "x:12") — never by
  * bare digits. "Até amanhã" alone is a goodbye, not a claim.
  */
-export function unverifiedCommercialTerms(reply: string, ground: readonly string[]): string[] {
+export function unverifiedCommercialTerms(
+  reply: string,
+  ground: readonly string[],
+  /** The customer's own messages: they ground digit runs only (an order number the customer typed). */
+  customerTexts: readonly string[] = [],
+): string[] {
   const g = groundTokens(ground);
+  const digitGround = [...g, ...commercialTokens(customerTexts.join('\n'))]
+    .filter((k) => k.startsWith('digits:'))
+    .map((k) => k.slice(7));
+  // "+55 11 99999-9999" and "(11) 99999-9999" are the same number.
+  const digitsGrounded = (d: string) => digitGround.some((x) => x.endsWith(d) || d.endsWith(x));
   const tokens = commercialTokens(reply);
   const offers = tokens.some((k) => OFFER_KEY.test(k));
-  return tokens.filter((k) => !g.has(k) && (offers || !k.startsWith('w:ate ')));
+  return tokens.filter((k) => {
+    if (g.has(k)) return false;
+    if (k.startsWith('digits:')) return !digitsGrounded(k.slice(7));
+    return offers || !k.startsWith('w:ate ');
+  });
 }
 
 /** The agent's business hours as trusted text ("das 8h às 18h") for the ground list. */
@@ -460,19 +542,57 @@ export function businessHoursGround(bh: AgentBusinessHours | null | undefined): 
 const PUBLIC_LINE =
   /\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}|\b\d{1,2}(?::\d{2}|h)\b|\b(?:rua|avenida|av\.|endereco|cep|horario|telefone|whatsapp|fone|funcionamos|atendemos)\b/;
 
+/** Shortest instruction sentence / memory fact checked for a near-verbatim copy. */
+export const LEAK_MIN_CHARS = 25;
+/** Share of a sentence's word trigrams found in the reply that counts as a copy. */
+const LEAK_TRIGRAM_RATIO = 0.8;
+
+const wordsOf = (s: string) => fold(s).match(/[\p{L}\p{N}]+/gu) ?? [];
+function trigrams(s: string): Set<string> {
+  const w = wordsOf(s);
+  const out = new Set<string>();
+  for (let i = 0; i + 3 <= w.length; i++) out.add(`${w[i]} ${w[i + 1]} ${w[i + 2]}`);
+  return out;
+}
+/** `unit` (≥ LEAK_MIN_CHARS) is reproduced almost word for word in the text whose trigrams are `inText`. */
+function nearlyCopied(unit: string, inText: Set<string>, ratio = LEAK_TRIGRAM_RATIO): boolean {
+  if (unit.trim().length < LEAK_MIN_CHARS) return false;
+  const tris = [...trigrams(unit)];
+  if (tris.length < 2) return false;
+  return tris.filter((t) => inText.has(t)).length / tris.length >= ratio;
+}
+const sentences = (text: string) => text.split(/\n+|(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+
 /**
- * The reply quotes ≥ `span` characters of the (trusted) instructions
- * verbatim. Address / phone / opening-hours lines don't count.
+ * The reply reproduces internal text: ≥ `span` characters of an
+ * instruction line verbatim, or (almost) word for word an instruction
+ * sentence / approved memory fact of 25+ characters. Address / phone /
+ * opening-hours sentences don't count, nor does a memory fact the
+ * customer wrote themselves. Knowledge-base snippets are left out on
+ * purpose: they are public answers meant to be quoted.
  */
-export function leaksInstructions(reply: string, instructions: string | null | undefined, span = 80): boolean {
+export function leaksInstructions(
+  reply: string,
+  instructions: string | null | undefined,
+  extra: { memory?: readonly string[]; customerTexts?: readonly string[] } = {},
+  span = 80,
+): boolean {
   const r = fold(reply);
-  if (r.length < span) return false;
+  const replyTris = trigrams(reply);
   for (const line of (instructions ?? '').split(/\n+/)) {
     const src = fold(line).trim();
-    if (src.length < span || PUBLIC_LINE.test(src)) continue;
-    for (let i = 0; i + span <= src.length; i += 5) {
-      if (r.includes(src.slice(i, i + span))) return true;
+    if (src.length >= span && !PUBLIC_LINE.test(src)) {
+      for (let i = 0; i + span <= src.length; i += 5) {
+        if (r.includes(src.slice(i, i + span))) return true;
+      }
     }
+    for (const s of sentences(line)) {
+      if (!PUBLIC_LINE.test(fold(s)) && nearlyCopied(s, replyTris)) return true;
+    }
+  }
+  const customerTris = trigrams((extra.customerTexts ?? []).join('\n'));
+  for (const fact of extra.memory ?? []) {
+    if (nearlyCopied(fact, replyTris) && !nearlyCopied(fact, customerTris, 0.5)) return true;
   }
   return false;
 }

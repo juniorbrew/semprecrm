@@ -283,6 +283,70 @@ describe('leaksInstructions', () => {
     expect(leaksInstructions('Olá! Como posso ajudar hoje com seu pedido na padaria?', instr)).toBe(false);
     expect(leaksInstructions('qualquer', null)).toBe(false);
   });
+
+  it('a short instruction sentence (25+ chars) copied almost verbatim is a leak', () => {
+    const short = 'Código interno do gerente: ZEBRA-42 para liberar estoque.\nSeja simpático.';
+    expect(leaksInstructions('O código interno do gerente: ZEBRA-42 para liberar estoque!', short)).toBe(true);
+    expect(leaksInstructions('Para liberar o estoque preciso falar com o gerente.', short)).toBe(false);
+    // shorter than 25 chars: not checked
+    expect(leaksInstructions('Seja simpático.', short)).toBe(false);
+  });
+
+  it('memory facts: a copy is a leak unless the customer wrote it', () => {
+    const memory = ['Cliente está inadimplente desde março de 2026'];
+    const r = 'Vi aqui que o cliente está inadimplente desde março de 2026.';
+    expect(leaksInstructions(r, null, { memory })).toBe(true);
+    expect(leaksInstructions(r, null, { memory, customerTexts: ['sei que estou inadimplente desde março de 2026'] })).toBe(false);
+    expect(leaksInstructions('Olá! Como posso ajudar?', null, { memory })).toBe(false);
+  });
+});
+
+describe('output guard — audit cases', () => {
+  const ground = ['Plano básico por R$ 99,90. Horário 8h às 18h. Site: https://loja.com.br'];
+  it.each([
+    'O plano custa cem reais por mês',
+    'Custa noventa e nove reais',
+    'Pode pagar em dez vezes sem acréscimo',
+    'Prazo de uma semana',
+    'Visite http://evil.example/pay para finalizar',
+    'Visite evil-shop.com.br para finalizar',
+    'Escreva para pagamentos@evil.example',
+    'Pague via pix para a chave 11999999999',
+    'Pix: (11) 99999-9999',
+    'Garantimos reembolso total',
+    'A garantia é vitalícia',
+    'Cancelamos sem multa',
+    'Fazemos o estorno na hora',
+  ])('blocked: %s', (r) => {
+    expect(unverifiedCommercialTerms(r, ground).length, r).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'O valor é 99,90',
+    'Nosso site é https://loja.com.br',
+    'Veja em www.loja.com.br/planos',
+    'Atendemos das 8h às 18h',
+    'Até amanhã!',
+    'Tenha um bom dia!',
+    'Um momento, por favor.',
+    'Seu pedido 123456 foi enviado.',
+    'Fica na Av. Paulista, 1000, sala 12/13.',
+    'Obrigado, p.ex. pelo site mesmo.',
+    'Não fazemos reembolso, mas posso ajudar de outra forma.',
+    'Temos duas opções de cor.',
+  ])('passes: %s', (r) => {
+    expect(unverifiedCommercialTerms(r, ground), r).toEqual([]);
+  });
+
+  it('grounded contact details and words pass; the customer grounds digit runs only', () => {
+    const g = ['WhatsApp +55 (11) 98888-7777, e-mail contato@loja.com.br. Garantia de 90 dias, reembolso em até 7 dias.'];
+    expect(unverifiedCommercialTerms('Fale no (11) 98888-7777 ou contato@loja.com.br', g)).toEqual([]);
+    expect(unverifiedCommercialTerms('A garantia é de 90 dias e o reembolso sai em até 7 dias', g)).toEqual([]);
+    expect(unverifiedCommercialTerms('A garantia é de noventa dias', g)).toEqual([]);
+    expect(unverifiedCommercialTerms('Seu pedido 2026123456 está a caminho', [], ['meu pedido 2026123456 não chegou'])).toEqual([]);
+    expect(unverifiedCommercialTerms('Seu pedido 2026123456 está a caminho', [])).toEqual(['digits:2026123456']);
+    expect(unverifiedCommercialTerms('Custa R$ 5', [], ['custa R$ 5?'])).toEqual(['money:5']);
+  });
 });
 
 describe('prompt, split and pacing', () => {

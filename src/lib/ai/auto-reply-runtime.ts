@@ -516,11 +516,16 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     return fail('A resposta da IA não coube no limite de mensagens');
   }
   if (!agentCfg.split_messages && out.reply.length > AUTO_REPLY.maxSingleReplyChars) return fail('A resposta da IA ficou longa demais');
-  if (leaksInstructions(out.reply, instructions)) return fail('A resposta da IA repetia as instruções internas');
+  const customerTexts = [...history, ...pending]
+    .filter((m) => m.sender_type === 'customer')
+    .map((m) => plainMessageText(m.content_text));
+  if (leaksInstructions(out.reply, instructions, { memory, customerTexts })) {
+    return fail('A resposta da IA repetia as instruções internas');
+  }
   const ground = [instructions ?? '', businessHoursGround(agentCfg.business_hours), ...knowledge.map((k) => `${k.title}\n${k.content}`)];
-  const unverified = unverifiedCommercialTerms(out.reply, ground);
+  const unverified = unverifiedCommercialTerms(out.reply, ground, customerTexts);
   if (unverified.length > 0) {
-    return fail(`A IA ia citar condição comercial que não está na base (${unverified.slice(0, 3).join(', ')})`);
+    return fail(`A IA ia citar condição comercial ou contato que não está na base (${unverified.slice(0, 3).join(', ')})`);
   }
 
   await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0, reply_message_ids: job.inbound_message_ids });
