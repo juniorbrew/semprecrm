@@ -10,7 +10,8 @@ import {
   splitReply,
   suggestionInstructions,
 } from './agents';
-import { AGENT_PRESETS } from './agent-presets';
+import { AGENT_PRESETS, agentPreset } from './agent-presets';
+import { translateLiteral } from '@/lib/i18n';
 
 const TAG = '11111111-1111-4111-8111-111111111111';
 type Ch = 'official' | 'qr';
@@ -192,11 +193,47 @@ describe('AGENT_PRESETS', () => {
       expect(parsed.ok, p.id).toBe(true);
       expect(p.instructions).toMatch(/Nunca|Não invente/);
     }
-    expect(AGENT_PRESETS.map((p) => p.id)).toEqual(['sales', 'support', 'general', 'blank']);
+    expect(AGENT_PRESETS.map((p) => p.id)).toEqual(['sales', 'support', 'triage', 'finance', 'general', 'blank']);
   });
 
   it('sales never invents prices', () => {
     expect(AGENT_PRESETS[0].instructions).toContain('Nunca invente preços');
+  });
+
+  it('support: step by step, confirms it worked and asks to close', () => {
+    const { name, instructions } = agentPreset('support');
+    expect(name).toBe('Suporte');
+    expect(instructions).toContain('passos curtos e numerados');
+    expect(instructions).toContain('pergunte se o problema foi resolvido');
+    expect(instructions).toContain('encerrar o atendimento');
+    expect(instructions).toContain('Nunca prometa prazos, trocas, reembolsos');
+  });
+
+  it('triage collects the missing details, never solves and hands over with a briefing', () => {
+    const { name, instructions } = agentPreset('triage');
+    expect(name).toBe('Triagem');
+    for (const need of ['produto', 'mensagem de erro', 'número do pedido ou da nota fiscal']) expect(instructions).toContain(need);
+    expect(instructions).toContain('Nunca tente resolver');
+    expect(instructions).toContain('resumo curto');
+    expect(instructions).toContain('no máximo três perguntas');
+  });
+
+  it('finance uses the knowledge base, never promises refunds or discounts and hands over disputes', () => {
+    const { name, instructions } = agentPreset('finance');
+    expect(name).toBe('Financeiro');
+    expect(instructions).toContain('base de conhecimento');
+    expect(instructions).toMatch(/Nunca prometa, confirme nem sugira reembolso, estorno, desconto/);
+    expect(instructions).toContain('contestar uma cobrança');
+    expect(instructions).toContain('Passe para uma pessoa do time');
+    expect(instructions).toContain('Não peça CPF ou CNPJ');
+  });
+
+  it('every template fits the limits with room to spare, and is translated for the picker', () => {
+    for (const p of AGENT_PRESETS) {
+      expect(p.instructions.length, p.id).toBeLessThanOrEqual(3500);
+      expect(translateLiteral(p.label, 'pt-BR'), p.label).not.toBe(p.label === 'Blank' ? '' : p.label);
+      expect(translateLiteral(p.summary, 'pt-BR'), p.summary).not.toBe(p.summary);
+    }
   });
 
   it('"blank" needs the user to write name and instructions', () => {
