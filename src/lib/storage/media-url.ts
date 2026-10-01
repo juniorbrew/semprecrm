@@ -159,7 +159,7 @@ function storageBases(env: MediaUrlEnv): URL[] {
 export function storageObjectPath(url: unknown, env: MediaUrlEnv = defaultEnv()): string {
   if (typeof url !== 'string' || url.length === 0 || url.length > 2048) throw new MediaUrlNaoPermitida()
   // controle (CR/LF/NUL), espaço, barra invertida, query/fragmento, traversal codificado
-  if (/[\x00-\x20\x7f\?#]/.test(url) || /%(2e|2f|5c|00)/i.test(url)) throw new MediaUrlNaoPermitida()
+  if (/[\x00-\x20\x7f\\?#]/.test(url) || /%(2e|2f|5c|00)/i.test(url)) throw new MediaUrlNaoPermitida()
 
   let path: string
   if (url.startsWith('/') && !url.startsWith('//')) {
@@ -191,6 +191,13 @@ export function storageObjectPath(url: unknown, env: MediaUrlEnv = defaultEnv())
     throw new MediaUrlNaoPermitida()
   }
   return path
+}
+
+/** URL pública (Meta busca de fora) de um caminho de objeto já validado. */
+export function storageUrlForPublic(objectPath: string, env: MediaUrlEnv = defaultEnv()): string {
+  const pub = env.NEXT_PUBLIC_SUPABASE_URL?.trim()
+  if (pub && !isRelativeSupabaseUrl(pub)) return trimSlashes(pub) + objectPath
+  return mediaUrlForPublic(relativeSupabasePrefix(env) + objectPath, env)
 }
 
 /** URL absoluta, alcançável pelo servidor (e pelo gateway), de um caminho de objeto. */

@@ -5,6 +5,7 @@ import {
   isRelativeMediaUrl,
   mediaUrlForPublic,
   storageObjectPath,
+  storageUrlForPublic,
   toStoredMediaUrl,
 } from './media-url'
 
@@ -177,5 +178,22 @@ describe('accountMediaUrlForServer / storageObjectPath (send-media validator)', 
       '/storage/v1/object/public/avatars/x.jpg',
     )
     expect(() => storageObjectPath('/supabase/../rest/v1/x', PROXY)).toThrow(MediaUrlNaoPermitida)
+  })
+
+  // WHATWG trata `\` como `/` e resolve `..` DEPOIS de reconstruir a URL:
+  // passaria pela checagem de segmentos e viraria traversal no Kong.
+  it.each([
+    ['object path', '/supabase/storage/v1/object/public/chat-media/x\\..\\..\\..\\api\\platform\\x'],
+    ['folder segment', '/supabase/storage/v1/object/public/chat-media/account-acct-1\\..\\..\\..\\rest\\v1\\x/a.jpg'],
+    ['after own folder', '/supabase/storage/v1/object/public/chat-media/account-acct-1/a\\..\\..\\..\\..\\rest\\v1\\x'],
+    ['absolute URL', 'https://www.semprecrm.com.br/supabase/storage/v1/object/public/chat-media/account-acct-1/a\\..\\..\\x'],
+  ])('refuses a backslash in the %s (storageObjectPath and the account check)', (_n, url) => {
+    expect(() => storageObjectPath(url, PROXY)).toThrow(MediaUrlNaoPermitida)
+    expect(() => accountMediaUrlForServer(url, ACC, PROXY)).toThrow(MediaUrlNaoPermitida)
+  })
+
+  it('storageUrlForPublic rebuilds the link Meta fetches from the validated path', () => {
+    expect(storageUrlForPublic(OBJ, ABS)).toBe(`https://api.semprecrm.com.br${OBJ}`)
+    expect(storageUrlForPublic(OBJ, PROXY)).toBe(`https://www.semprecrm.com.br/supabase${OBJ}`)
   })
 })

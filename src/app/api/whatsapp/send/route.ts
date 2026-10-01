@@ -39,9 +39,9 @@ import {
 import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
 import {
   MediaUrlNaoPermitida,
-  accountMediaUrlForServer,
   assertAccountMediaUrl,
-  mediaUrlForPublic,
+  storageUrlForPublic,
+  storageUrlForServer,
 } from '@/lib/storage/media-url'
 
 export async function POST(request: Request) {
@@ -154,9 +154,12 @@ export async function POST(request: Request) {
     // Só mídia do storage da PRÓPRIA conta: o gateway do canal QR baixa a URL
     // no servidor (arquivo local / rede interna se fosse livre) e a Meta a
     // busca de fora — nos dois canais a URL tem de ser um objeto nosso.
+    // O que sai do servidor é sempre reconstruído deste caminho validado,
+    // nunca a string do cliente.
+    let mediaObjectPath = ''
     if (isMediaKind) {
       try {
-        assertAccountMediaUrl(media_url, accountId)
+        mediaObjectPath = assertAccountMediaUrl(media_url, accountId)
       } catch (err) {
         if (err instanceof MediaUrlNaoPermitida) {
           return NextResponse.json({ error: err.message, code: err.code }, { status: 400 })
@@ -261,7 +264,7 @@ export async function POST(request: Request) {
                 media: {
                   // Validated above; rebuilt on the internal Supabase route
                   // the gateway can reach (and allowlists).
-                  url: accountMediaUrlForServer(media_url, accountId),
+                  url: storageUrlForServer(mediaObjectPath),
                   mimetype: mimeFromUrl(message_type, media_url, filename || undefined),
                   filename: filename || undefined,
                   caption: message_type !== 'audio' && content_text ? content_text : undefined,
@@ -482,7 +485,7 @@ export async function POST(request: Request) {
           to: phone,
           kind: message_type as MediaKind,
           // Meta fetches the link from the outside → public site origin.
-          link: mediaUrlForPublic(media_url),
+          link: storageUrlForPublic(mediaObjectPath),
           caption: content_text || undefined,
           filename: filename || undefined,
           contextMessageId,

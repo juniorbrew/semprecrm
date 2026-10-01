@@ -299,6 +299,31 @@ describe('POST /api/whatsapp/send — official conversations (unchanged)', () =>
     expect(h.state.inserted[0]).not.toHaveProperty('channel')
   })
 
+  it('media link sent to Meta is rebuilt from the validated object path', async () => {
+    h.state.conversation.channel = 'official'
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '/supabase')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://www.semprecrm.com.br')
+    const stored = '/supabase/storage/v1/object/public/chat-media/account-acct-1/1-a.pdf'
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'document', media_url: stored }))
+    expect(res.status).toBe(200)
+    expect(h.meta.sendMediaMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ link: `https://www.semprecrm.com.br${stored}` }),
+    )
+  })
+
+  it('backslash traversal is refused on the Meta channel too', async () => {
+    h.state.conversation.channel = 'official'
+    const res = await POST(
+      request({
+        conversation_id: 'conv-1',
+        message_type: 'document',
+        media_url: 'https://sb.test/storage/v1/object/public/chat-media/account-acct-1/a\\..\\..\\..\\x',
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(h.meta.sendMediaMessage).not.toHaveBeenCalled()
+  })
+
   it('treats a row without channel (pre-026) as official', async () => {
     delete h.state.conversation.channel
     const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
