@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationPriority, ConversationStatus, WhatsAppChannel } from "@/types";
@@ -9,7 +10,10 @@ import { useConversationCategories } from "@/hooks/use-conversation-categories";
 import { useSlaPolicies } from "@/hooks/use-sla-policies";
 import { useTeams } from "@/hooks/use-teams";
 import { slaCopy, activeSlaTarget, isSlaBreached } from "@/lib/support/sla";
-import { SlaRowLabel } from "./sla-indicator";
+import { SlaPill, SlaProgressLine } from "./sla-indicator";
+import { groupIntoBands, type InboxBand } from "@/lib/inbox/bands";
+import { claimRow, setRowStatus, type RowActionResult } from "@/lib/inbox/row-actions";
+import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { CATEGORY_DOT, PRIORITY_DOT, supportCopy, type CategoryColor } from "@/lib/support/model";
 import type { Language } from "@/lib/i18n";
 import { useAuth } from "@/hooks/use-auth";
@@ -80,9 +84,11 @@ import {
   UserX,
   Snowflake,
   Timer,
-  Building2,
   RefreshCw,
   Keyboard,
+  RotateCcw,
+  Rows4,
+  UserPlus,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -119,7 +125,39 @@ interface ConversationListProps {
   onListStateChange?: (state: InboxListState) => void;
   /** Opens the shortcut help (the "?" button in the header). */
   onShowShortcuts?: () => void;
+  /** Local patches after a row quick action (Resolver / Reabrir / Assumir). */
+  onStatusChange?: (conversationId: string, status: ConversationStatus) => void;
+  onAssignChange?: (conversationId: string, assignedAgentId: string | null) => void;
 }
+
+/** Row density, per user on this device (`wacrm:inbox:density:<userId>`). */
+export type ListDensity = "comfortable" | "compact";
+const DENSITY_KEY_PREFIX = "wacrm:inbox:density:";
+
+export function readDensity(userId: string): ListDensity {
+  try {
+    return localStorage.getItem(DENSITY_KEY_PREFIX + userId) === "compact" ? "compact" : "comfortable";
+  } catch {
+    return "comfortable";
+  }
+}
+
+export function writeDensity(userId: string, density: ListDensity): void {
+  try {
+    localStorage.setItem(DENSITY_KEY_PREFIX + userId, density);
+  } catch {
+    // Persistence is best-effort.
+  }
+}
+
+export type QuickAction = "resolve" | "reopen" | "claim";
+
+const BAND_DOT: Record<InboxBand, string> = {
+  now: "bg-red-500",
+  you: "bg-amber-500",
+  ongoing: "bg-primary",
+  customer: "bg-muted-foreground/60",
+};
 
 /**
  * Remembers the agent's tab + live filter across reloads so someone
@@ -168,6 +206,28 @@ const STRIP_COPY: Record<
     filteredEmpty: string;
     shortcuts: string;
     ownerTitle: (name: string) => string;
+    /** Bands of the live tabs (lib/inbox/bands). */
+    bands: Record<InboxBand, string>;
+    /** Row quick actions; `{name}` is the contact. */
+    quick: {
+      toolbar: (name: string) => string;
+      resolve: string;
+      reopen: string;
+      claim: string;
+      resolveAria: (name: string) => string;
+      reopenAria: (name: string) => string;
+      claimAria: (name: string) => string;
+      resolved: string;
+      reopened: string;
+      claimed: string;
+      undo: string;
+      failed: string;
+      claimTaken: string;
+      reopenBlocked: string;
+      openCurrent: string;
+    };
+    compact: string;
+    noMessages: string;
   }
 > = {
   "pt-BR": {
@@ -200,6 +260,31 @@ const STRIP_COPY: Record<
     filteredEmpty: "Nenhuma conversa com esses filtros",
     shortcuts: "Atalhos do teclado (?)",
     ownerTitle: (name) => `Responsável: ${name}`,
+    bands: {
+      now: "Agora",
+      you: "Esperando por você",
+      ongoing: "Em andamento",
+      customer: "Aguardando cliente",
+    },
+    quick: {
+      toolbar: (name) => `Ações rápidas: ${name}`,
+      resolve: "Resolver",
+      reopen: "Reabrir",
+      claim: "Assumir",
+      resolveAria: (name) => `Resolver conversa com ${name}`,
+      reopenAria: (name) => `Reabrir conversa com ${name}`,
+      claimAria: (name) => `Assumir conversa com ${name}`,
+      resolved: "Conversa resolvida",
+      reopened: "Conversa reaberta",
+      claimed: "Conversa atribuída a você",
+      undo: "Desfazer",
+      failed: "Não foi possível atualizar a conversa",
+      claimTaken: "Outra pessoa assumiu esta conversa antes de você",
+      reopenBlocked: "Este contato já tem uma conversa em andamento",
+      openCurrent: "Abrir atual",
+    },
+    compact: "Lista compacta",
+    noMessages: "Sem mensagens",
   },
   "en-US": {
     title: "Conversations",
@@ -231,6 +316,31 @@ const STRIP_COPY: Record<
     filteredEmpty: "No conversations match these filters",
     shortcuts: "Keyboard shortcuts (?)",
     ownerTitle: (name) => `Owner: ${name}`,
+    bands: {
+      now: "Now",
+      you: "Waiting for you",
+      ongoing: "In progress",
+      customer: "Waiting on customer",
+    },
+    quick: {
+      toolbar: (name) => `Quick actions: ${name}`,
+      resolve: "Resolve",
+      reopen: "Reopen",
+      claim: "Take",
+      resolveAria: (name) => `Resolve conversation with ${name}`,
+      reopenAria: (name) => `Reopen conversation with ${name}`,
+      claimAria: (name) => `Take conversation with ${name}`,
+      resolved: "Conversation resolved",
+      reopened: "Conversation reopened",
+      claimed: "Conversation assigned to you",
+      undo: "Undo",
+      failed: "Could not update the conversation",
+      claimTaken: "Someone else took this conversation first",
+      reopenBlocked: "This contact already has a live conversation",
+      openCurrent: "Open current",
+    },
+    compact: "Compact list",
+    noMessages: "No messages yet",
   },
 };
 
@@ -240,12 +350,8 @@ const RADAR_ICON: Record<RadarKey, typeof Clock> = {
   cooling: Snowflake,
 };
 
-/** Active-chip colours per bucket — same hues as the dashboard Radar card. */
-const RADAR_ACTIVE: Record<RadarKey, string> = {
-  waiting: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400",
-  unassigned: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  cooling: "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400",
-};
+/** Active filter chip: brand-tinted, like the tabs (Atendimento prototype). */
+const ACTIVE_CHIP = "border-transparent bg-primary/15 text-primary";
 
 const LIVE_DOT: Record<LiveFilter, string> = {
   live: "bg-foreground/40",
@@ -299,8 +405,10 @@ export function ConversationList({
   countsToken = 0,
   onListStateChange,
   onShowShortcuts,
+  onStatusChange,
+  onAssignChange,
 }: ConversationListProps) {
-  const { user, preferences, accountId } = useAuth();
+  const { user, profile, preferences, accountId, accountRole } = useAuth();
   const { language } = useLanguage();
   const copy = STRIP_COPY[language] ?? STRIP_COPY["pt-BR"];
   const userId = user?.id ?? null;
@@ -872,6 +980,26 @@ export function ConversationList({
     [basePool, preferences, now],
   );
   const queueById = useMemo(() => queueIndex(queue), [queue]);
+  // Fila badges, built once per clock tick so the memoised rows keep
+  // equal props between ticks.
+  const queueBadges = useMemo(() => {
+    if (tab !== "queue") return null;
+    const out = new Map<string, QueueBadge>();
+    for (const [id, entry] of queueById) {
+      const badge = queueBadgeFor(
+        entry,
+        preferences,
+        now,
+        language,
+        copy.queuePositionTitle,
+        // A search narrows the loaded rows, so their rank among the
+        // results is not their place in the Fila.
+        !debouncedSearch,
+      );
+      if (badge) out.set(id, badge);
+    }
+    return out;
+  }, [tab, queueById, preferences, now, language, copy.queuePositionTitle, debouncedSearch]);
 
   // Search: the server answers once the box settles; while the debounce is
   // pending the loaded rows are narrowed locally so typing feels instant.
@@ -900,6 +1028,15 @@ export function ConversationList({
     return result;
   }, [basePool, queue, tab, effectiveLive, userId, search, searchPending, softLoading]);
 
+  // Minhas / Todas group into bands (lib/inbox/bands) on the list's minute
+  // clock; the Fila keeps its wait order and the closed tabs stay flat.
+  // `ordered` is the on-screen order, which j / k follow.
+  const groups = useMemo<{ band: InboxBand | null; rows: Conversation[] }[]>(
+    () => (tab === "mine" || tab === "all" ? groupIntoBands(filtered, now) : [{ band: null, rows: filtered }]),
+    [filtered, tab, now],
+  );
+  const ordered = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
+
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       setSearch(e.target.value);
@@ -915,38 +1052,122 @@ export function ConversationList({
       ? cursorOverride
       : activeConversationId;
 
-  const handleSelect = useCallback(
-    (conv: Conversation) => {
-      setCursorOverride(null);
-      onSelect(conv);
-    },
-    [onSelect]
-  );
+  // Stable identity so the memoised rows do not re-render when the page
+  // hands down a new `onSelect` (it changes with the active conversation).
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  });
+  const handleSelect = useCallback((conv: Conversation) => {
+    setCursorOverride(null);
+    onSelectRef.current(conv);
+  }, []);
+
+  // Row quick actions (lib/inbox/row-actions). The latest actor and
+  // callbacks ride in a ref so the handler — a prop of every memoised
+  // row — keeps one identity.
+  const quickRef = useRef({ accountId, userId, name: profile?.full_name || user?.email || undefined, copy, onStatusChange, onAssignChange });
+  useEffect(() => {
+    quickRef.current = { accountId, userId, name: profile?.full_name || user?.email || undefined, copy, onStatusChange, onAssignChange };
+  });
+  const handleQuickAction = useCallback(async (conv: Conversation, action: QuickAction): Promise<void> => {
+    const st = quickRef.current;
+    if (!st.accountId || !st.userId) return;
+    const actor = { accountId: st.accountId, userId: st.userId, name: st.name };
+    const db = createClient();
+    const q = st.copy.quick;
+    let result: RowActionResult;
+    if (action === "claim") {
+      result = await claimRow(db, conv, actor);
+      if (result.status === "ok") {
+        st.onAssignChange?.(conv.id, st.userId);
+        toast.success(q.claimed);
+      } else if (result.status === "conflict") {
+        st.onAssignChange?.(conv.id, result.assignee);
+        toast.info(q.claimTaken);
+      }
+    } else {
+      const next = action === "resolve" ? "closed" : "open";
+      result = await setRowStatus(db, conv, next, actor);
+      if (result.status === "ok") {
+        st.onStatusChange?.(conv.id, next);
+        if (next === "closed") {
+          toast.success(q.resolved, {
+            action: {
+              label: q.undo,
+              onClick: () =>
+                void setRowStatus(db, { ...conv, status: "closed" }, conv.status, actor).then((r) => {
+                  if (r.status === "ok") quickRef.current.onStatusChange?.(conv.id, conv.status);
+                }),
+            },
+          });
+        } else {
+          toast.success(q.reopened);
+        }
+      } else if (result.status === "blocked") {
+        const otherId = result.otherId;
+        toast.error(
+          q.reopenBlocked,
+          otherId
+            ? {
+                action: {
+                  label: q.openCurrent,
+                  onClick: () =>
+                    void findConversationById(db, otherId).then((c) => {
+                      if (c) handleSelect(c);
+                    }),
+                },
+              }
+            : undefined,
+        );
+      }
+    }
+    if (result.status === "failed") toast.error(q.failed);
+  }, [handleSelect]);
+  const canWrite = conversationHeaderActions({
+    role: accountRole,
+    userId,
+    conversation: { status: "open" },
+    tasksEnabled: false,
+  }).canWrite;
+
+  // Density (compact hides the meta line), per user on this device.
+  const [density, setDensity] = useState<ListDensity>("comfortable");
+  useEffect(() => {
+    if (userId) setDensity(readDensity(userId));
+  }, [userId]);
+  const toggleDensity = useCallback(() => {
+    setDensity((d) => {
+      const next: ListDensity = d === "compact" ? "comfortable" : "compact";
+      if (userId) writeDensity(userId, next);
+      return next;
+    });
+  }, [userId]);
 
   // Shortcuts dispatched by useInboxShortcuts (lib/inbox/shortcuts).
-  const shortcutRef = useRef({ filtered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore });
+  const shortcutRef = useRef({ ordered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore });
   useEffect(() => {
-    shortcutRef.current = { filtered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore };
+    shortcutRef.current = { ordered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore };
   });
   useEffect(() => {
     const onShortcut = (e: Event) => {
       const action = (e as CustomEvent<ShortcutAction>).detail;
       const st = shortcutRef.current;
       if (action === "next" || action === "prev") {
-        const at = st.filtered.findIndex((c) => c.id === st.cursorId);
-        const idx = stepIndex(at, action === "next" ? 1 : -1, st.filtered.length);
-        const row = st.filtered[idx];
+        const at = st.ordered.findIndex((c) => c.id === st.cursorId);
+        const idx = stepIndex(at, action === "next" ? 1 : -1, st.ordered.length);
+        const row = st.ordered[idx];
         if (!row) return;
         setCursorOverride(row.id);
         // Near the end of the loaded window: fetch the next page.
-        if (st.hasMore && idx >= st.filtered.length - 3) void st.loadMore();
+        if (st.hasMore && idx >= st.ordered.length - 3) void st.loadMore();
         requestAnimationFrame(() =>
           document
             .querySelector(`[data-conv-id="${row.id}"]`)
             ?.scrollIntoView({ block: "nearest" }),
         );
       } else if (action === "open") {
-        const row = st.filtered.find((c) => c.id === st.cursorId);
+        const row = st.ordered.find((c) => c.id === st.cursorId);
         if (row) st.handleSelect(row);
       }
     };
@@ -1082,6 +1303,24 @@ export function ConversationList({
               <MailOpen className="h-3.5 w-3.5" />
             </button>
 
+            {/* Density: compact hides the meta line (per user, this device) */}
+            <button
+              type="button"
+              onClick={toggleDensity}
+              aria-pressed={density === "compact"}
+              aria-label={copy.compact}
+              title={copy.compact}
+              data-testid="density-toggle"
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                density === "compact"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              )}
+            >
+              <Rows4 className="h-3.5 w-3.5" />
+            </button>
+
             {onShowShortcuts && (
               <button
                 type="button"
@@ -1154,7 +1393,7 @@ export function ConversationList({
                 className={cn(
                   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] font-medium whitespace-nowrap transition-colors",
                   active
-                    ? RADAR_ACTIVE[key]
+                    ? ACTIVE_CHIP
                     : count > 0
                       ? "border-transparent bg-muted/60 text-foreground hover:bg-muted"
                       : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -1179,7 +1418,7 @@ export function ConversationList({
               className={cn(
                 "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] font-medium whitespace-nowrap transition-colors",
                 slaBreached
-                  ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
+                  ? ACTIVE_CHIP
                   : counts.slaBreached > 0
                     ? "border-transparent bg-muted/60 text-foreground hover:bg-muted"
                     : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -1199,7 +1438,7 @@ export function ConversationList({
         {/* Queue tabs with live counts */}
         <div
           role="tablist"
-          className="mt-1 flex items-stretch overflow-x-auto px-3 [scrollbar-width:none]"
+          className="flex items-center gap-0.5 overflow-x-auto px-2 pb-2 pt-2 [scrollbar-width:none]"
           data-no-translate
         >
           {INBOX_TABS.map((value) => {
@@ -1212,17 +1451,17 @@ export function ConversationList({
                 aria-selected={active}
                 onClick={() => handleTabChange(value)}
                 className={cn(
-                  "-mb-px flex shrink-0 grow items-center justify-center gap-1 border-b-2 px-1.5 py-2 text-xs font-medium whitespace-nowrap transition-colors",
+                  "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full px-2 text-xs whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   active
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
+                    ? "bg-primary/15 font-semibold text-primary"
+                    : "font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
               >
                 {copy.tabs[value]}
                 <span
                   className={cn(
                     "text-[11px] tabular-nums leading-none",
-                    active ? "text-foreground" : "text-muted-foreground"
+                    active ? "text-primary" : "text-muted-foreground"
                   )}
                 >
                   {counts.tabs[value]}
@@ -1287,47 +1526,55 @@ export function ConversationList({
             className={cn("flex flex-col transition-opacity", softLoading && "opacity-50")}
             aria-busy={softLoading}
           >
-            {filtered.map((conv) => (
-              <ConversationItem
-                key={conv.id}
-                conversation={conv}
-                isActive={conv.id === activeConversationId}
-                isCursor={conv.id === cursorId && conv.id !== activeConversationId}
-                ownerName={
-                  showOwner && conv.assigned_agent_id
-                    ? (owners.get(conv.assigned_agent_id) ?? null)
-                    : null
-                }
-                ownerTitle={copy.ownerTitle}
-                onSelect={handleSelect}
-                age={formatAge(conv.last_message_at, language, now)}
-                tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
-                companyName={companyByContact.get(conv.contact_id) ?? null}
-                category={conv.category_id ? (categoryById.get(conv.category_id) ?? null) : null}
-                priorityLabel={support.priorities[conv.priority ?? "normal"]}
-                rowStatus={copy.rowStatus}
-                channelLabel={copy.channel}
-                channelChip={copy.channelChip}
-                moreTags={copy.moreTags}
-                waitingLabel={activeSlaTarget(conv) ? null : waitingLabelFor(conv, preferences, now, language)}
-                now={now}
-                waitingTitle={copy.waitingTitle}
-                queue={
-                  tab === "queue"
-                    ? queueBadgeFor(
-                        queueById.get(conv.id),
-                        preferences,
-                        now,
-                        language,
-                        copy.queuePositionTitle,
-                        // A search narrows the loaded rows, so their rank
-                        // among the results is not their place in the Fila.
-                        !debouncedSearch,
-                      )
-                    : null
-                }
-              />
-            ))}
+            {groups.map((group) => {
+              const rows = group.rows.map((conv) => (
+                <ConversationItem
+                  key={conv.id}
+                  conversation={conv}
+                  isActive={conv.id === activeConversationId}
+                  isCursor={conv.id === cursorId && conv.id !== activeConversationId}
+                  ownerName={
+                    showOwner && conv.assigned_agent_id
+                      ? (owners.get(conv.assigned_agent_id) ?? null)
+                      : null
+                  }
+                  ownerTitle={copy.ownerTitle}
+                  onSelect={handleSelect}
+                  age={formatAge(conv.last_message_at, language, now)}
+                  tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
+                  companyName={companyByContact.get(conv.contact_id) ?? null}
+                  category={conv.category_id ? (categoryById.get(conv.category_id) ?? null) : null}
+                  priorityLabel={support.priorities[conv.priority ?? "normal"]}
+                  rowStatus={copy.rowStatus}
+                  channelLabel={copy.channel}
+                  channelChip={copy.channelChip}
+                  moreTags={copy.moreTags}
+                  waitingLabel={activeSlaTarget(conv) ? null : waitingLabelFor(conv, preferences, now, language)}
+                  waitingTitle={copy.waitingTitle}
+                  queue={queueBadges?.get(conv.id) ?? null}
+                  compact={density === "compact"}
+                  noMessages={copy.noMessages}
+                  quick={canWrite ? copy.quick : null}
+                  canClaim={!!userId && conv.assigned_agent_id !== userId}
+                  onQuickAction={handleQuickAction}
+                />
+              ));
+              if (!group.band) return rows;
+              return (
+                <section
+                  key={group.band}
+                  aria-label={copy.bands[group.band]}
+                  data-band={group.band}
+                >
+                  <h3 data-no-translate className="sticky top-0 z-10 flex items-center gap-2 bg-card px-3.5 pb-1 pt-2.5 text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <span className={cn("size-1.5 shrink-0 rounded-full", BAND_DOT[group.band])} aria-hidden />
+                    {copy.bands[group.band]}
+                    <span className="font-medium tabular-nums">{group.rows.length}</span>
+                  </h3>
+                  {rows}
+                </section>
+              );
+            })}
             {paging.hasMore && (
               <div className="flex justify-center px-3 py-3" data-no-translate>
                 <button
@@ -1393,6 +1640,7 @@ function queueBadgeFor(
   };
 }
 
+
 export interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
@@ -1406,7 +1654,7 @@ export interface ConversationItemProps {
   tags: RowTag[];
   /** Primary company (nome fantasia, else razão social), if any. */
   companyName: string | null;
-  /** Support category (migration 071), muted label under the name. */
+  /** Support category (migration 071), a neutral pill in the meta line. */
   category: { name: string; color: CategoryColor } | null;
   /** Localised priority name, for the dot's tooltip. */
   priorityLabel: string;
@@ -1416,14 +1664,28 @@ export interface ConversationItemProps {
   moreTags: (n: number) => string;
   /** Set when the customer is waiting past the SLA ("há 12 min"). */
   waitingLabel: string | null;
-  /** Clock of the list (minute tick), for the SLA remaining time. */
-  now?: number;
   waitingTitle: string;
   /** Fila tab only: position + wait. */
   queue: QueueBadge | null;
+  /** Compact density: no meta line, tighter padding. */
+  compact?: boolean;
+  noMessages?: string;
+  /** Quick-action copy; null hides the actions (viewers). */
+  quick?: (typeof STRIP_COPY)[Language]["quick"] | null;
+  /** "Assumir" applies (not already mine). */
+  canClaim?: boolean;
+  onQuickAction?: (conversation: Conversation, action: QuickAction) => Promise<void>;
 }
 
-export function ConversationItem({
+const QUICK_BUTTON =
+  "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+
+/**
+ * One list row (memoised: realtime patches, the minute clock and the
+ * selection only re-render the rows whose props changed; the SLA text
+ * and line tick on their own shared clock).
+ */
+export const ConversationItem = memo(function ConversationItem({
   conversation,
   isActive,
   isCursor,
@@ -1442,7 +1704,11 @@ export function ConversationItem({
   waitingLabel,
   waitingTitle,
   queue,
-  now,
+  compact = false,
+  noMessages = "No messages yet",
+  quick = null,
+  canClaim = false,
+  onQuickAction,
 }: ConversationItemProps) {
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
@@ -1459,227 +1725,273 @@ export function ConversationItem({
     !!conversation.ai_last_reply_at &&
     status !== "closed" &&
     !(pausedUntil === "infinity" || (pausedUntil && Date.parse(pausedUntil) > mountedAt));
+  const sla = activeSlaTarget(conversation);
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
   }, [onSelect, conversation]);
 
+  const [busy, setBusy] = useState(false);
+  const run = useCallback(
+    async (action: QuickAction) => {
+      if (!onQuickAction) return;
+      setBusy(true);
+      try {
+        await onQuickAction(conversation, action);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onQuickAction, conversation],
+  );
+
   const visibleTags = tags.slice(0, MAX_ROW_TAGS);
   const hiddenTagCount = tags.length - visibleTags.length;
+  const closed = status === "closed";
 
   return (
-    <button
-      onClick={handleClick}
-      aria-current={isActive ? "true" : undefined}
+    <div
       data-conv-id={conversation.id}
+      data-active={isActive ? "" : undefined}
       className={cn(
-        "flex w-full min-w-0 items-start gap-2.5 border-b border-border/60 px-3 py-2 text-left transition-colors hover:bg-muted/50",
-        isActive && "bg-muted/70 shadow-[inset_2px_0_0_var(--color-primary)]",
+        "group/row relative border-b border-border/60 transition-colors hover:bg-muted/50",
+        isActive &&
+          "bg-primary/10 before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary hover:bg-primary/10",
         isCursor && "bg-muted/50 ring-1 ring-inset ring-primary/40"
       )}
     >
-      {/* Avatar + channel badge */}
-      <div className="relative shrink-0">
-        <ContactAvatar
-          src={contact?.avatar_url}
-          name={displayName}
-          className="h-9 w-9 text-sm"
-        />
-        <span
-          data-no-translate
-          title={`${channelLabel} · ${channelChip[channel]}`}
-          className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background"
-        >
-          <MessageCircle className="h-2.5 w-2.5" />
-        </span>
-      </div>
-
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          {(conversation.priority === "urgent" || conversation.priority === "high") && (
-            <span
-              data-no-translate
-              data-testid="priority-dot"
-              title={priorityLabel}
-              role="img"
-              aria-label={priorityLabel}
-              className={cn("h-1.5 w-1.5 shrink-0 rounded-full", PRIORITY_DOT[conversation.priority])}
-            />
-          )}
-          <span
-            className={cn(
-              "truncate text-sm leading-[18px] text-foreground",
-              isUnread ? "font-semibold" : "font-medium"
-            )}
-          >
-            {displayName}
-          </span>
-          {/* Channel chip (QR / Oficial) — the avatar badge says
-              "WhatsApp"; this says which transport, now that there are
-              two (migration 026). Tiny so the age keeps its room. */}
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-current={isActive ? "true" : undefined}
+        className={cn(
+          "flex w-full min-w-0 items-start gap-2.5 px-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          compact ? "py-1.5" : "py-2.5"
+        )}
+      >
+        {/* Avatar + channel badge */}
+        <div className="relative shrink-0">
+          <ContactAvatar
+            src={contact?.avatar_url}
+            name={displayName}
+            className={cn("text-sm", compact ? "h-8 w-8" : "h-9 w-9")}
+          />
           <span
             data-no-translate
-            className={cn(
-              "shrink-0 text-[11px] leading-[18px]",
-              channel === "qr"
-                ? "text-amber-600 dark:text-amber-400"
-                : "text-muted-foreground",
-            )}
+            title={`${channelLabel} · ${channelChip[channel]}`}
+            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background"
           >
-            {channelChip[channel]}
-          </span>
-          {aiHandling && (
-            <span
-              data-no-translate
-              data-testid="ai-handling-badge"
-              title={language === "pt-BR" ? "A IA está respondendo esta conversa" : "The AI is answering this conversation"}
-              className="inline-flex shrink-0 items-center gap-0.5 text-[11px] leading-[18px] text-muted-foreground"
-            >
-              <Bot className="h-2.5 w-2.5" aria-hidden />
-              {language === "pt-BR" ? "IA" : "AI"}
-            </span>
-          )}
-          <span className="flex-1" />
-          {ownerName && (
-            <span
-              data-no-translate
-              data-testid="owner-badge"
-              title={ownerTitle(ownerName)}
-              aria-label={ownerTitle(ownerName)}
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-medium leading-none text-muted-foreground"
-            >
-              {avatarInitial(ownerName)}
-            </span>
-          )}
-          <span
-            data-no-translate
-            className={cn(
-              "shrink-0 text-[11px] leading-[18px] tabular-nums",
-              isUnread ? "font-medium text-primary" : "text-muted-foreground"
-            )}
-          >
-            {age}
+            <MessageCircle className="h-2.5 w-2.5" />
           </span>
         </div>
-        {(companyName || category) && (
-          <p
-            data-no-translate
-            className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground"
-          >
-            {category && (
+
+        {/* Content */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            {(conversation.priority === "urgent" || conversation.priority === "high") && (
               <span
-                data-testid="category-label"
-                title={category.name}
-                className="flex min-w-0 shrink-0 items-center gap-1.5"
-              >
-                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", CATEGORY_DOT[category.color])} aria-hidden />
-                <span className="truncate">{category.name}</span>
-              </span>
+                data-no-translate
+                data-testid="priority-dot"
+                title={priorityLabel}
+                role="img"
+                aria-label={priorityLabel}
+                className={cn("h-1.5 w-1.5 shrink-0 rounded-full", PRIORITY_DOT[conversation.priority])}
+              />
             )}
-            {category && companyName && <span aria-hidden>·</span>}
-            {companyName && (
-              <span title={companyName} className="min-w-0 truncate">
-                {companyName}
-              </span>
-            )}
-          </p>
-        )}
-        <div className="flex items-center justify-between gap-2">
-          <p
-            className={cn(
-              "truncate text-xs leading-4",
-              isUnread ? "font-medium text-foreground" : "text-muted-foreground"
-            )}
-          >
-            {conversation.last_message_text || "No messages yet"}
-          </p>
-          <div data-no-translate className="flex shrink-0 items-center gap-1.5">
-            {now !== undefined && <SlaRowLabel conversation={conversation} now={now} />}
-            {waitingLabel && !queue && (
+            <span
+              className={cn(
+                "truncate text-sm leading-[18px] text-foreground",
+                isUnread ? "font-semibold" : "font-medium"
+              )}
+            >
+              {displayName}
+            </span>
+            {/* Channel chip (QR / Oficial) — which transport, now that
+                there are two (migration 026). */}
+            <span
+              data-no-translate
+              className={cn(
+                "shrink-0 text-[11px] leading-[18px]",
+                channel === "qr"
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-muted-foreground",
+              )}
+            >
+              {channelChip[channel]}
+            </span>
+            {aiHandling && (
               <span
-                title={waitingTitle}
-                className="inline-flex items-center gap-0.5 text-[11px] font-medium leading-4 text-red-600 dark:text-red-400"
+                data-no-translate
+                data-testid="ai-handling-badge"
+                title={language === "pt-BR" ? "A IA está respondendo esta conversa" : "The AI is answering this conversation"}
+                className="inline-flex shrink-0 items-center gap-0.5 text-[11px] leading-[18px] text-muted-foreground"
               >
-                <Clock className="h-3 w-3" aria-hidden />
-                {waitingLabel}
+                <Bot className="h-2.5 w-2.5" aria-hidden />
+                {language === "pt-BR" ? "IA" : "AI"}
               </span>
             )}
-            {status !== "open" && (
+            <span className="flex-1" />
+            {ownerName && (
               <span
-                className={cn(
-                  "inline-flex items-center gap-1 text-[11px] leading-4",
-                  status === "pending"
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-muted-foreground"
-                )}
+                data-no-translate
+                data-testid="owner-badge"
+                title={ownerTitle(ownerName)}
+                aria-label={ownerTitle(ownerName)}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-medium leading-none text-muted-foreground"
               >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 shrink-0 rounded-full",
-                    status === "pending" ? "bg-amber-500" : "bg-zinc-400"
-                  )}
-                  aria-hidden
-                />
-                {conversation.archived_at ? rowStatus.archived : rowStatus[status]}
+                {avatarInitial(ownerName)}
               </span>
             )}
+            <span
+              data-no-translate
+              className={cn(
+                "shrink-0 text-[11px] leading-[18px] tabular-nums",
+                isUnread ? "font-medium text-primary" : "text-muted-foreground"
+              )}
+            >
+              {age}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <p
+              className={cn(
+                "truncate text-xs leading-4",
+                isUnread ? "font-medium text-foreground" : "text-muted-foreground"
+              )}
+            >
+              {conversation.last_message_text || noMessages}
+            </p>
             {isUnread && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold tabular-nums text-primary-foreground">
+              <span
+                data-no-translate
+                data-testid="unread-count"
+                className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold tabular-nums text-primary-foreground"
+              >
                 {conversation.unread_count}
               </span>
             )}
           </div>
-        </div>
-        {queue && (
-          <div data-no-translate className="mt-1 flex min-w-0 items-center gap-1.5">
-            {queue.position && (
-              <span
-                title={queue.positionTitle}
-                aria-label={queue.positionTitle}
-                className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
-              >
-                {queue.position}
-              </span>
-            )}
-            {queue.wait && (
-              <span
-                title={queue.overdue ? waitingTitle : undefined}
-                className={cn(
-                  "inline-flex min-w-0 items-center gap-0.5 truncate text-[11px] font-medium leading-4",
-                  queue.overdue
-                    ? "text-red-600 dark:text-red-400"
-                    : "text-amber-600 dark:text-amber-400",
-                )}
-              >
-                <Clock className="h-3 w-3 shrink-0" aria-hidden />
-                <span className="truncate">{queue.wait}</span>
-              </span>
-            )}
-          </div>
-        )}
-        {tags.length > 0 && (
-          <div data-no-translate className="mt-0.5 flex items-center gap-2.5 overflow-hidden">
-            {visibleTags.map((tag) => (
-              <span
-                key={tag.name}
-                className="inline-flex max-w-32 items-center gap-1 text-[11px] leading-4 text-muted-foreground"
-              >
+          {/* The one meta line: SLA, situation, category · company, tags. */}
+          {!compact && (
+            <div
+              data-no-translate
+              data-testid="row-meta"
+              className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[11px] leading-4 text-muted-foreground"
+            >
+              {sla && <SlaPill kind={sla.kind} dueAt={sla.dueAt} warnAt={sla.warnAt} />}
+              {waitingLabel && !queue && (
                 <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: tag.color }}
-                />
-                <span className="truncate">{tag.name}</span>
-              </span>
-            ))}
-            {hiddenTagCount > 0 && (
-              <span className="shrink-0 text-[11px] leading-4 text-muted-foreground">
-                {moreTags(hiddenTagCount)}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    </button>
+                  title={waitingTitle}
+                  className="inline-flex shrink-0 items-center gap-0.5 font-medium text-red-600 dark:text-red-400"
+                >
+                  <Clock className="h-3 w-3" aria-hidden />
+                  {waitingLabel}
+                </span>
+              )}
+              {queue?.position && (
+                <span
+                  title={queue.positionTitle}
+                  aria-label={queue.positionTitle}
+                  className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-bold tabular-nums leading-none text-primary"
+                >
+                  {queue.position}
+                </span>
+              )}
+              {queue?.wait && (
+                <span
+                  title={queue.overdue ? waitingTitle : undefined}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-0.5 font-medium",
+                    queue.overdue
+                      ? "text-red-600 dark:text-red-400"
+                      : "text-amber-600 dark:text-amber-400",
+                  )}
+                >
+                  <Clock className="h-3 w-3 shrink-0" aria-hidden />
+                  {queue.wait}
+                </span>
+              )}
+              {status !== "open" && (
+                <span
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-1",
+                    status === "pending" && "text-amber-600 dark:text-amber-400"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      status === "pending" ? "bg-amber-500" : "bg-zinc-400"
+                    )}
+                    aria-hidden
+                  />
+                  {conversation.archived_at ? rowStatus.archived : rowStatus[status]}
+                </span>
+              )}
+              {category && (
+                <span
+                  data-testid="category-label"
+                  title={category.name}
+                  className="inline-flex min-w-0 shrink items-center gap-1 rounded-full bg-muted px-2"
+                >
+                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", CATEGORY_DOT[category.color])} aria-hidden />
+                  <span className="truncate">{category.name}</span>
+                </span>
+              )}
+              {companyName && (
+                <span title={companyName} className="min-w-0 shrink truncate">
+                  {companyName}
+                </span>
+              )}
+              {visibleTags.map((tag) => (
+                <span key={tag.name} className="inline-flex min-w-0 max-w-28 shrink items-center gap-1">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+                  <span className="truncate">{tag.name}</span>
+                </span>
+              ))}
+              {hiddenTagCount > 0 && <span className="shrink-0">{moreTags(hiddenTagCount)}</span>}
+            </div>
+          )}
+        </div>
+      </button>
+
+      {/* Quick actions: on hover, and whenever focus is inside the row. */}
+      {quick && onQuickAction && (
+        <div
+          role="toolbar"
+          aria-label={quick.toolbar(displayName)}
+          data-no-translate
+          data-testid="row-quick-actions"
+          className="absolute right-2.5 top-1.5 z-[1] hidden gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-sm group-focus-within/row:flex group-hover/row:flex"
+        >
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void run(closed ? "reopen" : "resolve")}
+            aria-label={closed ? quick.reopenAria(displayName) : quick.resolveAria(displayName)}
+            title={closed ? quick.reopen : quick.resolve}
+            data-action={closed ? "reopen" : "resolve"}
+            className={QUICK_BUTTON}
+          >
+            {closed ? <RotateCcw className="size-3.5" aria-hidden /> : <Check className="size-3.5" aria-hidden />}
+          </button>
+          {!closed && canClaim && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run("claim")}
+              aria-label={quick.claimAria(displayName)}
+              title={quick.claim}
+              data-action="claim"
+              className={QUICK_BUTTON}
+            >
+              <UserPlus className="size-3.5" aria-hidden />
+            </button>
+          )}
+        </div>
+      )}
+
+      {sla && <SlaProgressLine kind={sla.kind} dueAt={sla.dueAt} warnAt={sla.warnAt} />}
+    </div>
   );
-}
+});

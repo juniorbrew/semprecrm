@@ -6,7 +6,7 @@ vi.mock("@/hooks/use-auth", () => ({ useAuth: () => ({ accountId: "a-1", user: n
 
 import type { Conversation } from "@/types"
 import type { Team } from "@/lib/support/teams"
-import { SlaLine, SlaRowLabel } from "./sla-indicator"
+import { SlaLine, SlaPill, SlaProgressLine } from "./sla-indicator"
 import { TeamChip } from "./team-chip"
 import { ConversationItem } from "./conversation-list"
 
@@ -28,42 +28,54 @@ const policy = (over: Partial<Conversation> = {}): Conversation => ({
   ...over,
 })
 
-describe("SlaRowLabel", () => {
-  it("shows the time left in muted text while there is plenty", () => {
-    const html = renderToString(<SlaRowLabel conversation={policy()} now={NOW} />)
+// The list pieces tick on the shared list clock (read at render time), so
+// their fixtures are relative to the real clock, with 30 s of slack.
+const soon = (min: number) => new Date(Date.now() + min * 60_000 + 30_000).getTime()
+const pill = (dueMin: number, warnMin: number | null, kind: "first_response" | "resolution" = "first_response") =>
+  renderToString(<SlaPill kind={kind} dueAt={soon(dueMin)} warnAt={warnMin === null ? null : soon(warnMin)} />)
+
+describe("SlaPill (list row)", () => {
+  it("green pill with the time left while there is plenty", () => {
+    // 100 min target, 80 left.
+    const html = pill(80, 60)
     expect(html).toContain('data-testid="sla-row"')
-    expect(html).toContain('data-level="ok"')
-    expect(html).toContain("1h 20min")
-    expect(html).toContain("text-muted-foreground")
-    expect(html).not.toContain("text-amber")
-    expect(html).not.toContain("text-red")
+    expect(html).toContain('data-tone="ok"')
+    expect(html).toContain("SLA 1h 20min")
+    expect(html).toContain("bg-emerald-500/15")
   })
 
-  it("turns amber under 20% left", () => {
-    const html = renderToString(<SlaRowLabel conversation={policy()} now={NOW + 70 * 60_000} />)
-    expect(html).toContain('data-level="warning"')
-    expect(html).toContain("10min")
-    expect(html).toContain("text-amber-600")
-    expect(html).toContain("bg-amber-500")
+  it("amber under 40% left, red under 15%", () => {
+    // 100 min target (warn 20 min before due): 30 left / 10 left.
+    expect(pill(30, 10)).toContain('data-tone="warn"')
+    expect(pill(30, 10)).toContain("bg-amber-500/15")
+    expect(pill(10, -10)).toContain('data-tone="critical"')
+    expect(pill(10, -10)).toContain('data-level="warning"')
   })
 
-  it("turns red once breached and says so in words, not only in colour", () => {
-    const html = renderToString(<SlaRowLabel conversation={policy()} now={NOW + 95 * 60_000} />)
+  it("says it in words once breached, not only in colour", () => {
+    const html = pill(-16, -36)
     expect(html).toContain('data-level="breached"')
     expect(html).toContain("estourado há 15min")
     expect(html).toContain("text-red-600")
-    expect(html).toContain("bg-red-500")
+    expect(html).not.toContain("SLA estourado")
   })
 
-  it("moves on to the resolution deadline once the first response happened", () => {
-    const html = renderToString(<SlaRowLabel conversation={policy({ first_response_at: at(-1) })} now={NOW} />)
-    expect(html).toContain("8h")
-    expect(html).toContain('title="Prazo de resolução"')
+  it("titles the deadline it tracks", () => {
+    expect(pill(480, 384, "resolution")).toContain('title="Prazo de resolução"')
+  })
+})
+
+describe("SlaProgressLine", () => {
+  it("draws the share left in the tone of the pill", () => {
+    const html = renderToString(<SlaProgressLine kind="first_response" dueAt={soon(30)} warnAt={soon(10)} />)
+    expect(html).toContain('data-testid="sla-progress"')
+    expect(html).toContain('data-tone="warn"')
+    expect(html).toMatch(/width:3[01]%/)
+    expect(html).toContain('aria-hidden="true"')
   })
 
-  it("renders nothing without a policy or when resolved", () => {
-    expect(renderToString(<SlaRowLabel conversation={policy({ first_response_due_at: null, resolution_due_at: null })} now={NOW} />)).toBe("")
-    expect(renderToString(<SlaRowLabel conversation={policy({ status: "closed" })} now={NOW} />)).toBe("")
+  it("draws nothing when the span is unknown (no warning stamp)", () => {
+    expect(renderToString(<SlaProgressLine kind="first_response" dueAt={soon(30)} warnAt={null} />)).toBe("")
   })
 })
 
@@ -96,13 +108,13 @@ describe("SlaLine (thread header)", () => {
   })
 
   it("keeps to the design rules: no emoji, gradient, glow or all-caps", () => {
-    const html = renderToString(<SlaLine conversation={liveConv()} />) + renderToString(<SlaRowLabel conversation={policy()} now={NOW} />)
+    const html = renderToString(<SlaLine conversation={liveConv()} />) + pill(80, 60)
     expect(html).not.toMatch(/gradient|shadow|uppercase|\p{Extended_Pictographic}/u)
   })
 })
 
 describe("ConversationItem SLA row", () => {
-  const render = (c: Conversation, extra: { now?: number; waitingLabel?: string | null } = {}) =>
+  const render = (c: Conversation, extra: { waitingLabel?: string | null } = {}) =>
     renderToString(
       <ConversationItem
         conversation={c}
@@ -123,19 +135,19 @@ describe("ConversationItem SLA row", () => {
         waitingLabel={extra.waitingLabel ?? null}
         waitingTitle="Aguardando"
         queue={null}
-        now={extra.now}
       />,
     )
 
   it("shows the remaining time when a policy applies", () => {
-    const html = render(policy(), { now: NOW })
+    const html = render(policy({ first_response_due_at: new Date(soon(80)).toISOString(), first_response_warn_at: new Date(soon(64)).toISOString() }))
     expect(html).toContain('data-testid="sla-row"')
     expect(html).toContain("1h 20min")
+    expect(html).toContain('data-testid="sla-progress"')
   })
 
   it("keeps the old wait pill behaviour when no policy applies", () => {
     const plain = policy({ first_response_due_at: null, resolution_due_at: null })
-    const html = render(plain, { now: NOW, waitingLabel: "há 20 min" })
+    const html = render(plain, { waitingLabel: "há 20 min" })
     expect(html).not.toContain("sla-row")
     expect(html).toContain("há 20 min")
   })
