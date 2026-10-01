@@ -23,7 +23,12 @@ else
   echo "AVISO: SUPABASE_DB_URL n„o definido ó migraÁıes n„o aplicadas" >&2
 fi
 
-npm ci --include=dev            # build needs devDependencies even if NODE_ENV=production
+# --ignore-scripts: no dependency gets to run code at install time. Verified
+# (next 16.3.6): the only root package with an install script is unrs-resolver
+# (eslint, not used by the build); native binaries (SWC) come as optional
+# deps. If a future dependency really needs its script, add an explicit
+# `npm rebuild <pkg>` here instead of dropping the flag.
+npm ci --include=dev --ignore-scripts   # build needs devDependencies even if NODE_ENV=production
 npm run build                  # .env.production is read at build time for NEXT_PUBLIC_*
 pm2 reload semprecrm --update-env || pm2 start deploy/contabo/ecosystem.config.cjs --only semprecrm
 # The cron loop (scripts/cron-tick.mjs) must pick up new endpoints, e.g.
@@ -34,7 +39,9 @@ pm2 reload semprecrm-cron --update-env || pm2 start deploy/contabo/ecosystem.con
 # Sem .env ele n√£o sobe (falta WA_GATEWAY_SECRET etc.), ent√£o s√≥ √© implantado
 # quando o arquivo existe ‚Äî VPS sem o canal QR continua funcionando.
 if [ -f services/wa-gateway/.env ]; then
-  (cd services/wa-gateway && npm ci --include=dev && npm run build)
+  # Install scripts here are only version checks (baileys, protobufjs) and
+  # esbuild for the dev tools; the build is plain tsc.
+  (cd services/wa-gateway && npm ci --include=dev --ignore-scripts && npm run build)
   mkdir -p /var/lib/semprecrm/wa
   pm2 reload wa-gateway --update-env || pm2 start deploy/contabo/ecosystem.config.cjs --only wa-gateway
 fi
