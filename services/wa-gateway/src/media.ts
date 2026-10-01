@@ -42,6 +42,8 @@ export const MAX_INBOUND_MEDIA_BYTES = 16 * 1024 * 1024;
 export const MAX_CONCURRENT_DOWNLOADS = 3;
 /** Fila cheia (inundação de mídia): a mensagem segue com o placeholder. */
 export const MAX_QUEUED_DOWNLOADS = 50;
+/** Prazo de cada download (por vaga). */
+export const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 export class MediaTooLargeError extends Error {
   constructor(bytes: number) {
@@ -114,9 +116,11 @@ export interface MediaStoreOptions {
   logger: Logger;
   /** injeção para testes */
   client?: SupabaseClient;
-  download?: (msg: WAMessage, sock: WASocket) => Promise<Buffer>;
+  download?: (msg: WAMessage, sock: WASocket, signal: AbortSignal) => Promise<Buffer>;
   /** injeção para testes (padrão MAX_CONCURRENT_DOWNLOADS) */
   maxConcurrentDownloads?: number;
+  /** injeção para testes (padrão DOWNLOAD_TIMEOUT_MS) */
+  downloadTimeoutMs?: number;
 }
 
 /**
@@ -131,7 +135,8 @@ export function storageMimeType(mimetype: string): string {
 
 export class MediaStore {
   private readonly client: SupabaseClient;
-  private readonly download: (msg: WAMessage, sock: WASocket) => Promise<Buffer>;
+  private readonly download: (msg: WAMessage, sock: WASocket, signal: AbortSignal) => Promise<Buffer>;
+  private readonly downloadTimeoutMs: number;
   private readonly log: Logger;
   private readonly baseUrl: string;
   private readonly publicUrl: string | undefined;
@@ -149,14 +154,27 @@ export class MediaStore {
       });
     this.log = opts.logger.child({ module: "media" });
     this.maxConcurrent = opts.maxConcurrentDownloads ?? MAX_CONCURRENT_DOWNLOADS;
+    this.downloadTimeoutMs = opts.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
     // Stream com teto de bytes: o modo "buffer" do Baileys guardaria a mídia
     // inteira em memória, qualquer que fosse o tamanho.
     this.download =
       opts.download ??
-      (async (msg, sock) =>
-        readCapped(
-          await downloadMediaMessage(msg, "stream", {}, { logger: this.log, reuploadRequest: sock.updateMediaMessage }),
-        ));
+      (async (msg, sock, signal) => {
+        const stream = await downloadMediaMessage(
+          msg,
+          "stream",
+          {},
+          { logger: this.log, reuploadRequest: sock.updateMediaMessage },
+        );
+        const onAbort = () => stream.destroy(signal.reason as Error);
+        if (signal.aborted) onAbort();
+        signal.addEventListener("abort", onAbort, { once: true });
+        try {
+          return await readCapped(stream);
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+        }
+      });
   }
 
   /** Vaga de download (no máximo `maxConcurrent` simultâneos); fila cheia → erro. */
@@ -194,7 +212,16 @@ export class MediaStore {
     const path = buildQrMediaPath(accountId, media.filename ?? "file");
     let bytes: number;
     try {
-      const buffer = await this.download(msg, sock);
+      // Prazo por download: um CDN lento não segura a vaga para sempre.
+      const signal = AbortSignal.timeout(this.downloadTimeoutMs);
+      const buffer = await Promise.race([
+        this.download(msg, sock, signal),
+        new Promise<never>((_, reject) =>
+          signal.addEventListener("abort", () => reject(new Error("download de mídia excedeu o prazo")), {
+            once: true,
+          }),
+        ),
+      ]);
       if (buffer.length > MAX_INBOUND_MEDIA_BYTES) throw new MediaTooLargeError(buffer.length);
       bytes = buffer.length;
       const { error } = await this.client.storage.from(CHAT_MEDIA_BUCKET).upload(path, buffer, {

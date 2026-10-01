@@ -155,3 +155,32 @@ describe("limites de mídia recebida (DoS de memória)", () => {
     expect(peak).toBe(2);
   });
 });
+
+describe("prazo por download", () => {
+  it("download pendurado é abortado e libera a vaga", async () => {
+    const { client, upload } = fakeClient("http://x");
+    let aborted = false;
+    const download = vi.fn(
+      (_m: WAMessage, _s: WASocket, signal: AbortSignal) =>
+        new Promise<Buffer>(() => {
+          signal.addEventListener("abort", () => (aborted = true));
+        }),
+    );
+    const media = new MediaStore({
+      supabaseUrl: "http://x",
+      serviceRoleKey: "k",
+      logger,
+      client,
+      download,
+      maxConcurrentDownloads: 1,
+      downloadTimeoutMs: 20,
+    });
+    const args = [ACCOUNT, {} as WAMessage, {} as WASocket, { mimetype: "image/jpeg" } as never] as const;
+    await expect(media.storeInbound(...args)).rejects.toThrow(/prazo/);
+    expect(aborted).toBe(true);
+    expect(upload).not.toHaveBeenCalled();
+    // a vaga foi devolvida: o próximo download entra
+    download.mockImplementationOnce(async () => Buffer.from("ok"));
+    await expect(media.storeInbound(...args)).resolves.toMatchObject({ path: expect.any(String) });
+  });
+});
