@@ -1900,12 +1900,12 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Shown in the sidebar, the header and the browser tab title.':
     'Aparece na barra lateral, no cabeçalho e no título da aba do navegador.',
   'Logo': 'Logo',
-  'Square works best. PNG, SVG or WebP up to 512 KB; it replaces the default mark in the sidebar.':
-    'Quadrado funciona melhor. PNG, SVG ou WebP de até 512 KB; substitui o símbolo padrão na barra lateral.',
+  'Square works best. PNG or WebP up to 512 KB; it replaces the default mark in the sidebar.':
+    'Quadrado funciona melhor. PNG ou WebP de até 512 KB; substitui o símbolo padrão na barra lateral.',
   'Upload logo': 'Enviar logo',
   'Replace logo': 'Trocar logo',
   'Remove logo': 'Remover logo',
-  'Use a PNG, SVG or WebP image.': 'Use uma imagem PNG, SVG ou WebP.',
+  'Use a PNG or WebP image.': 'Use uma imagem PNG ou WebP.',
   'The logo must be 512 KB or smaller.': 'O logo deve ter no máximo 512 KB.',
   'Primary colour': 'Cor de destaque',
   'Buttons, links and highlights. Each member keeps their own light or dark mode.':

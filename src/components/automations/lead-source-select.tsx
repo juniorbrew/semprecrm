@@ -36,7 +36,8 @@ export function LeadSourceSelect({
     let cancelled = false
     void (async () => {
       const { data } = await supabase
-        .from("lead_sources")
+        // Token-less view: lead_sources itself is admin-only (migration 076).
+        .from("lead_sources_public")
         .select("id, name, is_active")
         .order("name")
       if (cancelled) return
