@@ -13,6 +13,7 @@ import { useChatUnread } from "@/hooks/use-chat-unread";
 import { useUpcomingEvents } from "@/hooks/use-upcoming-events";
 import type { Module } from "@/lib/plans";
 import {
+  BarChart3,
   CalendarDays,
   CheckSquare,
   Crown,
@@ -35,7 +36,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { AccountRole } from "@/lib/auth/roles";
+import { canViewReports, type AccountRole } from "@/lib/auth/roles";
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -102,10 +103,14 @@ interface NavItem {
    * off. `inbox` / `contacts` are always on, so those rows never hide.
    */
   module: Module;
+  /** Owner / admin only (the row is hidden for agents and viewers). */
+  adminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
   { href: "/dashboard", label: "Painel", icon: LayoutDashboard, module: "dashboard" },
+  // Support reports (migration 075) — owner / admin, same plan module as the dashboard.
+  { href: "/reports", label: "Relatórios", icon: BarChart3, module: "dashboard", adminOnly: true },
   { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare, module: "inbox" },
   { href: "/contacts", label: "Contatos", icon: Users, module: "contacts" },
   // Customer companies (migration 054) — part of the always-on CRM core.
@@ -151,7 +156,9 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   // that appears late is less jarring than the whole menu reflowing
   // after a disabled module briefly showed up and vanished.
   const visibleNavItems = navItems.filter(
-    (item) => !entitlementsReady || modules[item.module],
+    (item) =>
+      (!entitlementsReady || modules[item.module]) &&
+      (!item.adminOnly || (!!accountRole && canViewReports(accountRole))),
   );
   // The logo link should never point at a hidden module.
   const homeHref =

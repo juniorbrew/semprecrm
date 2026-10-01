@@ -81,6 +81,14 @@ export function canEditSettings(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin: the support reports (/reports). The same rule the
+ * `support_report()` database function enforces.
+ */
+export function canViewReports(role: AccountRole): boolean {
+  return hasMinRole(role, "admin");
+}
+
+/**
  * Owner / admin / agent: write operational data — send messages,
  * create contacts, move deals, run broadcasts, edit automations.
  * Viewers are read-only.
