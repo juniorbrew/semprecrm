@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
@@ -111,10 +111,10 @@ export function ReportsView() {
     };
   }, [accountId, allowed, period, periodOk, filters, tick]);
 
-  const setFilter = useCallback((patch: Partial<ReportFilters>) => {
+  function setFilter(patch: Partial<ReportFilters>) {
     setState("loading");
     setFilters((f) => ({ ...f, ...patch }));
-  }, []);
+  }
 
   const exportHref = useMemo(() => {
     const q = new URLSearchParams({ from: period.from, to: period.to });
