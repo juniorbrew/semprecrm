@@ -36,6 +36,76 @@ export function buildQrMediaPath(accountId: string, filename: string, now: numbe
   return `account-${accountId}/qr/${now}-${base}.${ext}`;
 }
 
+/** Mídia recebida acima disso não é baixada (o WhatsApp limita vídeo a 16 MB). */
+export const MAX_INBOUND_MEDIA_BYTES = 16 * 1024 * 1024;
+/** Downloads simultâneos por processo; os demais esperam na fila. */
+export const MAX_CONCURRENT_DOWNLOADS = 3;
+/** Fila cheia (inundação de mídia): a mensagem segue com o placeholder. */
+export const MAX_QUEUED_DOWNLOADS = 50;
+
+export class MediaTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(`mídia de ${bytes} bytes acima do limite de ${MAX_INBOUND_MEDIA_BYTES}`);
+    this.name = "MediaTooLargeError";
+  }
+}
+
+const MEDIA_KEYS = ["imageMessage", "videoMessage", "audioMessage", "documentMessage", "stickerMessage", "ptvMessage"];
+const WRAPPER_KEYS = [
+  "ephemeralMessage",
+  "viewOnceMessage",
+  "viewOnceMessageV2",
+  "viewOnceMessageV2Extension",
+  "documentWithCaptionMessage",
+];
+
+/**
+ * `fileLength` que o remetente declarou na mensagem (antes de baixar), ou
+ * undefined se não houver. Desembrulha efêmera / visualização única /
+ * documento com legenda.
+ */
+export function declaredMediaBytes(msg: WAMessage): number | undefined {
+  let content = msg.message as Record<string, unknown> | null | undefined;
+  for (let i = 0; i < 4 && content; i++) {
+    const wrapper = WRAPPER_KEYS.map((k) => content![k] as { message?: Record<string, unknown> } | undefined).find(
+      (w) => w?.message,
+    );
+    if (!wrapper) break;
+    content = wrapper.message;
+  }
+  if (!content) return undefined;
+  for (const key of MEDIA_KEYS) {
+    const media = content[key] as { fileLength?: unknown } | undefined;
+    if (!media) continue;
+    const v = media.fileLength;
+    const n =
+      typeof v === "object" && v !== null && "toNumber" in v
+        ? (v as { toNumber: () => number }).toNumber()
+        : Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  }
+  return undefined;
+}
+
+/** Lê o stream até `max` bytes; acima disso destrói o stream e lança MediaTooLargeError. */
+export async function readCapped(
+  stream: AsyncIterable<Uint8Array> & { destroy?: (err?: Error) => void },
+  max: number = MAX_INBOUND_MEDIA_BYTES,
+): Promise<Buffer> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += chunk.byteLength;
+    if (total > max) {
+      const err = new MediaTooLargeError(total);
+      stream.destroy?.(err);
+      throw err;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 export interface MediaStoreOptions {
   supabaseUrl: string;
   /** Base pública das URLs devolvidas (padrão: `supabaseUrl`). */
@@ -45,6 +115,8 @@ export interface MediaStoreOptions {
   /** injeção para testes */
   client?: SupabaseClient;
   download?: (msg: WAMessage, sock: WASocket) => Promise<Buffer>;
+  /** injeção para testes (padrão MAX_CONCURRENT_DOWNLOADS) */
+  maxConcurrentDownloads?: number;
 }
 
 /**
@@ -63,6 +135,9 @@ export class MediaStore {
   private readonly log: Logger;
   private readonly baseUrl: string;
   private readonly publicUrl: string | undefined;
+  private readonly maxConcurrent: number;
+  private activeDownloads = 0;
+  private readonly waiting: (() => void)[] = [];
 
   constructor(opts: MediaStoreOptions) {
     this.baseUrl = opts.supabaseUrl.replace(/\/+$/, "");
@@ -73,15 +148,32 @@ export class MediaStore {
         auth: { persistSession: false, autoRefreshToken: false },
       });
     this.log = opts.logger.child({ module: "media" });
+    this.maxConcurrent = opts.maxConcurrentDownloads ?? MAX_CONCURRENT_DOWNLOADS;
+    // Stream com teto de bytes: o modo "buffer" do Baileys guardaria a mídia
+    // inteira em memória, qualquer que fosse o tamanho.
     this.download =
       opts.download ??
-      ((msg, sock) =>
-        downloadMediaMessage(
-          msg,
-          "buffer",
-          {},
-          { logger: this.log, reuploadRequest: sock.updateMediaMessage },
+      (async (msg, sock) =>
+        readCapped(
+          await downloadMediaMessage(msg, "stream", {}, { logger: this.log, reuploadRequest: sock.updateMediaMessage }),
         ));
+  }
+
+  /** Vaga de download (no máximo `maxConcurrent` simultâneos); fila cheia → erro. */
+  private async acquireDownloadSlot(): Promise<void> {
+    if (this.activeDownloads < this.maxConcurrent) {
+      this.activeDownloads++;
+      return;
+    }
+    if (this.waiting.length >= MAX_QUEUED_DOWNLOADS) throw new Error("fila de downloads de mídia cheia");
+    // a vaga é repassada por releaseDownloadSlot sem decrementar o contador
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+  }
+
+  private releaseDownloadSlot(): void {
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.activeDownloads--;
   }
 
   /**
@@ -94,17 +186,29 @@ export class MediaStore {
     sock: WASocket,
     media: PendingMedia,
   ): Promise<{ url: string; path: string }> {
-    const buffer = await this.download(msg, sock);
+    // Tamanho declarado pelo remetente: acima do teto nem baixa (placeholder).
+    const declared = declaredMediaBytes(msg);
+    if (declared !== undefined && declared > MAX_INBOUND_MEDIA_BYTES) throw new MediaTooLargeError(declared);
+    // A vaga cobre download + upload: é o tempo em que o buffer vive em memória.
+    await this.acquireDownloadSlot();
     const path = buildQrMediaPath(accountId, media.filename ?? "file");
-    const { error } = await this.client.storage.from(CHAT_MEDIA_BUCKET).upload(path, buffer, {
-      contentType: storageMimeType(media.mimetype),
-      upsert: false,
-    });
-    if (error) {
-      throw new Error(`upload no bucket ${CHAT_MEDIA_BUCKET} falhou: ${error.message}`);
+    let bytes: number;
+    try {
+      const buffer = await this.download(msg, sock);
+      if (buffer.length > MAX_INBOUND_MEDIA_BYTES) throw new MediaTooLargeError(buffer.length);
+      bytes = buffer.length;
+      const { error } = await this.client.storage.from(CHAT_MEDIA_BUCKET).upload(path, buffer, {
+        contentType: storageMimeType(media.mimetype),
+        upsert: false,
+      });
+      if (error) {
+        throw new Error(`upload no bucket ${CHAT_MEDIA_BUCKET} falhou: ${error.message}`);
+      }
+    } finally {
+      this.releaseDownloadSlot();
     }
     const { data } = this.client.storage.from(CHAT_MEDIA_BUCKET).getPublicUrl(path);
-    this.log.debug({ accountId, path, bytes: buffer.length }, "mídia armazenada");
+    this.log.debug({ accountId, path, bytes }, "mídia armazenada");
     return { url: this.toPublicUrl(data.publicUrl), path };
   }
 
