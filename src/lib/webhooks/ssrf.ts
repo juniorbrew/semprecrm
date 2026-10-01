@@ -183,6 +183,9 @@ export function requestFixado(rawUrl: string, init: RequestInit, lookupFn: Looku
     method,
     headers: Object.fromEntries(new Headers(init.headers).entries()),
     lookup: lookupFn,
+    // Fresh socket every time: a pooled keep-alive socket to the same host
+    // may have been opened without this lookup (unvetted address).
+    agent: false,
     signal: init.signal ?? undefined,
   });
   return new Promise((resolve, reject) => {
