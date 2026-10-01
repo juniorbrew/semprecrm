@@ -53,25 +53,25 @@ function StatusIcon({
     case "sending":
       return (
         <span title="Sending" aria-label="Sending" role="img">
-          <Clock className="h-3 w-3 text-muted-foreground" />
+          <Clock className="h-3 w-3 opacity-70" />
         </span>
       );
     case "sent":
       return (
         <span title="Sent" aria-label="Sent" role="img">
-          <Check className="h-3 w-3 text-muted-foreground" />
+          <Check className="h-3 w-3 opacity-70" />
         </span>
       );
     case "delivered":
       return (
         <span title="Delivered" aria-label="Delivered" role="img">
-          <CheckCheck className="h-3 w-3 text-muted-foreground" />
+          <CheckCheck className="h-3 w-3 opacity-70" />
         </span>
       );
     case "read":
       return (
         <span title="Read" aria-label="Read" role="img">
-          <CheckCheck className="h-3 w-3 text-blue-400" />
+          <CheckCheck className="h-3 w-3" />
         </span>
       );
     case "failed":
@@ -288,10 +288,8 @@ function MessageContent({
         <div>
           <span
             className={cn(
-              "mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
-              isAgent
-                ? "bg-primary-foreground/20 text-primary-foreground"
-                : "bg-primary/20 text-primary",
+              "mb-1 inline-flex items-center gap-1 text-[11px]",
+              isAgent ? "text-primary-foreground/80" : "text-muted-foreground",
             )}
           >
             <LayoutTemplate className="h-3 w-3" />
@@ -330,7 +328,7 @@ function MessageContent({
       // tap rather than the customer typing the same words.
       return (
         <div className="flex flex-col gap-0.5">
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
             <CornerDownLeft className="h-3 w-3" />
             Button reply
           </span>
@@ -440,7 +438,7 @@ export function MessageBubble({
           {label && (
             <>
               <span
-                className={cn("max-w-40 truncate text-[10px] font-medium", sticker ? "text-muted-foreground" : "text-primary-foreground/80")}
+                className={cn("max-w-40 truncate text-[10px]", sticker ? "text-muted-foreground" : "text-primary-foreground/80")}
                 title={label.hint ?? (label.translate ? undefined : label.text)}
                 data-sender-kind={label.kind}
                 {...(label.translate ? {} : { "data-no-translate": true })}

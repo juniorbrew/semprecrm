@@ -38,13 +38,13 @@ export function InternalNoteBubble({
       <div
         title={hint}
         className={cn(
-          "group/note relative max-w-[75%] rounded-2xl rounded-br-md border border-dashed border-amber-500/50 bg-amber-500/15 px-3 py-2 text-foreground shadow-sm",
+          "group/note relative max-w-[75%] rounded-2xl rounded-br-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-foreground",
         )}
       >
-        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500">
+        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
           <Lock className="h-3 w-3" />
           <span>{label}</span>
-          <span className="font-normal normal-case tracking-normal text-muted-foreground">
+          <span className="font-normal text-muted-foreground">
             · {authorName}
           </span>
         </div>

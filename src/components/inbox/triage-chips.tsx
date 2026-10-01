@@ -18,7 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Conversation, ConversationPriority } from "@/types";
 
 const CHIP =
-  "inline-flex h-5 max-w-36 shrink-0 items-center gap-1.5 rounded-full bg-muted px-2 text-[11px] leading-4 text-muted-foreground";
+  "inline-flex h-5 max-w-36 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs leading-4 text-muted-foreground";
 
 interface TriageChipsProps {
   conversation: Pick<Conversation, "category_id" | "priority" | "sentiment">;
@@ -57,13 +57,13 @@ export function TriageChips({ conversation, categories, byId, canEdit, onCategor
   );
 
   return (
-    <span data-no-translate data-testid="triage-chips" className="inline-flex min-w-0 items-center gap-1">
+    <span data-no-translate data-testid="triage-chips" className="-ml-1.5 inline-flex min-w-0 items-center gap-1">
       {canEdit ? (
         <Popover>
           <PopoverTrigger
             aria-label={copy.category}
             title={copy.category}
-            className={cn(CHIP, "transition-colors hover:bg-muted/70 hover:text-foreground", !category && "opacity-70")}
+            className={cn(CHIP, "transition-colors hover:bg-muted hover:text-foreground", !category && "opacity-70")}
           >
             {categoryBody}
           </PopoverTrigger>
@@ -91,7 +91,7 @@ export function TriageChips({ conversation, categories, byId, canEdit, onCategor
           <PopoverTrigger
             aria-label={copy.priority}
             title={copy.priority}
-            className={cn(CHIP, "transition-colors hover:bg-muted/70 hover:text-foreground")}
+            className={cn(CHIP, "transition-colors hover:bg-muted hover:text-foreground")}
           >
             {priorityBody}
           </PopoverTrigger>
