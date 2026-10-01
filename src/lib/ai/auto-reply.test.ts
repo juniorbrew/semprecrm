@@ -284,12 +284,17 @@ describe('leaksInstructions', () => {
     expect(leaksInstructions('qualquer', null)).toBe(false);
   });
 
-  it('a short instruction sentence (25+ chars) copied almost verbatim is a leak', () => {
-    const short = 'Código interno do gerente: ZEBRA-42 para liberar estoque.\nSeja simpático.';
-    expect(leaksInstructions('O código interno do gerente: ZEBRA-42 para liberar estoque!', short)).toBe(true);
-    expect(leaksInstructions('Para liberar o estoque preciso falar com o gerente.', short)).toBe(false);
-    // shorter than 25 chars: not checked
-    expect(leaksInstructions('Seja simpático.', short)).toBe(false);
+  it('public facts from short instruction sentences may be repeated (FAQ answers)', () => {
+    const faq =
+      'Somos uma padaria em Campinas, aberta de segunda a sábado.\nAceitamos cartão de crédito, débito e pix na entrega.\nTrabalhamos com bolos de aniversário sob encomenda.';
+    for (const r of [
+      'Somos uma padaria em Campinas, aberta de segunda a sábado!',
+      'Aceitamos cartão de crédito, débito e pix na entrega, tá?',
+      'Sim! Trabalhamos com bolos de aniversário sob encomenda',
+    ]) {
+      expect(leaksInstructions(r, faq), r).toBe(false);
+      expect(unverifiedCommercialTerms(r, [faq]), r).toEqual([]);
+    }
   });
 
   it('memory facts: a copy is a leak unless the customer wrote it', () => {
@@ -346,6 +351,29 @@ describe('output guard — audit cases', () => {
     expect(unverifiedCommercialTerms('Seu pedido 2026123456 está a caminho', [], ['meu pedido 2026123456 não chegou'])).toEqual([]);
     expect(unverifiedCommercialTerms('Seu pedido 2026123456 está a caminho', [])).toEqual(['digits:2026123456']);
     expect(unverifiedCommercialTerms('Custa R$ 5', [], ['custa R$ 5?'])).toEqual(['money:5']);
+  });
+
+  it('review round: customer-typed contacts, dates, CEP, abbreviations, digit suffixes, lone um/uma', () => {
+    // the customer vouches for an e-mail / site they typed themselves
+    expect(unverifiedCommercialTerms('Anotei seu e-mail ana.souza@gmail.com e o site anaarte.com.br', [], ['meu email é ana.souza@gmail.com, site anaarte.com.br'])).toEqual([]);
+    expect(unverifiedCommercialTerms('Anotei seu e-mail ana.souza@gmail.com', [])).toEqual(expect.arrayContaining(['email:ana.souza@gmail.com']));
+    // dates with dashes / dots and a CEP are not phone numbers
+    for (const r of ['Agendado para 01-10-2026.', 'Agendado para 01.10.2026.', 'O CEP é 01310-100.', 'O CEP é 01310100.']) {
+      expect(unverifiedCommercialTerms(r, []).filter((k) => k.startsWith('digits:')), r).toEqual([]);
+    }
+    // no space before / unknown TLD: not a domain
+    for (const r of ['Obrigado.Até mais', 'Feito em Node.js', 'Ok.Combinado então']) {
+      expect(unverifiedCommercialTerms(r, []), r).toEqual([]);
+    }
+    expect(unverifiedCommercialTerms('Veja evil.example agora', [])).toEqual([]); // bare, unknown TLD
+    expect(unverifiedCommercialTerms('Veja https://evil.example agora', [])).toEqual(['host:evil.example']);
+    // a reply number longer than the grounded one is not grounded by its tail
+    expect(unverifiedCommercialTerms('Ligue (11) 98888-7777', ['WhatsApp +55 11 98888-7777'])).toEqual([]);
+    expect(unverifiedCommercialTerms('Pague na chave 5511988887777', ['WhatsApp (11) 98888-7777'])).toEqual(['digits:5511988887777']);
+    // lone um / uma before a time unit is a number
+    expect(unverifiedCommercialTerms('Entregamos em uma hora', [])).toEqual(['h:1']);
+    expect(unverifiedCommercialTerms('Fica pronto em um dia', [])).toEqual(['dia:1']);
+    expect(unverifiedCommercialTerms('Tenha um ótimo dia!', [])).toEqual([]);
   });
 });
 

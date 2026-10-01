@@ -389,7 +389,7 @@ const NUM_WORDS: Record<string, number> = {
 const NW = Object.keys(NUM_WORDS).sort((a, z) => z.length - a.length).join('|');
 const NUM_WORDS_RE = new RegExp(String.raw`\b(?:${NW})(?:(?:\s+e\s+|\s+)(?:${NW}))*\b`, 'g');
 /** A lone "um"/"uma" is an article ("um bom dia") unless a unit or currency follows. */
-const AFTER_LONE_ONE = /^\s+(?:semanas?|mes|meses|anos?|real|reais)\b/;
+const AFTER_LONE_ONE = /^\s+(?:horas?|dias?|semanas?|mes|meses|anos?|real|reais)\b/;
 
 /** "noventa e nove reais" → "99 reais", "uma semana" → "1 semana" (input already folded). */
 function numberWordsToDigits(text: string): string {
@@ -450,10 +450,21 @@ function wordKey(w: string): string {
 }
 
 const EMAIL_RE = /[a-z0-9._%+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})\b/g;
-/** A URL / domain. Bare ones ("loja.com.br") need labels of 2+ characters, so "p.ex." is not a domain. */
-const HOST_RE = /(?<![a-z0-9@.-])(https?:\/\/|www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?![a-z0-9-])/g;
+/** A URL / host with "http(s)://" or "www." — any TLD. */
+const URL_RE = /(?<![a-z0-9@.-])(?:https?:\/\/|www\.)((?:[a-z0-9-]+\.)+[a-z]{2,})(?![a-z0-9-])/g;
+/**
+ * A bare domain ("loja.com.br"): after a space / start / bracket / quote
+ * (so "Obrigado.Até" is not one), labels of 2+ characters and a common
+ * TLD (so "p.ex." and "Node.js" are not either).
+ */
+const BARE_HOST_RE = /(?<![^\s(["'])((?:[a-z0-9-]{2,}\.)+([a-z]{2,}))(?![a-z0-9-])/g;
+const BARE_TLDS = new Set(
+  'com br net org io app dev me co shop store site online info biz xyz link ly pay tech top club live pro gov edu ai us uk pt'.split(' '),
+);
 /** Phone / Pix key / account number: 8+ digits, optionally split by spaces, dots, dashes or parentheses. */
 const DIGIT_RUN_RE = /(?<![\d/])\+?\(?\d(?:[\s().-]?\d){7,}(?![\d/])/g;
+/** Not a phone: a date written with dashes / dots (01-10-2026, 01.10.2026) or a CEP (01310-100). */
+const NOT_A_PHONE = /^(?:\d{1,2}[-.]\d{1,2}[-.]\d{2,4}|\d{5}-?\d{3})$/;
 
 /** "host:", "email:" and "digits:" tokens — contact / payment details. */
 function contactTokens(t: string, out: Set<string>): void {
@@ -462,12 +473,16 @@ function contactTokens(t: string, out: Set<string>): void {
     out.add(`host:${domain.replace(/^www\./, '')}`);
     return ' ';
   });
-  for (const m of withoutEmails.matchAll(HOST_RE)) {
-    const host = m[2].replace(/^www\./, '');
-    if (!m[1] && host.split('.').some((label) => label.length < 2)) continue;
-    out.add(`host:${host}`);
+  const withoutUrls = withoutEmails.replace(URL_RE, (_m: string, host: string) => {
+    out.add(`host:${host.replace(/^www\./, '')}`);
+    return ' ';
+  });
+  for (const m of withoutUrls.matchAll(BARE_HOST_RE)) {
+    if (BARE_TLDS.has(m[2])) out.add(`host:${m[1].replace(/^www\./, '')}`);
   }
-  for (const m of t.matchAll(DIGIT_RUN_RE)) out.add(`digits:${m[0].replace(/\D/g, '')}`);
+  for (const m of t.matchAll(DIGIT_RUN_RE)) {
+    if (!NOT_A_PHONE.test(m[0].trim())) out.add(`digits:${m[0].replace(/\D/g, '')}`);
+  }
 }
 
 /**
@@ -512,15 +527,19 @@ function groundTokens(ground: readonly string[]): Set<string> {
 export function unverifiedCommercialTerms(
   reply: string,
   ground: readonly string[],
-  /** The customer's own messages: they ground digit runs only (an order number the customer typed). */
+  /**
+   * The customer's own messages: they vouch for contact details only —
+   * digit runs (an order number), e-mails and hosts the customer typed.
+   */
   customerTexts: readonly string[] = [],
 ): string[] {
   const g = groundTokens(ground);
-  const digitGround = [...g, ...commercialTokens(customerTexts.join('\n'))]
-    .filter((k) => k.startsWith('digits:'))
-    .map((k) => k.slice(7));
-  // "+55 11 99999-9999" and "(11) 99999-9999" are the same number.
-  const digitsGrounded = (d: string) => digitGround.some((x) => x.endsWith(d) || d.endsWith(x));
+  for (const k of commercialTokens(customerTexts.join('\n'))) {
+    if (/^(?:digits|email|host):/.test(k)) g.add(k);
+  }
+  const digitGround = [...g].filter((k) => k.startsWith('digits:')).map((k) => k.slice(7));
+  // "(11) 99999-9999" in the reply is grounded by "+55 (11) 99999-9999" — never the other way round.
+  const digitsGrounded = (d: string) => digitGround.some((x) => x.endsWith(d));
   const tokens = commercialTokens(reply);
   const offers = tokens.some((k) => OFFER_KEY.test(k));
   return tokens.filter((k) => {
@@ -541,9 +560,9 @@ export function businessHoursGround(bh: AgentBusinessHours | null | undefined): 
 const PUBLIC_LINE =
   /\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}|\b\d{1,2}(?::\d{2}|h)\b|\b(?:rua|avenida|av\.|endereco|cep|horario|telefone|whatsapp|fone|funcionamos|atendemos)\b/;
 
-/** Shortest instruction sentence / memory fact checked for a near-verbatim copy. */
+/** Shortest memory fact checked for a near-verbatim copy. */
 export const LEAK_MIN_CHARS = 25;
-/** Share of a sentence's word trigrams found in the reply that counts as a copy. */
+/** Share of a fact's word trigrams found in the reply that counts as a copy. */
 const LEAK_TRIGRAM_RATIO = 0.8;
 
 const wordsOf = (s: string) => fold(s).match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -560,15 +579,14 @@ function nearlyCopied(unit: string, inText: Set<string>, ratio = LEAK_TRIGRAM_RA
   if (tris.length < 2) return false;
   return tris.filter((t) => inText.has(t)).length / tris.length >= ratio;
 }
-const sentences = (text: string) => text.split(/\n+|(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
 
 /**
  * The reply reproduces internal text: ≥ `span` characters of an
- * instruction line verbatim, or (almost) word for word an instruction
- * sentence / approved memory fact of 25+ characters. Address / phone /
- * opening-hours sentences don't count, nor does a memory fact the
- * customer wrote themselves. Knowledge-base snippets are left out on
- * purpose: they are public answers meant to be quoted.
+ * instruction line verbatim (address / phone / opening-hours lines don't
+ * count), or (almost) word for word an approved memory fact of 25+
+ * characters the customer did not write. Short instruction sentences are
+ * NOT checked: they are mostly public facts the assistant should repeat
+ * ("Aceitamos cartão e pix"); knowledge-base snippets neither, same reason.
  */
 export function leaksInstructions(
   reply: string,
@@ -584,9 +602,6 @@ export function leaksInstructions(
       for (let i = 0; i + span <= src.length; i += 5) {
         if (r.includes(src.slice(i, i + span))) return true;
       }
-    }
-    for (const s of sentences(line)) {
-      if (!PUBLIC_LINE.test(fold(s)) && nearlyCopied(s, replyTris)) return true;
     }
   }
   const customerTris = trigrams((extra.customerTexts ?? []).join('\n'));
