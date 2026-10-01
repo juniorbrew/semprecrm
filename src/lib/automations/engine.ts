@@ -147,6 +147,26 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<Di
       }
     }
 
+    // Same for `context.conversation_id` (also body-supplied on the manual
+    // route): steps write to that conversation through the service role,
+    // so a foreign id is dropped and steps fall back to the contact's own.
+    const ctxConv = input.context?.conversation_id
+    if (ctxConv) {
+      let owned: string | null
+      try {
+        owned = await ownedConversationId(input.accountId, input.contactId ?? null, ctxConv)
+      } catch (err) {
+        console.error('[automations] conversation ownership check failed:', err)
+        return { ok: false }
+      }
+      if (!owned) {
+        console.warn('[automations] conversation not in account/contact, dropping it', ctxConv)
+        const { conversation_id: _dropped, ...rest } = input.context ?? {}
+        void _dropped
+        input = { ...input, context: rest }
+      }
+    }
+
     // Plan gate (migration 025): an account without the `automations`
     // module (or a blocked account) runs nothing, even if active rows
     // exist from before the plan changed.
@@ -734,8 +754,8 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         })
         continue
       }
-      let conversationId: string | null = args.context.conversation_id ?? null
-      if (!conversationId && args.contactId) {
+      let conversationId: string | null = null
+      if (args.context.conversation_id || args.contactId) {
         try {
           conversationId = await resolveConversationId(args)
         } catch {
@@ -1237,8 +1257,8 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       // Link the conversation when the trigger had one (inbound message)
       // or the contact has exactly one; a contact-only trigger (tag added
       // to an imported contact) just leaves it empty.
-      let conversationId: string | undefined = args.context.conversation_id
-      if (!conversationId && args.contactId) {
+      let conversationId: string | undefined
+      if (args.context.conversation_id || args.contactId) {
         try {
           conversationId = await resolveConversationId(args)
         } catch {
@@ -1307,9 +1327,35 @@ export function pickLiveConversation<T extends { status?: string | null }>(rows:
   return rows.find((r) => r.status && r.status !== 'closed') ?? rows[0] ?? null
 }
 
+/**
+ * `conversationId` when it belongs to the account (and to the contact,
+ * when there is one), else null. Context ids can be caller-supplied and
+ * every step writes through the service role, so they are never trusted
+ * blindly. Throws on a DB error.
+ */
+async function ownedConversationId(
+  accountId: string,
+  contactId: string | null,
+  conversationId: string,
+): Promise<string | null> {
+  let query = supabaseAdmin()
+    .from('conversations')
+    .select('id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+  if (contactId) query = query.eq('contact_id', contactId)
+  const { data, error } = await query.maybeSingle()
+  if (error) throw new Error(`conversation ownership check failed: ${error.message}`)
+  return (data as { id: string } | null)?.id ?? null
+}
+
 async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
-  if (fromCtx) return fromCtx
+  if (fromCtx) {
+    const owned = await ownedConversationId(args.automation.account_id, args.contactId, fromCtx)
+    if (owned) return owned
+    console.warn('[automations] context conversation not owned, ignoring', fromCtx)
+  }
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
   const { data: rows, error } = await supabaseAdmin()
     .from('conversations')
