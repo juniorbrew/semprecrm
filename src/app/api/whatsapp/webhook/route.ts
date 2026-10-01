@@ -19,7 +19,11 @@ import {
 import { buildVCards } from '@/lib/inbox/vcard'
 import { supabaseServerUrl } from '@/lib/supabase/url'
 import { recipientErrorMessage } from '@/lib/whatsapp/failure-reason'
-import { isMessageAckStatus, statusesBefore } from '@/lib/whatsapp/message-status-ladder'
+import {
+  isMessageAckStatus,
+  statusesBefore,
+  updateAccountMessageStatus,
+} from '@/lib/whatsapp/message-status-ladder'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -259,8 +263,9 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       // Handle status updates
       if (value.statuses) {
+        const statusAccountId = await accountForPhoneNumberId(value.metadata?.phone_number_id)
         for (const status of value.statuses) {
-          await handleStatusUpdate(status)
+          await handleStatusUpdate(status, statusAccountId)
         }
       }
 
@@ -377,13 +382,30 @@ function isMissingColumnError(err: unknown): boolean {
   return code === 'PGRST204' || code === '42703'
 }
 
-async function handleStatusUpdate(status: {
-  id: string
-  status: string
-  timestamp: string
-  recipient_id: string
-  errors?: MetaStatusError[]
-}) {
+/** The account that owns this Meta number; null unless exactly one config matches. */
+async function accountForPhoneNumberId(phoneNumberId: string | undefined): Promise<string | null> {
+  if (!phoneNumberId) return null
+  const { data, error } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('account_id')
+    .eq('phone_number_id', phoneNumberId)
+  if (error || !data || data.length !== 1) {
+    console.error('[webhook] status update: cannot resolve account for phone_number_id', phoneNumberId, error)
+    return null
+  }
+  return (data[0] as { account_id: string }).account_id
+}
+
+async function handleStatusUpdate(
+  status: {
+    id: string
+    status: string
+    timestamp: string
+    recipient_id: string
+    errors?: MetaStatusError[]
+  },
+  accountId: string | null,
+) {
   // Meta's reason for a failed send (wacrm #535). Only read on `failed`;
   // a later non-failed status for the same wamid leaves the error
   // columns alone rather than clearing them, so the reason survives.
@@ -416,7 +438,9 @@ async function handleStatusUpdate(status: {
   //    from the inbox. The `.in('status', …)` filter makes the database
   //    enforce it atomically. The failure reason rides in the same
   //    update (migration 052).
-  if (isMessageAckStatus(status.status)) {
+  //    Scoped to the account that owns the number (via conversations), so
+  //    a wamid can never move another tenant's message.
+  if (isMessageAckStatus(status.status) && accountId) {
     const messageUpdate: Record<string, unknown> = { status: status.status }
     if (failure) {
       messageUpdate.error_code = failure.code
@@ -425,11 +449,12 @@ async function handleStatusUpdate(status: {
     }
     const allowedFrom = statusesBefore(status.status)
     const runMessageUpdate = (patch: Record<string, unknown>) =>
-      supabaseAdmin()
-        .from('messages')
-        .update(patch)
-        .eq('message_id', status.id)
-        .in('status', allowedFrom)
+      updateAccountMessageStatus(supabaseAdmin(), {
+        accountId,
+        messageId: status.id,
+        patch,
+        allowedFrom,
+      })
 
     let { error: msgErr } = await runMessageUpdate(messageUpdate)
     if (msgErr && failure && isMissingColumnError(msgErr)) {

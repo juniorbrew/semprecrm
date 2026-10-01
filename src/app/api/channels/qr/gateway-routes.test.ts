@@ -13,6 +13,9 @@ const h = vi.hoisted(() => ({
   echo: vi.fn(),
   revoke: vi.fn(),
   writes: [] as { table: string; op: string; payload: unknown; filters: [string, unknown][] }[],
+  /** Rows a `messages` select returns, keyed by the account it is scoped to. */
+  messagesByAccount: { 'acct-1': [{ id: 'm-1' }] } as Record<string, { id: string }[]>,
+  reads: [] as { table: string; filters: [string, unknown][] }[],
 }))
 
 vi.mock('@/lib/whatsapp/inbound', () => ({
@@ -42,11 +45,18 @@ vi.mock('@/lib/flows/admin-client', () => ({
       const b: Record<string, unknown> = {
         update: (p: unknown) => ((rec.op = 'update'), (rec.payload = p), h.writes.push(rec), b),
         upsert: (p: unknown) => ((rec.op = 'upsert'), (rec.payload = p), h.writes.push(rec), b),
-        select: () => b,
+        select: () => ((rec.op ||= 'select'), b),
         eq: (k: string, v: unknown) => (filters.push([k, v]), b),
         in: (k: string, v: unknown) => (filters.push([k, v]), b),
         maybeSingle: () => Promise.resolve({ data: rec.payload, error: null }),
-        then: (onF: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(onF),
+        then: (onF: (v: unknown) => unknown) => {
+          if (table === 'messages' && rec.op === 'select') {
+            h.reads.push({ table, filters })
+            const acct = filters.find(([k]) => k === 'conversations.account_id')?.[1] as string
+            return Promise.resolve({ data: h.messagesByAccount[acct] ?? [], error: null }).then(onF)
+          }
+          return Promise.resolve({ data: null, error: null }).then(onF)
+        },
       }
       return b
     },
@@ -77,6 +87,7 @@ beforeEach(() => {
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = SECRET
   h.writes.length = 0
+  h.reads.length = 0
   h.ingest.mockReset()
   h.ingest.mockResolvedValue({ ok: true, conversationId: 'conv-1' })
   h.echo.mockReset()
@@ -183,14 +194,26 @@ describe('POST /ack', () => {
       op: 'update',
       payload: { status: 'read' },
     })
-    // Exactly these filters — no conversation / conversation-status
-    // scope, so a message that lives in an older, resolved conversation
-    // (a new one was opened after it, migration 060) still gets its ack.
-    expect(h.writes[0].filters).toEqual([
+    // Scoped to the account's conversations (any conversation status, so
+    // a message in an older, resolved conversation — migration 060 —
+    // still gets its ack), then a forward-only update by row id.
+    expect(h.reads[0].filters).toEqual([
       ['message_id', 'ABCD'],
+      ['conversations.account_id', 'acct-1'],
       ['channel', 'qr'],
+    ])
+    expect(h.writes[0].filters).toEqual([
+      ['id', ['m-1']],
       ['status', ['sending', 'sent', 'delivered']],
     ])
+  })
+
+  it('never updates a message of another account', async () => {
+    const res = await ack(
+      req('ack', { account_id: 'acct-2', message_id: 'ABCD', status: 'read' }),
+    )
+    expect(res.status).toBe(200)
+    expect(h.writes).toHaveLength(0)
   })
 
   it('only moves status forward: a late "sent" cannot overwrite delivered/read', async () => {
