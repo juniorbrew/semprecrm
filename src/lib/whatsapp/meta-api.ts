@@ -1195,10 +1195,16 @@ export interface GetMediaUrlArgs {
  * Resolve a media ID to Meta's (short-lived, authenticated) CDN URL
  * plus the MIME type. Step one of the media-proxy flow.
  */
+/** Meta media ids are plain numeric strings. */
+export function isMetaMediaId(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{5,30}$/.test(value)
+}
+
 export async function getMediaUrl(
   args: GetMediaUrlArgs
 ): Promise<{ url: string; mimeType: string }> {
   const { mediaId, accessToken } = args
+  if (!isMetaMediaId(mediaId)) throw new Error('Invalid media id')
   const response = await fetch(`${META_API_BASE}/${mediaId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })

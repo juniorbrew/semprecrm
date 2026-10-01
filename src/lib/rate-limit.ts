@@ -14,12 +14,14 @@
  * change.
  *
  * Memory: entries are ~50 bytes each. With LIGHT_SWEEP below, expired
- * keys get cleared opportunistically on every ~1 000th call, so a
+ * keys get cleared opportunistically on every ~200th call (and the
+ * Map is hard-capped at MAX_BUCKETS), so a
  * healthy instance stays in the low-MB range even with thousands of
  * distinct users. No background timer — works in serverless edge
  * runtimes that don't keep timers alive across requests.
  */
 
+import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
 export interface RateLimitOptions {
@@ -48,8 +50,23 @@ const buckets = new Map<string, Entry>();
 // Opportunistic cleanup. Running a sweep on every call would be
 // quadratic; running it 1-in-N lets the Map self-drain without a
 // background timer.
-const LIGHT_SWEEP_EVERY = 1000;
+const LIGHT_SWEEP_EVERY = 200;
 let callsSinceSweep = 0;
+
+/** Hard cap on live buckets. Past it the oldest-inserted keys are
+ *  evicted (Map iterates in insertion order), so a flood of distinct
+ *  keys costs bounded memory instead of growing until the next sweep. */
+export const MAX_BUCKETS = 50_000;
+let maxBuckets = MAX_BUCKETS;
+
+/** Keys longer than this are hashed, so a caller-influenced key part
+ *  (a token, a header) can't make each Map entry arbitrarily large. */
+export const MAX_KEY_LENGTH = 128;
+
+function normalizeKey(key: string): string {
+  if (key.length <= MAX_KEY_LENGTH) return key;
+  return 'h:' + createHash('sha256').update(key).digest('hex');
+}
 
 function sweepExpired(now: number) {
   for (const [k, v] of buckets) {
@@ -57,11 +74,19 @@ function sweepExpired(now: number) {
   }
 }
 
+/** O(1): drop the oldest-inserted key. Expired keys are left to the
+ *  periodic sweep, so a flood never triggers a full scan per insert. */
+function evictOldest() {
+  const oldest = buckets.keys().next();
+  if (!oldest.done) buckets.delete(oldest.value);
+}
+
 export function checkRateLimit(
-  key: string,
+  rawKey: string,
   { limit, windowMs }: RateLimitOptions,
 ): RateLimitResult {
   const now = Date.now();
+  const key = normalizeKey(rawKey);
 
   callsSinceSweep += 1;
   if (callsSinceSweep >= LIGHT_SWEEP_EVERY) {
@@ -72,7 +97,11 @@ export function checkRateLimit(
   const entry = buckets.get(key);
 
   if (!entry || entry.resetAt <= now) {
+    // delete-then-set moves a refreshed key to the end of the
+    // insertion order, so eviction drops genuinely stale keys first.
+    buckets.delete(key);
     buckets.set(key, { count: 1, resetAt: now + windowMs });
+    if (buckets.size > maxBuckets) evictOldest();
     return { success: true, remaining: limit - 1, reset: now + windowMs, limit };
   }
 
@@ -173,6 +202,19 @@ export const RATE_LIMITS = {
   aiSuggest: { limit: 10, windowMs: 60_000 },
   /** "Classificar" (per user) — one small model call on the account's own key. */
   aiTriage: { limit: 10, windowMs: 60_000 },
+  /** WhatsApp media proxy (per user). Each hit is two Meta calls; an
+   *  inbox thread can render dozens of bubbles at once and the browser
+   *  caches the result (private, 1 day), so the budget is generous. */
+  mediaProxy: { limit: 300, windowMs: 60_000 },
+  /** Mark-as-read (per user): fired on every conversation open and
+   *  forwards a read receipt to Meta / the QR gateway. */
+  markRead: { limit: 120, windowMs: 60_000 },
+  /** Manual automation trigger (per user). One call can fan out to
+   *  every matching automation's outbound sends. */
+  automationTrigger: { limit: 20, windowMs: 60_000 },
+  /** Meta webhook verification handshake (public, per IP). Meta calls
+   *  it once when the URL is saved; anything more is probing. */
+  webhookVerify: { limit: 20, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
@@ -180,4 +222,15 @@ export const RATE_LIMITS = {
 export function __resetRateLimitForTests() {
   buckets.clear();
   callsSinceSweep = 0;
+  maxBuckets = MAX_BUCKETS;
+}
+
+/** Test-only: shrink the bucket cap so eviction is cheap to exercise. */
+export function __setMaxBucketsForTests(n: number) {
+  maxBuckets = n;
+}
+
+/** Test-only: number of live buckets. */
+export function __rateLimitBucketCountForTests(): number {
+  return buckets.size;
 }

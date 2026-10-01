@@ -203,4 +203,13 @@ describe('POST', () => {
     expect(res.headers.get('Retry-After')).toBeTruthy()
     expect(h.ingest).not.toHaveBeenCalled()
   })
+
+  it('malformed tokens 404 without consuming a rate-limit bucket', async () => {
+    for (let i = 0; i < 70; i++) {
+      expect((await POST(post('phone=5511999990000', undefined, `junk-${i}`), ctx(`junk-${i}`))).status).toBe(404)
+    }
+    const { __rateLimitBucketCountForTests } = await import('@/lib/rate-limit')
+    expect(__rateLimitBucketCountForTests()).toBe(0)
+    expect(h.state.lookups).toEqual([])
+  })
 })

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  __rateLimitBucketCountForTests,
   __resetRateLimitForTests,
+  __setMaxBucketsForTests,
   checkRateLimit,
   rateLimitResponse,
 } from "./rate-limit";
@@ -110,6 +112,31 @@ describe("RATE_LIMITS presets", () => {
     // per minute. Sized below that, every batch past the cap comes back
     // 429 and its recipients are written off as failed (issue #472).
     expect(RATE_LIMITS.broadcast.limit).toBeGreaterThanOrEqual(45);
+  });
+});
+
+describe("checkRateLimit memory bounds", () => {
+  beforeEach(() => {
+    __resetRateLimitForTests();
+  });
+
+  it("hashes over-long keys but still counts them consistently", () => {
+    const long = "k:" + "x".repeat(10_000);
+    expect(checkRateLimit(long, OPTS).success).toBe(true);
+    expect(checkRateLimit(long, OPTS).success).toBe(true);
+    expect(checkRateLimit(long, OPTS).success).toBe(true);
+    expect(checkRateLimit(long, OPTS).success).toBe(false);
+    // A different long key with the same 128-char prefix is its own bucket.
+    expect(checkRateLimit(long + "y", OPTS).success).toBe(true);
+  });
+
+  it("never holds more than the bucket cap, evicting the oldest key", () => {
+    __setMaxBucketsForTests(100);
+    for (let i = 0; i < 150; i++) checkRateLimit(`flood:${i}`, OPTS);
+    expect(__rateLimitBucketCountForTests()).toBe(100);
+    // The newest key survives eviction; the oldest was dropped (fresh budget).
+    expect(checkRateLimit("flood:149", OPTS).remaining).toBe(1);
+    expect(checkRateLimit("flood:0", OPTS).remaining).toBe(2);
   });
 });
 

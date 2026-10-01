@@ -13,6 +13,7 @@
 // ============================================================
 
 import type { AccountRole } from './roles'
+import { sameOriginPath } from './safe-redirect'
 
 export type AssuranceLevel = 'aal1' | 'aal2'
 
@@ -158,9 +159,7 @@ export function isMfaEnrollAllowedPath(pathname: string): boolean {
  * same-origin absolute paths survive; anything else → `/dashboard`.
  */
 export function safeNextPath(raw: string | null | undefined, fallback = '/dashboard'): string {
-  if (!raw || typeof raw !== 'string') return fallback
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return fallback
-  if (raw.startsWith(MFA_PATH)) return fallback
-  if (/[\r\n]/.test(raw)) return fallback
-  return raw
+  const path = sameOriginPath(raw)
+  if (!path || path.startsWith(MFA_PATH)) return fallback
+  return path
 }
