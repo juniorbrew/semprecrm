@@ -67,8 +67,8 @@ export function SuggestReplyButton({ loading, block, labels, onSuggest, onCancel
       onMouseDown={(e) => e.preventDefault()}
       onClick={loading ? onCancel : onSuggest}
       className={cn(
-        "group relative inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
-        loading && "bg-card text-primary",
+        "group relative inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+        loading && "bg-muted text-primary",
       )}
     >
       {loading ? (

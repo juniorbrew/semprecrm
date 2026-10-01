@@ -29,7 +29,6 @@ import {
   Strikethrough,
   Code,
   Zap,
-  Sparkles,
   Bot,
   ChevronDown,
 } from "lucide-react";
@@ -1045,7 +1044,7 @@ export function MessageComposer({
               className={cn(
                 "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
                 !isNote
-                  ? "bg-card text-foreground shadow-sm"
+                  ? "bg-card text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -1060,7 +1059,7 @@ export function MessageComposer({
               className={cn(
                 "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
                 isNote
-                  ? "bg-amber-500/20 text-amber-600 shadow-sm dark:text-amber-400"
+                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -1068,7 +1067,7 @@ export function MessageComposer({
               {copy.note}
             </button>
           </div>
-          <p className="hidden min-w-0 truncate text-[10px] text-muted-foreground sm:block">
+          <p className="hidden min-w-0 truncate text-[11px] text-muted-foreground sm:block">
             {isNote ? copy.noteHint : copy.replyHint}
           </p>
         </div>
@@ -1079,7 +1078,7 @@ export function MessageComposer({
       {sessionExpired && !isNote && !readOnly && (
         <div
           data-no-translate
-          className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5"
+          className="mb-2 flex items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-1.5"
         >
           <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" />
           <p className="min-w-0 flex-1 text-xs leading-snug text-amber-600 dark:text-amber-400">
@@ -1102,10 +1101,9 @@ export function MessageComposer({
         <div
           data-no-translate
           role="status"
-          className="mb-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2"
+          className="mb-2 rounded-lg bg-muted/50 px-3 py-2"
         >
-          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-            <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <p className="text-xs font-medium text-foreground">
             {copy.suggestReady}
           </p>
           <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">
@@ -1210,9 +1208,9 @@ export function MessageComposer({
         // collapses into a bare disabled input.
         <div
           className={cn(
-            "relative rounded-xl border bg-muted transition-colors focus-within:border-primary/50",
+            "relative rounded-xl border bg-background transition-colors focus-within:border-primary/50",
             isNote
-              ? "border-dashed border-amber-500/50 bg-amber-500/10 focus-within:border-amber-500/80"
+              ? "border-amber-500/30 bg-amber-500/5 focus-within:border-amber-500/60"
               : "border-border",
             textDisabled && "opacity-70",
           )}
@@ -1238,7 +1236,7 @@ export function MessageComposer({
           {!isNote && (
             <div
               data-no-translate
-              className="flex items-center gap-0.5 border-b border-border/60 px-1.5 py-1"
+              className="flex items-center gap-0.5 px-1.5 pt-1"
             >
               {(
                 [
@@ -1257,7 +1255,7 @@ export function MessageComposer({
                   onClick={() => wrapSelection(marker)}
                   aria-label={label}
                   title={label}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Icon className="h-3.5 w-3.5" />
                 </button>
@@ -1270,9 +1268,9 @@ export function MessageComposer({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={toggleQuickFromButton}
                 title={copy.quickReplies}
-                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <kbd className="rounded border border-border bg-card px-1 font-mono text-[10px] leading-4 text-foreground/80">
+                <kbd className="rounded bg-muted px-1 font-mono text-[10px] leading-4 text-foreground/80">
                   /
                 </kbd>
                 <span className="hidden sm:inline">{copy.slashHint}</span>
@@ -1307,7 +1305,7 @@ export function MessageComposer({
                 disabled={textDisabled}
                 aria-label={copy.emoji}
                 title={copy.emoji}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <SmilePlus className="h-4 w-4" />
               </PopoverTrigger>
@@ -1349,8 +1347,8 @@ export function MessageComposer({
               title={copy.quickReplies}
               data-no-translate
               className={cn(
-                "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
-                quickOpen && "bg-card text-primary",
+                "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+                quickOpen && "bg-muted text-primary",
               )}
             >
               <Zap className="h-4 w-4" />
@@ -1378,7 +1376,7 @@ export function MessageComposer({
                   data-testid="suggest-agent"
                   aria-label={`${copy.agentTitle}: ${activeAgentName}`}
                   title={copy.agentTitle}
-                  className="inline-flex h-8 max-w-[9rem] items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                  className="inline-flex h-8 max-w-[9rem] items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span className="truncate" data-no-translate>{activeAgentName}</span>
@@ -1420,7 +1418,7 @@ export function MessageComposer({
                         ? copy.expiredPlaceholder
                         : copy.attach
                 }
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1455,7 +1453,7 @@ export function MessageComposer({
               onClick={() => void startRecording()}
               aria-label={copy.voiceMessage}
               title={isNote ? copy.attachNotInNote : copy.voiceMessage}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Mic className="h-4 w-4" />
             </button>
@@ -1472,7 +1470,7 @@ export function MessageComposer({
                 title={readOnly ? undefined : copy.sendTemplate}
                 data-no-translate
                 className={cn(
-                  "h-8 gap-1.5 px-2 text-xs hover:bg-card hover:text-foreground",
+                  "h-8 gap-1.5 px-2 text-xs hover:bg-muted hover:text-foreground",
                   sessionExpired ? "text-primary" : "text-muted-foreground",
                 )}
                 onClick={onOpenTemplates}
