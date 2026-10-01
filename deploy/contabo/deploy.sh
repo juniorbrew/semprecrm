@@ -16,7 +16,9 @@ git pull --ff-only origin "$BRANCH"
 # in .env.production as SUPABASE_DB_URL. Without it the step is skipped loudly.
 DB_URL="${SUPABASE_DB_URL:-$(grep -E '^SUPABASE_DB_URL=' .env.production 2>/dev/null | cut -d= -f2- || true)}"
 if [ -n "$DB_URL" ]; then
-  npx -y supabase db push --db-url "$DB_URL"
+  # Pinned: this runs with the database superuser URL, so never let npx pick
+  # up whatever "latest" is on the registry that day. Bump deliberately.
+  npx -y supabase@2.119.0 db push --db-url "$DB_URL"
 else
   echo "AVISO: SUPABASE_DB_URL não definido — migrações não aplicadas" >&2
 fi

@@ -107,7 +107,7 @@ As 25 migrations em `supabase/migrations/` criam as tabelas do CRM. Aplique dire
 
 ```bash
 cd /var/www/semprecrm
-npx supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:5432/postgres"
+npx -y supabase@2.119.0 db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:5432/postgres"
 ```
 
 A porta 5432 do host é o Supavisor (usuário `postgres.<POOLER_TENANT_ID>`); se ele recusar, aponte para
