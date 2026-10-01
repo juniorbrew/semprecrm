@@ -11,7 +11,6 @@
  */
 const BASE = 'http://same-origin.invalid'
 
-// eslint-disable-next-line no-control-regex
 const FORBIDDEN = /[\s\u0000-\u001f\u007f-\u009f\\]/
 
 export function sameOriginPath(raw: unknown, origin: string = BASE): string | null {
