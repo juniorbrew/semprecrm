@@ -744,7 +744,27 @@ describe("LGPD — opt-out / anonymised contacts and send_webhook", () => {
     await runAutomationsForTrigger({ accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: { message_text: "meu cpf é 123" } });
 
     expect(spy).not.toHaveBeenCalled();
-    expect(h.state.logResults[0]).toMatchObject({ step_type: "send_webhook", status: "skipped" });
+    expect(h.state.logResults[0]).toMatchObject({ step_type: "send_webhook", status: "skipped", detail: "contato anonimizado" });
+  });
+
+  it("the webhook still runs on the opt-out message itself (only anonymised contacts block it)", async () => {
+    const { fetchSeguro } = await import("@/lib/webhooks/ssrf");
+    const spy = vi.mocked(fetchSeguro);
+    spy.mockClear();
+    spy.mockImplementationOnce(async () => new Response("ok", { status: 200 }));
+    h.state.owned = { id: "c1", opted_out_at: "2026-09-13T10:00:00.000Z" } as { id: string };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [plainWebhook("https://hooks.example.com/x")];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { conversation_id: "conv-1", vars: { opted_out: true } },
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(h.state.logResults[0]).toMatchObject({ step_type: "send_webhook", status: "success" });
   });
 
   it("without a body template, the webhook posts identifiers only — never the message text or vars", async () => {
