@@ -53,6 +53,7 @@ import {
   typingDelayMs,
   unverifiedCommercialTerms,
 } from './auto-reply';
+import { automaticCapReached } from './automatic-cap';
 import { AiError, type AiErrorCode } from './errors';
 import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from './knowledge';
 import { runModelCall } from './run-model-call';
@@ -445,6 +446,18 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   const words = lastWords(pending);
   if (agentCfg.handoff_enabled && detectHandoff(texts, agentCfg.handoff_keywords)) {
     return handOff(ctx, { reason: 'O cliente pediu para falar com uma pessoa', customerWants: 'Falar com uma pessoa da equipe', lastWords: words, notify: true });
+  }
+
+  // Hourly cap on automatic calls (cost burn by a customer or a flood of
+  // numbers): the team takes the conversation, silently, and the AI stays
+  // paused on it — so this happens once per conversation.
+  const capped = await automaticCapReached(db, { accountId: job.account_id, contactId: contact.id, now: started });
+  if (capped) {
+    return handOff(ctx, {
+      reason: capped === 'contact' ? 'Limite por hora de respostas automáticas para este contato' : 'Limite por hora de respostas automáticas da conta',
+      lastWords: words,
+      notify: false,
+    });
   }
 
   // ---- prompt ----

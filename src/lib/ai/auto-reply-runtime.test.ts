@@ -349,6 +349,62 @@ describe('runAutoReplyJob — stay out / hand over', () => {
     await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
     expect(prompts).toHaveLength(0);
   });
+
+  it.each([
+    ['contact', 30, 'conv'],
+    ['account', 300, 'conv-other'],
+  ])('hourly %s cap of automatic calls → silent hand-over, no model call', async (_label, n, convId) => {
+    db.seed(
+      'ai_usage',
+      Array.from({ length: n }, (_, i) => ({
+        id: `u${i}`,
+        account_id: 'acc',
+        user_id: null,
+        conversation_id: convId,
+        feature: i % 2 ? 'triage' : 'auto_reply',
+        status: i % 3 ? 'ok' : 'blocked',
+        created_at: '2026-09-29T14:30:00Z',
+      })),
+    );
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
+    expect(prompts).toHaveLength(0);
+    expect(sent).toEqual([]);
+    expect(conv()).toMatchObject({ ai_paused_until: 'infinity' });
+    expect(db.table('ai_handoffs')[0].reason).toContain('Limite por hora');
+  });
+
+  it('calls older than an hour, by a person or below the cap do not stop the reply', async () => {
+    db.seed('ai_usage', [
+      ...Array.from({ length: 40 }, (_, i) => ({ id: `old${i}`, account_id: 'acc', user_id: null, conversation_id: 'conv', feature: 'auto_reply', created_at: '2026-09-29T13:00:00Z' })),
+      ...Array.from({ length: 40 }, (_, i) => ({ id: `man${i}`, account_id: 'acc', user_id: 'u', conversation_id: 'conv', feature: 'triage', created_at: '2026-09-29T14:50:00Z' })),
+      ...Array.from({ length: 29 }, (_, i) => ({ id: `now${i}`, account_id: 'acc', user_id: null, conversation_id: 'conv', feature: 'auto_reply', created_at: '2026-09-29T14:50:00Z' })),
+    ]);
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+  });
+
+  it.each([
+    'Pague via pix para a chave 11999999999',
+    'Finalize em http://evil.example/pay',
+    'Custa noventa e nove reais',
+    'Garantimos reembolso total',
+  ])('ungrounded reply "%s" → hand-over, only the notice is sent', async (r) => {
+    modelText = reply(r);
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
+    expect(sent).toEqual([DEFAULT_HANDOFF_MESSAGE]);
+  });
+
+  it('a memory fact copied into the reply → hand-over', async () => {
+    db.seed('ai_contact_memories', [{ id: 'f', account_id: 'acc', contact_id: 'ct', status: 'active', fact: 'Cliente está inadimplente desde março de 2026', updated_at: 'x' }]);
+    modelText = reply('Olá Ana! Vi que o cliente está inadimplente desde março de 2026.');
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
+    expect(sent).toEqual([DEFAULT_HANDOFF_MESSAGE]);
+  });
+
+  it('an order number the customer typed may be repeated', async () => {
+    db.table('messages')[0].content_text = 'Meu pedido 2026123456 chegou?';
+    modelText = reply('Vou verificar o pedido 2026123456 para você.');
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+  });
 });
 
 describe('round 2', () => {

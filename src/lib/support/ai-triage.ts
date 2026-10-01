@@ -18,6 +18,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { automaticCapReached } from '@/lib/ai/automatic-cap'
 import { AiError } from '@/lib/ai/errors'
 import { runModelCall } from '@/lib/ai/run-model-call'
 import {
@@ -32,6 +33,7 @@ import {
   type SuggestMessage,
 } from '@/lib/ai/suggest-reply'
 import { plainMessageText } from '@/lib/inbox/vcard'
+import { accountHasModule } from '@/lib/plans-server'
 import type { ConversationPriority, ConversationSentiment } from '@/types'
 import { isPriority, isSentiment, type ConversationCategory } from './model'
 import { applyRouting } from './routing'
@@ -249,7 +251,7 @@ export type TriageOutcome =
   | { status: 'applied'; result: TriageResult }
   | {
       status: 'skipped'
-      reason: TriageSkip | 'low_confidence' | 'invalid_output' | 'changed_meanwhile' | 'recently_run'
+      reason: TriageSkip | 'low_confidence' | 'invalid_output' | 'changed_meanwhile' | 'recently_run' | 'hourly_cap'
     }
 
 type Row = Record<string, unknown>
@@ -274,7 +276,7 @@ export async function runTriage(
 ): Promise<TriageOutcome> {
   const { accountId, conversationId } = input
 
-  const [{ data: settings }, { data: conv }, { data: cats }] = await Promise.all([
+  const [{ data: settings }, { data: conv }, { data: cats }, hasModule] = await Promise.all([
     db.from('ai_settings').select('enabled, triage_enabled').eq('account_id', accountId).maybeSingle(),
     db
       .from('conversations')
@@ -288,6 +290,8 @@ export async function runTriage(
       .eq('account_id', accountId)
       .is('archived_at', null)
       .order('position', { ascending: true }),
+    // Suspended / downgraded account: no customer text leaves for the provider.
+    accountHasModule(db, accountId, 'ai'),
   ])
   if (!conv) return { status: 'skipped', reason: 'not_found' }
   const c = conv as Row
@@ -307,7 +311,7 @@ export async function runTriage(
   }
 
   const skip = triageSkipReason({
-    aiEnabled: !!(settings as Row | null)?.enabled,
+    aiEnabled: !!(settings as Row | null)?.enabled && hasModule,
     triageEnabled: !!(settings as Row | null)?.triage_enabled,
     categoryCount: categories.length,
     contactAnonymized: !!contact?.anonymized_at,
@@ -317,6 +321,10 @@ export async function runTriage(
   if (skip) return { status: 'skipped', reason: skip }
 
   if (input.claim) {
+    // Automatic run: hourly cap per contact / account (see automatic-cap.ts).
+    if (await automaticCapReached(db, { accountId, contactId: (c.contact_id as string | null) ?? null })) {
+      return { status: 'skipped', reason: 'hourly_cap' }
+    }
     const { data: won, error: claimErr } = await db.rpc('claim_triage_run', { p_conversation_id: conversationId })
     if (claimErr) throw new Error(`triage claim failed: ${claimErr.message}`)
     if (!won) return { status: 'skipped', reason: 'recently_run' }

@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeFakeDb } from '@/lib/ai/fake-db.test-helper'
 import { AiError } from '@/lib/ai/errors'
 
-const h = vi.hoisted(() => ({ runModelCall: vi.fn() }))
+const h = vi.hoisted(() => ({ runModelCall: vi.fn(), module: true }))
 vi.mock('@/lib/ai/run-model-call', () => ({ runModelCall: h.runModelCall }))
+vi.mock('@/lib/plans-server', () => ({ accountHasModule: async () => h.module }))
 
 import {
   buildTriagePrompt,
@@ -194,7 +195,7 @@ async function rowsOf(fake: ReturnType<typeof makeFakeDb>, table: string) {
 
 let claimResult = true
 const claims: string[] = []
-function world(over: { conv?: Record<string, unknown>; settings?: Record<string, unknown> | null; cats?: Record<string, unknown>[] } = {}) {
+function world(over: { conv?: Record<string, unknown>; settings?: Record<string, unknown> | null; cats?: Record<string, unknown>[]; usage?: Record<string, unknown>[] } = {}) {
   return makeFakeDb({
     ai_settings: over.settings === null ? [] : [{ account_id: 'acc', enabled: true, triage_enabled: true, ...over.settings }],
     accounts: [{ id: 'acc', name: 'Padaria Sol' }],
@@ -223,6 +224,7 @@ function world(over: { conv?: Record<string, unknown>; settings?: Record<string,
     ],
     conversation_events: [],
     contacts: [{ id: 'k1', account_id: 'acc', anonymized_at: null }],
+    ai_usage: over.usage ?? [],
   }, (fn, args) => {
     claims.push(`${fn}:${(args as { p_conversation_id: string }).p_conversation_id}`)
     return { data: claimResult, error: null }
@@ -235,6 +237,27 @@ describe('runTriage', () => {
     h.runModelCall.mockResolvedValue({ text: good() })
     claimResult = true
     claims.length = 0
+    h.module = true
+  })
+
+  it('a suspended / downgraded account (no AI module) never calls the model', async () => {
+    h.module = false
+    expect(await runTriageQuietly(world() as never, { accountId: 'acc', conversationId: 'conv' })).toEqual({ status: 'skipped', reason: 'ai_disabled' })
+    expect(await runTriage(world() as never, { accountId: 'acc', conversationId: 'conv' })).toEqual({ status: 'skipped', reason: 'ai_disabled' })
+    expect(h.runModelCall).not.toHaveBeenCalled()
+  })
+
+  it('automatic runs stop at the hourly cap (automatic calls only; manual runs are not capped)', async () => {
+    const recent = new Date().toISOString()
+    const usage = (n: number, over: Record<string, unknown> = {}) =>
+      Array.from({ length: n }, (_, i) => ({ id: `u${i}`, account_id: 'acc', user_id: null, conversation_id: 'conv', feature: 'auto_reply', created_at: recent, ...over }))
+    expect(await runTriageQuietly(world({ usage: usage(30) }) as never, { accountId: 'acc', conversationId: 'conv' })).toEqual({ status: 'skipped', reason: 'hourly_cap' })
+    expect(await runTriageQuietly(world({ usage: usage(300, { conversation_id: 'other' }) }) as never, { accountId: 'acc', conversationId: 'conv' })).toEqual({ status: 'skipped', reason: 'hourly_cap' })
+    expect(h.runModelCall).not.toHaveBeenCalled()
+    // manual calls (user_id set), old calls and other accounts do not count
+    const ignored = [...usage(40, { user_id: 'u1' }), ...usage(40, { created_at: '2020-01-01T00:00:00Z' }), ...usage(400, { account_id: 'acc-b' })]
+    expect((await runTriageQuietly(world({ usage: ignored }) as never, { accountId: 'acc', conversationId: 'conv' }))?.status).toBe('applied')
+    expect((await runTriage(world({ usage: usage(40) }) as never, { accountId: 'acc', conversationId: 'conv' })).status).toBe('applied')
   })
 
   it('the automatic run claims a capped run first; losing the claim skips without a model call', async () => {

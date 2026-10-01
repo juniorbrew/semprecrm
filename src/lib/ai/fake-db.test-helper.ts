@@ -80,6 +80,10 @@ export function makeFakeDb(tables: Record<string, Row[]>, onRpc?: (fn: string, a
           );
           return b;
         },
+        gte: (col: string, val: unknown) => {
+          filters.push((r) => String(r[col] ?? '') >= String(val));
+          return b;
+        },
         in: (col: string, vals: unknown[]) => {
           filters.push((r) => vals.includes(r[col]));
           return b;
