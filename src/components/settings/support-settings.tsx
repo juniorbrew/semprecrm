@@ -33,6 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
+import { CsatSettings } from "./support-csat-settings";
 import { SlaSettings } from "./support-sla-settings";
 import { RoutingSettings, TeamsSettings } from "./support-teams-settings";
 
@@ -278,6 +279,7 @@ export function SupportSettings() {
       <SlaSettings readOnly={readOnly} />
       <TeamsSettings readOnly={readOnly} />
       <RoutingSettings readOnly={readOnly} />
+      <CsatSettings readOnly={readOnly} />
       </div>
     </div>
   );

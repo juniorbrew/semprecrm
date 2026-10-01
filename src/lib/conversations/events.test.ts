@@ -329,8 +329,14 @@ describe('support events (migrations 072-073)', () => {
   })
 
   it('every new type is visible in the thread', () => {
-    for (const type of ['sla_warning', 'sla_breached', 'team_changed'] as const) {
+    for (const type of ['sla_warning', 'sla_breached', 'team_changed', 'csat_sent', 'csat_answered'] as const) {
       expect(isVisibleEvent({ type })).toBe(true)
     }
+  })
+
+  it('the survey: sent, and the rating the customer gave', () => {
+    expect(fmt('csat_sent')).toBe('Pesquisa de satisfação enviada')
+    expect(fmt('csat_answered', { score: 5 })).toBe('Avaliação do cliente: nota 5')
+    expect(fmt('csat_answered', { score: 1 }, {}, 'en-US')).toBe('Customer rating: 1')
   })
 })

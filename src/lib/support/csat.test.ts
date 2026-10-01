@@ -5,6 +5,7 @@ import {
   CSAT_DEFAULTS,
   csatSkipReason,
   isCommentCandidate,
+  latestCsatScore,
   isCommentDecline,
   parseCsatScore,
   parseCsatSettings,
@@ -172,5 +173,23 @@ describe('csatSkipReason', () => {
     expect(csatSkipReason(base({ conversation: { last_customer_message_at: old } }))).toBe('window_closed')
     expect(csatSkipReason(base({ conversation: { last_customer_message_at: old, channel: 'qr' } }))).toBeNull()
     expect(csatSkipReason(base({ conversation: { last_customer_message_at: '2026-09-29T12:00:01Z' } }))).toBeNull()
+  })
+})
+
+describe('latestCsatScore', () => {
+  it('reads the newest csat_answered event', () => {
+    expect(latestCsatScore([])).toBeNull()
+    expect(latestCsatScore([{ event_type: 'status_changed' }])).toBeNull()
+    expect(
+      latestCsatScore([
+        { event_type: 'csat_answered', payload: { score: 2 }, created_at: '2026-09-30T10:00:00Z' },
+        { event_type: 'csat_answered', payload: { score: 5 }, created_at: '2026-09-30T11:00:00Z' },
+        { event_type: 'csat_sent', payload: {}, created_at: '2026-09-30T12:00:00Z' },
+      ]),
+    ).toBe(5)
+  })
+  it('ignores a malformed score', () => {
+    expect(latestCsatScore([{ event_type: 'csat_answered', payload: { score: 9 } }])).toBeNull()
+    expect(latestCsatScore([{ event_type: 'csat_answered', payload: null }])).toBeNull()
   })
 })

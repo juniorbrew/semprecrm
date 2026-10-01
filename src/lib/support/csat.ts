@@ -5,6 +5,8 @@
 // inbound interception (csat-inbound.ts) both use these.
 // ============================================================
 
+import type { Language } from '@/lib/i18n'
+
 export type CsatScale = 'stars5' | 'thumbs'
 export const CSAT_SCALES: readonly CsatScale[] = ['stars5', 'thumbs']
 export const CSAT_RESOLUTIONS = ['resolved', 'not_applicable', 'closed_by_customer', 'expired', 'duplicate'] as const
@@ -211,4 +213,85 @@ export function surveyText(s: CsatSettings): string {
 export function thanksText(s: CsatSettings): string {
   const thanks = s.thanks_text.trim()
   return s.ask_comment ? (thanks ? `${thanks}\n\n${CSAT_COMMENT_PROMPT}` : CSAT_COMMENT_PROMPT) : thanks
+}
+
+// ---- inbox ----------------------------------------------------------
+
+/** The newest rating in a conversation's event log (`csat_answered`), or null. */
+export function latestCsatScore(
+  events: readonly { event_type: string; payload?: { score?: unknown } | null; created_at?: string }[],
+): number | null {
+  let best: { at: number; score: number } | null = null
+  for (const [i, e] of events.entries()) {
+    if (e.event_type !== 'csat_answered') continue
+    const score = Number(e.payload?.score)
+    if (!Number.isInteger(score) || score < 1 || score > 5) continue
+    const at = e.created_at ? Date.parse(e.created_at) : i
+    if (!best || at >= best.at) best = { at: Number.isFinite(at) ? at : i, score }
+  }
+  return best?.score ?? null
+}
+
+// ---- copy -----------------------------------------------------------
+
+export interface CsatCopy {
+  rating: (n: number) => string
+  title: string
+  intro: string
+  enable: string
+  scale: string
+  scaleOptions: Record<CsatScale, string>
+  message: string
+  thanks: string
+  delay: string
+  minutes: string
+  askComment: string
+  cooldown: string
+  days: string
+  skip: string
+  saveFailed: string
+  readOnly: string
+}
+
+const COPY: Record<Language, CsatCopy> = {
+  'pt-BR': {
+    rating: (n) => `Nota ${n}`,
+    title: 'Pesquisa de satisfação',
+    intro: 'Depois de resolver, o cliente recebe uma pergunta pelo WhatsApp e responde com uma nota.',
+    enable: 'Enviar pesquisa após resolver',
+    scale: 'Escala',
+    scaleOptions: { stars5: 'Nota de 1 a 5', thumbs: 'Positivo ou negativo' },
+    message: 'Mensagem',
+    thanks: 'Agradecimento',
+    delay: 'Enviar depois de',
+    minutes: 'minutos',
+    askComment: 'Pedir um comentário depois da nota',
+    cooldown: 'Não perguntar de novo ao mesmo contato por',
+    days: 'dias',
+    skip: 'Não enviar quando a conversa for resolvida como',
+    saveFailed: 'Não foi possível salvar',
+    readOnly: 'Somente administradores podem alterar a pesquisa.',
+  },
+  'en-US': {
+    rating: (n) => `Rated ${n}`,
+    title: 'Satisfaction survey',
+    intro: 'After a conversation is resolved, the customer gets a question on WhatsApp and answers with a score.',
+    enable: 'Send a survey after resolving',
+    scale: 'Scale',
+    scaleOptions: { stars5: 'Score from 1 to 5', thumbs: 'Thumbs up or down' },
+    message: 'Message',
+    thanks: 'Thank-you message',
+    delay: 'Send after',
+    minutes: 'minutes',
+    askComment: 'Ask for a comment after the score',
+    cooldown: 'Do not ask the same contact again for',
+    days: 'days',
+    skip: 'Do not send when the conversation is resolved as',
+    saveFailed: 'Could not save',
+    readOnly: 'Only admins can change the survey.',
+  },
+}
+
+export function csatCopy(language: Language): CsatCopy {
+  return COPY[language] ?? COPY['pt-BR']
 }
