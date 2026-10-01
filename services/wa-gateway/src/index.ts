@@ -29,6 +29,7 @@ async function main(): Promise<void> {
     mediaStore,
     logger,
     markOnline: config.markOnline,
+    mediaPolicy: config.mediaPolicy,
   });
 
   const app = createApp({ secret: config.secret, sessions, logger });

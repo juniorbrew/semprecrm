@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { HEADER_SECRET } from "./app-client.js";
 import type { Logger } from "./logger.js";
+import { httpOrigin } from "./outbound-media.js";
 import { GatewayError, type SessionManager } from "./session-manager.js";
 import type { AvatarRequest, ReadRequest, SendRequest } from "./types.js";
 
@@ -88,6 +89,11 @@ export function createApp(deps: ServerDeps): Hono {
     }
     if (body.media && (typeof body.media.url !== "string" || typeof body.media.mimetype !== "string")) {
       throw new GatewayError("media precisa de url e mimetype", "invalid_request", 400);
+    }
+    // Só http(s): qualquer outra coisa o Baileys abriria como arquivo local.
+    // A origem é conferida no download (outbound-media.ts).
+    if (body.media && !httpOrigin(body.media.url)) {
+      throw new GatewayError("media.url precisa ser http(s)", "invalid_request", 400);
     }
     const result = await deps.sessions.send(c.req.param("accountId"), body);
     return c.json(result);

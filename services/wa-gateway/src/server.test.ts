@@ -80,6 +80,20 @@ describe("HTTP", () => {
     expect(await notConnected.json()).toEqual({ error: "not_connected", message: "sessão não conectada" });
   });
 
+  it.each(["./.env", "//etc/passwd", "file:///etc/passwd", "data:text/plain;base64,QQ==", "ftp://x/y"])(
+    "POST send recusa media.url que não é http(s): %s",
+    async (url) => {
+      const { app, sessions } = makeApp();
+      const res = await app.request("/sessions/acc-1/send", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ to: "5511999999999", media: { url, mimetype: "application/pdf" } }),
+      });
+      expect(res.status).toBe(400);
+      expect(sessions.send).not.toHaveBeenCalled();
+    },
+  );
+
   it("POST read valida o corpo e repassa para markRead", async () => {
     const { app, sessions } = makeApp();
     const post = (body: unknown) =>
