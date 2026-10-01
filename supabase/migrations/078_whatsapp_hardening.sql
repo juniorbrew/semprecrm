@@ -14,9 +14,19 @@
 --     (the service role bypasses RLS, so the gateway is unaffected);
 --   - UPDATE also has a WITH CHECK, so an object cannot be moved into
 --     another account's folder or into qr/.
--- Reads stay public (Meta fetches the links).
+-- Reads are not touched here: public URLs (/object/public/*, what Meta
+-- fetches) are served by the storage API without any SELECT policy, and
+-- migration 076 owns the chat-media SELECT policies.
 --
--- Idempotent: DROP POLICY IF EXISTS + CREATE.
+-- OWNERSHIP: 078 is the ONLY migration that defines the chat-media
+-- INSERT / UPDATE / DELETE policies ("Members can upload/update/delete
+-- chat media"). The chat-media write-policy block in 076 must be removed
+-- (076 keeps its SELECT changes). 078 is self-sufficient either way: it
+-- drops and recreates the three policies and grants EXECUTE on its helper
+-- functions explicitly, since 076 revokes default EXECUTE on new functions
+-- from PUBLIC / anon / authenticated.
+--
+-- Idempotent: CREATE OR REPLACE / DROP POLICY IF EXISTS + CREATE / GRANT.
 -- ============================================================
 
 -- `account-<uuid>` → uuid; NULL for anything else (never a cast error).
@@ -43,6 +53,11 @@ AS $$
   SELECT COALESCE((storage.foldername(object_name))[2], '') <> 'qr'
      AND COALESCE(public.is_account_member(public.chat_media_account_id(object_name), 'agent'), false)
 $$;
+
+-- Policies run as the caller: authenticated must be able to execute both.
+REVOKE ALL ON FUNCTION public.chat_media_account_id(text), public.chat_media_writable(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chat_media_writable(text), public.chat_media_account_id(text)
+  TO authenticated, service_role;
 
 DROP POLICY IF EXISTS "Members can upload chat media" ON storage.objects;
 CREATE POLICY "Members can upload chat media"

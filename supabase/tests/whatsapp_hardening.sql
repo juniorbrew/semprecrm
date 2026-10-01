@@ -37,6 +37,8 @@ END $$;
 
 CREATE FUNCTION pg_temp.assert(cond boolean, label text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN IF cond IS DISTINCT FROM true THEN RAISE EXCEPTION 'FAIL: %', label; END IF; END $$;
+-- 076 revokes default EXECUTE from authenticated; the asserts below run as it.
+GRANT EXECUTE ON FUNCTION pg_temp.assert(boolean, text) TO authenticated;
 
 SELECT pg_temp.assert(pg_temp.can('78000000-0000-4000-8000-00000000000a', 'account-' || (SELECT acc_a FROM ids) || '/1-a.jpg'),
   'agent writes own account folder');
