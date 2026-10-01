@@ -143,8 +143,8 @@ export const DICT_API: Record<string, string> = {
     'As notificações push não estão configuradas neste servidor',
   "'subscription' must be an object":
     'A inscrição de notificação enviada é inválida',
-  "'subscription.endpoint' must be an https URL":
-    'O endereço da inscrição de notificação deve ser uma URL https',
+  "'subscription.endpoint' must be a browser push service URL":
+    'O endereço da inscrição de notificação deve ser de um serviço de push do navegador',
   "'subscription.keys' must carry p256dh and auth":
     'A inscrição de notificação está sem as chaves p256dh e auth',
   'Failed to save subscription':
@@ -172,6 +172,13 @@ export const DICT_API: Record<string, string> = {
   'Invalid template id.': 'O identificador do modelo é inválido.',
   'Media ID is required': 'Informe o identificador da mídia',
   'Failed to fetch media': 'Não foi possível baixar a mídia',
+  'Invalid media id': 'Identificador de mídia inválido',
+  'Failed to delete message': 'Não foi possível apagar a mensagem',
+  'Rate limit exceeded': 'Muitas tentativas em pouco tempo. Aguarde um minuto e tente de novo',
+  "This action requires the 'admin' role or higher":
+    'Esta ação exige o papel de administrador ou superior',
+  'Failed to send read receipts': 'Não foi possível confirmar a leitura no WhatsApp',
+  'Simulation failed': 'Não foi possível simular a automação',
 
   // ---- WhatsApp: send ---------------------------------------------------
   'conversation_id and message_type are required':
@@ -256,8 +263,8 @@ export const DICT_API: Record<string, string> = {
     'Informe o token de acesso e o ID do número de telefone',
   'PIN must be exactly 6 digits.': 'O PIN deve ter exatamente 6 dígitos.',
   'Failed to validate configuration': 'Não foi possível validar a configuração',
-  'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one SempreCRM user.':
-    'Este número do WhatsApp já está vinculado a outra conta nesta instância. Cada número só pode ser conectado a um usuário do SempreCRM.',
+  'This phone number cannot be connected. Contact support if you believe this is a mistake.':
+    'Este número não pode ser conectado. Fale com o suporte se acredita que isso é um engano.',
   'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.':
     'Não foi possível criptografar o token. Verifique se a ENCRYPTION_KEY nas variáveis de ambiente é um texto hexadecimal válido de 64 caracteres.',
   'Your plan has no free slot for another connected WhatsApp number. Disconnect one or upgrade the plan.':

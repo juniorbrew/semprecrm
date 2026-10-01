@@ -117,7 +117,8 @@ vi.mock('@supabase/supabase-js', () => ({
   }),
 }))
 
-import { POST } from './route'
+import { __resetRateLimitForTests } from '@/lib/rate-limit'
+import { GET, POST } from './route'
 
 function post(body: unknown) {
   return POST(
@@ -403,5 +404,34 @@ describe('template lifecycle events (wacrm #534)', () => {
     })
     expect(h.updates).toEqual([])
     expect(h.ingest).not.toHaveBeenCalled()
+  })
+})
+
+describe('GET verification handshake', () => {
+  const verify = (token: string, ip = '203.0.113.7') =>
+    GET(
+      new Request(
+        `http://localhost/api/whatsapp/webhook?hub.mode=subscribe&hub.challenge=42&hub.verify_token=${token}`,
+        { headers: { 'x-real-ip': ip } },
+      ),
+    ) as unknown as Promise<{ status: number; text?: () => Promise<string> }>
+
+  beforeEach(() => {
+    __resetRateLimitForTests()
+    h.configRows = [{ id: 'cfg-1', verify_token: 'enc' }]
+  })
+
+  it('echoes the challenge for a matching token and 403s otherwise', async () => {
+    const ok = (await verify('token')) as unknown as Response
+    expect(ok.status).toBe(200)
+    expect(await ok.text()).toBe('42')
+    expect((await verify('wrong')).status).toBe(403)
+  })
+
+  it('rate-limits per client IP', async () => {
+    let last = 0
+    for (let i = 0; i < 21; i++) last = (await verify('wrong')).status
+    expect(last).toBe(429)
+    expect((await verify('token', '198.51.100.1')).status).toBe(200)
   })
 })

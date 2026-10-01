@@ -243,7 +243,7 @@ function WhatsAppOfficialConfig() {
   // context and key every read off it — so a teammate who just
   // joined an account sees the inviter's saved config without
   // having to re-enter anything.
-  const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+  const { user, accountId, loading: authLoading, profileLoading, canEditSettings } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -375,7 +375,11 @@ function WhatsAppOfficialConfig() {
           const res = await fetch('/api/whatsapp/config', { method: 'GET' });
           const payload = await res.json();
 
-          if (payload.connected) {
+          if (!res.ok) {
+            // 401 / 429: not a verdict on the connection — keep the
+            // current status and just tell the user.
+            toast.error(t(payload?.error || 'API connection failed'));
+          } else if (payload.connected) {
             setConnectionStatus('connected');
             setResetReason(null);
             setStatusMessage('');
@@ -553,6 +557,10 @@ function WhatsAppOfficialConfig() {
       const res = await fetch('/api/whatsapp/config', { method: 'GET' });
       const payload = await res.json();
 
+      if (!res.ok) {
+        toast.error(t(payload?.error || 'API connection failed'));
+        return;
+      }
       if (payload.connected) {
         setConnectionStatus('connected');
         setResetReason(null);
@@ -589,7 +597,16 @@ function WhatsAppOfficialConfig() {
       const res = await fetch('/api/whatsapp/config/verify-registration', {
         method: 'GET',
       });
-      const data = (await res.json()) as RegistrationProbe;
+      const body = (await res.json().catch(() => null)) as
+        | (RegistrationProbe & { error?: string })
+        | null;
+      // 403 (non-admin) / 429 answer `{ error }` without `checks` —
+      // never hand that to the probe panel.
+      if (!res.ok || !body || typeof body.checks !== 'object' || body.checks === null) {
+        toast.error(t(body?.error || 'Could not reach the verification endpoint.'));
+        return;
+      }
+      const data = body;
       setRegistrationProbe(data);
       if (data.live) {
         toast.success(t('Number is fully wired — Meta is delivering events.'));
@@ -712,7 +729,7 @@ function WhatsAppOfficialConfig() {
                 </AlertDescription>
                 <Button
                   onClick={handleReset}
-                  disabled={resetting}
+                  disabled={resetting || !canEditSettings}
                   size="sm"
                   className="mt-3 bg-amber-600 hover:bg-amber-700 text-white"
                 >
@@ -837,20 +854,22 @@ function WhatsAppOfficialConfig() {
                     : t('Not registered — Meta will not deliver events')}
                 </AlertTitle>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleVerifyRegistration}
-                disabled={verifyingRegistration}
-                className="border-border bg-transparent text-foreground hover:bg-muted h-7"
-              >
-                {verifyingRegistration ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Zap className="size-3.5" />
-                )}
-                {t('Verify with Meta')}
-              </Button>
+              {canEditSettings && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleVerifyRegistration}
+                  disabled={verifyingRegistration}
+                  className="border-border bg-transparent text-foreground hover:bg-muted h-7"
+                >
+                  {verifyingRegistration ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Zap className="size-3.5" />
+                  )}
+                  {t('Verify with Meta')}
+                </Button>
+              )}
             </div>
             <AlertDescription className="text-muted-foreground mt-2 text-xs leading-relaxed">
               {isRegistered ? (
@@ -1054,7 +1073,7 @@ function WhatsAppOfficialConfig() {
         <div className="flex flex-wrap gap-3">
           <Button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canEditSettings}
             className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             {saving ? (
@@ -1084,7 +1103,7 @@ function WhatsAppOfficialConfig() {
               </>
             )}
           </Button>
-          {config && (
+          {config && canEditSettings && (
             <Button
               variant="outline"
               onClick={handleReset}

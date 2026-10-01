@@ -126,12 +126,24 @@ describe('flows senders on a QR conversation', () => {
   })
 
   it('media carries a mimetype', async () => {
-    await engineSendMedia({ ...BASE, kind: 'image', link: 'https://x/a.jpg', caption: 'foto' })
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://sb.test')
+    vi.stubEnv('SUPABASE_INTERNAL_URL', '')
+    const link = 'https://sb.test/storage/v1/object/public/flow-media/account-acct-1/1-a.jpg'
+    await engineSendMedia({ ...BASE, kind: 'image', link, caption: 'foto' })
+    vi.unstubAllEnvs()
     expect(gatewayBody()).toEqual({
       to: '5511999990000',
-      media: { url: 'https://x/a.jpg', mimetype: 'image/jpeg', caption: 'foto' },
+      media: { url: link, mimetype: 'image/jpeg', caption: 'foto' },
     })
-    expect(h.state.inserted[0]).toMatchObject({ content_type: 'image', media_url: 'https://x/a.jpg' })
+    expect(h.state.inserted[0]).toMatchObject({ content_type: 'image', media_url: link })
+  })
+
+  it('send_media with a link outside the account storage is refused before the gateway', async () => {
+    await expect(
+      engineSendMedia({ ...BASE, kind: 'document', link: 'https://evil.example/a.pdf' }),
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_media_url' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
   })
 
   it('official conversations still go to Meta', async () => {

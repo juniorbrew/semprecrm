@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  MediaUrlNaoPermitida,
+  accountMediaUrlForServer,
   isRelativeMediaUrl,
   mediaUrlForPublic,
-  mediaUrlForServer,
+  storageObjectPath,
+  storageUrlForPublic,
   toStoredMediaUrl,
 } from './media-url'
 
@@ -50,63 +53,6 @@ describe('toStoredMediaUrl', () => {
   })
 })
 
-describe('mediaUrlForServer', () => {
-  it('swaps the public /supabase prefix for SUPABASE_INTERNAL_URL', () => {
-    expect(
-      mediaUrlForServer(PATH, {
-        NEXT_PUBLIC_SUPABASE_URL: '/supabase',
-        SUPABASE_INTERNAL_URL: 'http://host.docker.internal:56021/',
-        NEXT_PUBLIC_SITE_URL: 'http://192.168.1.10:3101',
-      }),
-    ).toBe(
-      'http://host.docker.internal:56021/storage/v1/object/public/chat-media/account-1/1-foto.jpg',
-    )
-  })
-
-  it('falls back to NEXT_PUBLIC_SITE_URL (through the proxy) without an internal URL', () => {
-    expect(
-      mediaUrlForServer(PATH, {
-        NEXT_PUBLIC_SUPABASE_URL: '/supabase',
-        NEXT_PUBLIC_SITE_URL: 'http://192.168.1.10:3101/',
-      }),
-    ).toBe(`http://192.168.1.10:3101${PATH}`)
-  })
-
-  it('uses NEXT_PUBLIC_SITE_URL for relative paths outside the Supabase prefix', () => {
-    expect(
-      mediaUrlForServer('/icon.png', {
-        NEXT_PUBLIC_SUPABASE_URL: '/supabase',
-        SUPABASE_INTERNAL_URL: 'http://kong:8000',
-        NEXT_PUBLIC_SITE_URL: 'https://crm.example.com',
-      }),
-    ).toBe('https://crm.example.com/icon.png')
-  })
-
-  it('does not treat /supabasex as the /supabase prefix', () => {
-    expect(
-      mediaUrlForServer('/supabasex/a.png', {
-        NEXT_PUBLIC_SUPABASE_URL: '/supabase',
-        SUPABASE_INTERNAL_URL: 'http://kong:8000',
-        NEXT_PUBLIC_SITE_URL: 'https://crm.example.com',
-      }),
-    ).toBe('https://crm.example.com/supabasex/a.png')
-  })
-
-  it('leaves absolute URLs and empty strings unchanged', () => {
-    const env = { NEXT_PUBLIC_SUPABASE_URL: '/supabase', SUPABASE_INTERNAL_URL: 'http://kong:8000' }
-    expect(mediaUrlForServer('https://x.supabase.co/storage/v1/a.png', env)).toBe(
-      'https://x.supabase.co/storage/v1/a.png',
-    )
-    expect(mediaUrlForServer('', env)).toBe('')
-  })
-
-  it('throws when nothing can absolutise a relative URL', () => {
-    expect(() =>
-      mediaUrlForServer(PATH, { NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:56021' }),
-    ).toThrow(/SUPABASE_INTERNAL_URL|NEXT_PUBLIC_SITE_URL/)
-  })
-})
-
 describe('mediaUrlForPublic', () => {
   afterEach(() => vi.unstubAllGlobals())
 
@@ -131,5 +77,123 @@ describe('mediaUrlForPublic', () => {
 
   it('returns the path unchanged when no base is known', () => {
     expect(mediaUrlForPublic(PATH, {})).toBe(PATH)
+  })
+})
+
+describe('accountMediaUrlForServer / storageObjectPath (send-media validator)', () => {
+  const ACC = 'acct-1'
+  const OBJ = '/storage/v1/object/public/chat-media/account-acct-1/1-foto.jpg'
+
+  // Same-origin proxy deployment (local Docker / VPS behind nginx).
+  const PROXY = {
+    NEXT_PUBLIC_SUPABASE_URL: '/supabase',
+    SUPABASE_INTERNAL_URL: 'http://host.docker.internal:56021',
+    NEXT_PUBLIC_SITE_URL: 'https://www.semprecrm.com.br',
+  }
+  // Absolute Supabase deployment.
+  const ABS = {
+    NEXT_PUBLIC_SUPABASE_URL: 'https://api.semprecrm.com.br',
+    SUPABASE_INTERNAL_URL: 'http://127.0.0.1:8000',
+  }
+
+  it('accepts a relative storage path and rewrites it to the internal route', () => {
+    expect(accountMediaUrlForServer(`/supabase${OBJ}`, ACC, PROXY)).toBe(`http://host.docker.internal:56021${OBJ}`)
+  })
+
+  it('accepts the absolute public, internal and site-proxied forms of our own storage', () => {
+    expect(accountMediaUrlForServer(`https://api.semprecrm.com.br${OBJ}`, ACC, ABS)).toBe(`http://127.0.0.1:8000${OBJ}`)
+    expect(accountMediaUrlForServer(`http://127.0.0.1:8000${OBJ}`, ACC, ABS)).toBe(`http://127.0.0.1:8000${OBJ}`)
+    expect(accountMediaUrlForServer(`https://www.semprecrm.com.br/supabase${OBJ}`, ACC, PROXY)).toBe(
+      `http://host.docker.internal:56021${OBJ}`,
+    )
+    expect(
+      accountMediaUrlForServer('/supabase/storage/v1/object/public/flow-media/account-acct-1/qr/1-a.pdf', ACC, PROXY),
+    ).toBe('http://host.docker.internal:56021/storage/v1/object/public/flow-media/account-acct-1/qr/1-a.pdf')
+  })
+
+  it('without SUPABASE_INTERNAL_URL falls back to the absolute public URL, then the site proxy', () => {
+    expect(accountMediaUrlForServer(`https://api.semprecrm.com.br${OBJ}`, ACC, { NEXT_PUBLIC_SUPABASE_URL: ABS.NEXT_PUBLIC_SUPABASE_URL })).toBe(
+      `https://api.semprecrm.com.br${OBJ}`,
+    )
+    expect(
+      accountMediaUrlForServer(`/supabase${OBJ}`, ACC, { NEXT_PUBLIC_SUPABASE_URL: '/supabase', NEXT_PUBLIC_SITE_URL: 'https://app.x' }),
+    ).toBe(`https://app.x/supabase${OBJ}`)
+  })
+
+  it.each([
+    ['empty', ''],
+    ['non-string', 42],
+    ['protocol-relative', '//etc/passwd'],
+    ['dot path', './.env'],
+    ['bare relative', 'data/creds.json'],
+    ['absolute fs path', '/etc/passwd'],
+    ['relative outside storage', '/supabase/rest/v1/contacts'],
+    ['parent segments', '/supabase/storage/v1/object/public/chat-media/account-acct-1/../../../../rest/v1/x'],
+    ['dot-dot to other account', '/supabase/storage/v1/object/public/chat-media/account-acct-1/../account-x/a.jpg'],
+    ['encoded traversal', '/supabase/storage/v1/object/public/chat-media/account-acct-1/%2e%2e/%2E%2E/x'],
+    ['encoded slash', '/supabase/storage/v1/object/public/chat-media/account-acct-1%2f..%2fx'],
+    ['backslash', '/supabase/storage/v1/object/public/chat-media/account-acct-1\\..\\x'],
+    ['double slash inside', '/supabase/storage/v1/object/public/chat-media//account-acct-1/x'],
+    ['CRLF', `/supabase${OBJ}\r\nX: y`],
+    ['query', `/supabase${OBJ}?x=1`],
+    ['fragment', `/supabase${OBJ}#a`],
+    ['file scheme', 'file:///etc/passwd'],
+    ['data scheme', 'data:image/png;base64,AAAA'],
+    ['ftp scheme', `ftp://api.semprecrm.com.br${OBJ}`],
+    ['loopback', `http://127.0.0.1${OBJ}`],
+    ['metadata', 'http://169.254.169.254/latest/meta-data/'],
+    ['foreign host', `https://evil.example${OBJ}`],
+    ['userinfo host trick', `https://api.semprecrm.com.br@evil.example${OBJ}`],
+    ['userinfo on our host', `https://user:pw@api.semprecrm.com.br${OBJ}`],
+    ['port trick', `https://api.semprecrm.com.br:8443${OBJ}`],
+    ['http on https origin', `http://api.semprecrm.com.br${OBJ}`],
+    ['decimal IP', `http://2130706433${OBJ}`],
+    ['hex IP', `http://0x7f000001${OBJ}`],
+    ['IPv6 loopback', `http://[::1]${OBJ}`],
+    ['IPv4-mapped IPv6', `http://[::ffff:127.0.0.1]:8000${OBJ}`],
+    ['our host, not storage', 'https://api.semprecrm.com.br/rest/v1/contacts'],
+    ['storage, not public object', 'https://api.semprecrm.com.br/storage/v1/object/sign/chat-media/account-acct-1/x'],
+    ['other account folder', 'https://api.semprecrm.com.br/storage/v1/object/public/chat-media/account-acct-2/x.jpg'],
+    ['bucket only', 'https://api.semprecrm.com.br/storage/v1/object/public/chat-media'],
+    ['no account folder', 'https://api.semprecrm.com.br/storage/v1/object/public/chat-media/x.jpg'],
+    ['other bucket', 'https://api.semprecrm.com.br/storage/v1/object/public/avatars/account-acct-1/x.jpg'],
+  ])('refuses %s', (_name, url) => {
+    expect(() => accountMediaUrlForServer(url, ACC, ABS)).toThrow(MediaUrlNaoPermitida)
+    expect(() => accountMediaUrlForServer(url, ACC, PROXY)).toThrow(MediaUrlNaoPermitida)
+  })
+
+  it('carries a pt-BR message and a 400 status', () => {
+    try {
+      accountMediaUrlForServer('./.env', ACC, ABS)
+      throw new Error('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(MediaUrlNaoPermitida)
+      expect((err as MediaUrlNaoPermitida).status).toBe(400)
+      expect((err as Error).message).toMatch(/não permitida/)
+    }
+  })
+
+  it('storageObjectPath ignores bucket/account (template headers) but keeps the path rules', () => {
+    expect(storageObjectPath('https://api.semprecrm.com.br/storage/v1/object/public/avatars/x.jpg', ABS)).toBe(
+      '/storage/v1/object/public/avatars/x.jpg',
+    )
+    expect(() => storageObjectPath('/supabase/../rest/v1/x', PROXY)).toThrow(MediaUrlNaoPermitida)
+  })
+
+  // WHATWG trata `\` como `/` e resolve `..` DEPOIS de reconstruir a URL:
+  // passaria pela checagem de segmentos e viraria traversal no Kong.
+  it.each([
+    ['object path', '/supabase/storage/v1/object/public/chat-media/x\\..\\..\\..\\api\\platform\\x'],
+    ['folder segment', '/supabase/storage/v1/object/public/chat-media/account-acct-1\\..\\..\\..\\rest\\v1\\x/a.jpg'],
+    ['after own folder', '/supabase/storage/v1/object/public/chat-media/account-acct-1/a\\..\\..\\..\\..\\rest\\v1\\x'],
+    ['absolute URL', 'https://www.semprecrm.com.br/supabase/storage/v1/object/public/chat-media/account-acct-1/a\\..\\..\\x'],
+  ])('refuses a backslash in the %s (storageObjectPath and the account check)', (_n, url) => {
+    expect(() => storageObjectPath(url, PROXY)).toThrow(MediaUrlNaoPermitida)
+    expect(() => accountMediaUrlForServer(url, ACC, PROXY)).toThrow(MediaUrlNaoPermitida)
+  })
+
+  it('storageUrlForPublic rebuilds the link Meta fetches from the validated path', () => {
+    expect(storageUrlForPublic(OBJ, ABS)).toBe(`https://api.semprecrm.com.br${OBJ}`)
+    expect(storageUrlForPublic(OBJ, PROXY)).toBe(`https://www.semprecrm.com.br/supabase${OBJ}`)
   })
 })

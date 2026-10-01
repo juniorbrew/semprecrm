@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -75,6 +76,8 @@ export async function PATCH(
     } catch (err) {
       return toErrorResponse(err)
     }
+    const limit = checkRateLimit(`wa-templates:edit:${user.id}`, RATE_LIMITS.adminAction)
+    if (!limit.success) return rateLimitResponse(limit)
 
     // Resolve the caller's account_id so template + whatsapp_config
     // lookups work for teammates who didn't author the row.
@@ -272,6 +275,8 @@ export async function DELETE(
     } catch (err) {
       return toErrorResponse(err)
     }
+    const limit = checkRateLimit(`wa-templates:edit:${user.id}`, RATE_LIMITS.adminAction)
+    if (!limit.success) return rateLimitResponse(limit)
 
     // Same account-scoping rationale as the PATCH handler above —
     // teammates need to be able to operate on shared templates +

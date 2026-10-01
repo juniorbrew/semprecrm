@@ -25,6 +25,9 @@ describe('safeNextPath', () => {
     expect(safeNextPath('//evil.com', origin, 'signup')).toBe('/dashboard')
     expect(safeNextPath('javascript:alert(1)', origin, 'signup')).toBe('/dashboard')
     expect(safeNextPath('/auth/callback?code=1', origin, 'signup')).toBe('/dashboard')
+    expect(safeNextPath('/\t/evil.com', origin, 'signup')).toBe('/dashboard')
+    expect(safeNextPath('/\\evil.com', origin, 'signup')).toBe('/dashboard')
+    expect(safeNextPath('https://www.semprecrm.com.br.evil.com/', origin, 'signup')).toBe('/dashboard')
   })
 
   it('always sends a recovery link to the password form', () => {

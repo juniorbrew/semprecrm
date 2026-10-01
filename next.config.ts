@@ -60,7 +60,27 @@ const SECURITY_HEADERS = [
   },
 ] as const;
 
+/**
+ * Pages that redirect on session state and/or set auth cookies. They
+ * must never be stored by a shared cache (the CDN rule below would
+ * otherwise mark them `public, s-maxage=300`), so they get
+ * `private, no-store` — declared after the public rule, and Next lets
+ * the last matching rule win for the same header key.
+ */
+const NO_STORE_PREFIXES = [
+  "auth",
+  "login",
+  "signup",
+  "join",
+  "platform",
+  "mfa",
+  "reset-password",
+  "forgot-password",
+] as const;
+
 const nextConfig: NextConfig = {
+  // Don't advertise the framework (`x-powered-by: Next.js`).
+  poweredByHeader: false,
   // Hide the floating "N" dev-tools badge in `next dev`; no effect on production.
   devIndicators: false,
   // Emit `.next/standalone` (server + traced node_modules) so the Docker
@@ -134,6 +154,11 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // `/:path*` also matches the bare prefix (zero segments).
+      ...NO_STORE_PREFIXES.map((prefix) => ({
+        source: `/${prefix}/:path*`,
+        headers: [{ key: "Cache-Control", value: "private, no-store" }],
+      })),
       {
         // Security headers on every response, including /_next/static
         // assets (nosniff matters there) and /api/* (HSTS + referrer-

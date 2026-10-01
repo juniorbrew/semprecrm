@@ -70,9 +70,9 @@ function makeAdmin(rows: Row[]) {
 }
 
 const ROWS: Row[] = [
-  { id: 's1', user_id: 'u1', endpoint: 'https://push.example/1', p256dh: 'p1', auth: 'a1' },
-  { id: 's2', user_id: 'u1', endpoint: 'https://push.example/2', p256dh: 'p2', auth: 'a2' },
-  { id: 's3', user_id: 'u2', endpoint: 'https://push.example/3', p256dh: 'p3', auth: 'a3' },
+  { id: 's1', user_id: 'u1', endpoint: 'https://fcm.googleapis.com/fcm/send/1', p256dh: 'p1', auth: 'a1' },
+  { id: 's2', user_id: 'u1', endpoint: 'https://fcm.googleapis.com/fcm/send/2', p256dh: 'p2', auth: 'a2' },
+  { id: 's3', user_id: 'u2', endpoint: 'https://fcm.googleapis.com/fcm/send/3', p256dh: 'p3', auth: 'a3' },
 ]
 
 const PAYLOAD = { title: 'Maria', body: 'Olá, tudo bem?', url: '/inbox?c=abc', tag: 'conversation:abc' }
@@ -194,7 +194,7 @@ describe('sendPushToUsers', () => {
     expect(sendNotification).toHaveBeenCalledTimes(3)
     const [subArg, msgArg, optsArg] = sendNotification.mock.calls[0]
     expect(subArg).toEqual({
-      endpoint: 'https://push.example/1',
+      endpoint: 'https://fcm.googleapis.com/fcm/send/1',
       keys: { p256dh: 'p1', auth: 'a1' },
     })
     expect(JSON.parse(msgArg)).toEqual({
@@ -223,6 +223,32 @@ describe('sendPushToUsers', () => {
     expect(res).toEqual({ users: 2, sent: 0, failed: 1, removed: 2, configured: true })
     expect(deleted.sort()).toEqual(['s1', 's2'])
     expect(stamped).toEqual([])
+  })
+
+  it('never POSTs to a stored endpoint outside the push-service allowlist, and prunes it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    sendNotification.mockResolvedValue({ statusCode: 201 })
+    const rows = [
+      ...ROWS.slice(0, 1),
+      { id: 'evil', user_id: 'u1', endpoint: 'https://169.254.169.254/latest', p256dh: 'p', auth: 'a' },
+    ]
+    const { admin, deleted } = makeAdmin(rows)
+    const res = await sendPushToUsers(admin, ['u1'], PAYLOAD)
+    expect(sendNotification).toHaveBeenCalledTimes(1)
+    expect(sendNotification.mock.calls[0][0].endpoint).toBe('https://fcm.googleapis.com/fcm/send/1')
+    expect(res).toMatchObject({ sent: 1, failed: 0, removed: 1 })
+    expect(deleted).toEqual(['evil'])
+  })
+
+  it('prunes disallowed rows even when no valid subscription is left', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { admin, deleted } = makeAdmin([
+      { id: 'evil', user_id: 'u1', endpoint: 'https://127.0.0.1/x', p256dh: 'p', auth: 'a' },
+    ])
+    const res = await sendPushToUsers(admin, ['u1'], PAYLOAD)
+    expect(sendNotification).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ sent: 0, failed: 0, removed: 1 })
+    expect(deleted).toEqual(['evil'])
   })
 
   it('returns zeros for an empty recipient list without touching the DB', async () => {

@@ -116,6 +116,19 @@ export function buildChatAttachmentPath(
   return `account-${accountId}/chat/${threadId}/${uuid}-${safeAttachmentName(fileName)}`;
 }
 
+/**
+ * True only for an object path `buildChatAttachmentPath` could have
+ * produced for this account + thread. The attachment JSON is written by
+ * the sender, so the service-role removal must never trust its `path`
+ * beyond this shape (no other tenant, no other thread, no traversal).
+ */
+export function isChatAttachmentPathFor(path: string, accountId: string, threadId: string): boolean {
+  const prefix = `account-${accountId}/chat/${threadId}/`;
+  if (!path.startsWith(prefix)) return false;
+  const rest = path.slice(prefix.length);
+  return /^[A-Za-z0-9._-]+$/.test(rest) && !rest.startsWith('.');
+}
+
 /** Emoji + English label for previews and push bodies. */
 export function attachmentPreview(mime: string | null | undefined): { emoji: string; label: 'Audio' | 'Attachment' } {
   return (mime ?? '').startsWith('audio/')
