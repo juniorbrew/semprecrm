@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl, downloadMedia, mediaProxyHeaders, MediaTooLargeError } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 export async function GET(
@@ -76,11 +76,14 @@ export async function GET(
     return new Response(new Uint8Array(buffer), {
       status: 200,
       headers: {
-        'Content-Type': contentType || mediaInfo.mimeType || 'application/octet-stream',
+        ...mediaProxyHeaders(contentType || mediaInfo.mimeType, `media-${mediaId}`),
         'Cache-Control': 'public, max-age=86400',
       },
     })
   } catch (error) {
+    if (error instanceof MediaTooLargeError) {
+      return NextResponse.json({ error: 'Media too large' }, { status: 413 })
+    }
     console.error('Error in WhatsApp media GET:', error)
     return NextResponse.json(
       { error: 'Failed to fetch media' },
