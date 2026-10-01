@@ -19,3 +19,14 @@ describe("loadConfig — WA_MARK_ONLINE", () => {
     expect(loadConfig({ ...BASE, WA_MARK_ONLINE: v }).markOnline).toBe(false);
   });
 });
+
+describe("loadConfig — GATEWAY_BIND", () => {
+  it("escuta só em loopback por padrão", () => {
+    expect(loadConfig(BASE).bind).toBe("127.0.0.1");
+    expect(loadConfig({ ...BASE, GATEWAY_BIND: " " }).bind).toBe("127.0.0.1");
+  });
+
+  it("aceita outro endereço explícito (Docker)", () => {
+    expect(loadConfig({ ...BASE, GATEWAY_BIND: "0.0.0.0" }).bind).toBe("0.0.0.0");
+  });
+});
