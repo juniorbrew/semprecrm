@@ -58,15 +58,19 @@ chmod 700 "$DEST"
 # Cifra (age) ou repassa. Tudo é gravado como .part e só ganha o nome final
 # quando TODAS as etapas terminaram bem.
 seal() { if [ -n "$AGE_RECIPIENT" ]; then age -r "$AGE_RECIPIENT"; else cat; fi; }
+# Storage e sessões do WhatsApp estão em uso: um arquivo alterado durante a
+# leitura faz o GNU tar sair com 1 ("file changed as we read it"). Isso é
+# aceitável para um backup a quente; 2 ou mais continua sendo erro.
+tar_live() { tar --warning=no-file-changed "$@" || [ "$?" -eq 1 ]; }
 
 docker exec supabase-db pg_dumpall -U postgres --clean --if-exists \
   | gzip -9 | seal > "$DEST/db_$STAMP.sql.gz$EXT.part"
-tar -C "$(dirname "$STORAGE_DIR")" -czf - "$(basename "$STORAGE_DIR")" \
+tar_live -C "$(dirname "$STORAGE_DIR")" -czf - "$(basename "$STORAGE_DIR")" \
   | seal > "$DEST/storage_$STAMP.tar.gz$EXT.part"
 # Credenciais das sessões WhatsApp por QR (wa-gateway). Sem elas, cada conta
 # precisa escanear o QR de novo depois de restaurar a VPS.
 if [ -d "$WA_DIR" ]; then
-  tar -C "$(dirname "$WA_DIR")" -czf - "$(basename "$WA_DIR")" \
+  tar_live -C "$(dirname "$WA_DIR")" -czf - "$(basename "$WA_DIR")" \
     | seal > "$DEST/wa_sessions_$STAMP.tar.gz$EXT.part"
 fi
 

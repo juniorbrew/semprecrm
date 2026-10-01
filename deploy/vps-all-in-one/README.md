@@ -45,7 +45,7 @@ docker compose ps        # todos "healthy" em 1 a 2 minutos
 > todo `docker compose up` confira:
 >
 > ```bash
-> ss -ltn | grep -E ':(5432|6543|8000) '    # só 127.0.0.1; 0.0.0.0, [::] ou * = exposto à internet
+> ss -ltn | grep -E ':(5432|6543|8000|8443) '    # só 127.0.0.1; 0.0.0.0, [::] ou * = exposto à internet
 > ```
 
 #### Verificação em duas etapas (MFA TOTP)
@@ -99,7 +99,9 @@ ssh -L 8000:127.0.0.1:8000 semprecrm     # e abra http://localhost:8000
 
 ou, se tiver IP fixo, acrescente-o no bloco `geo $semprecrm_studio_allowed` do topo do arquivo. Os
 endpoints de login/cadastro/recuperação (`/auth/v1/token`, `signup`, `recover`, `otp`…) têm um
-`limit_req` de 30/min por IP (rajada 20), além dos limites do próprio GoTrue.
+`limit_req` de 30/min por IP (rajada 20), além dos limites do próprio GoTrue. **Antes de ativar**, troque
+`IP.PUBLICO.DA.VPS` no bloco `geo $semprecrm_api_auth_exempt` pelo IP da própria VPS: o servidor do app
+renova sessões pelo domínio público e, sem a isenção, todos os usuários dividiriam o mesmo limite.
 
 ### 5. Migrations do SempreCRM
 
@@ -279,8 +281,7 @@ busca cada um por URL na hora de enviar, então o Nginx da API os serve em `http
 
 ```bash
 sudo mkdir -p /var/www/mail-templates && sudo cp /var/www/semprecrm/deploy/vps-all-in-one/mail-templates/*.html /var/www/mail-templates/
-# no bloco 443 de /etc/nginx/sites-available/semprecrm-api, antes de "location /":
-#   location /mail/ { alias /var/www/mail-templates/; default_type text/html; }
+# o nginx-api.conf já tem "location /mail/ { alias /var/www/mail-templates/; ... }"
 sudo nginx -t && sudo systemctl reload nginx
 ```
 

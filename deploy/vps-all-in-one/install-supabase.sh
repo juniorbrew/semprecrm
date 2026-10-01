@@ -80,13 +80,13 @@ echo "   cd $DEST && docker compose pull && docker compose up -d"
 # Conferência: com o stack no ar (reexecução do instalador ou depois do
 # "up -d"), nenhuma porta do Supabase pode escutar fora do loopback.
 # Rode de novo depois de qualquer "docker compose up":
-#   ss -ltnH '( sport = :5432 or sport = :6543 or sport = :8000 )'
+#   ss -ltnH '( sport = :5432 or sport = :6543 or sport = :8000 or sport = :8443 )'
 #   (todas as linhas devem ser 127.0.0.1; 0.0.0.0, [::] ou * = exposto)
-exposed=$(ss -ltnH '( sport = :5432 or sport = :6543 or sport = :8000 )' 2>/dev/null |
+exposed=$(ss -ltnH '( sport = :5432 or sport = :6543 or sport = :8000 or sport = :8443 )' 2>/dev/null |
   awk '{print $4}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
 if [ -n "$exposed" ]; then
   echo "ATENÇÃO: portas do Supabase expostas fora do loopback: $exposed" >&2
   echo "         rode 'cd $DEST && docker compose up -d' para aplicar docker-compose.semprecrm.yml" >&2
   exit 1
 fi
-echo ">> Depois do 'up -d', confira: ss -ltn | grep -E ':(5432|6543|8000) ' (só 127.0.0.1)"
+echo ">> Depois do 'up -d', confira: ss -ltn | grep -E ':(5432|6543|8000|8443) ' (só 127.0.0.1)"
