@@ -692,8 +692,9 @@ function contactOptedOut(args: ExecuteArgs): Promise<boolean> {
       .eq('account_id', args.automation.account_id)
       .maybeSingle()
     if (error) {
-      console.error('[automations] opt-out check failed:', error)
-      return false
+      // Fail closed: when we cannot tell, do not message the contact.
+      console.error('[automations] opt-out check failed, skipping send:', error)
+      return true
     }
     return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at
   })()
@@ -1181,7 +1182,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
-      const body = cfg.body_template ? await interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      const body = cfg.body_template ? await webhookBody(cfg.body_template, args) : JSON.stringify(args.context)
       // SSRF guard (wacrm GHSA-8jqh-598v-rfxc): a URL e os headers vêm da
       // conta e quem faz o request é o servidor — fetchSeguro recusa destino
       // interno (loopback, rede privada, metadata de nuvem, reservado) antes de
@@ -1540,20 +1541,33 @@ const TEMPLATE_VAR = /\{\{\s*([\w.]+)\s*\}\}/g
 /**
  * Resolve `{{ message.text }}`, `{{ vars.* }}` and `{{ contact.name |
  * phone | email | company }}` in a step's text. Unknown variables
- * become empty strings.
+ * become empty strings. `escape` is applied to every substituted value.
  */
-async function interpolate(s: string, args: ExecuteArgs): Promise<string> {
+async function interpolate(s: string, args: ExecuteArgs, escape: (v: string) => string = (v) => v): Promise<string> {
   const needsContact = /\{\{\s*contact\./.test(s)
   const contact = needsContact ? await loadContactVars(args) : null
   return s.replace(TEMPLATE_VAR, (_, key) => {
     const [ns, prop] = String(key).split('.')
-    if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
-    if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
+    if (ns === 'message' && prop === 'text') return escape(String(args.context.message_text ?? ''))
+    if (ns === 'vars' && prop) return escape(String(args.context.vars?.[prop] ?? ''))
     if (ns === 'contact' && prop && CONTACT_VAR_KEYS.has(prop as keyof ContactVars)) {
-      return String(contact?.[prop as keyof ContactVars] ?? '')
+      return escape(String(contact?.[prop as keyof ContactVars] ?? ''))
     }
     return ''
   })
+}
+
+/** Escape a value for use inside a JSON string literal (no surrounding quotes). */
+const jsonStringEscape = (v: string) => JSON.stringify(v).slice(1, -1)
+
+/**
+ * send_webhook body. A JSON-shaped template gets every substituted value
+ * JSON-escaped, so customer text (`", "status":"paid"`) cannot add keys;
+ * a plain-text template is left as is.
+ */
+export async function webhookBody(template: string, args: ExecuteArgs): Promise<string> {
+  const looksJson = /^\s*[[{]/.test(template)
+  return interpolate(template, args, looksJson ? jsonStringEscape : undefined)
 }
 
 

@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
     logResults: [] as unknown[],
     // Conversation rows the ownership checks filter (id / account / contact).
     conversations: [] as Record<string, unknown>[],
+    // Error returned by the opt-out read (`select('opted_out_at')`).
+    optOutError: null as { message: string } | null,
   },
 }));
 
@@ -32,6 +34,7 @@ vi.mock("./admin-client", () => {
     payload?: unknown;
     filters: [string, string, unknown][];
     single?: boolean;
+    cols?: string;
   }) {
     const { table, type } = ops;
     if (table === "conversations" && type === "select") {
@@ -44,6 +47,9 @@ vi.mock("./admin-client", () => {
       if (type === "update") {
         state.updateCalls.push({ table, filters: ops.filters });
         return { data: null, error: null };
+      }
+      if (ops.cols === "opted_out_at" && state.optOutError) {
+        return { data: null, error: state.optOutError };
       }
       // ownership guard / condition read
       return { data: state.owned, error: null };
@@ -92,9 +98,10 @@ vi.mock("./admin-client", () => {
       payload: undefined as unknown,
       filters: [] as [string, string, unknown][],
       single: false,
+      cols: undefined as string | undefined,
     };
     const b: Record<string, unknown> = {
-      select: () => b,
+      select: (c?: string) => ((ops.cols = c), b),
       insert: (p: unknown) => ((ops.type = "insert"), (ops.payload = p), b),
       update: (p: unknown) => ((ops.type = "update"), (ops.payload = p), b),
       delete: () => ((ops.type = "delete"), b),
@@ -129,7 +136,7 @@ vi.mock("./meta-send", () => ({
   engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
 }));
 
-import { runAutomationsForTrigger } from "./engine";
+import { runAutomationsForTrigger, webhookBody } from "./engine";
 
 const ACCOUNT = "acct-1";
 
@@ -152,6 +159,7 @@ beforeEach(() => {
   h.state.member = null;
   h.state.insertCalls = [];
   h.state.logResults = [];
+  h.state.optOutError = null;
   h.state.conversations = [
     { id: "conv1", account_id: ACCOUNT, contact_id: "c1", status: "open" },
     { id: "conv-1", account_id: ACCOUNT, contact_id: "c1", status: "open" },
@@ -753,5 +761,51 @@ describe("context.conversation_id — tenant isolation", () => {
     await run("foreign");
 
     expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "mine" }));
+  });
+});
+
+describe("send_webhook body — JSON injection", () => {
+  const args = (message_text: string) =>
+    ({ automation: { account_id: ACCOUNT }, contactId: null, context: { message_text } }) as never;
+  const evil = '", "status":"paid","x":"';
+
+  it("JSON-escapes values in a JSON template so customer text cannot add keys", async () => {
+    const body = await webhookBody('{"text":"{{ message.text }}","status":"new"}', args(evil));
+    const parsed = JSON.parse(body);
+    expect(parsed).toEqual({ text: evil, status: "new" });
+    expect(Object.keys(parsed)).toEqual(["text", "status"]);
+  });
+
+  it("escapes newlines and backslashes too", async () => {
+    const tricky = 'a\\b\n"c';
+    const body = await webhookBody('[ "{{ message.text }}" ]', args(tricky));
+    expect(JSON.parse(body)).toEqual([tricky]);
+  });
+
+  it("leaves a plain-text template unchanged", async () => {
+    expect(await webhookBody("msg: {{ message.text }}", args(evil))).toBe(`msg: ${evil}`);
+  });
+});
+
+describe("opt-out check fails closed", () => {
+  it("skips send steps when the opt-out read errors", async () => {
+    const { engineSendText } = await import("./meta-send");
+    (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
+    h.state.owned = { id: "c1" };
+    h.state.optOutError = { message: "boom" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [
+      { id: "s1", automation_id: "a1", step_type: "send_message", step_config: { text: "oi" }, position: 0, parent_step_id: null, branch: null },
+    ];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { conversation_id: "conv1" },
+    });
+
+    expect(engineSendText).not.toHaveBeenCalled();
+    expect(h.state.logResults[0]).toMatchObject({ step_id: "s1", status: "skipped" });
   });
 });
