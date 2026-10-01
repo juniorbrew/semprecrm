@@ -50,7 +50,6 @@ import { DealForm } from "@/components/pipelines/deal-form";
 import {
   LinkedTaskRows,
   TaskDrawer,
-  TaskQuickCreate,
   useLinkedTasks,
 } from "@/components/tasks";
 import { EventDrawer, LinkedEvents } from "@/components/calendar";
@@ -381,9 +380,7 @@ export function ContactSidebar({
   } | null>(null);
   const [dealFormOpen, setDealFormOpen] = useState(false);
   const [dealTargetLoading, setDealTargetLoading] = useState(false);
-  // Tasks: open ones for this contact, "+" reveals the inline quick
-  // create (title + due) linked to the contact and the active thread.
-  const [taskAddOpen, setTaskAddOpen] = useState(false);
+  // Tasks: open ones for this contact; opening one shows the task drawer.
   const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   // "Marcar compromisso" shortcut: the agenda's create sheet prefilled
@@ -994,35 +991,16 @@ export function ContactSidebar({
               <div className="my-4 border-t border-border" />
 
               {/* Tasks: open tasks linked to this contact; the checkbox
-                  completes (default done status), "+" reveals the inline
-                  title + due creator linked to the contact and thread. */}
+                  completes (default done status). Creating a task is the
+                  "Nova tarefa" shortcut at the top of the panel. */}
               <PanelSection id="tasks">
                 <div>
                   <SectionHeader
                     icon={CheckSquare}
                     label={t("Tasks")}
                     count={linkedTasks.tasks.length}
-                    action={
-                      canWrite ? (
-                        <SectionAddButton
-                          label={t("Add task")}
-                          onClick={() => setTaskAddOpen((open) => !open)}
-                        />
-                      ) : undefined
-                    }
                   />
                   <div className="mt-2 space-y-2 px-1">
-                    {taskAddOpen && (
-                      <TaskQuickCreate
-                        defaults={{
-                          contact_id: contact.id,
-                          conversation_id: conversationId ?? undefined,
-                        }}
-                        statuses={linkedTasks.statuses}
-                        onCreated={linkedTasks.add}
-                        onCancel={() => setTaskAddOpen(false)}
-                      />
-                    )}
                     <LinkedTaskRows
                       tasks={linkedTasks.tasks}
                       readOnly={!canWrite}
