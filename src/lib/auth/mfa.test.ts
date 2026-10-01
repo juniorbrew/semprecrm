@@ -154,4 +154,37 @@ describe('safeNextPath', () => {
     expect(safeNextPath(null)).toBe('/dashboard')
     expect(safeNextPath('', '/x')).toBe('/x')
   })
+
+  it.each([
+    '/\t/evil.com', // `?next=/%09/evil.com` after searchParams decoding
+    '/\n/evil.com',
+    '/\r//evil.com',
+    '/ /evil.com',
+    '\t//evil.com',
+    '/\\/evil.com',
+    '\\\\evil.com',
+    '//evil.com/x',
+    'javascript:alert(1)',
+    'JaVaScRiPt:alert(1)',
+    'https://evil.com',
+    'http:evil.com',
+    'data:text/html,x',
+    '/\u0000/evil.com',
+    '/ /evil.com',
+    '/a/../mfa',
+  ])('rejects open-redirect vector %j', (vector) => {
+    expect(safeNextPath(vector)).toBe('/dashboard')
+  })
+
+  it('keeps still-encoded sequences as literal same-origin paths', () => {
+    // A double-encoded payload arrives as the literal text "%09"; the
+    // browser treats that as a path segment, never as a host.
+    expect(safeNextPath('/%09/evil.com')).toBe('/%09/evil.com')
+    expect(safeNextPath('/%5cevil.com')).toBe('/%5cevil.com')
+    expect(safeNextPath('/%2f%2fevil.com')).toBe('/%2f%2fevil.com')
+  })
+
+  it('returns the normalized path', () => {
+    expect(safeNextPath('/a/../inbox#x')).toBe('/inbox#x')
+  })
 })
