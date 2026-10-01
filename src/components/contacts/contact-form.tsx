@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertTriangle } from 'lucide-react';
+import { applySuppressions } from '@/lib/contacts/apply-suppressions';
 
 interface ContactFormProps {
   open: boolean;
@@ -175,6 +176,11 @@ export function ContactForm({
           .single();
         if (error) throw error;
         contactId = data.id;
+        // A number that opted out before being anonymised comes back opted
+        // out (migration 077). Best effort: never blocks the save.
+        void applySuppressions([data.id]).catch((err) =>
+          console.error('[contact-form] suppression check failed:', err)
+        );
       }
 
       // Sync tags

@@ -21,6 +21,7 @@ import {
 } from '@/lib/contacts/resolve-import-tags';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { applySuppressions } from '@/lib/contacts/apply-suppressions';
 import {
   Dialog,
   DialogContent,
@@ -435,23 +436,13 @@ export function ImportModal({
       // Numbers that opted out before being anonymised come back opted out
       // (suppression list, migration 077 — checked server-side only).
       let reOptedOut = 0;
-      for (let i = 0; i < insertedIds.length; i += 500) {
-        try {
-          const res = await fetch('/api/contacts/suppressions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids: insertedIds.slice(i, i + 500) }),
-          });
-          const body = (await res.json().catch(() => null)) as { opted_out?: number } | null;
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          reOptedOut += body?.opted_out ?? 0;
-        } catch (err) {
-          console.error('[contacts import] suppression check failed:', err);
-          toast.warning(
-            'Não foi possível verificar a lista de descadastrados. Confira os contatos importados antes de enviar campanhas.'
-          );
-          break;
-        }
+      try {
+        reOptedOut = await applySuppressions(insertedIds);
+      } catch (err) {
+        console.error('[contacts import] suppression check failed:', err);
+        toast.warning(
+          'Não foi possível verificar a lista de descadastrados. Confira os contatos importados antes de enviar campanhas.'
+        );
       }
       if (reOptedOut > 0) {
         toast.info(

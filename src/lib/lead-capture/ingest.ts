@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
+import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { isValidE164, normalizePhone } from '@/lib/whatsapp/phone-utils'
 import type { LeadSource, LeadSourceEventStatus } from '@/types'
 
@@ -149,6 +150,16 @@ async function upsertContact(
     }
   }
 
+  // A number that opted out before being anonymised comes back opted out
+  // (suppression list, migration 077). Fail-open: a lead is never lost
+  // because the lookup failed.
+  let suppressed = false
+  try {
+    suppressed = (await findSuppressedPhones(db, source.account_id, [phone])).size > 0
+  } catch (err) {
+    console.error('[lead-capture] suppression lookup failed:', err instanceof Error ? err.message : err)
+  }
+
   const insert = {
     account_id: source.account_id,
     user_id: ownerUserId,
@@ -156,6 +167,7 @@ async function upsertContact(
     name: lead.name ?? phone,
     email: lead.email,
     company: lead.company,
+    ...(suppressed ? { opted_out_at: nowIso() } : {}),
   }
   const { data, error } = await db.from('contacts').insert(insert).select().single()
   if (error) {
