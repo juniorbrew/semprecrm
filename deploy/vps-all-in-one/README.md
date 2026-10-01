@@ -141,12 +141,96 @@ funcionando pelo app).
 
 ```bash
 sudo crontab -e
-# 0 3 * * * /var/www/semprecrm/deploy/vps-all-in-one/backup.sh >> /var/log/semprecrm/backup.log 2>&1
+# 0 3 * * * /bin/bash /var/www/semprecrm/deploy/vps-all-in-one/backup.sh >> /var/log/semprecrm/backup.log 2>&1
 ```
 
-Gera dump completo do Postgres e um tar do Storage em `/var/backups/semprecrm`, mantendo 14 dias.
-Copie essa pasta para fora da VPS (rclone para B2, S3 ou Google Drive). Backup só na própria máquina
-não protege contra perda da VPS.
+Chame sempre com `/bin/bash` na frente: sem isso o cron depende do bit de execução do arquivo, e um
+checkout sem ele faz o cron falhar com "Permission denied" todas as noites, em silêncio.
+
+Gera em `/var/backups/semprecrm` (pasta 700, arquivos 600) o dump completo do Postgres (`db_*`), um tar do
+Storage (`/opt/supabase/volumes/storage`, que o container monta em `/var/lib/storage`) e um tar das
+sessões do wa-gateway (`/var/lib/semprecrm/wa`), mantendo 14 dias. Se qualquer etapa falhar o script sai
+com código diferente de 0, escreve `BACKUP FALHOU` no log, apaga os parciais e **não** apaga nenhum
+backup antigo. Cada backup completo atualiza o arquivo `LAST_OK`.
+
+Backup só na própria máquina não protege contra perda da VPS: ative a cifragem e a cópia externa abaixo.
+
+## Backups: como conferir, restaurar e trocar as chaves
+
+### Conferir
+
+```bash
+sudo bash /var/www/semprecrm/deploy/vps-all-in-one/backup-check.sh   # código 0 = ok
+sudo tail -n 20 /var/log/semprecrm/backup.log
+```
+
+O `backup-check.sh` falha quando o `db_*` mais novo tem mais de 26 h (`BACKUP_MAX_AGE_H`) ou menos de
+50 KB (`BACKUP_MIN_BYTES`). Rode-o pelo menos uma vez por mês (ver `docs/runbooks/ops-checklist.md`) ou
+pendure-o num monitor que avise quando sair com erro.
+
+### Cifrar (age) e copiar para fora da VPS (rclone)
+
+1. **No seu computador, nunca na VPS**, gere o par de chaves age (Windows: `winget install FiloSottile.age`;
+   macOS: `brew install age`; Linux: `apt install age`):
+
+   ```bash
+   age-keygen -o semprecrm-backup.key
+   # imprime "Public key: age1..." — só essa linha pública vai para o servidor
+   ```
+
+   Guarde `semprecrm-backup.key` (a chave privada) no cofre de senhas e numa cópia offline. Sem ela os
+   backups cifrados são irrecuperáveis; com ela na VPS, quem invadir a VPS lê os backups.
+
+2. Na VPS: `sudo apt install -y age rclone`, configure o destino com `sudo rclone config` (B2, S3, Drive…;
+   de preferência uma credencial que só consiga gravar, sem apagar) e crie o arquivo de configuração:
+
+   ```bash
+   sudo install -d -m 700 /etc/semprecrm
+   sudo install -m 600 /dev/null /etc/semprecrm/backup.env
+   sudo tee /etc/semprecrm/backup.env >/dev/null <<'EOF'
+   BACKUP_AGE_RECIPIENT=age1...sua.chave.publica...
+   BACKUP_RCLONE_REMOTE=b2:semprecrm-backup/vps
+   EOF
+   sudo bash /var/www/semprecrm/deploy/vps-all-in-one/backup.sh && sudo ls -l /var/backups/semprecrm
+   ```
+
+   Com `BACKUP_AGE_RECIPIENT` os arquivos saem como `*.age` e nada em texto puro é gravado. O
+   `BACKUP_RCLONE_REMOTE` só é aceito junto com a chave (nunca enviamos backup sem cifrar). O `rclone copy`
+   não apaga nada no destino: configure a retenção (lifecycle) no próprio bucket.
+
+3. Depois do primeiro backup cifrado, apague os backups antigos em texto puro:
+   `sudo find /var/backups/semprecrm -maxdepth 1 -type f -name '*.gz' -delete`.
+
+### Restaurar
+
+Pare o app antes (`pm2 stop semprecrm semprecrm-cron wa-gateway`) e suba de novo no fim.
+
+```bash
+# Sem cifragem, na VPS:
+zcat /var/backups/semprecrm/db_X.sql.gz | docker exec -i supabase-db psql -U postgres
+sudo tar -C /opt/supabase/volumes -xzf /var/backups/semprecrm/storage_X.tar.gz
+sudo tar -C /var/lib/semprecrm -xzf /var/backups/semprecrm/wa_sessions_X.tar.gz
+
+# Cifrado: decifre no SEU computador (onde está a chave privada) e mande o fluxo para a VPS.
+scp semprecrm:/var/backups/semprecrm/db_X.sql.gz.age .     # ou baixe do bucket com rclone
+age -d -i semprecrm-backup.key db_X.sql.gz.age | ssh semprecrm "gunzip | docker exec -i supabase-db psql -U postgres"
+age -d -i semprecrm-backup.key storage_X.tar.gz.age | ssh semprecrm "sudo tar -C /opt/supabase/volumes -xzf -"
+age -d -i semprecrm-backup.key wa_sessions_X.tar.gz.age | ssh semprecrm "sudo tar -C /var/lib/semprecrm -xzf -"
+```
+
+Teste a restauração de vez em quando num Postgres descartável; backup que nunca foi restaurado não é
+backup confirmado.
+
+### Trocar as chaves
+
+1. Gere um par novo no seu computador (`age-keygen -o semprecrm-backup-AAAA.key`).
+2. Troque `BACKUP_AGE_RECIPIENT` em `/etc/semprecrm/backup.env` pela chave pública nova e rode o backup
+   uma vez para conferir.
+3. Mantenha a chave privada **antiga** no cofre até expirarem todos os backups cifrados com ela (14 dias
+   na VPS e a retenção do bucket). Só então descarte.
+
+Se a chave privada vazou, faça os passos 1 e 2 já e apague do bucket os backups cifrados com a chave
+antiga depois que houver backups novos válidos.
 
 ## Operação
 
@@ -157,7 +241,7 @@ não protege contra perda da VPS.
 | Reiniciar o Supabase | `docker compose restart` |
 | Redeploy do app | `bash /var/www/semprecrm/deploy/contabo/deploy.sh main` |
 | Atualizar o Supabase | trocar `UPSTREAM_SHA` no `install-supabase.sh`, ler o changelog da pasta `docker/` do repositório supabase/supabase, rodar o instalador de novo e `docker compose up -d` |
-| Restaurar backup | `zcat db_X.sql.gz \| docker exec -i supabase-db psql -U postgres` |
+| Conferir / restaurar backup | ver "Backups: como conferir, restaurar e trocar as chaves" acima |
 
 ## Quando vale a pena voltar para o Supabase Cloud
 
