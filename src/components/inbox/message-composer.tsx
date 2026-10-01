@@ -21,7 +21,6 @@ import {
   X,
   Loader2,
   Lock,
-  MessageSquareReply,
   SmilePlus,
   Clock,
   Bold,
@@ -75,6 +74,7 @@ import {
 import { resolvePastedImage } from "@/lib/inbox/paste-image";
 import { ReplyQuote } from "./reply-quote";
 import {
+  PendingSuggestionStrip,
   SuggestReplyButton,
   suggestReplyBlock,
   type SuggestReplyBlock,
@@ -194,7 +194,6 @@ const COMPOSER_COPY: Record<
     emoji: string;
     attach: string;
     noteHint: string;
-    replyHint: string;
     attachNotInNote: string;
     readOnlyTitle: string;
     bold: string;
@@ -226,7 +225,8 @@ const COMPOSER_COPY: Record<
     suggestCancel: string;
     suggestBlocked: Record<SuggestReplyBlock, string>;
     suggestReady: string;
-    suggestReplace: string;
+    suggestUse: string;
+    suggestPrefix: string;
     suggestAppend: string;
     suggestDiscard: string;
     suggestFailed: string;
@@ -255,7 +255,6 @@ const COMPOSER_COPY: Record<
     emoji: "Emoji",
     attach: "Anexar arquivo",
     noteHint: "Visível só para a equipe · nunca vai para o WhatsApp",
-    replyHint: "Enter envia · Shift+Enter quebra linha",
     attachNotInNote: "Anexos só em respostas",
     readOnlyTitle: "Somente leitura — seu perfil não pode enviar mensagens",
     bold: "Negrito (Ctrl+B)",
@@ -292,7 +291,8 @@ const COMPOSER_COPY: Record<
       no_key: "Falta a chave de API do provedor de IA. Um administrador pode adicioná-la em Configurações → Inteligência Artificial",
     },
     suggestReady: "Sugestão pronta. Já há texto na caixa — o que fazer?",
-    suggestReplace: "Substituir",
+    suggestUse: "Usar",
+    suggestPrefix: "Sugestão:",
     suggestAppend: "Adicionar ao final",
     suggestDiscard: "Descartar",
     suggestFailed: "Não foi possível gerar a sugestão.",
@@ -319,7 +319,6 @@ const COMPOSER_COPY: Record<
     emoji: "Emoji",
     attach: "Attach file",
     noteHint: "Visible to your team only · never sent to WhatsApp",
-    replyHint: "Enter sends · Shift+Enter for a new line",
     attachNotInNote: "Attachments only on replies",
     readOnlyTitle: "Read-only — your role can't send messages",
     bold: "Bold (Ctrl+B)",
@@ -356,7 +355,8 @@ const COMPOSER_COPY: Record<
       no_key: "The AI provider API key is missing. An admin can add it in Settings → Artificial Intelligence",
     },
     suggestReady: "Suggestion ready. There is already text in the box — what should we do?",
-    suggestReplace: "Replace",
+    suggestUse: "Use",
+    suggestPrefix: "Suggestion:",
     suggestAppend: "Append",
     suggestDiscard: "Discard",
     suggestFailed: "Could not generate the suggestion.",
@@ -1007,12 +1007,10 @@ export function MessageComposer({
           : copy.replyPlaceholderNoTemplates;
 
   return (
-    <div
-      className={cn(
-        "border-t border-border bg-card p-3 transition-colors",
-        isNote && "bg-amber-500/[0.04]",
-      )}
-    >
+    // Composer sits on the thread background as one bordered field with
+    // its toolbar underneath (no top bar, no divider); the reply / note
+    // switch is the "Nota interna" toggle in that toolbar.
+    <div className="px-3 pb-3 pt-1 sm:px-4">
       {replyTo && !isNote && (
         <div className="mb-2">
           <ReplyQuote
@@ -1020,56 +1018,6 @@ export function MessageComposer({
             preview={replyTo.preview}
             onDismiss={onClearReply}
           />
-        </div>
-      )}
-
-      {/* Mode switch — Responder | Nota interna. Notes are the team
-          layer: stored on the contact, rendered as amber bubbles in the
-          thread, never sent to WhatsApp. */}
-      {onSendNote && (
-        <div
-          className="mb-2 flex items-center justify-between gap-3"
-          data-no-translate
-        >
-          <div
-            role="tablist"
-            aria-label={`${copy.reply} / ${copy.note}`}
-            className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={!isNote}
-              onClick={() => setMode("reply")}
-              className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
-                !isNote
-                  ? "bg-card text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <MessageSquareReply className="h-3.5 w-3.5" />
-              {copy.reply}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={isNote}
-              onClick={() => setMode("note")}
-              className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
-                isNote
-                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Lock className="h-3.5 w-3.5" />
-              {copy.note}
-            </button>
-          </div>
-          <p className="hidden min-w-0 truncate text-[11px] text-muted-foreground sm:block">
-            {isNote ? copy.noteHint : copy.replyHint}
-          </p>
         </div>
       )}
 
@@ -1098,43 +1046,19 @@ export function MessageComposer({
 
       {/* AI suggestion arrived while the agent already had a draft. */}
       {pendingSuggestion !== null && !isNote && (
-        <div
-          data-no-translate
-          role="status"
-          className="mb-2 rounded-lg bg-muted/50 px-3 py-2"
-        >
-          <p className="text-xs font-medium text-foreground">
-            {copy.suggestReady}
-          </p>
-          <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">
-            {pendingSuggestion}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <Button
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => applySuggestion(pendingSuggestion, "replace")}
-            >
-              {copy.suggestReplace}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 px-2 text-xs"
-              onClick={() => applySuggestion(pendingSuggestion, "append")}
-            >
-              {copy.suggestAppend}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs"
-              onClick={() => setPendingSuggestion(null)}
-            >
-              {copy.suggestDiscard}
-            </Button>
-          </div>
-        </div>
+        <PendingSuggestionStrip
+          text={pendingSuggestion}
+          labels={{
+            prefix: copy.suggestPrefix,
+            hint: copy.suggestReady,
+            use: copy.suggestUse,
+            append: copy.suggestAppend,
+            discard: copy.suggestDiscard,
+          }}
+          onUse={() => applySuggestion(pendingSuggestion, "replace")}
+          onAppend={() => applySuggestion(pendingSuggestion, "append")}
+          onDiscard={() => setPendingSuggestion(null)}
+        />
       )}
 
       {/* Hidden file inputs driven by the attach menu. */}
@@ -1208,7 +1132,7 @@ export function MessageComposer({
         // collapses into a bare disabled input.
         <div
           className={cn(
-            "relative rounded-xl border bg-background transition-colors focus-within:border-primary/50",
+            "relative rounded-[var(--radius)] border bg-card transition-colors focus-within:border-primary/50",
             isNote
               ? "border-amber-500/30 bg-amber-500/5 focus-within:border-amber-500/60"
               : "border-border",
@@ -1299,111 +1223,6 @@ export function MessageComposer({
           />
 
           <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
-            {/* Emoji — works for replies and notes alike. */}
-            <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-              <PopoverTrigger
-                disabled={textDisabled}
-                aria-label={copy.emoji}
-                title={copy.emoji}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <SmilePlus className="h-4 w-4" />
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                side="top"
-                className="w-auto border-border bg-popover p-2"
-              >
-                <div
-                  className="grid grid-cols-10 gap-0.5"
-                  role="listbox"
-                  aria-label={copy.emoji}
-                >
-                  {COMPOSER_EMOJIS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      role="option"
-                      aria-selected={false}
-                      onClick={() => insertEmoji(emoji)}
-                      className="flex h-7 w-7 items-center justify-center rounded text-base leading-none transition-colors hover:bg-muted"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {/* Quick replies — same list as "/", for agents who don't
-                know the shortcut. Works for replies and notes alike. */}
-            <button
-              type="button"
-              disabled={textDisabled}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={toggleQuickFromButton}
-              aria-label={copy.quickReplies}
-              aria-expanded={quickOpen}
-              title={copy.quickReplies}
-              data-no-translate
-              className={cn(
-                "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
-                quickOpen && "bg-muted text-primary",
-              )}
-            >
-              <Zap className="h-4 w-4" />
-            </button>
-
-            {/* Sugerir resposta (AI) — replies only; fills the box, never sends. */}
-            {!isNote && (
-              <SuggestReplyButton
-                loading={suggesting}
-                block={suggestBlock}
-                labels={{
-                  suggest: copy.suggestReply,
-                  cancel: copy.suggestCancel,
-                  blocked: copy.suggestBlocked,
-                }}
-                onSuggest={() => void requestSuggestion()}
-                onCancel={cancelSuggestion}
-              />
-            )}
-
-            {/* AI agent for the suggestion — shown only when the account has agents. */}
-            {!isNote && !suggestBlock && agents.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  data-testid="suggest-agent"
-                  aria-label={`${copy.agentTitle}: ${activeAgentName}`}
-                  title={copy.agentTitle}
-                  className="inline-flex h-8 max-w-[9rem] items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  <span className="truncate" data-no-translate>{activeAgentName}</span>
-                  <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" data-no-translate className="border-border bg-popover">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>{copy.agentTitle}</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={pickedAgentId ?? ""}
-                      onValueChange={(v: string) => setPickedAgent(v ? { conversationId, id: v } : null)}
-                    >
-                      <DropdownMenuRadioItem value="">
-                        {copy.agentAuto}
-                        {agentInfo?.resolved ? ` (${agents.find((a) => a.id === agentInfo.resolved)?.name ?? ""})` : ""}
-                      </DropdownMenuRadioItem>
-                      {agents.map((a) => (
-                        <DropdownMenuRadioItem key={a.id} value={a.id}>
-                          {a.name}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-
             {/* Attach menu — photo / video / document / voice. */}
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -1458,6 +1277,30 @@ export function MessageComposer({
               <Mic className="h-4 w-4" />
             </button>
 
+            {/* Nota interna — toggles the box between a WhatsApp reply and
+                a team-only note (stored on the contact, amber in the
+                thread, never sent). Reset to reply on thread change. */}
+            {onSendNote && (
+              <button
+                type="button"
+                data-no-translate
+                data-testid="note-toggle"
+                aria-pressed={isNote}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setMode(isNote ? "reply" : "note")}
+                title={isNote ? copy.noteHint : copy.note}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs transition-colors",
+                  isNote
+                    ? "bg-amber-500/15 font-medium text-amber-700 dark:text-amber-400"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Lock className="h-4 w-4" aria-hidden />
+                <span className="hidden sm:inline">{copy.note}</span>
+              </button>
+            )}
+
             {/* Templates — the only WhatsApp path once the window
                 closes, so it lights up in that state. Hidden for notes
                 and for QR-channel threads (no templates there). */}
@@ -1478,6 +1321,111 @@ export function MessageComposer({
                 <LayoutTemplate className="h-4 w-4" />
                 <span className="hidden sm:inline">{copy.templates}</span>
               </GatedButton>
+            )}
+
+            {/* Quick replies — same list as "/", for agents who don't
+                know the shortcut. Works for replies and notes alike. */}
+            <button
+              type="button"
+              disabled={textDisabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleQuickFromButton}
+              aria-label={copy.quickReplies}
+              aria-expanded={quickOpen}
+              title={copy.quickReplies}
+              data-no-translate
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+                quickOpen && "bg-muted text-primary",
+              )}
+            >
+              <Zap className="h-4 w-4" />
+            </button>
+
+            {/* Emoji — works for replies and notes alike. */}
+            <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+              <PopoverTrigger
+                disabled={textDisabled}
+                aria-label={copy.emoji}
+                title={copy.emoji}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <SmilePlus className="h-4 w-4" />
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                side="top"
+                className="w-auto border-border bg-popover p-2"
+              >
+                <div
+                  className="grid grid-cols-10 gap-0.5"
+                  role="listbox"
+                  aria-label={copy.emoji}
+                >
+                  {COMPOSER_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      onClick={() => insertEmoji(emoji)}
+                      className="flex h-7 w-7 items-center justify-center rounded text-base leading-none transition-colors hover:bg-muted"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            {/* Sugerir resposta (AI) — replies only; fills the box, never sends. */}
+            {!isNote && (
+              <SuggestReplyButton
+                loading={suggesting}
+                block={suggestBlock}
+                labels={{
+                  suggest: copy.suggestReply,
+                  cancel: copy.suggestCancel,
+                  blocked: copy.suggestBlocked,
+                }}
+                onSuggest={() => void requestSuggestion()}
+                onCancel={cancelSuggestion}
+              />
+            )}
+
+            {/* AI agent for the suggestion — shown only when the account has agents. */}
+            {!isNote && !suggestBlock && agents.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  data-testid="suggest-agent"
+                  aria-label={`${copy.agentTitle}: ${activeAgentName}`}
+                  title={copy.agentTitle}
+                  className="inline-flex h-8 max-w-[9rem] items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="truncate" data-no-translate>{activeAgentName}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" data-no-translate className="border-border bg-popover">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{copy.agentTitle}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={pickedAgentId ?? ""}
+                      onValueChange={(v: string) => setPickedAgent(v ? { conversationId, id: v } : null)}
+                    >
+                      <DropdownMenuRadioItem value="">
+                        {copy.agentAuto}
+                        {agentInfo?.resolved ? ` (${agents.find((a) => a.id === agentInfo.resolved)?.name ?? ""})` : ""}
+                      </DropdownMenuRadioItem>
+                      {agents.map((a) => (
+                        <DropdownMenuRadioItem key={a.id} value={a.id}>
+                          {a.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
 
             <span className="flex-1" />
