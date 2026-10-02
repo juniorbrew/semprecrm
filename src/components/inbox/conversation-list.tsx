@@ -70,6 +70,7 @@ import { buildSearchPattern, normalizeSearch } from "@/lib/inbox/search";
 import { debounceWithMaxWait } from "@/lib/inbox/throttle";
 import {
   INBOX_SHORTCUT_EVENT,
+  nextAfterResolve,
   stepIndex,
   type ShortcutAction,
 } from "@/lib/inbox/shortcuts";
@@ -129,6 +130,8 @@ interface ConversationListProps {
   /** Local patches after a row quick action (Resolver / Reabrir / Assumir). */
   onStatusChange?: (conversationId: string, status: ConversationStatus) => void;
   onAssignChange?: (conversationId: string, assignedAgentId: string | null) => void;
+  /** Clears the selection ("e" resolved the last row of the list). */
+  onDeselect?: () => void;
 }
 
 /** Row density, per user on this device (`wacrm:inbox:density:<userId>`). */
@@ -408,6 +411,7 @@ export function ConversationList({
   onShowShortcuts,
   onStatusChange,
   onAssignChange,
+  onDeselect,
 }: ConversationListProps) {
   const { user, profile, preferences, accountId, accountRole } = useAuth();
   const { language } = useLanguage();
@@ -1167,9 +1171,20 @@ export function ConversationList({
   }, [userId]);
 
   // Shortcuts dispatched by useInboxShortcuts (lib/inbox/shortcuts).
-  const shortcutRef = useRef({ ordered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore });
+  const shortcutState = {
+    ordered,
+    cursorId,
+    activeConversationId,
+    conversations,
+    hasMore: paging.hasMore,
+    handleSelect,
+    handleQuickAction,
+    onDeselect,
+    loadMore,
+  };
+  const shortcutRef = useRef(shortcutState);
   useEffect(() => {
-    shortcutRef.current = { ordered, cursorId, hasMore: paging.hasMore, handleSelect, loadMore };
+    shortcutRef.current = shortcutState;
   });
   useEffect(() => {
     const onShortcut = (e: Event) => {
@@ -1191,6 +1206,21 @@ export function ConversationList({
       } else if (action === "open") {
         const row = st.ordered.find((c) => c.id === st.cursorId);
         if (row) st.handleSelect(row);
+      } else if (action === "resolve") {
+        // "e": resolve the open conversation through the row quick action
+        // (same write, event and Desfazer toast as the row's button), then
+        // open the next row in band order — or clear the selection. The
+        // page already applied the header rules (role, not resolved).
+        const activeId = st.activeConversationId;
+        if (!activeId) return;
+        const nextId = nextAfterResolve(st.ordered.map((c) => c.id), activeId);
+        const loaded = st.ordered.find((c) => c.id === activeId) ?? st.conversations.find((c) => c.id === activeId);
+        void (loaded ? Promise.resolve(loaded) : findConversationById(createClient(), activeId)).then((conv) => {
+          if (conv && conv.status !== "closed") void st.handleQuickAction(conv, "resolve");
+        });
+        const next = nextId ? st.ordered.find((c) => c.id === nextId) : undefined;
+        if (next) st.handleSelect(next);
+        else st.onDeselect?.();
       }
     };
     window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
