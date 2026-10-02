@@ -9,8 +9,8 @@ export function startOfLocalDay(d: Date = new Date()): Date {
   return out
 }
 
-export function daysAgoStart(days: number): Date {
-  const out = startOfLocalDay()
+export function daysAgoStart(days: number, from: Date = new Date()): Date {
+  const out = startOfLocalDay(from)
   out.setDate(out.getDate() - days)
   return out
 }

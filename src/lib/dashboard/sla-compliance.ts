@@ -36,7 +36,7 @@ export async function loadSlaCompliance(
 ): Promise<SlaComplianceResult> {
   const { data, error } = await db.rpc('sla_compliance', {
     p_account_id: accountId,
-    p_since: daysAgoStart(period - 1).toISOString(),
+    p_since: daysAgoStart(period - 1, now).toISOString(),
     p_now: now.toISOString(),
   })
   if (error) throw error
