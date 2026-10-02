@@ -9,6 +9,7 @@ import { translateLiteral, type Language } from "@/lib/i18n";
 import {
   LogOut,
   Menu,
+  Search,
   Settings as SettingsIcon,
   ShieldCheck,
   User,
@@ -26,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { PALETTE_COPY } from "@/components/layout/command-palette";
 import {
   AvailabilityDot,
   AvailabilityToggle,
@@ -62,14 +64,17 @@ interface HeaderProps {
   /** Wired to the shell's drawer state. Used only on mobile — the
    *  hamburger button is hidden on lg+. */
   onOpenSidebar?: () => void;
+  /** Opens the command palette (also Ctrl/Cmd+K). */
+  onOpenPalette?: () => void;
 }
 
-export function Header({ onOpenSidebar }: HeaderProps) {
+export function Header({ onOpenSidebar, onOpenPalette }: HeaderProps) {
   const pathname = usePathname();
   const { profile, signOut, isPlatformAdmin } = useAuth();
   const branding = useBranding();
   const { language } = useLanguage();
   const title = getPageTitle(pathname, language);
+  const paletteCopy = PALETTE_COPY[language] ?? PALETTE_COPY["pt-BR"];
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??
@@ -102,6 +107,22 @@ export function Header({ onOpenSidebar }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
+        {/* Command palette trigger: a field-like button on sm+, an icon on phones. */}
+        <button
+          type="button"
+          onClick={onOpenPalette}
+          aria-label={paletteCopy.triggerAria}
+          aria-keyshortcuts="Control+K Meta+K"
+          aria-haspopup="dialog"
+          data-no-translate
+          className="flex h-10 w-10 items-center justify-center gap-2 rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none sm:h-8 sm:w-56 sm:justify-start sm:border sm:border-border sm:bg-background sm:px-2.5 sm:text-sm md:w-64"
+        >
+          <Search className="size-4 shrink-0 sm:size-3.5" aria-hidden="true" />
+          <span className="hidden flex-1 truncate text-left sm:inline">{paletteCopy.trigger}</span>
+          <kbd className="hidden h-5 items-center rounded border border-border bg-muted px-1.5 font-sans text-[11px] font-medium text-foreground sm:inline-flex">
+            Ctrl K
+          </kbd>
+        </button>
         <ModeToggle />
 
         <DropdownMenu>

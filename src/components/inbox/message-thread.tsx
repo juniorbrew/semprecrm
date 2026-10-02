@@ -1222,20 +1222,15 @@ export function MessageThread({
   // Resolve ⇄ Reopen from the header's primary button. Pending counts
   // as "still open" for this toggle, so the button always resolves
   // unless the thread is already closed.
-  const handleResolveToggle = useCallback(async (withUndo = false) => {
+  // (The "e" shortcut resolves through the list's row action instead, which
+  // carries the Desfazer toast and moves on to the next conversation.)
+  const handleResolveToggle = useCallback(async () => {
     if (!conversation) return;
     const next: ConversationStatus =
       conversation.status === "closed" ? "open" : "closed";
     if (!(await handleStatusChange(next))) return;
-    const message = next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast;
-    if (withUndo && next === "closed") {
-      toast.success(message, {
-        action: { label: t("Undo"), onClick: () => void handleStatusChange("open") },
-      });
-    } else {
-      toast.success(message);
-    }
-  }, [conversation, handleStatusChange, statusCopy, t]);
+    toast.success(next === "closed" ? statusCopy.resolvedToast : statusCopy.reopenedToast);
+  }, [conversation, handleStatusChange, statusCopy]);
 
   // "Resolver como…": same as Resolver, with an explicit outcome.
   const handleResolveAs = useCallback(
@@ -1681,27 +1676,24 @@ export function MessageThread({
     if (outcome === "ok") toast.success(statusCopy.claimedToast);
   }, [handleAssignChange, user?.id, statusCopy]);
 
-  // Keyboard shortcuts "a" (Assumir) / "e" (Resolver): the page already
-  // applied the header rules; re-check them here against this thread's state.
-  const shortcutRef = useRef({ handleClaim, handleResolveToggle, conversation, accountRole, userId: user?.id });
+  // Keyboard shortcut Shift+A (Assumir): the page already applied the header
+  // rules; re-check them here against this thread's state. ("e" is the list's.)
+  const shortcutRef = useRef({ handleClaim, conversation, accountRole, userId: user?.id });
   useEffect(() => {
-    shortcutRef.current = { handleClaim, handleResolveToggle, conversation, accountRole, userId: user?.id };
+    shortcutRef.current = { handleClaim, conversation, accountRole, userId: user?.id };
   });
   useEffect(() => {
     const onShortcut = (e: Event) => {
       const action = (e as CustomEvent<ShortcutAction>).detail;
       const st = shortcutRef.current;
-      if (!st.conversation || (action !== "claim" && action !== "resolve")) return;
+      if (!st.conversation || action !== "claim") return;
       const allowed = conversationHeaderActions({
         role: st.accountRole,
         userId: st.userId,
         conversation: st.conversation,
         tasksEnabled: false,
       });
-      if (action === "claim" && allowed.claim.enabled) void st.handleClaim();
-      if (action === "resolve" && allowed.close.enabled && st.conversation.status !== "closed") {
-        void st.handleResolveToggle(true);
-      }
+      if (allowed.claim.enabled) void st.handleClaim();
     };
     window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
     return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);

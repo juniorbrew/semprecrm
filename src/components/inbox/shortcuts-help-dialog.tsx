@@ -40,6 +40,7 @@ export function ShortcutsHelpDialog({
             </li>
           ))}
         </ul>
+        <p className="text-xs text-muted-foreground">{t("Shortcuts pause while you type in a field or a dialog is open.")}</p>
         <label className="flex items-center justify-between gap-3 border-t border-border pt-3 text-sm">
           <span>{t("Keyboard shortcuts")}</span>
           <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label={t("Keyboard shortcuts")} />
