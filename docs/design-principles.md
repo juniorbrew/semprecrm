@@ -49,9 +49,13 @@ Regras aplicadas às telas de IA (configurações, agentes, sugestão de respost
 
 Barra lateral e cabeçalho (`src/components/layout/`, itens em `nav-config.ts`).
 
-- **Seções com título** (Atendimento, Vendas, Automação, Trabalho): texto pequeno em caixa alta, espaçado, na cor da marca (`text-primary`). É o único lugar com caixa alta.
-- **Item ativo:** fundo levemente tingido da marca (`bg-primary/10`) com filete de 2 px à esquerda (`shadow-[inset_2px_0_0_var(--primary)]`), texto `text-foreground` e ícone `text-primary`. Sempre com `aria-current` e foco visível.
-- **Submenu da caixa de entrada** (Minhas, Equipe, Sem dono, SLA em risco): só visões que já existem na lista; os contadores vêm da própria lista, sem consulta extra. Contador vermelho só para SLA em risco.
+- **Logo no topo**, sem divisória: quadrado de 30 px (`rounded-[10px] bg-primary`) com brilho suave (`shadow-[0_0_22px_-3px_var(--primary)]`) e o nome em `text-base font-extrabold tracking-[-0.01em]`.
+- **Painel** primeiro, sem título. Depois as **seções com título** (Atendimento, Vendas, Automação, Trabalho): `text-[10.5px] font-bold uppercase tracking-[0.08em] text-primary`, com `pt-3.5` de respiro. É o único lugar com caixa alta.
+- **Itens:** `py-2 px-2.5`, ícone a 11 px do texto (`gap-[11px]`), raio `calc(var(--radius) - 2px)`; ícone inativo em `opacity-70`.
+- **Item ativo:** fundo tingido da marca (`bg-primary/13`) com filete de 2 px à esquerda (`shadow-[inset_2px_0_0_var(--primary)]`), texto `font-semibold text-foreground` e ícone `text-primary` opaco. Sempre com `aria-current` e foco visível.
+- **Contadores** são pílulas pequenas (`text-[11px] font-bold`, `rounded-full`): neutras (`bg-muted text-muted-foreground`) para contagens simples (Tarefas, Agenda); `bg-primary` para não lidas (Caixa de entrada, Chat); `bg-destructive` só para SLA em risco.
+- **Submenu da caixa de entrada** (Minhas, Equipe, Sem dono, SLA em risco): aparece só dentro de /inbox, recuado 19 px com linha guia (`border-l border-border`), itens em 13 px; o atalho ativo ganha fundo neutro (`bg-muted`), sem filete. Só visões que já existem na lista; os contadores vêm da própria lista, sem consulta extra.
+- **Cartão do usuário no pé:** borda fina e `rounded-[14px]`, avatar com iniciais em `bg-primary` e ponto de disponibilidade, nome em negrito e o status (Disponível / Ausente) embaixo. Abre o menu com a alternância de disponibilidade, Perfil, Configurações, Plataforma (admin da plataforma) e Sair. A faixa da conta com o selo de papel continua acima quando o nome da conta difere do usuário.
 - **Só tokens** (`--primary`, `--muted`, `--border`…): a cor escolhida em Configurações vale em todo o app. Nada de cor fixa nem seletor de cor no cabeçalho.
 - Cabeçalho na mesma superfície da barra lateral (`bg-card`), título `text-[15px] font-semibold`.
 
