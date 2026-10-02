@@ -77,6 +77,21 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import {
+  AvailabilityDot,
+  AvailabilityToggle,
+} from "@/components/layout/availability-toggle";
+
+/** Count pill shared by the nav rows and the inbox shortcuts. */
+const PILL =
+  "inline-flex min-w-5 shrink-0 items-center justify-center rounded-full px-[7px] text-[11px] font-bold leading-[18px] tabular-nums";
+
+/** "Ana Ribeiro" → "AR"; falls back to the email's first letter. */
+function initials(name: string | null | undefined, email: string | null | undefined): string {
+  const words = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1) return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+  return (words[0]?.[0] ?? email?.[0] ?? "U").toUpperCase();
+}
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -185,21 +200,27 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       >
         {/* Logo row. On mobile we put a close button here; on desktop the
             close button is hidden since the sidebar is always-visible. */}
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href={homeHref} className="flex min-w-0 items-center gap-2">
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-5 pt-2">
+          <Link
+            href={homeHref}
+            className="flex min-w-0 items-center gap-2.5 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
             {branding.logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element -- remote, user-uploaded; no fixed dimensions
               <img
                 src={branding.logo_url}
                 alt={branding.app_name}
-                className="h-8 w-8 shrink-0 rounded-lg object-contain"
+                className="size-[30px] shrink-0 rounded-[10px] object-contain"
               />
             ) : (
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <MessageSquare className="h-4 w-4" />
+              <div className="flex size-[30px] shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground shadow-[0_0_22px_-3px_var(--primary)]">
+                <MessageSquare className="size-4" />
               </div>
             )}
-            <span className="truncate text-sm font-semibold text-foreground" title={branding.app_name}>
+            <span
+              className="truncate text-base font-extrabold tracking-[-0.01em] text-foreground"
+              title={branding.app_name}
+            >
               {branding.app_name}
             </span>
           </Link>
@@ -216,7 +237,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Main navigation: an unlabelled top row (Painel), then labelled
             sections. Section titles use the brand colour; the active row
             gets a brand tint + a 2px inset accent (docs/design-principles). */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 overflow-y-auto px-3 pb-3 pt-1">
           {groups.map((group) => {
             const headingId = group.section ? `nav-section-${group.section}` : undefined;
             return (
@@ -229,7 +250,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   <p
                     id={headingId}
                     data-no-translate
-                    className="px-3 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-primary"
+                    className="px-2.5 pb-[5px] pt-3.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-primary"
                   >
                     {navCopy.sections[group.section]}
                   </p>
@@ -239,7 +260,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     const isActive = isNavActive(pathname, item.href);
                     const isInbox = item.href === "/inbox";
 
-                    const showUnreadDot = isInbox && totalUnread > 0 && !isActive;
+                    const showUnreadBadge = isInbox && totalUnread > 0;
                     const showOverdueBadge = item.href === "/tasks" && overdueTasks > 0;
                     const showChatBadge = item.href === "/chat" && chatUnread > 0;
                     const showAgendaBadge = item.href === "/agenda" && upcomingEvents > 0;
@@ -251,13 +272,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                           aria-current={isActive ? "page" : undefined}
                           className={cn(
                             // Taller on mobile so fingers can hit the row reliably (≥44px).
-                            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 lg:py-2",
+                            "flex items-center gap-[11px] rounded-[calc(var(--radius)-2px)] px-2.5 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 lg:py-2",
                             isActive
-                              ? "bg-primary/10 font-semibold text-foreground shadow-[inset_2px_0_0_var(--primary)]"
+                              ? "bg-primary/13 font-semibold text-foreground shadow-[inset_2px_0_0_var(--primary)]"
                               : "text-muted-foreground hover:bg-muted hover:text-foreground",
                           )}
                         >
-                          <item.icon className={cn("h-4 w-4", isActive && "text-primary")} />
+                          <item.icon
+                            className={cn("size-4 shrink-0", isActive ? "text-primary" : "opacity-70")}
+                          />
                           <span className="flex-1">{item.label}</span>
                           {item.beta && (
                             <span
@@ -271,7 +294,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                             <span
                               aria-label={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
                               title={`${overdueTasks} ${t(overdueTasks === 1 ? "task past due" : "tasks past due")}`}
-                              className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400"
+                              className={cn(PILL, "bg-muted text-muted-foreground")}
                             >
                               {overdueTasks > 99 ? "99+" : overdueTasks}
                             </span>
@@ -280,7 +303,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                             <span
                               aria-label={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
                               title={`${chatUnread} ${t(chatUnread === 1 ? "unread message" : "unread messages")}`}
-                              className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
+                              className={cn(PILL, "bg-primary text-primary-foreground")}
                             >
                               {chatUnread > 99 ? "99+" : chatUnread}
                             </span>
@@ -289,18 +312,19 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                             <span
                               aria-label={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
                               title={`${upcomingEvents} ${t(upcomingEvents === 1 ? "appointment in the next 2 h" : "appointments in the next 2 h")}`}
-                              className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-amber-600 dark:text-amber-400"
+                              className={cn(PILL, "bg-muted text-muted-foreground")}
                             >
                               {upcomingEvents > 99 ? "99+" : upcomingEvents}
                             </span>
                           )}
-                          {showUnreadDot && (
+                          {showUnreadBadge && (
                             <span
+                              data-testid="nav-inbox-unread"
                               aria-label={`${totalUnread} ${t(totalUnread === 1 ? "unread conversation" : "unread conversations")}`}
-                              className="relative flex h-2 w-2"
+                              title={`${totalUnread} ${t(totalUnread === 1 ? "unread conversation" : "unread conversations")}`}
+                              className={cn(PILL, "bg-primary text-primary-foreground")}
                             >
-                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                              {totalUnread > 99 ? "99+" : totalUnread}
                             </span>
                           )}
                         </Link>
@@ -308,7 +332,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                           <ul
                             aria-label={navCopy.inboxViews}
                             data-no-translate
-                            className="mb-1 ml-5 mt-0.5 flex flex-col border-l border-border pl-2.5"
+                            className="mb-1 ml-[19px] mt-0.5 flex flex-col gap-px border-l border-border pl-2.5"
                           >
                             {INBOX_SHORTCUTS.map((shortcut) => {
                               const current = activeShortcut === shortcut.id;
@@ -322,7 +346,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                                     onClick={onClose}
                                     aria-current={current ? "true" : undefined}
                                     className={cn(
-                                      "flex items-center gap-2 rounded-md px-2.5 py-2 text-[13px] outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 lg:py-1.5",
+                                      "flex items-center gap-2 rounded-[calc(var(--radius)-2px)] px-2.5 py-2 text-[13px] outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 lg:py-[5px]",
                                       current
                                         ? "bg-muted font-medium text-foreground"
                                         : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -333,10 +357,12 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                                       <span
                                         data-testid={`inbox-shortcut-count-${shortcut.id}`}
                                         className={cn(
-                                          "inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                                          PILL,
                                           shortcut.alert
-                                            ? "bg-red-500/15 text-red-600 dark:text-red-400"
-                                            : "bg-muted text-muted-foreground",
+                                            ? "bg-destructive text-white"
+                                            : current
+                                              ? "bg-background text-muted-foreground"
+                                              : "bg-muted text-muted-foreground",
                                         )}
                                       >
                                         {count > 99 ? "99+" : count}
@@ -358,7 +384,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </nav>
 
         {/* User section */}
-        <div className="shrink-0 border-t border-border p-3">
+        <div className="shrink-0 p-3 pt-1">
           {/* Account name display — surfaced only when the account
               name differs from the user's own name (see
               `showAccountStrip`). For a default solo account the two
@@ -395,28 +421,35 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             </div>
           ) : null}
           <DropdownMenu>
-            <DropdownMenuTrigger className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60">
-              <Avatar className="size-8 shrink-0">
-                {profile?.avatar_url ? (
-                  <AvatarImage
-                    src={profile.avatar_url}
-                    alt={profile.full_name ?? "Avatar"}
-                  />
-                ) : null}
-                <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ??
-                    profile?.email?.charAt(0)?.toUpperCase() ??
-                    "U"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
+            <DropdownMenuTrigger
+              title={profile?.email ?? undefined}
+              className="flex w-full items-center gap-2.5 rounded-[14px] border border-border p-2.5 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-muted/60"
+            >
+              <span className="relative shrink-0">
+                <Avatar className="size-8">
+                  {profile?.avatar_url ? (
+                    <AvatarImage
+                      src={profile.avatar_url}
+                      alt={profile.full_name ?? "Avatar"}
+                    />
+                  ) : null}
+                  <AvatarFallback className="bg-primary text-[11px] font-bold text-primary-foreground">
+                    {initials(profile?.full_name, profile?.email)}
+                  </AvatarFallback>
+                </Avatar>
+                <AvailabilityDot
+                  availability={profile?.availability}
+                  className="absolute -bottom-0.5 -right-0.5 ring-card"
+                />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-bold text-foreground">
                   {profile?.full_name ?? "Usuário"}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {profile?.email ?? ""}
-                </p>
-              </div>
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {profile?.availability === "away" ? t("Away") : t("Available")}
+                </span>
+              </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
@@ -424,6 +457,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               sideOffset={6}
               className="min-w-56 bg-popover text-popover-foreground ring-border"
             >
+              <div className="p-1">
+                <AvailabilityToggle />
+              </div>
+              <DropdownMenuSeparator className="bg-border" />
               <DropdownMenuItem
                 render={
                   <Link

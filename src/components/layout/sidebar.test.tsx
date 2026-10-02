@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   role: "owner" as string | null,
   modules: {} as Record<string, boolean>,
   inboxNav: null as unknown,
+  unread: 0,
 }));
 
 vi.mock("next/navigation", () => ({ usePathname: () => state.pathname }));
@@ -32,7 +33,7 @@ vi.mock("@/hooks/use-auth", async (importOriginal) => {
     useEntitlements: () => ({ ready: true, modules: state.modules }),
   };
 });
-vi.mock("@/hooks/use-total-unread", () => ({ useTotalUnread: () => 0 }));
+vi.mock("@/hooks/use-total-unread", () => ({ useTotalUnread: () => state.unread }));
 vi.mock("@/hooks/use-overdue-tasks", () => ({ useOverdueTasks: () => 0 }));
 vi.mock("@/hooks/use-chat-unread", () => ({ useChatUnread: () => 0 }));
 vi.mock("@/hooks/use-upcoming-events", () => ({ useUpcomingEvents: () => 0 }));
@@ -63,6 +64,7 @@ beforeEach(() => {
   state.role = "owner";
   state.modules = { ...allOn };
   state.inboxNav = null;
+  state.unread = 0;
 });
 
 describe("navGroups", () => {
@@ -142,7 +144,7 @@ describe("Sidebar", () => {
     const html = renderToString(<Sidebar />);
     const active = linkTag(html, "/contacts");
     expect(active).toContain('aria-current="page"');
-    expect(active).toContain("bg-primary/10");
+    expect(active).toContain("bg-primary/13");
     expect(active).toContain("shadow-[inset_2px_0_0_var(--primary)]");
     expect(active).toContain("focus-visible:ring-3");
     expect(linkTag(html, "/inbox")).not.toContain("aria-current");
@@ -169,8 +171,14 @@ describe("Sidebar", () => {
     expect(html).toMatch(/inbox-shortcut-count-mine"[^>]*>4</);
     expect(html).toMatch(/inbox-shortcut-count-team"[^>]*>12</);
     expect(html).toMatch(/inbox-shortcut-count-unassigned"[^>]*>3</);
-    expect(html).toMatch(/inbox-shortcut-count-slaRisk"[^>]*text-red-600[^>]*>2</);
+    expect(html).toMatch(/inbox-shortcut-count-slaRisk"[^>]*bg-destructive[^>]*>2</);
     expect(linkTag(html, "/inbox?tab=all&radar=unassigned")).toContain('aria-current="true"');
     expect(linkTag(html, "/inbox?tab=mine")).not.toContain("aria-current");
+  });
+
+  it("shows the inbox unread total as a primary pill", () => {
+    expect(renderToString(<Sidebar />)).not.toContain("nav-inbox-unread");
+    state.unread = 5;
+    expect(renderToString(<Sidebar />)).toMatch(/nav-inbox-unread"[^>]*bg-primary text-primary-foreground[^>]*>5</);
   });
 });
