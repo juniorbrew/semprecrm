@@ -19,6 +19,8 @@ import { MessageThread } from "@/components/inbox/message-thread";
 import { ShortcutsHelpDialog } from "@/components/inbox/shortcuts-help-dialog";
 import { useInboxShortcuts } from "@/hooks/use-inbox-shortcuts";
 import { readShortcutsEnabled, writeShortcutsEnabled } from "@/lib/inbox/shortcuts";
+import { rememberRecent } from "@/lib/command-palette";
+import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import { conversationHeaderActions } from "@/lib/conversations/header-actions";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
@@ -69,7 +71,7 @@ export default function InboxPage() {
 
   const { accountId, user, preferences, accountRole } = useAuth();
 
-  // Keyboard shortcuts (lib/inbox/shortcuts). "a" / "e" follow the thread
+  // Keyboard shortcuts (lib/inbox/shortcuts). Shift+A / "e" follow the thread
   // header's own rules: same role check, and Resolver only while not resolved.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutsOn, setShortcutsOn] = useState(true);
@@ -86,11 +88,12 @@ export default function InboxPage() {
         tasksEnabled: false,
       })
     : null;
+  const canResolveActive = !!headerActions?.close.enabled && activeConversation?.status !== "closed";
   useInboxShortcuts(
     {
       hasActive: !!activeConversation,
       canClaim: !!headerActions?.claim.enabled,
-      canResolve: !!headerActions?.close.enabled && activeConversation?.status !== "closed",
+      canResolve: canResolveActive,
     },
     () => setShortcutsOpen(true),
     shortcutsOn,
@@ -672,6 +675,11 @@ export default function InboxPage() {
       // when conversationId changes — so messages would stay empty until
       // the user navigated away and back. Bail out early instead.
       if (activeConversation?.id === conv.id) return;
+      rememberRecent(user?.id, {
+        kind: "conversation",
+        href: inboxConversationHref(conv.id),
+        label: conv.contact?.name?.trim() || conv.contact?.phone || "",
+      });
       setActiveConversation(conv);
       setActiveContact(conv.contact ?? null);
       setMessages([]);
@@ -710,7 +718,7 @@ export default function InboxPage() {
         { scroll: false },
       );
     },
-    [activeConversation?.id, router, searchParams]
+    [activeConversation?.id, router, searchParams, user?.id]
   );
 
   // Mobile "back" — deselect the conversation so the list pane comes
@@ -755,11 +763,12 @@ export default function InboxPage() {
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, status } : c))
       );
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation((prev) => (prev ? { ...prev, status } : prev));
-      }
+      // Matched inside the updater: a row action finishing after the
+      // selection moved on ("e" opens the next one) must not patch the
+      // conversation that is open now.
+      setActiveConversation((prev) => (prev && prev.id === conversationId ? { ...prev, status } : prev));
     },
-    [activeConversation]
+    []
   );
 
   const handleAssignChange = useCallback(
@@ -771,15 +780,13 @@ export default function InboxPage() {
             : c
         )
       );
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation((prev) =>
-          prev
-            ? { ...prev, assigned_agent_id: assignedAgentId ?? undefined }
-            : prev
-        );
-      }
+      setActiveConversation((prev) =>
+        prev && prev.id === conversationId
+          ? { ...prev, assigned_agent_id: assignedAgentId ?? undefined }
+          : prev
+      );
     },
-    [activeConversation]
+    []
   );
 
   // Generic local patch (archive / unarchive — migration 056).
@@ -803,7 +810,11 @@ export default function InboxPage() {
   const hasActiveConv = !!activeConversation;
 
   return (
-    <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+    <div
+      className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6"
+      // Read by the command palette ("Resolver conversa atual").
+      data-inbox-resolvable={canResolveActive || undefined}
+    >
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappBanner && (
@@ -843,6 +854,7 @@ export default function InboxPage() {
             onShowShortcuts={() => setShortcutsOpen(true)}
             onStatusChange={handleStatusChange}
             onAssignChange={handleAssignChange}
+            onDeselect={handleCloseConversation}
           />
         </div>
 

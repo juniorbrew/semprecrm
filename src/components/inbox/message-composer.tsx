@@ -1332,6 +1332,7 @@ export function MessageComposer({
               onClick={toggleQuickFromButton}
               aria-label={copy.quickReplies}
               aria-expanded={quickOpen}
+              data-inbox-quick-replies
               title={copy.quickReplies}
               data-no-translate
               className={cn(

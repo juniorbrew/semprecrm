@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyTarget, readShortcutsEnabled, redirectForPendingCursor, resolveShortcut, stepIndex, writeShortcutsEnabled, SHORTCUTS_ENABLED_KEY, type ShortcutContext, type ShortcutKeyEvent } from './shortcuts'
+import { classifyTarget, nextAfterResolve, paletteKey, readShortcutsEnabled, redirectForPendingCursor, resolveShortcut, stepIndex, writeShortcutsEnabled, SHORTCUTS_ENABLED_KEY, type ShortcutContext, type ShortcutKeyEvent } from './shortcuts'
 
 const ctx: ShortcutContext = { overlayOpen: false, hasActive: true, canClaim: true, canResolve: true }
 const key = (k: string, over: Partial<ShortcutKeyEvent> = {}): ShortcutKeyEvent => ({ key: k, target: 'other', ...over })
@@ -8,16 +8,25 @@ describe('resolveShortcut', () => {
   it('maps the documented keys', () => {
     const map: Record<string, string> = {
       j: 'next', ArrowDown: 'next', k: 'prev', ArrowUp: 'prev', Enter: 'open', o: 'open',
-      r: 'focusComposer', a: 'claim', e: 'resolve', '/': 'focusSearch',
+      r: 'focusComposer', e: 'resolve', '/': 'quickReplies',
     }
     for (const [k, action] of Object.entries(map)) expect(resolveShortcut(key(k), ctx)).toBe(action)
     expect(resolveShortcut(key('?', { shiftKey: true }), ctx)).toBe('help')
+    expect(resolveShortcut(key('A', { shiftKey: true }), ctx)).toBe('claim')
+  })
+
+  it('claim is Shift+A only; "/" searches when no thread is open', () => {
+    expect(resolveShortcut(key('a'), ctx)).toBeNull()
+    // Caps Lock "A" without Shift is typing, not a shortcut.
+    expect(resolveShortcut(key('A'), ctx)).toBeNull()
+    expect(resolveShortcut(key('/'), { ...ctx, hasActive: false })).toBe('focusSearch')
   })
 
   it('never fires while typing; Esc leaves the field', () => {
     for (const k of ['j', 'a', 'e', '/', '?', 'Enter']) {
       expect(resolveShortcut(key(k, { target: 'typing' }), ctx)).toBeNull()
     }
+    expect(resolveShortcut(key('A', { shiftKey: true, target: 'typing' }), ctx)).toBeNull()
     expect(resolveShortcut(key('Escape', { target: 'typing' }), ctx)).toBe('blur')
     expect(resolveShortcut(key('Escape'), ctx)).toBeNull()
   })
@@ -37,10 +46,12 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut(key('Escape', { target: 'typing' }), open)).toBeNull()
   })
 
-  it('a and e only when the header rules allow them', () => {
-    expect(resolveShortcut(key('a'), { ...ctx, canClaim: false })).toBeNull()
+  it('Shift+A and e only when the header rules allow them (viewers: never)', () => {
+    const shiftA = key('A', { shiftKey: true })
+    expect(resolveShortcut(shiftA, { ...ctx, canClaim: false })).toBeNull()
     expect(resolveShortcut(key('e'), { ...ctx, canResolve: false })).toBeNull()
-    expect(resolveShortcut(key('a'), { ...ctx, hasActive: false })).toBeNull()
+    expect(resolveShortcut(shiftA, { ...ctx, hasActive: false })).toBeNull()
+    expect(resolveShortcut(key('e', { ctrlKey: true }), ctx)).toBeNull()
     expect(resolveShortcut(key('r'), { ...ctx, hasActive: false })).toBeNull()
     expect(resolveShortcut(key('j'), { ...ctx, hasActive: false })).toBe('next')
   })
@@ -91,6 +102,7 @@ describe('review fixes', () => {
     expect(redirectForPendingCursor('claim', true)).toBe('open')
     expect(redirectForPendingCursor('resolve', true)).toBe('open')
     expect(redirectForPendingCursor('focusComposer', true)).toBe('open')
+    expect(redirectForPendingCursor('quickReplies', true)).toBe('open')
     expect(redirectForPendingCursor('claim', false)).toBe('claim')
     expect(redirectForPendingCursor('next', true)).toBe('next')
   })
@@ -103,5 +115,34 @@ describe('review fixes', () => {
     expect(data[SHORTCUTS_ENABLED_KEY]).toBe('false')
     expect(readShortcutsEnabled(st)).toBe(false)
     expect(readShortcutsEnabled(null)).toBe(true)
+  })
+})
+
+describe('nextAfterResolve', () => {
+  it('opens the next row, or nothing at the end / outside the list', () => {
+    const ids = ['a', 'b', 'c']
+    expect(nextAfterResolve(ids, 'a')).toBe('b')
+    expect(nextAfterResolve(ids, 'b')).toBe('c')
+    expect(nextAfterResolve(ids, 'c')).toBeNull()
+    expect(nextAfterResolve(ids, 'x')).toBeNull()
+    expect(nextAfterResolve(ids, null)).toBeNull()
+    expect(nextAfterResolve([], 'a')).toBeNull()
+  })
+})
+
+describe('paletteKey', () => {
+  const closed = { paletteOpen: false, overlayOpen: false }
+  it('Ctrl+K and Cmd+K toggle the palette, even from a field', () => {
+    expect(paletteKey({ key: 'k', ctrlKey: true }, closed)).toBe('toggle')
+    expect(paletteKey({ key: 'K', metaKey: true }, closed)).toBe('toggle')
+    expect(paletteKey({ key: 'k', ctrlKey: true }, { paletteOpen: true, overlayOpen: true })).toBe('toggle')
+  })
+  it('ignores other combinations and other open dialogs', () => {
+    expect(paletteKey({ key: 'k' }, closed)).toBeNull()
+    expect(paletteKey({ key: 'k', ctrlKey: true, shiftKey: true }, closed)).toBeNull()
+    expect(paletteKey({ key: 'k', ctrlKey: true, altKey: true }, closed)).toBeNull()
+    expect(paletteKey({ key: 'k', ctrlKey: true, repeat: true }, closed)).toBeNull()
+    expect(paletteKey({ key: 'j', ctrlKey: true }, closed)).toBeNull()
+    expect(paletteKey({ key: 'k', ctrlKey: true }, { paletteOpen: false, overlayOpen: true })).toBeNull()
   })
 })

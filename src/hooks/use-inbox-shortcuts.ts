@@ -10,13 +10,13 @@ import {
 } from "@/lib/inbox/shortcuts";
 
 /** A dialog / menu / popover is open somewhere: it owns the keyboard. */
-const OVERLAY_SELECTOR =
+export const OVERLAY_SELECTOR =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot="popover-content"]';
 
 /**
  * Global inbox keydown -> `resolveShortcut`. DOM-only actions (focus the
- * search / reply box, leave a field) run here; the rest goes out as a window
- * event for the list (next / prev / open) and the thread (claim / resolve).
+ * search / reply box, quick replies, leave a field) run here; the rest goes out as a window
+ * event for the list (next / prev / open / resolve + advance) and the thread (claim).
  */
 export function useInboxShortcuts(
   ctx: Omit<ShortcutContext, "overlayOpen">,
@@ -64,6 +64,14 @@ export function useInboxShortcuts(
         case "focusComposer":
           document.querySelector<HTMLElement>("[data-inbox-composer]")?.focus();
           break;
+        case "quickReplies": {
+          // The composer's own button opens the list and focuses the box;
+          // disabled (viewer, expired window) or absent -> the search.
+          const button = document.querySelector<HTMLElement>("[data-inbox-quick-replies]:not(:disabled)");
+          if (button) button.click();
+          else document.querySelector<HTMLElement>("[data-inbox-search]")?.focus();
+          break;
+        }
         case "open":
           dispatchInboxShortcut("open");
           break;

@@ -5,9 +5,12 @@
  *
  *   j / ArrowDown   next conversation      k / ArrowUp  previous
  *   Enter / o       open the highlighted one
- *   r               focus the reply box    /            focus the search
- *   a               Assumir (claim)        e            Resolver
+ *   r               focus the reply box    /            quick replies (open thread)
+ *                                          /            focus the search (no thread)
+ *   Shift+A         Assumir (claim)        e            Resolver + next conversation
  *   ?               shortcut help          Esc          leave the field
+ *
+ * Ctrl/Cmd+K (command palette) is app-wide: see `paletteKey`.
  */
 
 export type ShortcutAction =
@@ -18,6 +21,7 @@ export type ShortcutAction =
   | 'claim'
   | 'resolve'
   | 'focusSearch'
+  | 'quickReplies'
   | 'help'
   | 'blur'
 
@@ -90,8 +94,9 @@ export function resolveShortcut(e: ShortcutKeyEvent, ctx: ShortcutContext): Shor
   if (e.target === 'typing' || ctx.overlayOpen) return null
 
   const key = e.key
-  // Shift only for characters that need it ("?"); shifted letters are ignored.
-  if (e.shiftKey && key !== '?') return null
+  // Shift only where it is part of the shortcut ("?", Shift+A); other
+  // shifted letters are ignored.
+  if (e.shiftKey && key !== '?' && key !== 'A') return null
 
   switch (key) {
     case 'j':
@@ -106,13 +111,14 @@ export function resolveShortcut(e: ShortcutKeyEvent, ctx: ShortcutContext): Shor
     case 'o':
       return 'open'
     case '/':
-      return 'focusSearch'
+      return ctx.hasActive ? 'quickReplies' : 'focusSearch'
     case '?':
       return 'help'
     case 'r':
       return ctx.hasActive ? 'focusComposer' : null
-    case 'a':
-      return ctx.hasActive && ctx.canClaim ? 'claim' : null
+    case 'A':
+      // Shift+A only (a bare "A" is Caps Lock typing, not a shortcut).
+      return e.shiftKey && ctx.hasActive && ctx.canClaim ? 'claim' : null
     case 'e':
       return ctx.hasActive && ctx.canResolve ? 'resolve' : null
     default:
@@ -126,12 +132,39 @@ export const SHORTCUT_HELP: { keys: string[]; label: string }[] = [
   { keys: ['k', '↑'], label: 'Previous conversation' },
   { keys: ['Enter', 'o'], label: 'Open conversation' },
   { keys: ['r'], label: 'Reply' },
-  { keys: ['a'], label: 'Take the conversation' },
-  { keys: ['e'], label: 'Resolve' },
-  { keys: ['/'], label: 'Search conversations' },
+  { keys: ['/'], label: 'Quick replies' },
+  { keys: ['Shift', 'A'], label: 'Take the conversation' },
+  { keys: ['e'], label: 'Resolve and open the next one' },
+  { keys: ['Ctrl', 'K'], label: 'Search or run a command' },
   { keys: ['?'], label: 'Keyboard shortcuts' },
   { keys: ['Esc'], label: 'Leave the field' },
 ]
+
+/**
+ * Conversation to open after "e" resolves `activeId`: the next row in the
+ * on-screen order, or null (nothing after it / not in the list) to clear
+ * the selection.
+ */
+export function nextAfterResolve(orderedIds: readonly string[], activeId: string | null): string | null {
+  if (!activeId) return null
+  const at = orderedIds.indexOf(activeId)
+  return at >= 0 ? orderedIds[at + 1] ?? null : null
+}
+
+/**
+ * Ctrl+K / Cmd+K, app-wide (also inside fields, like any app palette):
+ * 'toggle' opens it, or closes it when it is the open overlay; null while
+ * another dialog / menu owns the keyboard.
+ */
+export function paletteKey(
+  e: Pick<ShortcutKeyEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'repeat'>,
+  ctx: { paletteOpen: boolean; overlayOpen: boolean },
+): 'toggle' | null {
+  if (e.isComposing || e.repeat || e.altKey || e.shiftKey) return null
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k') return null
+  if (ctx.overlayOpen && !ctx.paletteOpen) return null
+  return 'toggle'
+}
 
 /** Index reached by moving `dir` from `current` (-1 = nothing highlighted), clamped. */
 export function stepIndex(current: number, dir: 1 | -1, length: number): number {
@@ -149,13 +182,14 @@ export function dispatchInboxShortcut(action: ShortcutAction): void {
 }
 
 /**
- * "a" / "e" / "r" act on the OPEN conversation. While the j/k cursor sits on
+ * Shift+A / "e" / "r" / "/" act on the OPEN conversation. While the j/k cursor sits on
  * a different row (`cursorPending`), the first press opens that row instead
  * (Enter semantics), so the key never hits a conversation the agent is not
  * looking at.
  */
 export function redirectForPendingCursor(action: ShortcutAction, cursorPending: boolean): ShortcutAction {
-  return cursorPending && (action === 'claim' || action === 'resolve' || action === 'focusComposer')
+  return cursorPending &&
+    (action === 'claim' || action === 'resolve' || action === 'focusComposer' || action === 'quickReplies')
     ? 'open'
     : action
 }
