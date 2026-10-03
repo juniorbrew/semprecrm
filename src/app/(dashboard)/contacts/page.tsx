@@ -12,21 +12,6 @@ import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -38,18 +23,23 @@ import {
   Search,
   Plus,
   Upload,
-  MoreHorizontal,
-  Pencil,
-  ShieldCheck,
   Trash2,
   Loader2,
-  Users,
   ChevronLeft,
   ChevronRight,
   SlidersHorizontal,
-  MessageCircle,
   Ban,
+  Rows4,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
+import {
+  CONTACTS_COPY,
+  ContactListRow,
+  readContactsDensity,
+  writeContactsDensity,
+  type ContactsDensity,
+} from '@/components/contacts/contact-list-row';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
@@ -61,6 +51,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 const PAGE_SIZE = 25;
 const DELETE_CHUNK = 10;
+const TH = 'h-9 px-2 text-left text-xs font-medium text-muted-foreground';
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
@@ -108,6 +99,23 @@ export default function ContactsPage() {
   const { t, language } = useLanguage();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+  const copy = CONTACTS_COPY[language] ?? CONTACTS_COPY['pt-BR'];
+  const userId = useAuth().user?.id;
+
+  // Row density, per user on this device. Read after mount (localStorage
+  // in the initializer would be a hydration mismatch), like the inbox list.
+  const [density, setDensity] = useState<ContactsDensity>('comfortable');
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (userId) setDensity(readContactsDensity(userId));
+  }, [userId]);
+  const toggleDensity = useCallback(() => {
+    setDensity((d) => {
+      const next: ContactsDensity = d === 'compact' ? 'comfortable' : 'compact';
+      if (userId) writeContactsDensity(userId, next);
+      return next;
+    });
+  }, [userId]);
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -350,53 +358,61 @@ export default function ContactsPage() {
   const hasPrev = page > 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Contatos</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage your contact list. {totalCount > 0 && `${totalCount} total contacts.`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="space-y-4">
+      {/* Header: title + count, one filled action */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">{copy.title}</h1>
+        {totalCount > 0 && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold tabular-nums text-muted-foreground">
+            {totalCount}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
           {canEditSettings && (
             <Button
-              variant="outline"
+              variant="ghost"
+              size="sm"
               onClick={() => setCustomFieldsOpen(true)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              aria-label={copy.customFields}
+              title={copy.customFields}
+              className="text-muted-foreground hover:text-foreground"
             >
-              <SlidersHorizontal className="size-4" />
-              Campos personalizados
+              <SlidersHorizontal />
+              <span className="hidden md:inline">{copy.customFields}</span>
             </Button>
           )}
           <GatedButton
-            variant="outline"
+            variant="ghost"
+            size="sm"
             canAct={canEdit}
             gateReason="add or import contacts"
             onClick={() => setImportOpen(true)}
-            className="border-border text-muted-foreground hover:bg-muted"
+            className="text-muted-foreground hover:text-foreground"
           >
-            <Upload className="size-4" />
-            Import
+            <Upload />
+            {copy.import}
           </GatedButton>
           <GatedButton
+            size="sm"
             canAct={canEdit}
             gateReason="add or import contacts"
             onClick={openAddForm}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
-            <Plus className="size-4" />
-            Add Contact
+            <Plus />
+            {copy.newContact}
           </GatedButton>
         </div>
       </div>
 
-      {/* Search + filters */}
+      {/* Search + filter pill + density */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative max-w-sm flex-1 min-w-56">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+        <div className="relative min-w-48 max-w-xs flex-1">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
           <Input
+            type="search"
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -404,8 +420,9 @@ export default function ContactsPage() {
               // set shrinks/grows, page N may no longer be valid.
               setPage(0);
             }}
-            placeholder="Search by name, phone, or email..."
-            className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground"
+            placeholder={copy.search}
+            aria-label={copy.search}
+            className="h-8 pl-8 text-sm"
           />
         </div>
         <button
@@ -415,32 +432,48 @@ export default function ContactsPage() {
             setOptedOutOnly((v) => !v);
             setPage(0);
           }}
-          className={
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
             optedOutOnly
-              ? 'inline-flex h-9 items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/10 px-3 text-xs font-medium text-red-600 dark:text-red-400'
-              : 'inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
-          }
+              ? 'bg-primary/15 text-primary'
+              : 'bg-muted text-muted-foreground hover:text-foreground',
+          )}
         >
           <Ban className="size-3.5" aria-hidden />
-          {t('Opted-out contacts')}
+          {copy.optedOut}
+        </button>
+        <button
+          type="button"
+          onClick={toggleDensity}
+          aria-pressed={density === 'compact'}
+          aria-label={copy.compact}
+          title={copy.compact}
+          data-testid="contacts-density-toggle"
+          className={cn(
+            'ml-auto inline-flex size-7 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
+            density === 'compact'
+              ? 'bg-primary/10 text-primary'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          )}
+        >
+          <Rows4 className="size-3.5" />
         </button>
       </div>
 
       {/* Bulk action bar */}
       {selected.size > 0 && (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/40 px-4 py-2">
-          <p className="text-sm text-foreground">
-            <span className="font-medium">{selected.size}</span>{' '}
-            {selected.size === 1 ? 'contact' : 'contacts'} selected
+        <div className="flex items-center gap-2 rounded-md bg-primary/10 px-3 py-1.5">
+          <p className="text-sm font-medium text-foreground" aria-live="polite">
+            {copy.selected(selected.size)}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-1.5">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setSelected(new Set())}
               className="text-muted-foreground hover:text-foreground"
             >
-              Clear
+              {copy.clear}
             </Button>
             <GatedButton
               variant="destructive"
@@ -449,257 +482,116 @@ export default function ContactsPage() {
               gateReason="delete contacts"
               onClick={() => setBulkDeleteOpen(true)}
             >
-              <Trash2 className="size-4" />
-              Delete selected
+              <Trash2 />
+              {copy.deleteSelected}
             </GatedButton>
           </div>
         </div>
       )}
 
-      {/* Table */}
-      <div className="rounded-lg border border-border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-border hover:bg-transparent">
-              <TableHead className="w-10">
-                <Checkbox
-                  checked={allOnPageSelected}
-                  indeterminate={!allOnPageSelected && someOnPageSelected}
-                  onCheckedChange={toggleSelectAll}
-                  disabled={contacts.length === 0}
-                  aria-label="Select all contacts on this page"
-                />
-              </TableHead>
-              <TableHead className="text-muted-foreground">Nome</TableHead>
-              <TableHead className="text-muted-foreground">Telefone</TableHead>
-              <TableHead className="text-muted-foreground hidden md:table-cell">E-mail</TableHead>
-              <TableHead className="text-muted-foreground hidden lg:table-cell">Empresa</TableHead>
-              <TableHead className="text-muted-foreground hidden md:table-cell">Etiquetas</TableHead>
-              <TableHead className="text-muted-foreground hidden lg:table-cell">Created</TableHead>
-              <TableHead className="text-muted-foreground w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
-                  <div className="flex flex-col items-center gap-2">
-                    <Loader2 className="size-6 animate-spin text-primary" />
-                    <p className="text-sm text-muted-foreground">Loading contacts...</p>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : contacts.length === 0 ? (
-              <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
-                  <div className="flex flex-col items-center gap-2">
-                    <Users className="size-8 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">
-                      {optedOutOnly
-                        ? t('No opted-out contacts.')
-                        : search
-                          ? 'No contacts match your search.'
-                          : 'No contacts yet.'}
-                    </p>
-                    {!search && !optedOutOnly && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={openAddForm}
-                        className="mt-2 border-border text-muted-foreground hover:bg-muted"
-                      >
-                        <Plus className="size-3.5" />
-                        Add your first contact
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              contacts.map((contact) => (
-                <TableRow
-                  key={contact.id}
-                  className="border-border hover:bg-muted/50 cursor-pointer"
-                  onClick={() => openDetail(contact.id)}
-                >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={selected.has(contact.id)}
-                      onCheckedChange={() => toggleSelect(contact.id)}
-                      aria-label={`Select contact ${contact.name || contact.phone}`}
-                    />
-                  </TableCell>
-                  <TableCell className="text-foreground font-medium">
-                    {/* Link-styled name + sub-line so the row reads as
-                        clickable; the button also gives the a11y tree a
-                        named entry point instead of a bare bold span. */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openDetail(contact.id);
-                      }}
-                      className="group/name block max-w-full text-left cursor-pointer"
-                    >
-                      <span className="flex items-center gap-1.5 truncate text-foreground group-hover/name:text-primary group-hover/name:underline underline-offset-2 transition-colors">
-                        {contact.name || (
-                          <span className="text-muted-foreground italic">Unnamed</span>
-                        )}
-                        {contact.anonymized_at ? (
-                          <span
-                            title={t('Personal data removed (LGPD)')}
-                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium leading-4 text-muted-foreground no-underline"
-                          >
-                            <ShieldCheck className="size-2.5" aria-hidden />
-                            {t('Anonymized')}
-                          </span>
-                        ) : contact.opted_out_at ? (
-                          <span
-                            title={t('Asked to stop receiving messages')}
-                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-px text-[10px] font-medium leading-4 text-red-600 no-underline dark:text-red-400"
-                          >
-                            <Ban className="size-2.5" aria-hidden />
-                            {t('Opted out')}
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="block text-[11px] font-normal text-muted-foreground group-hover/name:text-primary/80">
-                        {t('View details')}
-                      </span>
-                    </button>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground hidden md:table-cell text-sm">
-                    {contact.email || <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
-                    {contact.company || <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
-                      {contact.tags && contact.tags.length > 0 ? (
-                        contact.tags.slice(0, 3).map((tag) => (
-                          <span
-                            key={tag.id}
-                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
-                          >
-                            {tag.name}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
-                      {contact.tags && contact.tags.length > 3 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          +{contact.tags.length - 3}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
-                    {new Date(contact.created_at).toLocaleDateString(language, {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        }
-                      >
-                        <MoreHorizontal className="size-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="bg-popover border-border"
-                      >
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openConversationFor(contact);
-                          }}
-                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
-                        >
-                          <MessageCircle className="size-4" />
-                          {t('Open conversation')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          disabled={!!contact.anonymized_at}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (contact.anonymized_at) return;
-                            openEditForm(contact);
-                          }}
-                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
-                        >
-                          <Pencil className="size-4" />
-                          Editar
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator className="bg-border" />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmDelete(contact);
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                          Excluir
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* List: card-less table, sticky header, hairline rows */}
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 z-10 bg-background">
+          <tr className="border-y border-border">
+            <th scope="col" className="h-9 w-10 pl-3 pr-1 text-left">
+              <Checkbox
+                checked={allOnPageSelected}
+                indeterminate={!allOnPageSelected && someOnPageSelected}
+                onCheckedChange={toggleSelectAll}
+                disabled={contacts.length === 0}
+                aria-label={copy.selectAll}
+              />
+            </th>
+            <th scope="col" className={TH}>{copy.colContact}</th>
+            <th scope="col" className={cn(TH, 'hidden md:table-cell')}>{copy.colEmail}</th>
+            <th scope="col" className={cn(TH, 'hidden md:table-cell')}>{copy.colTags}</th>
+            <th scope="col" className={cn(TH, 'hidden lg:table-cell')}>{copy.colCreated}</th>
+            <th scope="col" className="w-px pr-3">
+              <span className="sr-only">{copy.colActions}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading ? (
+            <tr>
+              <td colSpan={6} className="py-12 text-center">
+                <span role="status" className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                  {copy.loading}
+                </span>
+              </td>
+            </tr>
+          ) : contacts.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="py-12 text-center">
+                <p className="text-sm text-muted-foreground">
+                  {optedOutOnly ? copy.emptyOptedOut : search ? copy.emptySearch : copy.emptyAll}
+                </p>
+                {!search && !optedOutOnly && canEdit && (
+                  <Button variant="outline" size="sm" onClick={openAddForm} className="mt-3">
+                    <Plus />
+                    {copy.addFirst}
+                  </Button>
+                )}
+              </td>
+            </tr>
+          ) : (
+            contacts.map((contact) => (
+              <ContactListRow
+                key={contact.id}
+                contact={contact}
+                tags={contact.tags ?? []}
+                selected={selected.has(contact.id)}
+                compact={density === 'compact'}
+                createdLabel={new Date(contact.created_at).toLocaleDateString(language, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })}
+                copy={copy}
+                onToggleSelect={() => toggleSelect(contact.id)}
+                onOpen={() => openDetail(contact.id)}
+                onOpenConversation={() => openConversationFor(contact)}
+                onEdit={() => openEditForm(contact)}
+                onDelete={() => confirmDelete(contact)}
+              />
+            ))
+          )}
+        </tbody>
+      </table>
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            {`Showing ${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
+        <nav className="flex items-center justify-between" aria-label={copy.pagination}>
+          <p className="text-xs tabular-nums text-muted-foreground">
+            {copy.range(page * PAGE_SIZE + 1, Math.min((page + 1) * PAGE_SIZE, totalCount), totalCount)}
           </p>
           <div className="flex items-center gap-1">
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon-sm"
               disabled={!hasPrev}
               onClick={() => setPage((p) => p - 1)}
-              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+              aria-label={copy.prev}
+              className="text-muted-foreground hover:text-foreground"
             >
-              <ChevronLeft className="size-4" />
+              <ChevronLeft />
             </Button>
-            <span className="text-xs text-muted-foreground px-2">
-              {`Page ${page + 1} of ${totalPages}`}
+            <span className="px-2 text-xs tabular-nums text-muted-foreground">
+              {copy.page(page + 1, totalPages)}
             </span>
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon-sm"
               disabled={!hasNext}
               onClick={() => setPage((p) => p + 1)}
-              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+              aria-label={copy.next}
+              className="text-muted-foreground hover:text-foreground"
             >
-              <ChevronRight className="size-4" />
+              <ChevronRight />
             </Button>
           </div>
-        </div>
+        </nav>
       )}
 
       {/* Contact Form Dialog */}
