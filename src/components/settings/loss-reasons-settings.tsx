@@ -6,7 +6,6 @@ import {
   ArrowDown,
   ArrowUp,
   Loader2,
-  MessageSquareX,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -26,17 +25,11 @@ import {
 } from "@/lib/pipelines/loss-reasons";
 import type { DealLossReason } from "@/types";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { DANGER_TEXT_BUTTON, SettingsGroup } from "./settings-group";
 
 /**
  * Configurações → Negócios e moeda → "Motivos de perda": the account's
@@ -164,34 +157,27 @@ export function LossReasonsSettings() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
-          <MessageSquareX className="size-4 text-primary" />
-          {t("Loss reasons")}
-        </CardTitle>
-        <CardDescription className="text-muted-foreground">
-          {t(
-            "What your team picks when a deal is marked as lost. Names are saved when you leave the field; inactive reasons stay on old deals but are no longer offered.",
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <SettingsGroup
+      title={t("Loss reasons")}
+      description={t(
+        "What your team picks when a deal is marked as lost. Names are saved when you leave the field; inactive reasons stay on old deals but are no longer offered.",
+      )}
+    >
         {loading || profileLoading ? (
           <div className="space-y-2">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
+              <div key={i} className="h-10 animate-pulse rounded-md bg-muted/60" />
             ))}
           </div>
         ) : (
           <>
             {ordered.length === 0 && (
-              <p className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {t("No loss reasons yet. Add the first one below.")}
               </p>
             )}
 
-            <div className="space-y-2">
+            <div className="divide-y divide-border">
               {ordered.map((reason, index) => (
                 <ReasonRow
                   key={reason.id}
@@ -222,8 +208,8 @@ export function LossReasonsSettings() {
             </div>
 
             {!readOnly && (
-              <div className="grid gap-2 rounded-lg border border-dashed border-border p-3">
-                <Label htmlFor="new-loss-reason" className="text-muted-foreground">
+              <div className="grid gap-2 pt-2">
+                <Label htmlFor="new-loss-reason">
                   {t("New loss reason")}
                 </Label>
                 <div className="flex flex-wrap items-center gap-2">
@@ -233,7 +219,7 @@ export function LossReasonsSettings() {
                     onChange={(e) => setNewName(e.target.value)}
                     placeholder={t("e.g. Budget cut, Timing")}
                     maxLength={80}
-                    className="min-w-[160px] flex-1 border-border bg-muted text-sm text-foreground"
+                    className="min-w-[160px] flex-1"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -247,9 +233,9 @@ export function LossReasonsSettings() {
                     size="sm"
                     onClick={() => void handleAdd()}
                     disabled={adding || !newName.trim()}
-                    className="shrink-0 border-border bg-transparent text-muted-foreground hover:bg-muted"
+                    className="shrink-0"
                   >
-                    {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                    {adding ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
                     {t("Add")}
                   </Button>
                 </div>
@@ -263,8 +249,7 @@ export function LossReasonsSettings() {
             )}
           </>
         )}
-      </CardContent>
-    </Card>
+    </SettingsGroup>
   );
 }
 
@@ -315,7 +300,7 @@ function ReasonRow({
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-muted p-2",
+        "py-2.5",
         !reason.is_active && "opacity-70",
       )}
     >
@@ -327,7 +312,7 @@ function ReasonRow({
             disabled={readOnly || isFirst || busy}
             aria-label={t("Move up")}
             title={t("Move up")}
-            className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground hover:bg-card hover:text-foreground disabled:cursor-default disabled:opacity-30"
+            className="flex h-4 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-default disabled:opacity-30 motion-reduce:transition-none"
           >
             <ArrowUp className="h-3 w-3" />
           </button>
@@ -337,7 +322,7 @@ function ReasonRow({
             disabled={readOnly || isLast || busy}
             aria-label={t("Move down")}
             title={t("Move down")}
-            className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground hover:bg-card hover:text-foreground disabled:cursor-default disabled:opacity-30"
+            className="flex h-4 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-default disabled:opacity-30 motion-reduce:transition-none"
           >
             <ArrowDown className="h-3 w-3" />
           </button>
@@ -361,7 +346,7 @@ function ReasonRow({
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
           className={cn(
-            "h-8 min-w-[140px] flex-1 border-border bg-card text-sm text-foreground",
+            "h-8 min-w-[140px] flex-1 text-sm",
             !reason.is_active && "line-through",
           )}
         />
@@ -383,7 +368,7 @@ function ReasonRow({
             disabled={busy}
             title={t("Delete loss reason")}
             aria-label={t("Delete loss reason")}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
           </button>
@@ -391,24 +376,24 @@ function ReasonRow({
       </div>
 
       {confirming && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-foreground">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+        <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground">
+          <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
           <span className="flex-1">{t("Delete this loss reason?")}</span>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={onCancelDelete}
-            className="h-7 border-border text-muted-foreground hover:bg-muted"
           >
             {t("Cancel")}
           </Button>
           <Button
             type="button"
+            variant="ghost"
             size="sm"
             onClick={onDelete}
             disabled={busy}
-            className="h-7 bg-red-600 text-white hover:bg-red-700"
+            className={DANGER_TEXT_BUTTON}
           >
             {t("Delete")}
           </Button>
@@ -416,8 +401,8 @@ function ReasonRow({
       )}
 
       {inUseCount !== null && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-foreground">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+        <div role="status" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground">
+          <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
           <span className="flex-1">
             {inUseCount === 1
               ? t("This reason is used by 1 deal and can't be deleted. Deactivate it instead to hide it from the list.")
@@ -425,19 +410,18 @@ function ReasonRow({
           </span>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={onDismissInUse}
-            className="h-7 border-border text-muted-foreground hover:bg-muted"
           >
             {t("Close")}
           </Button>
           {reason.is_active && (
             <Button
               type="button"
+              variant="outline"
               size="sm"
               onClick={onDeactivate}
-              className="h-7 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {t("Deactivate")}
             </Button>

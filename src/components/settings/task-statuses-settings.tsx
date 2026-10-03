@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, CheckSquare, GripVertical, Loader2, Plus, Star, Trash2 } from "lucide-react";
+import { AlertTriangle, GripVertical, Loader2, Plus, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
@@ -65,15 +65,15 @@ const COLOR_NAMES: Record<string, string> = {
   "#64748b": "Slate",
 };
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
+import { DANGER_TEXT_BUTTON, SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
 
 const SELECT_CLASS =
-  "h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
+  "h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60";
 
 /**
  * Configurações → Tarefas: the account's task statuses (board columns).
@@ -224,35 +224,28 @@ export function TaskStatusesSettings() {
   }
 
   return (
-    <section className="max-w-2xl animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title={t("Tasks")}
         description={t(
           "The columns of the task board. Every account keeps at least one open, one in-progress and one done status; new tasks land on the default.",
         )}
       />
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <CheckSquare className="size-4 text-primary" />
-            {t("Task statuses")}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t("Drag to reorder. Names are saved when you leave the field.")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <SettingsGroup
+        title={t("Task statuses")}
+        description={t("Drag to reorder. Names are saved when you leave the field.")}
+      >
           {loading || profileLoading ? (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
+                <div key={i} className="h-10 animate-pulse rounded-md bg-muted/60" />
               ))}
             </div>
           ) : (
             <>
               {missingKinds.length > 0 && (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-foreground">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <div role="status" className="flex items-start gap-2 text-xs text-foreground">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
                   <span>
                     {t("Missing a status of kind:")}{" "}
                     {missingKinds.map((k) => t(KIND_LABELS[k])).join(", ")}
@@ -265,7 +258,7 @@ export function TaskStatusesSettings() {
                   items={statuses.map((s) => s.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="space-y-2">
+                  <div className="divide-y divide-border">
                     {sortStatuses(statuses).map((status) => (
                       <StatusRow
                         key={status.id}
@@ -291,29 +284,31 @@ export function TaskStatusesSettings() {
               </DndContext>
 
               {!readOnly && (
-                <div className="grid gap-2 rounded-lg border border-dashed border-border p-3">
-                  <Label className="text-muted-foreground">{t("New status")}</Label>
-                  <div className="flex flex-wrap gap-1">
+                <div className="grid gap-2 pt-2">
+                  <Label htmlFor="new-task-status">{t("New status")}</Label>
+                  <div className="flex flex-wrap gap-1.5">
                     {TASK_STATUS_COLORS.map((color) => (
                       <button
                         key={color}
                         type="button"
                         onClick={() => setNewColor(color)}
                         aria-label={`${t("Pick color")} ${t(COLOR_NAMES[color] ?? color)}`}
-                        className="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
-                        style={{
-                          backgroundColor: color,
-                          borderColor: newColor === color ? "var(--foreground)" : "transparent",
-                        }}
+                        aria-pressed={newColor === color}
+                        className={cn(
+                          "size-5 rounded-full focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+                          newColor === color && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                        )}
+                        style={{ backgroundColor: color }}
                       />
                     ))}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Input
+                      id="new-task-status"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                       placeholder={t("Status name")}
-                      className="min-w-[160px] flex-1 border-border bg-muted text-sm text-foreground"
+                      className="min-w-[160px] flex-1"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") void handleAdd();
                       }}
@@ -331,13 +326,11 @@ export function TaskStatusesSettings() {
                       ))}
                     </select>
                     <Button
-                      variant="outline"
-                      size="sm"
                       onClick={() => void handleAdd()}
                       disabled={adding || !newName.trim()}
-                      className="shrink-0 border-border bg-transparent text-muted-foreground hover:bg-muted"
+                      className="shrink-0"
                     >
-                      {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                      {adding ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
                       {t("Add")}
                     </Button>
                   </div>
@@ -351,8 +344,7 @@ export function TaskStatusesSettings() {
               )}
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsGroup>
     </section>
   );
 }
@@ -403,7 +395,7 @@ function StatusRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
-      className="rounded-lg border border-border bg-muted p-2"
+      className={cn("bg-background py-2.5", isDragging && "relative z-10")}
     >
       <div className="flex flex-wrap items-center gap-2">
         <button
@@ -411,7 +403,7 @@ function StatusRow({
           {...attributes}
           {...listeners}
           disabled={readOnly}
-          className="cursor-grab touch-none text-muted-foreground hover:text-foreground disabled:cursor-default active:cursor-grabbing"
+          className="cursor-grab touch-none rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-default active:cursor-grabbing"
           aria-label={t("Drag to reorder")}
         >
           <GripVertical className="h-4 w-4" />
@@ -444,7 +436,7 @@ function StatusRow({
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
-          className="h-8 min-w-[140px] flex-1 border-border bg-card text-sm text-foreground"
+          className="h-8 min-w-[140px] flex-1 text-sm"
         />
 
         <select
@@ -468,10 +460,10 @@ function StatusRow({
           title={status.is_default ? t("Default status for new tasks") : t("Make default")}
           aria-label={status.is_default ? t("Default status for new tasks") : t("Make default")}
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
+            "flex size-8 items-center justify-center rounded-md transition-colors duration-150 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none",
             status.is_default
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
-              : "border-border text-muted-foreground hover:bg-card hover:text-foreground disabled:opacity-50",
+              ? "text-amber-500"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50",
           )}
         >
           <Star className={cn("h-3.5 w-3.5", status.is_default && "fill-current")} />
@@ -484,7 +476,7 @@ function StatusRow({
             disabled={!deletable || busy}
             title={deletable ? t("Delete status") : t("Keep at least one status of each kind.")}
             aria-label={t("Delete status")}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
           </button>
@@ -492,26 +484,26 @@ function StatusRow({
       </div>
 
       {confirming && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-foreground">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+        <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground">
+          <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
           <span className="flex-1">
             {t("Delete this status? Its tasks move to")} <strong>{moveTarget ?? "—"}</strong>.
           </span>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={onCancelDelete}
-            className="h-7 border-border text-muted-foreground hover:bg-muted"
           >
             {t("Cancel")}
           </Button>
           <Button
             type="button"
+            variant="ghost"
             size="sm"
             onClick={onDelete}
             disabled={busy}
-            className="h-7 bg-red-600 text-white hover:bg-red-700"
+            className={DANGER_TEXT_BUTTON}
           >
             {t("Delete")}
           </Button>
