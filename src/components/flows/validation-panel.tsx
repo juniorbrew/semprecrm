@@ -29,12 +29,11 @@ export function ValidationPanel() {
   const { t } = useLanguage();
 
   if (issues.length === 0) {
-    // Slate-950 base + emerald accents so the panel stays readable when
-    // sticky-positioned over scrolled-behind node cards (a translucent
-    // bg-emerald-500/10 would bleed through ugly).
+    // Opaque background so the panel stays readable when sticky-positioned
+    // over scrolled-behind node cards; the status is icon + text.
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-background p-3 text-sm font-medium text-emerald-300">
-        <CircleCheck className="h-4 w-4 shrink-0" />
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground" role="status">
+        <CircleCheck className="size-4 shrink-0 text-emerald-500" aria-hidden />
         {t("No errors found. Ready to activate.")}
       </div>
     );
@@ -44,15 +43,17 @@ export function ValidationPanel() {
   return (
     <div
       className={cn(
-        "rounded-lg border bg-background p-3",
-        errors.length > 0 ? "border-red-500/40" : "border-amber-500/40",
+        "rounded-lg border border-border bg-background p-3",
+        errors.length > 0
+          ? "shadow-[inset_3px_0_0_var(--color-red-500)]"
+          : "shadow-[inset_3px_0_0_var(--color-amber-500)]",
       )}
     >
-      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="mb-2 flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
         {errors.length > 0 ? (
-          <CircleAlert className="h-4 w-4 text-red-400" />
+          <CircleAlert className="size-3.5 text-red-500" aria-hidden />
         ) : (
-          <CircleAlert className="h-4 w-4 text-amber-400" />
+          <CircleAlert className="size-3.5 text-amber-500" aria-hidden />
         )}
         {errors.length} {t(errors.length === 1 ? "error" : "errors")},{" "}
         {warnings.length} {t(warnings.length === 1 ? "warning" : "warnings")}
@@ -80,13 +81,12 @@ export function IssueLine({
   onJump?: (key: string) => void;
 }) {
   const { t, language } = useLanguage();
-  const tone =
-    issue.severity === "error" ? "text-red-300" : "text-amber-300";
+  const tone = "text-foreground";
   const iconTone =
-    issue.severity === "error" ? "text-red-400" : "text-amber-400";
+    issue.severity === "error" ? "text-red-500" : "text-amber-500";
   const body = (
     <>
-      <CircleAlert className={cn("mt-0.5 h-3 w-3 shrink-0", iconTone)} />
+      <CircleAlert className={cn("mt-0.5 size-3 shrink-0", iconTone)} aria-hidden />
       <span className="min-w-0 flex-1">
         {issue.node_key && (
           <code className="mr-1 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">

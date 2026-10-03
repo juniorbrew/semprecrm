@@ -1,25 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  Workflow,
   Plus,
-  Trash2,
-  Pencil,
   Loader2,
   MessageSquare,
-  PlayCircle,
-  PauseCircle,
-  Archive,
   HelpCircle,
   UserPlus,
   FileText,
+  Rows4,
 } from "lucide-react";
 
 import { useCan } from "@/hooks/use-can";
+import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
@@ -31,44 +26,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
 import { translateLiteral } from "@/lib/i18n";
 import { getFlowTemplate, localizeFlowTemplate } from "@/lib/flows/templates";
+import {
+  FLOWS_COPY,
+  FlowListRow,
+  readFlowsDensity,
+  writeFlowsDensity,
+  type FlowRow,
+  type FlowsDensity,
+} from "@/components/flows/flow-list-row";
 
 /**
  * Flows list page.
  *
  * Open to every authenticated user. Flows is in soft-GA — the "Beta"
- * chip in the header is the only remaining signal that the surface
+ * chip in the sidebar is the only remaining signal that the surface
  * is new. The previous per-account beta gate was removed in PR #134.
  */
-
-interface FlowRow {
-  id: string;
-  name: string;
-  description: string | null;
-  status: "draft" | "active" | "archived";
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
-  trigger_config: { keywords?: string[] } | Record<string, unknown>;
-  execution_count: number;
-  last_executed_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-const STATUS_LABELS: Record<FlowRow["status"], string> = {
-  draft: "Draft",
-  active: "Active",
-  archived: "Archived",
-};
-
-const STATUS_COLORS: Record<FlowRow["status"], string> = {
-  draft: "border-border bg-muted text-muted-foreground",
-  active: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
-  archived: "border-border bg-muted/50 text-muted-foreground",
-};
 
 interface TemplateSummary {
   slug: string;
@@ -88,6 +65,8 @@ const TEMPLATE_ICONS = {
 export default function FlowsPage() {
   const router = useRouter();
   const { t, language } = useLanguage();
+  const copy = FLOWS_COPY[language] ?? FLOWS_COPY["pt-BR"];
+  const userId = useAuth().user?.id;
   const canCreate = useCan("send-messages");
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,6 +74,19 @@ export default function FlowsPage() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+
+  // Row density, per user on this device (read after mount: no hydration mismatch).
+  const [density, setDensity] = useState<FlowsDensity>("comfortable");
+  useEffect(() => {
+    if (userId) setDensity(readFlowsDensity(userId));
+  }, [userId]);
+  const toggleDensity = useCallback(() => {
+    setDensity((d) => {
+      const next: FlowsDensity = d === "compact" ? "comfortable" : "compact";
+      if (userId) writeFlowsDensity(userId, next);
+      return next;
+    });
+  }, [userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -226,52 +218,82 @@ export default function FlowsPage() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-foreground">{t("Flows")}</h1>
-            <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-              {t("Beta")}
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("Build branching, button-driven WhatsApp conversations. Useful for menus, FAQs, and triage before a human steps in.")}
-          </p>
+    <div className="space-y-4">
+      {/* Header: title + count, one filled action */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">{copy.title}</h1>
+        {flows.length > 0 && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold tabular-nums text-muted-foreground">
+            {flows.length}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {flows.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleDensity}
+              aria-pressed={density === "compact"}
+              aria-label={copy.compact}
+              title={copy.compact}
+              data-testid="flows-density-toggle"
+              className={cn(
+                "inline-flex size-7 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                density === "compact"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <Rows4 className="size-3.5" />
+            </button>
+          )}
+          <GatedButton
+            size="sm"
+            canAct={canCreate}
+            gateReason={t("create flows")}
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus />
+            {copy.newFlow}
+          </GatedButton>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason={t("create flows")}
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="h-4 w-4" />
-          {t("New flow")}
-        </GatedButton>
-      </header>
+      </div>
 
       {flows.length === 0 ? (
-        <EmptyState
-          onCreate={() => setCreateOpen(true)}
-          canCreate={canCreate}
-        />
+        <div className="max-w-md py-10">
+          <p className="text-sm text-foreground">{copy.empty}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{copy.emptyHint}</p>
+          {canCreate && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCreateOpen(true)}
+              className="-ml-2.5 mt-3 text-primary hover:text-primary"
+            >
+              <Plus />
+              {copy.firstFlow}
+            </Button>
+          )}
+        </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="divide-y divide-border border-y border-border">
           {flows.map((flow) => (
-            <FlowCard
+            <FlowListRow
               key={flow.id}
               flow={flow}
-              onEdit={() => router.push(`/flows/${flow.id}`)}
+              language={language}
+              copy={copy}
+              compact={density === "compact"}
               onDelete={() => handleDelete(flow)}
             />
           ))}
-        </div>
+        </ul>
       )}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -288,11 +310,11 @@ export default function FlowsPage() {
           </DialogHeader>
 
           {templates.length > 0 && (
-            <div className="space-y-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+            <div className="space-y-2">
+              <p className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 {t("Start with a template")}
               </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {templates.map((tmpl) => {
                   const Icon = TEMPLATE_ICONS[tmpl.icon] ?? FileText;
                   return (
@@ -301,17 +323,19 @@ export default function FlowsPage() {
                       type="button"
                       onClick={() => handleUseTemplate(tmpl.slug)}
                       disabled={creating}
-                      className="flex flex-col gap-2.5 rounded-lg border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted disabled:opacity-50"
+                      className="flex items-start gap-3 rounded-lg border border-border p-3 text-left transition-colors duration-150 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 motion-reduce:transition-none"
                     >
-                      <Icon className="h-5 w-5 text-primary" />
-                      <span className="text-sm font-semibold text-popover-foreground">
-                        {t(tmpl.name)}
-                      </span>
-                      <span className="text-xs leading-relaxed text-muted-foreground">
-                        {t(tmpl.description)}
-                      </span>
-                      <span className="mt-auto border-t border-border pt-2 text-[11px] text-muted-foreground">
-                        {tmpl.node_count} {t(tmpl.node_count === 1 ? "node" : "nodes")}
+                      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-popover-foreground">
+                          {t(tmpl.name)}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                          {t(tmpl.description)}
+                        </span>
+                        <span className="mt-1 block text-[11px] tabular-nums text-muted-foreground">
+                          {tmpl.node_count} {t(tmpl.node_count === 1 ? "node" : "nodes")}
+                        </span>
                       </span>
                     </button>
                   );
@@ -321,14 +345,18 @@ export default function FlowsPage() {
           )}
 
           <div className="space-y-2 border-t border-border pt-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+            <label
+              htmlFor="new-flow-name"
+              className="block text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+            >
               {t("Or start blank")}
-            </p>
+            </label>
             <Input
+              id="new-flow-name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder={t("e.g. Welcome menu")}
-              className="bg-muted"
+              className="h-8"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreate();
               }}
@@ -352,135 +380,4 @@ export default function FlowsPage() {
       </Dialog>
     </div>
   );
-}
-
-function EmptyState({
-  onCreate,
-  canCreate,
-}: {
-  onCreate: () => void;
-  canCreate: boolean;
-}) {
-  const { t } = useLanguage();
-  return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-        <Workflow className="h-6 w-6 text-muted-foreground" />
-      </div>
-      <h2 className="mt-4 text-base font-medium text-foreground">
-        {t("No flows yet")}
-      </h2>
-      <p className="mt-1 max-w-md text-sm text-muted-foreground">
-        {t("Build your first conversation — a welcome menu, an order lookup, an FAQ bot. Customers tap buttons; the bot routes them to the right answer (or the right agent).")}
-      </p>
-      <GatedButton
-        canAct={canCreate}
-        gateReason={t("create flows")}
-        onClick={onCreate}
-        className="mt-5"
-      >
-        <Plus className="h-4 w-4" />
-        {t("Create your first flow")}
-      </GatedButton>
-    </div>
-  );
-}
-
-function FlowCard({
-  flow,
-  onEdit,
-  onDelete,
-}: {
-  flow: FlowRow;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const { t } = useLanguage();
-  const triggerSummary = describeTrigger(flow, t);
-  const StatusIcon =
-    flow.status === "active"
-      ? PlayCircle
-      : flow.status === "archived"
-        ? Archive
-        : PauseCircle;
-  return (
-    <div className="flex flex-col rounded-lg border border-border bg-card p-4 transition-colors hover:border-border">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Workflow className="h-4 w-4 shrink-0 text-primary" />
-          <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
-            <button
-              type="button"
-              onClick={onEdit}
-              className="max-w-full truncate text-left hover:text-primary hover:underline"
-            >
-              {flow.name}
-            </button>
-          </h3>
-        </div>
-        <Badge
-          variant="outline"
-          className={cn(
-            "shrink-0 gap-1 text-[10px]",
-            STATUS_COLORS[flow.status],
-          )}
-        >
-          <StatusIcon className="h-3 w-3" />
-          {t(STATUS_LABELS[flow.status])}
-        </Badge>
-      </div>
-
-      <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-        {flow.description || triggerSummary}
-      </p>
-
-      <div className="mt-4 flex items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1">
-          <MessageSquare className="h-3 w-3" />
-          {flow.execution_count} {t(flow.execution_count === 1 ? "run" : "runs")}
-        </span>
-      </div>
-
-      <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
-        {/* A real anchor (via next/link) so the editor opens on any
-            click strategy — keyboard, middle-click, programmatic — and
-            not only through the router handler. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          nativeButton={false}
-          render={<Link href={`/flows/${flow.id}`} />}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          {t("Edit")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onDelete}
-          className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          {t("Delete")}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function describeTrigger(
-  flow: FlowRow,
-  t: (english: string) => string,
-): string {
-  if (flow.trigger_type === "keyword") {
-    const keywords = Array.isArray(flow.trigger_config.keywords)
-      ? (flow.trigger_config.keywords as string[])
-      : [];
-    if (keywords.length === 0) return t("Triggers on keyword (none set)");
-    return `${t("Triggers on:")} ${keywords.join(", ")}`;
-  }
-  if (flow.trigger_type === "first_inbound_message") {
-    return t("Triggers on a contact's first-ever inbound message");
-  }
-  return t("Manual trigger");
 }

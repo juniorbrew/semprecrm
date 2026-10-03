@@ -67,8 +67,8 @@ export default function AutomationLogsPage({
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-3">
-        <p className="text-sm text-red-400">{error}</p>
-        <Button variant="outline" onClick={() => router.push('/automations')}>
+        <p className="text-muted-foreground text-sm" role="alert">{error}</p>
+        <Button variant="ghost" size="sm" onClick={() => router.push('/automations')}>
           {t('Back')}
         </Button>
       </div>
@@ -78,7 +78,7 @@ export default function AutomationLogsPage({
   if (!automation || logs === null) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="text-primary h-6 w-6 animate-spin" />
+        <Loader2 className="text-muted-foreground size-5 animate-spin" />
       </div>
     );
   }
@@ -98,11 +98,11 @@ export default function AutomationLogsPage({
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <div>
-          <h1 className="text-foreground text-2xl font-bold">
+        <div className="min-w-0">
+          <h1 className="text-foreground truncate text-xl font-semibold tracking-tight" data-no-translate>
             {automation.name}
           </h1>
-          <p className="text-muted-foreground mt-0.5 text-sm">
+          <p className="text-muted-foreground text-sm">
             {t('Execution logs')}
           </p>
         </div>
@@ -123,7 +123,7 @@ export default function AutomationLogsPage({
       )}
 
       {visibleLogs.length === 0 ? (
-        <div className="border-border bg-card/40 flex h-48 flex-col items-center justify-center rounded-xl border border-dashed">
+        <div className="py-10">
           <p className="text-foreground text-sm">
             {t('No executions yet')}
           </p>
@@ -132,18 +132,19 @@ export default function AutomationLogsPage({
           </p>
         </div>
       ) : (
-        <ul className="space-y-2">
+        <ul className="divide-border border-border divide-y border-y">
           {visibleLogs.map((log) => {
             const isOpen = openLogId === log.id;
             return (
-              <li
-                key={log.id}
-                className="border-border bg-card rounded-xl border"
-              >
+              <li key={log.id}>
                 <button
                   type="button"
                   onClick={() => setOpenLogId(isOpen ? null : log.id)}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                  aria-expanded={isOpen}
+                  className={cn(
+                    'hover:bg-muted/50 focus-visible:ring-ring flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors duration-150 focus-visible:ring-2 focus-visible:outline-none motion-reduce:transition-none',
+                    isOpen && 'bg-primary/10 hover:bg-primary/10 shadow-[inset_3px_0_0_var(--primary)]'
+                  )}
                 >
                   {isOpen ? (
                     <ChevronDown className="text-muted-foreground h-4 w-4" />
@@ -169,7 +170,7 @@ export default function AutomationLogsPage({
                   </div>
                 </button>
                 {isOpen && (
-                  <div className="border-border border-t px-4 py-3">
+                  <div className="py-3 pr-3 pl-10">
                     {log.status === 'no_action' && (
                       <p className="text-muted-foreground mb-3 text-xs">
                         {pt
@@ -184,7 +185,7 @@ export default function AutomationLogsPage({
                       </p>
                     )}
                     {log.error_message && (
-                      <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                      <p className="text-destructive mb-3 text-xs" role="alert">
                         {log.error_message}
                       </p>
                     )}
@@ -232,14 +233,15 @@ const RUN_STATUS_LABEL: Record<Lang, Record<AutomationLog['status'], string>> = 
   },
 };
 
-const STATUS_CLASSES: Record<AutomationLog['status'], string> = {
-  success: 'border-primary/30 bg-primary/10 text-primary',
-  partial: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  waiting: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  failed: 'border-red-500/30 bg-red-500/10 text-red-300',
-  no_action: 'border-border bg-muted text-muted-foreground',
-  skipped: 'border-border bg-muted/50 text-muted-foreground',
-  cancelled: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
+/** Status dot colour; the label next to it carries the meaning. */
+const STATUS_DOT: Record<AutomationLog['status'], string> = {
+  success: 'bg-emerald-500',
+  partial: 'bg-amber-500',
+  waiting: 'bg-amber-500',
+  failed: 'bg-red-500',
+  no_action: 'bg-muted-foreground/50',
+  skipped: 'bg-muted-foreground/50',
+  cancelled: 'bg-muted-foreground/50',
 };
 
 /**
@@ -263,14 +265,12 @@ function StatusBadge({
   status: AutomationLog['status'];
   language: Lang;
 }) {
-  const classes = STATUS_CLASSES[status] ?? STATUS_CLASSES.failed;
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-        classes
-      )}
-    >
+    <span className="text-muted-foreground inline-flex w-24 shrink-0 items-center gap-1.5 text-xs">
+      <span
+        aria-hidden
+        className={cn('size-1.5 rounded-full', STATUS_DOT[status] ?? STATUS_DOT.failed)}
+      />
       {RUN_STATUS_LABEL[language][status] ?? status}
     </span>
   );

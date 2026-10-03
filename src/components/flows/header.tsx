@@ -24,10 +24,8 @@ import {
   PlayCircle,
   Save,
   Trash2,
-  Workflow,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -54,61 +52,61 @@ export function EditorHeader() {
   const { t } = useLanguage();
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <button
-          type="button"
-          onClick={() => router.push("/flows")}
-          className="inline-flex items-center gap-1 hover:text-foreground"
-        >
-          <ArrowLeft className="h-3 w-3" />
-          {t("Flows")}
-        </button>
-      </div>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Workflow className="h-5 w-5 shrink-0 text-primary" />
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.push("/flows")}
+            aria-label={t("Flows")}
+            title={t("Flows")}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+          >
+            <ArrowLeft className="size-4" />
+          </button>
           <Input
             value={state.name}
             onChange={(e) =>
               setState((s) => ({ ...s, name: e.target.value }))
             }
             placeholder={t("Flow name")}
-            className="max-w-md bg-card text-lg font-semibold"
+            aria-label={t("Flow name")}
+            className="h-8 min-w-0 max-w-md border-transparent bg-transparent px-1.5 text-base font-semibold shadow-none hover:border-border focus-visible:border-ring dark:bg-transparent md:text-base"
           />
           <StatusBadge status={state.status} />
           {dirty && (
             <span
-              className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+              className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
               title={t("Unsaved changes — hit Save to persist")}
               aria-live="polite"
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
               {t("Edited")}
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => router.push(`/flows/${flow.id}/runs`)}
+            className="text-muted-foreground hover:text-foreground"
           >
-            <History className="h-3.5 w-3.5" />
+            <History className="size-3.5" />
             {t("Runs")}
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => void deleteFlow()}
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="size-3.5" />
             {t("Delete")}
           </Button>
           {state.status === "active" ? (
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => void setStatus("draft")}
               disabled={activating}
@@ -122,7 +120,7 @@ export function EditorHeader() {
             </Button>
           ) : (
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => void setStatus("active")}
               disabled={activating || !canActivate}
@@ -156,7 +154,8 @@ export function EditorHeader() {
           setState((s) => ({ ...s, description: e.target.value }))
         }
         placeholder={t("Optional description (internal — customers don't see this)")}
-        className="bg-card text-sm"
+        aria-label={t("Description")}
+        className="h-8 border-transparent bg-transparent px-1.5 text-sm text-muted-foreground shadow-none hover:border-border focus-visible:border-ring focus-visible:text-foreground dark:bg-transparent sm:ml-9 sm:max-w-2xl"
       />
     </div>
   );
@@ -170,14 +169,15 @@ const STATUS_LABEL: Record<BuilderState["status"], string> = {
 
 function StatusBadge({ status }: { status: BuilderState["status"] }) {
   const { t } = useLanguage();
-  const cls = {
-    draft: "border-border bg-muted text-muted-foreground",
-    active: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
-    archived: "border-border bg-muted/50 text-muted-foreground",
+  const dot = {
+    draft: "bg-muted-foreground/50",
+    active: "bg-emerald-500",
+    archived: "bg-muted-foreground/30",
   }[status];
   return (
-    <Badge variant="outline" className={cn("shrink-0", cls)}>
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
       {t(STATUS_LABEL[status])}
-    </Badge>
+    </span>
   );
 }

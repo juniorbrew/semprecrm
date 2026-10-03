@@ -50,7 +50,7 @@ export function AgentOperationBar({
           </select>
         </label>
         {agent.mode === "auto" ? (
-          <Button size="sm" variant="outline" disabled={!canEdit || busy} onClick={() => onPatch({ paused: !paused })}>
+          <Button size="sm" variant="ghost" disabled={!canEdit || busy} onClick={() => onPatch({ paused: !paused })}>
             {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
             {paused ? t("Resume automatic") : t("Pause automatic")}
           </Button>
@@ -66,7 +66,7 @@ export function AgentOperationBar({
             variant="ghost"
             disabled={busy}
             onClick={onDelete}
-            className="text-destructive hover:text-destructive"
+            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             aria-label={`${t("Delete")}: ${agent.name}`}
           >
             <Trash2 className="size-3.5" />

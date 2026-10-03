@@ -96,7 +96,7 @@ function Section({ title, description, children }: { title: string; description?
   return (
     <section className="space-y-4 border-t border-border pt-6 first:border-t-0 first:pt-0">
       <div>
-        <h2 className="text-base font-semibold text-foreground">{t(title)}</h2>
+        <h2 className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">{t(title)}</h2>
         {description ? <p className="mt-1 text-sm text-muted-foreground">{t(description)}</p> : null}
       </div>
       {children}

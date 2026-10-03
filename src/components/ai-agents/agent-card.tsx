@@ -82,10 +82,13 @@ export function AgentCard({
   ].filter(Boolean);
 
   return (
-    <li className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:gap-6">
+    <li className="flex flex-col gap-3 px-3 py-3 transition-colors duration-150 hover:bg-muted/50 motion-reduce:transition-none sm:flex-row sm:items-center sm:gap-6">
       <div className="min-w-0 flex-1">
         <h2 className="truncate text-sm font-medium text-foreground" data-no-translate>
-          <Link href={`/ai/agents/${agent.id}`} className="underline-offset-2 hover:underline focus-visible:underline">
+          <Link
+            href={`/ai/agents/${agent.id}`}
+            className="rounded-sm underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             {agent.name}
           </Link>
         </h2>
