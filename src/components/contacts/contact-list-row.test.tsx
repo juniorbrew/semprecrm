@@ -50,7 +50,7 @@ describe('contactMetaLine', () => {
   it('joins company and phone, skipping blanks', () => {
     expect(contactMetaLine({ company: 'Acme', phone: '55119' })).toBe('Acme · 55119');
     expect(contactMetaLine({ company: '  ', phone: '55119' })).toBe('55119');
-    expect(contactMetaLine({ company: null, phone: '55119' })).toBe('55119');
+    expect(contactMetaLine({ company: undefined, phone: '55119' })).toBe('55119');
   });
 });
 
