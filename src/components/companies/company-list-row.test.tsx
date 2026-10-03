@@ -48,6 +48,7 @@ describe('companyMetaLine', () => {
     expect(companyMetaLine(company())).toBe('Padaria Sol LTDA · 11.222.333/0001-81 · Porto Alegre/RS');
     expect(companyMetaLine(company({ nome_fantasia: null }))).toBe('11.222.333/0001-81 · Porto Alegre/RS');
     expect(companyMetaLine(company({ nome_fantasia: null, cnpj: null, cidade: null, uf: null }))).toBe('');
+    expect(companyMetaLine(company(), { withPlace: false })).toBe('Padaria Sol LTDA · 11.222.333/0001-81');
   });
 });
 

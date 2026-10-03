@@ -37,11 +37,15 @@ export function writeCompaniesDensity(userId: string, density: CompaniesDensity)
 
 type MetaFields = Pick<CompanyListItem, 'razao_social' | 'nome_fantasia' | 'cnpj' | 'cidade' | 'uf'>;
 
-/** "Razão social · CNPJ · Cidade/UF" — the one meta line under the name (razão only when it differs). */
-export function companyMetaLine(company: MetaFields): string {
+/**
+ * "Razão social · CNPJ · Cidade/UF" — the one meta line under the name
+ * (razão only when it differs). The list drops the place (it has a City
+ * column on wider screens) with `withPlace: false`.
+ */
+export function companyMetaLine(company: MetaFields, { withPlace = true } = {}): string {
   const legal =
     company.nome_fantasia && company.nome_fantasia.trim() !== company.razao_social ? company.razao_social : null;
-  return [legal, company.cnpj ? formatTaxId('pj', company.cnpj) : null, companyPlace(company)]
+  return [legal, company.cnpj ? formatTaxId('pj', company.cnpj) : null, withPlace ? companyPlace(company) : null]
     .filter(Boolean)
     .join(' · ');
 }
@@ -157,7 +161,7 @@ export function CompanyListRow({
   onDelete,
 }: CompanyListRowProps) {
   const name = companyDisplayName(company);
-  const meta = companyMetaLine(company);
+  const meta = companyMetaLine(company, { withPlace: false });
   const place = companyPlace(company);
   const cell = compact ? 'py-1.5' : 'py-2.5';
 
@@ -205,7 +209,17 @@ export function CompanyListRow({
             <span className={cn('truncate text-sm font-medium text-foreground', compact && 'max-w-full shrink-0')}>
               {name}
             </span>
-            {meta && <span className="min-w-0 truncate text-xs tabular-nums text-muted-foreground">{meta}</span>}
+            {(meta || place) && (
+              <span className="min-w-0 truncate text-xs tabular-nums text-muted-foreground">
+                {meta}
+                {place && (
+                  <span className="md:hidden">
+                    {meta ? ' · ' : ''}
+                    {place}
+                  </span>
+                )}
+              </span>
+            )}
           </span>
         </button>
       </td>
