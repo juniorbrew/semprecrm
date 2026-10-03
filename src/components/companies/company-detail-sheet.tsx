@@ -2,22 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import {
-  Briefcase,
-  Building2,
-  Link2,
-  Loader2,
-  Mail,
-  MapPin,
-  Pencil,
-  Phone,
-  Plus,
-  Star,
-  StickyNote,
-  Trash2,
-  Unlink,
-  Users,
-} from 'lucide-react';
+import { Briefcase, Building2, Loader2, Mail, MapPin, Pencil, Phone, Plus, Star, Trash2, Unlink } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { NOTES_LABEL } from '@/components/contacts/notes-label';
@@ -25,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useCan } from '@/hooks/use-can';
 import { useLanguage } from '@/hooks/use-language';
-import { formatTaxId } from '@/lib/br/documents';
 import { formatCep, formatPhone } from '@/lib/br/lookup';
 import {
   companyDisplayName,
@@ -43,7 +27,16 @@ import {
 import { formatCurrency } from '@/lib/currency';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
+import { companyInitials, companyMetaLine } from './company-list-row';
 import { SearchPicker } from './search-picker';
+
+/** Small muted uppercase section title — same as the inbox contact panel. */
+const SECTION_TITLE = 'text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground';
+
+const SHEET_COPY = {
+  'pt-BR': { registration: 'Cadastro' },
+  'en-US': { registration: 'Registration' },
+} as const;
 
 interface CompanyDetailSheetProps {
   open: boolean;
@@ -164,6 +157,9 @@ export function CompanyDetailSheet({
 
   const linkedIds = new Set(contacts.map((l) => l.contact.id));
 
+  const address = company ? companyAddressLine(company) : '';
+  const copy = SHEET_COPY[language] ?? SHEET_COPY['pt-BR'];
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -171,123 +167,127 @@ export function CompanyDetailSheet({
         className="w-full border-border bg-popover p-0 text-popover-foreground data-[side=right]:sm:max-w-[480px]"
       >
         {loading && !company ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="size-6 animate-spin text-primary" />
+          <div className="flex h-full items-center justify-center" role="status">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden />
+            <span className="sr-only">{t('Loading...')}</span>
           </div>
         ) : !company ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
             <SheetTitle className="sr-only">{t('Company')}</SheetTitle>
-            <Building2 className="size-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">{missing ? t('Company not found') : t('Loading...')}</p>
           </div>
         ) : (
           <div className="flex h-full flex-col">
-            <SheetHeader className="gap-3 border-b border-border/50 p-4 pb-3">
+            {/* Identity + the one filled action */}
+            <SheetHeader className="gap-3 p-4 pb-3">
               <div className="flex items-start gap-3 pr-8">
-                <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <Building2 className="size-6" />
+                <span
+                  aria-hidden
+                  className="flex size-10 shrink-0 items-center justify-center rounded-[calc(var(--radius)-2px)] bg-muted text-sm font-semibold text-muted-foreground"
+                >
+                  {companyInitials(companyDisplayName(company)) || <Building2 className="size-4" />}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <SheetTitle className="truncate text-lg leading-tight text-popover-foreground">
+                  <SheetTitle className="truncate text-base font-semibold leading-tight text-popover-foreground">
                     {companyDisplayName(company)}
                   </SheetTitle>
                   <SheetDescription className="sr-only">{t('Company details')}</SheetDescription>
-                  {company.nome_fantasia && company.nome_fantasia.trim() !== company.razao_social ? (
-                    <p className="truncate text-xs text-muted-foreground">{company.razao_social}</p>
-                  ) : null}
-                  {company.cnpj ? (
-                    <p className="mt-0.5 font-mono text-xs text-muted-foreground">CNPJ {formatTaxId('pj', company.cnpj)}</p>
+                  {companyMetaLine(company) ? (
+                    <p className="mt-0.5 truncate text-xs tabular-nums text-muted-foreground">
+                      {companyMetaLine(company)}
+                    </p>
                   ) : null}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onEdit(company)}
-                  disabled={!canEdit}
-                  className="flex-1 border-border text-foreground hover:bg-muted"
-                >
-                  <Pencil className="size-3.5" />
+              <div className="flex items-center gap-1.5">
+                <Button size="sm" onClick={() => onEdit(company)} disabled={!canEdit}>
+                  <Pencil />
                   {t('Edit')}
                 </Button>
                 <Button
                   size="icon-sm"
-                  variant="outline"
+                  variant="ghost"
                   aria-label={t('Delete company')}
                   title={t('Delete company')}
                   onClick={() => onDelete(company)}
                   disabled={!canEdit}
-                  className="border-border text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 >
-                  <Trash2 className="size-3.5" />
+                  <Trash2 />
                 </Button>
               </div>
             </SheetHeader>
 
-            <div className="flex-1 space-y-5 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto">
               {/* Registration */}
-              <section className="space-y-1.5 text-sm">
-                {company.email ? (
-                  <a href={`mailto:${company.email}`} className="flex items-center gap-2 text-foreground hover:text-primary">
-                    <Mail className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{company.email}</span>
-                  </a>
-                ) : null}
-                {company.phone ? (
-                  <a href={`tel:+55${company.phone}`} className="flex items-center gap-2 text-foreground hover:text-primary">
-                    <Phone className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span>{formatPhone(company.phone)}</span>
-                  </a>
-                ) : null}
-                {companyAddressLine(company) ? (
-                  <p className="flex items-start gap-2 text-foreground">
-                    <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                    <span>{companyAddressLine(company)}</span>
-                  </p>
-                ) : null}
-                {company.atividade ? (
-                  <p className="flex items-start gap-2 text-foreground">
-                    <Briefcase className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                    <span>
-                      {company.atividade}
-                      {company.cnae ? <span className="ml-1 font-mono text-xs text-muted-foreground">CNAE {company.cnae}</span> : null}
-                    </span>
-                  </p>
-                ) : null}
-                {company.notes ? (
-                  <div className="mt-2 flex gap-2 rounded-xl border border-border bg-card p-3">
-                    <StickyNote className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label={NOTES_LABEL[language]} />
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{company.notes}</p>
-                  </div>
-                ) : null}
-              </section>
+              {company.email || company.phone || address || company.atividade || company.notes ? (
+                <section className="space-y-2 border-t border-border px-4 py-4 text-sm">
+                  <h3 className={SECTION_TITLE}>{copy.registration}</h3>
+                  {company.email ? (
+                    <a
+                      href={`mailto:${company.email}`}
+                      className="flex items-center gap-2 rounded-sm text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Mail className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="truncate">{company.email}</span>
+                    </a>
+                  ) : null}
+                  {company.phone ? (
+                    <a
+                      href={`tel:+55${company.phone}`}
+                      className="flex items-center gap-2 rounded-sm tabular-nums text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Phone className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <span>{formatPhone(company.phone)}</span>
+                    </a>
+                  ) : null}
+                  {address ? (
+                    <p className="flex items-start gap-2 text-foreground">
+                      <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <span>{address}</span>
+                    </p>
+                  ) : null}
+                  {company.atividade ? (
+                    <p className="flex items-start gap-2 text-foreground">
+                      <Briefcase className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <span>
+                        {company.atividade}
+                        {company.cnae ? (
+                          <span className="ml-1 text-xs tabular-nums text-muted-foreground">· CNAE {company.cnae}</span>
+                        ) : null}
+                      </span>
+                    </p>
+                  ) : null}
+                  {company.notes ? (
+                    <div className="mt-1 border-l-2 border-amber-500/60 pl-3">
+                      <p className="sr-only">{NOTES_LABEL[language]}</p>
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{company.notes}</p>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
 
               {/* Contacts */}
-              <section>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    <Users className="size-3.5" />
+              <section className="border-t border-border px-4 py-4">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <h3 className={SECTION_TITLE}>
                     {t('Contacts')}
-                    {contacts.length > 0 ? (
-                      <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums">{contacts.length}</span>
-                    ) : null}
+                    {contacts.length > 0 ? <span className="ml-1.5 tabular-nums">{contacts.length}</span> : null}
                   </h3>
                   {canEdit ? (
-                    <Button
+                    <button
                       type="button"
-                      size="xs"
-                      variant="ghost"
                       onClick={() => setLinking((v) => !v)}
-                      className="text-muted-foreground hover:text-foreground"
+                      aria-expanded={linking}
+                      className="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      <Plus />
+                      <Plus className="size-3.5" aria-hidden />
                       {t('Link contact')}
-                    </Button>
+                    </button>
                   ) : null}
                 </div>
                 {linking ? (
-                  <div className="mb-2">
+                  <div className="my-2">
                     <SearchPicker<CompanyContactLink['contact']>
                       search={(term) => searchContactsForCompany(createClient(), term)}
                       getKey={(c) => c.id}
@@ -295,7 +295,7 @@ export function CompanyDetailSheet({
                       renderItem={(c) => (
                         <span className="block min-w-0">
                           <span className="block truncate font-medium">{c.name || c.phone}</span>
-                          <span className="block truncate font-mono text-[11px] text-muted-foreground">{c.phone}</span>
+                          <span className="block truncate text-[11px] tabular-nums text-muted-foreground">{c.phone}</span>
                         </span>
                       )}
                       onPick={(c) => void link(c.id)}
@@ -307,21 +307,26 @@ export function CompanyDetailSheet({
                   </div>
                 ) : null}
                 {contacts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('No contacts linked to this company yet')}</p>
+                  <p className="pt-1 text-xs text-muted-foreground">{t('No contacts linked to this company yet')}</p>
                 ) : (
-                  <ul className="space-y-1.5">
+                  <ul className="divide-y divide-border">
                     {contacts.map((l) => (
-                      <li key={l.contact.id} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-                        <Link href={`/contacts?contact=${l.contact.id}`} className="min-w-0 flex-1 hover:text-primary">
+                      <li key={l.contact.id} className="group/link flex items-center gap-2 py-2">
+                        <Link
+                          href={`/contacts?contact=${l.contact.id}`}
+                          className="min-w-0 flex-1 rounded-sm hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
                           <span className="block truncate text-sm font-medium">{l.contact.name || l.contact.phone}</span>
-                          <span className="block truncate font-mono text-[11px] text-muted-foreground">{l.contact.phone}</span>
+                          <span className="block truncate text-xs tabular-nums text-muted-foreground">
+                            {l.contact.phone}
+                          </span>
                         </Link>
                         {l.is_primary ? (
                           <span
-                            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary"
+                            className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
                             title={t("This is the contact's primary company")}
                           >
-                            <Star className="size-2.5" />
+                            <Star className="size-3 text-primary" aria-hidden />
                             {t('Primary')}
                           </span>
                         ) : null}
@@ -346,39 +351,44 @@ export function CompanyDetailSheet({
               </section>
 
               {/* Deals */}
-              <section>
-                <h3 className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  <Link2 className="size-3.5" />
+              <section className="border-t border-border px-4 py-4">
+                <h3 className={cn(SECTION_TITLE, 'mb-1')}>
                   {t('Deals')}
-                  {deals.length > 0 ? (
-                    <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums">{deals.length}</span>
-                  ) : null}
+                  {deals.length > 0 ? <span className="ml-1.5 tabular-nums">{deals.length}</span> : null}
                 </h3>
                 {deals.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('No deals linked to this company yet')}</p>
+                  <p className="pt-1 text-xs text-muted-foreground">{t('No deals linked to this company yet')}</p>
                 ) : (
-                  <ul className="space-y-1.5">
+                  <ul className="divide-y divide-border">
                     {deals.map((d) => (
                       <li key={d.id}>
                         <Link
                           href={`/pipelines?deal=${d.id}`}
-                          className="block rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40 hover:bg-muted/60"
+                          className="-mx-2 block rounded-md px-2 py-2 transition-colors duration-150 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                         >
-                          <span className="flex items-start justify-between gap-2">
+                          <span className="flex items-baseline justify-between gap-2">
                             <span className="truncate text-sm font-medium text-foreground">{d.title}</span>
+                            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                              {formatCurrency(d.value, d.currency ?? undefined)}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                             {d.stage ? (
-                              <span
-                                className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                                style={{ backgroundColor: `${d.stage.color}20`, color: d.stage.color }}
-                              >
-                                {d.stage.name}
+                              <span className="inline-flex min-w-0 items-center gap-1.5">
+                                <span
+                                  aria-hidden
+                                  className="size-1.5 shrink-0 rounded-full"
+                                  style={{ backgroundColor: d.stage.color }}
+                                />
+                                <span className="truncate">{d.stage.name}</span>
                               </span>
                             ) : null}
-                          </span>
-                          <span className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                            <span>{formatCurrency(d.value, d.currency ?? undefined)}</span>
                             {d.status && d.status !== 'open' ? (
-                              <span className={cn(d.status === 'won' ? 'text-primary' : 'text-red-400')}>
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden
+                                  className={cn('size-1.5 rounded-full', d.status === 'won' ? 'bg-emerald-500' : 'bg-red-500')}
+                                />
                                 {t(d.status === 'won' ? 'Won' : 'Lost')}
                               </span>
                             ) : null}
