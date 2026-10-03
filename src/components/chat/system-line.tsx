@@ -43,10 +43,10 @@ export function SystemLine({ message, userId, nameOf }: SystemLineProps) {
       break;
   }
   return (
-    <div className="my-2 flex justify-center" data-message-id={message.id}>
-      <span className="max-w-[85%] rounded-full bg-muted/70 px-3 py-1 text-center text-[11px] text-muted-foreground">
-        {text}
-      </span>
+    <div className="my-2 flex items-center justify-center gap-2" data-message-id={message.id}>
+      <span className="h-px w-7 shrink-0 bg-border" aria-hidden />
+      <span className="max-w-[80%] text-center text-[11px] leading-4 text-muted-foreground">{text}</span>
+      <span className="h-px w-7 shrink-0 bg-border" aria-hidden />
     </div>
   );
 }

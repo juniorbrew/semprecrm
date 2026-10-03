@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MessagesSquare } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -24,6 +23,22 @@ import { useChatPresence } from "@/components/chat/presence-provider";
 import { GroupMembersDialog } from "@/components/chat/group-members-dialog";
 import { PeopleList } from "@/components/chat/people-list";
 import { ThreadPanel } from "@/components/chat/thread-panel";
+import { useDensity } from "@/components/tasks/density";
+import { DensityToggle } from "@/components/tasks/density-toggle";
+import type { Language } from "@/lib/i18n";
+
+const CHAT_COPY: Record<Language, { title: string; compact: string; empty: string }> = {
+  "pt-BR": {
+    title: "Chat",
+    compact: "Lista compacta",
+    empty: "Escolha um colega ou grupo para conversar. As mensagens ficam dentro da sua conta.",
+  },
+  "en-US": {
+    title: "Chat",
+    compact: "Compact list",
+    empty: "Pick a teammate or a group to start a conversation. Messages stay inside your account.",
+  },
+};
 
 type Selection = { kind: "person"; userId: string } | { kind: "group"; threadId: string };
 
@@ -43,7 +58,9 @@ function selectionKey(s: Selection | null): string | null {
  */
 export default function ChatPage() {
   const supabase = useMemo(() => createClient(), []);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const copy = CHAT_COPY[language] ?? CHAT_COPY["pt-BR"];
+  const [density, toggleDensity] = useDensity("chat");
   const { user, accountId, accountRole } = useAuth();
   const userId = user?.id ?? null;
   const router = useRouter();
@@ -227,7 +244,14 @@ export default function ChatPage() {
         )}
         aria-label={t("People")}
       >
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border pl-4 pr-2.5">
+          <h1 className="text-[15px] font-semibold text-foreground">{copy.title}</h1>
+          <div className="ml-auto">
+            <DensityToggle density={density} onToggle={toggleDensity} label={copy.compact} />
+          </div>
+        </div>
         <PeopleList
+          compact={density === "compact"}
           rows={rows}
           loading={loading}
           selectedKey={selectedKey}
@@ -265,14 +289,8 @@ export default function ChatPage() {
             <div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" role="status" aria-label={t("Loading...")} />
           </div>
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-            <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-              <MessagesSquare className="size-7" />
-            </div>
-            <p className="text-base font-semibold text-foreground">{t("Internal chat")}</p>
-            <p className="max-w-sm text-sm text-muted-foreground">
-              {t("Pick a teammate or a group on the left to start a conversation. Messages stay inside your account.")}
-            </p>
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <p className="max-w-sm text-sm text-muted-foreground">{copy.empty}</p>
           </div>
         )}
       </section>

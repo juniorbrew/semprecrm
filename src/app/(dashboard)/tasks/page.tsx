@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CheckSquare, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
@@ -34,6 +34,9 @@ import {
   type TaskView,
 } from "@/components/tasks";
 import { GatedButton } from "@/components/ui/gated-button";
+import { tasksCopy } from "@/components/tasks/copy";
+import { useDensity } from "@/components/tasks/density";
+import { DensityToggle } from "@/components/tasks/density-toggle";
 
 const VIEW_STORAGE_KEY = "semprecrm-tasks-view";
 
@@ -53,8 +56,10 @@ function isScope(value: string | null): value is TaskScope {
 
 export default function TasksPage() {
   const supabase = useMemo(() => createClient(), []);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const copy = tasksCopy(language);
   const { accountId, user } = useAuth();
+  const [density, toggleDensity] = useDensity("tasks");
   const canWrite = useCan("send-messages");
   const searchParams = useSearchParams();
 
@@ -206,15 +211,18 @@ export default function TasksPage() {
 
   if (loading || statusesLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4" aria-busy="true">
         <div className="flex items-center justify-between">
-          <div className="h-8 w-40 animate-pulse rounded bg-muted" />
-          <div className="h-9 w-32 animate-pulse rounded-lg bg-muted" />
+          <div className="h-7 w-32 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
+          <div className="h-8 w-32 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
         </div>
-        <div className="h-9 w-full animate-pulse rounded-lg bg-muted/60" />
-        <div className="space-y-2">
+        <div className="h-7 w-full max-w-xl animate-pulse rounded-full bg-muted/60 motion-reduce:animate-none" />
+        <div className="divide-y divide-border border-y border-border">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-14 animate-pulse rounded-xl bg-muted/50" />
+            <div key={i} className="flex items-center gap-3 px-2 py-3">
+              <div className="size-4 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+              <div className="h-3.5 w-1/3 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+            </div>
           ))}
         </div>
       </div>
@@ -222,37 +230,34 @@ export default function TasksPage() {
   }
 
   return (
-    <div className="space-y-5 board-fit:flex board-fit:h-full board-fit:flex-col">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <CheckSquare className="h-4.5 w-4.5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground">{t("Tasks")}</h1>
-            <p className="text-xs text-muted-foreground">
-              {counts.open} {counts.open === 1 ? t("open task") : t("open tasks")}
-              {counts.overdue > 0 && (
-                <>
-                  {" · "}
-                  <span className="font-medium text-red-600 dark:text-red-400">
-                    {counts.overdue} {counts.overdue === 1 ? t("overdue task") : t("overdue tasks")}
-                  </span>
-                </>
-              )}
-            </p>
-          </div>
-        </div>
-        <GatedButton
-          canAct={canWrite}
-          gateReason="create tasks"
-          onClick={() => openCreate()}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+    <div className="space-y-4 board-fit:flex board-fit:h-full board-fit:flex-col">
+      {/* Header: title + neutral count, density, one filled action. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">{copy.title}</h1>
+        <span
+          className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold tabular-nums text-muted-foreground"
+          title={`${counts.open} ${counts.open === 1 ? t("open task") : t("open tasks")}`}
         >
-          <Plus className="mr-1 h-4 w-4" />
-          {t("New task")}
-        </GatedButton>
+          {counts.open}
+        </span>
+        {counts.overdue > 0 && (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+            <span aria-hidden className="size-1.5 rounded-full bg-red-500" />
+            {copy.overdue(counts.overdue)}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          <DensityToggle density={density} onToggle={toggleDensity} label={copy.compact} />
+          <GatedButton
+            canAct={canWrite}
+            gateReason="create tasks"
+            onClick={() => openCreate()}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="mr-1 size-4" />
+            {t("New task")}
+          </GatedButton>
+        </div>
       </div>
 
       <TaskFilters
@@ -273,7 +278,9 @@ export default function TasksPage() {
           onOpen={openTask}
           onMove={handleMove}
           onAdd={canWrite ? openCreate : undefined}
+          onComplete={canWrite ? (task) => void handleToggleDone(task, true) : undefined}
           readOnly={!canWrite}
+          compact={density === "compact"}
         />
       ) : (
         <TaskList
@@ -283,6 +290,7 @@ export default function TasksPage() {
           onOpen={openTask}
           onToggleDone={handleToggleDone}
           readOnly={!canWrite}
+          compact={density === "compact"}
         />
       )}
 

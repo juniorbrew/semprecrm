@@ -26,8 +26,9 @@ import { chipStyle, eventColor } from "./colors";
 import { EventChip } from "./event-chip";
 import { ProviderIcon } from "./provider-icon";
 
-/** Pixels per hour on the time grid. */
-const HOUR_PX = 56;
+/** Pixels per hour on the time grid (comfortable / compact density). */
+const HOUR_PX_COMFORTABLE = 56;
+const HOUR_PX_COMPACT = 40;
 const DRAG_THRESHOLD_PX = 4;
 
 export interface TimeGridViewProps {
@@ -36,6 +37,8 @@ export interface TimeGridViewProps {
   events: CalendarEvent[];
   tz: string;
   now: Date;
+  /** Compact density: 40 px per hour instead of 56. */
+  compact?: boolean;
   readOnly?: boolean;
   onOpenEvent: (event: CalendarEvent) => void;
   /** Click / drag on an empty slot → quick-create for `[starts_at, ends_at)`. */
@@ -68,9 +71,10 @@ type Drag =
  * hour), dragging an event moves it (snapped to 30 min, across
  * columns), the bottom handle resizes, a click opens the drawer.
  */
-export function TimeGridView({ days, events, tz, now, readOnly, onOpenEvent, onCreateSlot, onMoveEvent, onResizeEvent }: TimeGridViewProps) {
+export function TimeGridView({ days, events, tz, now, compact, readOnly, onOpenEvent, onCreateSlot, onMoveEvent, onResizeEvent }: TimeGridViewProps) {
   const { t, language } = useLanguage();
   const names = weekdayNames(language);
+  const HOUR_PX = compact ? HOUR_PX_COMPACT : HOUR_PX_COMFORTABLE;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -80,7 +84,7 @@ export function TimeGridView({ days, events, tz, now, readOnly, onOpenEvent, onC
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_PX;
-  }, []);
+  }, [HOUR_PX]);
 
   const nowMin = minutesOfDay(now, tz);
   const todayIndex = days.findIndex((d) => d.isToday);
@@ -218,23 +222,23 @@ export function TimeGridView({ days, events, tz, now, readOnly, onOpenEvent, onC
     };
     // `locate` reads refs only; days / callbacks are the real inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, tz, onCreateSlot, onMoveEvent, onOpenEvent, onResizeEvent]);
+  }, [days, tz, HOUR_PX, onCreateSlot, onMoveEvent, onOpenEvent, onResizeEvent]);
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
-  const gutter = "w-12 shrink-0";
+  const gutter = "w-14 shrink-0";
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-background">
       {/* Day headers */}
       <div className="flex shrink-0 border-b border-border">
         <div className={gutter} />
         {days.map((day) => (
           <div key={day.key} className="flex flex-1 flex-col items-center py-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{names[day.weekday]}</span>
+            <span className={cn("text-[10.5px] font-semibold uppercase tracking-[0.07em]", day.isToday ? "text-primary" : "text-muted-foreground")}>{names[day.weekday]}</span>
             <span
               className={cn(
-                "mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full text-sm tabular-nums",
-                day.isToday ? "bg-primary font-semibold text-primary-foreground" : "text-foreground",
+                "mt-0.5 inline-flex size-7 items-center justify-center rounded-full text-sm tabular-nums",
+                day.isToday ? "bg-primary/15 font-semibold text-primary" : "text-foreground",
               )}
             >
               {day.dayOfMonth}
@@ -244,8 +248,8 @@ export function TimeGridView({ days, events, tz, now, readOnly, onOpenEvent, onC
       </div>
 
       {/* All-day strip */}
-      <div className="flex shrink-0 border-b border-border bg-muted/20">
-        <div className={cn(gutter, "flex items-start justify-end pr-1 pt-1 text-[10px] text-muted-foreground")}>{t("All day")}</div>
+      <div className="flex shrink-0 border-b border-border">
+        <div className={cn(gutter, "flex items-start justify-end pr-1.5 pt-1.5 text-right text-[10px] leading-3 text-muted-foreground")}>{t("All day")}</div>
         {days.map((day, i) => (
           <div key={day.key} className={cn("flex min-h-7 flex-1 flex-col gap-0.5 p-0.5", i > 0 && "border-l border-border/60")}>
             {perDay[i].allDay.map((ev) => (
@@ -275,8 +279,8 @@ export function TimeGridView({ days, events, tz, now, readOnly, onOpenEvent, onC
           >
             {/* Hour lines */}
             {hours.map((h) => (
-              <div key={h} className="pointer-events-none absolute inset-x-0 border-t border-border/60" style={{ top: h * HOUR_PX }}>
-                <div className="border-t border-dashed border-border/40" style={{ marginTop: HOUR_PX / 2 }} />
+              <div key={h} className="pointer-events-none absolute inset-x-0 border-t border-border/70" style={{ top: h * HOUR_PX }}>
+                <div className="border-t border-border/30" style={{ marginTop: HOUR_PX / 2 }} />
               </div>
             ))}
             {days.map((day, i) => {

@@ -72,8 +72,11 @@ import { memberName, useCalendarMembers, useCalendarTimezone } from "./hooks";
 import { timezoneLabel } from "./timezone-label";
 import { ProviderIcon } from "./provider-icon";
 
+/** Section heading, as in the inbox contact panel: small, muted, uppercase. */
+const SECTION_TITLE = "text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground";
+
 const SELECT_CLASS =
-  "h-8 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
+  "h-8 w-full rounded-md border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
 
 export interface EventDrawerProps {
   open: boolean;
@@ -495,18 +498,19 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
 
   return (
     <div className="flex h-full flex-col">
-      <SheetHeader className="gap-1 border-b border-border/50 p-4 pr-12">
+      <SheetHeader className="gap-1 border-b border-border p-4 pr-12">
         <div className="flex items-center gap-2">
-          <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: previewColor }} aria-hidden />
+          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: previewColor }} aria-hidden />
           <SheetTitle className="text-popover-foreground">{isEdit ? t("Appointment") : t("New appointment")}</SheetTitle>
           {cancelled && (
-            <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground" />
               {t("Cancelled")}
             </span>
           )}
           {isEdit && event && event.source !== "internal" && (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
               title={event.source === "google" ? t("Synced from Google Calendar") : t("Synced from Outlook")}
             >
               <ProviderIcon provider={event.source} />
@@ -525,7 +529,7 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         {/* My answer — only when I am an attendee of an existing event. */}
         {isEdit && myAttendance && !cancelled && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-primary/10 px-3 py-2">
             <span className="text-xs text-foreground">
               {myAttendance.response === "accepted"
                 ? t("You accepted this appointment")
@@ -578,9 +582,9 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
         </div>
 
         {/* When */}
-        <div className="grid gap-2 rounded-lg border border-border/60 p-3">
+        <div className="grid gap-2 border-t border-border pt-4">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("When")}</p>
+            <p className={SECTION_TITLE}>{t("When")}</p>
             <label className="inline-flex items-center gap-2 text-xs text-foreground">
               <Checkbox
                 checked={allDay}
@@ -837,8 +841,8 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
         </div>
 
         {/* Links */}
-        <div className="grid gap-3 rounded-lg border border-border/60 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("Links")}</p>
+        <div className="grid gap-3 border-t border-border pt-4">
+          <p className={SECTION_TITLE}>{t("Links")}</p>
 
           {/* Contact */}
           <div className="grid gap-1.5">
@@ -970,7 +974,7 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
 
         {/* Task due option (create from a task) */}
         {!isEdit && offerTaskDue && taskId && (
-          <label className="flex items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs text-foreground">
+          <label className="flex items-center gap-2 border-t border-border pt-4 text-xs text-foreground">
             <Checkbox checked={setTaskDue} onCheckedChange={(c) => setSetTaskDue(c === true)} />
             {t("Also set the task's due date to the appointment start")}
           </label>
@@ -984,9 +988,9 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
       </div>
 
       {/* Footer */}
-      <div className="border-t border-border/50 bg-popover/50 p-3">
+      <div className="border-t border-border p-3">
         {confirmDelete ? (
-          <div className="flex items-center gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+          <div className="flex items-center gap-3 rounded-md bg-red-500/10 px-3 py-2" role="alert">
             <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
             <p className="flex-1 text-xs text-foreground">{t("Delete this appointment? This cannot be undone.")}</p>
             <Button
@@ -1089,7 +1093,7 @@ function OpenLink({ href, label, icon: Icon }: { href: string; label: string; ic
       href={href}
       title={label}
       aria-label={label}
-      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
     >
       <Icon className="h-3.5 w-3.5" />
       <ExternalLink className="h-3 w-3" />
@@ -1139,7 +1143,7 @@ function TaskPicker({
 
   if (task) {
     return (
-      <div className="flex h-8 items-center gap-2 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground">
+      <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2.5 text-sm text-foreground">
         <CheckSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{task.title}</span>
         {!disabled && (

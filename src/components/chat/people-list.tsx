@@ -11,6 +11,11 @@ import { Input } from "@/components/ui/input";
 
 import { lastSeenLabel } from "./last-seen";
 
+/** Selected row: soft brand tint + 3 px accent, as in the inbox list. */
+const ROW =
+  "flex w-full items-center gap-3 px-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none";
+const ROW_SELECTED = "bg-primary/10 shadow-[inset_3px_0_0_var(--primary)]";
+
 interface PeopleListProps {
   rows: ChatListRow[];
   loading: boolean;
@@ -21,6 +26,8 @@ interface PeopleListProps {
   now: number;
   onSelect: (row: ChatListRow) => void;
   onNewGroup: () => void;
+  /** Compact rows: smaller avatar, tighter padding. */
+  compact?: boolean;
 }
 
 /** Short clock / date for the row's right edge. */
@@ -40,7 +47,7 @@ function UnreadBadge({ n, t }: { n: number; t: (s: string) => string }) {
   return (
     <span
       aria-label={`${n} ${n === 1 ? t("unread message") : t("unread messages")}`}
-      className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground"
+      className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 py-px text-[11px] font-bold tabular-nums text-primary-foreground"
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -53,22 +60,22 @@ function UnreadBadge({ n, t }: { n: number; t: (s: string) => string }) {
  * message preview, time and unread badge. Rows come sorted from
  * `buildChatRows`.
  */
-export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect, onNewGroup }: PeopleListProps) {
+export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect, onNewGroup, compact }: PeopleListProps) {
   const { t, language } = useLanguage();
   const [query, setQuery] = useState("");
   const visible = useMemo(() => filterChatRows(rows, query), [rows, query]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border p-3">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-border p-3">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("Search people and groups")}
             aria-label={t("Search people and groups")}
-            className="h-9 pl-8"
+            className="h-8 pl-8 text-sm"
           />
         </div>
         <button
@@ -76,7 +83,7 @@ export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect
           onClick={onNewGroup}
           aria-label={t("New group")}
           title={t("New group")}
-          className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
         >
           <UsersRound className="size-4" />
         </button>
@@ -86,7 +93,7 @@ export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect
         {loading ? (
           [1, 2, 3].map((i) => (
             <li key={i} className="flex items-center gap-3 px-3 py-3">
-              <div className="size-10 animate-pulse rounded-full bg-muted" />
+              <div className="size-10 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
               <div className="flex-1 space-y-2">
                 <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
                 <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
@@ -109,13 +116,15 @@ export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect
                     type="button"
                     onClick={() => onSelect(item)}
                     aria-current={selected ? "true" : undefined}
-                    className={cn(
-                      "flex w-full items-center gap-3 px-3 py-3 text-left transition-colors",
-                      selected ? "bg-primary/10" : "hover:bg-muted/60",
-                    )}
+                    className={cn(ROW, compact ? "py-2" : "py-2.5", selected ? ROW_SELECTED : "hover:bg-muted/60")}
                   >
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                      <Users className="size-5" />
+                    <span
+                      className={cn(
+                        "flex shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground",
+                        compact ? "size-8" : "size-10",
+                      )}
+                    >
+                      <Users className="size-4" aria-hidden />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
@@ -147,13 +156,10 @@ export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect
                   type="button"
                   onClick={() => onSelect(item)}
                   aria-current={selected ? "true" : undefined}
-                  className={cn(
-                    "flex w-full items-center gap-3 px-3 py-3 text-left transition-colors",
-                    selected ? "bg-primary/10" : "hover:bg-muted/60",
-                  )}
+                  className={cn(ROW, compact ? "py-2" : "py-2.5", selected ? ROW_SELECTED : "hover:bg-muted/60")}
                 >
                   <span className="relative shrink-0">
-                    <Avatar className="size-10">
+                    <Avatar className={compact ? "size-8" : "size-10"}>
                       {row.member.avatar_url ? <AvatarImage src={row.member.avatar_url} alt={name} /> : null}
                       <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
                         {name.charAt(0).toUpperCase()}
@@ -163,7 +169,7 @@ export function PeopleList({ rows, loading, selectedKey, isOnline, now, onSelect
                       aria-label={online ? t("Online") : t("Offline")}
                       title={status}
                       className={cn(
-                        "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-card",
+                        "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-card",
                         online ? "bg-emerald-500" : "bg-muted-foreground/50",
                       )}
                     />
