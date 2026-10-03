@@ -10,17 +10,8 @@ import { Loader2, FileText, ArrowRight, Search, Settings2 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import { templateLanguageLabel } from './template-language-label';
 import { isStubTemplate } from '@/lib/whatsapp/template-row-guard';
-
-/**
- * Meta template categories are stored title-cased ('Marketing' /
- * 'Utility' / 'Authentication'); the label is looked up through the i18n
- * layer so the badge reads "Utilidade" / "Autenticação" in pt-BR.
- */
-const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  Utility: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  Authentication: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-};
+import { cn } from '@/lib/utils';
+import { StepFooter, StepHeader, optionRowClass } from './wizard-ui';
 
 /** Show the search box once the grid is big enough to need it. */
 const SEARCH_THRESHOLD = 4;
@@ -83,29 +74,28 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
+      <p role="status" className="flex h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+        {t('Loading…')}
+      </p>
     );
   }
 
   if (error) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{t(error)}</p>
-      </div>
+      <p role="alert" className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+        {t(error)}
+      </p>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">{t('Choose a template')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t('Select an approved message template for the broadcast.')}
-          </p>
-        </div>
+        <StepHeader
+          title={t('Choose a template')}
+          description={t('Select an approved message template for the broadcast.')}
+        />
         {templates.length > 0 && (
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span className="tabular-nums">
@@ -113,9 +103,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
             </span>
             <Link
               href={TEMPLATES_SETTINGS_HREF}
-              className="inline-flex items-center gap-1 text-primary hover:underline"
+              className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <Settings2 className="size-3.5" aria-hidden="true" />
               {t('Manage templates')}
             </Link>
           </div>
@@ -123,95 +113,78 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
       </div>
 
       {templates.length >= SEARCH_THRESHOLD && (
-        <div className="relative">
+        <div className="relative max-w-xs">
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
           />
           <Input
+            type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('Search templates…')}
             aria-label={t('Search templates…')}
-            className="border-border bg-muted pl-9 text-foreground placeholder:text-muted-foreground"
+            className="h-8 pl-8 text-sm"
           />
         </div>
       )}
 
       {templates.length === 0 ? (
-        <div className="flex h-56 flex-col items-center justify-center rounded-xl border border-border bg-card/50 px-6 text-center">
-          <FileText className="mb-2 h-8 w-8 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">{t('No templates available.')}</p>
-          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-            {t('Only approved templates can be used in broadcasts.')}{' '}
-            {t('Create a template in Settings first.')}
+        <div className="border-y border-border py-12 text-center">
+          <p className="text-sm text-muted-foreground">
+            {t('No templates available.')} {t('Only approved templates can be used in broadcasts.')}
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4 border-border"
-            render={<Link href={TEMPLATES_SETTINGS_HREF} />}
-          >
-            <Settings2 className="h-3.5 w-3.5" />
+          <Button variant="outline" size="sm" className="mt-3" render={<Link href={TEMPLATES_SETTINGS_HREF} />}>
+            <Settings2 />
             {t('Manage templates')}
           </Button>
         </div>
       ) : filteredTemplates.length === 0 ? (
-        <div className="flex h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50">
-          <p className="text-sm text-muted-foreground">{t('No template matches your search.')}</p>
-        </div>
+        <p className="border-y border-border py-10 text-center text-sm text-muted-foreground">
+          {t('No template matches your search.')}
+        </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="divide-y divide-border border-y border-border">
           {filteredTemplates.map((template) => {
             const isSelected = selectedTemplate?.id === template.id;
-            const catColor = categoryColors[template.category] ?? categoryColors.Utility;
-
             return (
-              <button
-                key={template.id}
-                type="button"
-                aria-pressed={isSelected}
-                onClick={() => onSelect(template)}
-                className={`flex flex-col gap-3 rounded-xl border p-4 text-left transition-all ${
-                  isSelected
-                    ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                    : 'border-border bg-card/50 hover:border-primary/40 hover:bg-card'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-sm font-medium text-foreground">{template.name}</h3>
-                  <span
-                    className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${catColor}`}
-                  >
-                    {t(template.category)}
+              <li key={template.id}>
+                <button
+                  type="button"
+                  aria-pressed={isSelected}
+                  onClick={() => onSelect(template)}
+                  className={optionRowClass(isSelected)}
+                >
+                  <FileText
+                    className={cn('mt-0.5 size-4 shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="truncate text-sm font-medium text-foreground">{template.name}</span>
+                      {/* Status is omitted on purpose — every template here is APPROVED. */}
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {t(template.category)} · <span data-no-translate>{templateLanguageLabel(template.language, language)}</span>
+                      </span>
+                    </span>
+                    <span className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{template.body_text}</span>
                   </span>
-                </div>
-                <p className="line-clamp-3 text-xs text-muted-foreground">{template.body_text}</p>
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                  <span data-no-translate>{templateLanguageLabel(template.language, language)}</span>
-                  {/* Status is omitted on purpose — every template
-                      shown here is already filtered to APPROVED,
-                      so the chip carried no information. */}
-                </div>
-              </button>
+                </button>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
-        <Button variant="outline" onClick={onBack} className="border-border text-muted-foreground">
+      <StepFooter>
+        <Button variant="ghost" onClick={onBack} className="text-muted-foreground hover:text-foreground">
           {t('Back')}
         </Button>
-        <Button
-          onClick={onNext}
-          disabled={!selectedTemplate}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        <Button onClick={onNext} disabled={!selectedTemplate}>
           {t('Next')}
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight />
         </Button>
-      </div>
+      </StepFooter>
     </div>
   );
 }

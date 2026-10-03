@@ -14,9 +14,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, Save } from 'lucide-react';
+import { Label } from '@/components/ui/label';
 import { useLanguage } from '@/hooks/use-language';
 import { templateLanguageLabel } from './template-language-label';
+import { SECTION_TITLE, StepFooter, StepHeader } from './wizard-ui';
 
 interface AudienceConfig {
   type: string;
@@ -93,159 +95,131 @@ export function Step4ScheduleSend({
           ? t('CSV Upload')
           : t('Custom Field');
 
+  const summary: { label: string; value: React.ReactNode; noTranslate?: boolean }[] = [
+    { label: t('Template'), value: template.name },
+    { label: t('Audience'), value: audienceLabel },
+    {
+      label: t('Estimated Reach'),
+      value: loadingReach ? (
+        <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label={t('Calculating…')} />
+      ) : (
+        <span className="font-semibold tabular-nums">{estimatedReach.toLocaleString(language)}</span>
+      ),
+    },
+    { label: t('Language'), value: templateLanguageLabel(template.language, language), noTranslate: true },
+  ];
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">{t('Review & Send')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('Name the broadcast, review the details and send.')}
-        </p>
-      </div>
+      <StepHeader title={t('Review & Send')} description={t('Name the broadcast, review the details and send.')} />
 
       {/* Broadcast Name */}
-      <div>
-        <label
-          htmlFor="broadcast-name"
-          className="mb-1.5 block text-sm font-medium text-foreground"
-        >
-          {t('Broadcast Name')}
-        </label>
+      <div className="max-w-2xl space-y-1.5">
+        <Label htmlFor="broadcast-name">{t('Broadcast Name')}</Label>
         <Input
           id="broadcast-name"
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder={t('e.g. Summer Sale Announcement')}
-          className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
         />
       </div>
 
-      {/* Summary Card */}
-      <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3">
-        <p className="text-sm font-medium text-foreground">{t('Summary')}</p>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <p className="text-xs text-muted-foreground">{t('Template')}</p>
-            <p className="text-foreground">{template.name}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{t('Audience')}</p>
-            <p className="text-foreground">{audienceLabel}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{t('Estimated Reach')}</p>
-            <div className="flex items-center gap-1.5">
-              {loadingReach ? (
-                <Loader2 className="h-3 w-3 animate-spin text-primary" />
-              ) : (
-                <>
-                  <Users className="h-3.5 w-3.5 text-primary" />
-                  <p className="font-medium text-foreground">
-                    {estimatedReach.toLocaleString(language)}
-                  </p>
-                </>
-              )}
+      {/* Summary — hairline rows, no box */}
+      <section className="space-y-1">
+        <h3 className={SECTION_TITLE}>{t('Summary')}</h3>
+        <dl className="divide-y divide-border border-y border-border text-sm">
+          {summary.map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-4 py-2">
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd className="min-w-0 truncate text-right text-foreground" data-no-translate={row.noTranslate || undefined}>
+                {row.value}
+              </dd>
             </div>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{t('Language')}</p>
-            <p className="text-foreground" data-no-translate>
-              {templateLanguageLabel(template.language, language)}
-            </p>
-          </div>
-        </div>
-      </div>
+          ))}
+        </dl>
+      </section>
 
-      {/* Processing overlay */}
+      {/* Send progress — a thin line, not a box */}
       {isProcessing && (
-        <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <p className="text-sm font-medium text-foreground">{t('Sending broadcast...')}</p>
-            </div>
-            <span className="text-xs font-medium text-primary">{progress}%</span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-muted">
+        <section className="space-y-1.5" aria-live="polite">
+          <p className="flex items-center justify-between text-sm text-foreground">
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
+              {t('Sending broadcast...')}
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">{progress}%</span>
+          </p>
+          <div
+            role="progressbar"
+            aria-valuenow={progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={t('Sending broadcast...')}
+            className="h-1 overflow-hidden rounded-full bg-muted"
+          >
             <div
-              className="h-1.5 rounded-full bg-primary transition-all duration-300"
+              className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
               style={{ width: `${progress}%` }}
             />
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
+      <StepFooter>
         <Button
-          variant="outline"
+          variant="ghost"
           onClick={onBack}
           disabled={isProcessing}
-          className="border-border text-muted-foreground"
+          className="text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft />
           {t('Back')}
         </Button>
 
         <div className="flex items-center gap-2">
           {onSaveDraft && (
-            <Button
-              variant="outline"
-              onClick={onSaveDraft}
-              disabled={!name.trim() || isProcessing}
-              className="border-border text-muted-foreground hover:bg-muted disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
+            <Button variant="ghost" onClick={onSaveDraft} disabled={!name.trim() || isProcessing}>
+              <Save />
               {t('Save as draft')}
             </Button>
           )}
 
           <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
-          <DialogTrigger
-            render={
-              <Button
-                disabled={!name.trim() || isProcessing}
-                className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              />
-            }
-          >
-            <Send className="h-4 w-4" />
-            {t('Send Broadcast')}
-          </DialogTrigger>
-          <DialogContent className="border-border bg-popover sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-popover-foreground">{t('Confirm broadcast')}</DialogTitle>
-              <DialogDescription className="text-muted-foreground">
-                {t('You are about to send this broadcast to')}{' '}
-                <span className="font-medium text-popover-foreground">
-                  {estimatedReach.toLocaleString(language)}
-                </span>{' '}
-                {t('contacts using the template')}{' '}
-                <span className="font-medium text-popover-foreground">{template.name}</span>.{' '}
-                {t('This action cannot be undone.')}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setShowConfirm(false)}
-                className="border-border text-muted-foreground"
-              >
-                {t('Cancel')}
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowConfirm(false);
-                  onSend();
-                }}
-                className="bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                <Send className="h-4 w-4" />
-                {t('Confirm & Send')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            <DialogTrigger render={<Button disabled={!name.trim() || isProcessing} />}>
+              <Send />
+              {t('Send Broadcast')}
+            </DialogTrigger>
+            <DialogContent className="border-border bg-popover sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-popover-foreground">{t('Confirm broadcast')}</DialogTitle>
+                <DialogDescription className="text-muted-foreground">
+                  {t('You are about to send this broadcast to')}{' '}
+                  <span className="font-medium text-popover-foreground">
+                    {estimatedReach.toLocaleString(language)}
+                  </span>{' '}
+                  {t('contacts using the template')}{' '}
+                  <span className="font-medium text-popover-foreground">{template.name}</span>.{' '}
+                  {t('This action cannot be undone.')}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowConfirm(false)}>
+                  {t('Cancel')}
+                </Button>
+                <Button
+                  onClick={() => {
+                    setShowConfirm(false);
+                    onSend();
+                  }}
+                >
+                  <Send />
+                  {t('Confirm & Send')}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
-      </div>
+      </StepFooter>
     </div>
   );
 }

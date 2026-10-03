@@ -12,12 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, ArrowRight, Eye, ImageIcon, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import {
   headerMediaUrlError,
   mediaHeaderTypeOf,
 } from '@/lib/broadcast-header-media';
+import { SECTION_TITLE, StepFooter, StepHeader } from './wizard-ui';
 
 type VariableType = 'static' | 'field' | 'custom_field';
 
@@ -226,26 +227,17 @@ export function Step3Personalize({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">{t('Personalize Message')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('Map template variables to contact fields, custom fields, or static values.')}
-        </p>
-      </div>
+      <StepHeader
+        title={t('Personalize Message')}
+        description={t('Map template variables to contact fields, custom fields, or static values.')}
+      />
 
       {mediaHeaderType && (
-        <div className="rounded-xl border border-border bg-card/50 p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <ImageIcon className="h-4 w-4 text-primary" />
-            <p className="text-sm font-medium text-foreground">{t('Header media')}</p>
-            <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium uppercase text-primary">
-              {t(MEDIA_HEADER_LABELS[mediaHeaderType])}
-            </span>
-          </div>
-          <label
-            htmlFor="broadcast-header-media-url"
-            className="mb-1.5 block text-xs font-medium text-muted-foreground"
-          >
+        <section className="space-y-2">
+          <h3 className={SECTION_TITLE}>
+            {t('Header media')} · {t(MEDIA_HEADER_LABELS[mediaHeaderType])}
+          </h3>
+          <label htmlFor="broadcast-header-media-url" className="block text-xs font-medium text-muted-foreground">
             {t('Media URL')}
           </label>
           <Input
@@ -253,6 +245,8 @@ export function Step3Personalize({
             type="url"
             value={headerMediaUrl}
             onChange={(e) => onHeaderMediaUrlChange(e.target.value)}
+            aria-invalid={headerMediaError !== null}
+            aria-describedby={headerMediaError ? 'broadcast-header-media-error' : 'broadcast-header-media-hint'}
             placeholder={`https://example.com/header.${
               mediaHeaderType === 'image'
                 ? 'jpg'
@@ -260,9 +254,8 @@ export function Step3Personalize({
                   ? 'mp4'
                   : 'pdf'
             }`}
-            className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
           />
-          <p className="mt-1.5 text-xs text-muted-foreground">
+          <p id="broadcast-header-media-hint" className="text-xs text-muted-foreground">
             {t('Public URL of the media sent as the message header. Used for every recipient in this broadcast.')}
           </p>
           {mediaHeaderType === 'image' &&
@@ -272,188 +265,170 @@ export function Step3Personalize({
               <img
                 src={headerMediaUrl.trim()}
                 alt={t('Header preview')}
-                className="mt-3 max-h-40 rounded-lg border border-border object-contain"
+                className="max-h-40 rounded-md border border-border object-contain"
               />
             )}
           {headerMediaError && (
-            <p className="mt-1.5 text-xs text-amber-300">
+            <p id="broadcast-header-media-error" role="alert" className="text-xs text-amber-700 dark:text-amber-300">
               {headerMediaError === 'missing'
                 ? t('A media URL is required to send this template.')
                 : t('Enter a valid http(s) URL.')}
             </p>
           )}
-        </div>
+        </section>
       )}
 
       {placeholders.length === 0 && !mediaHeaderType ? (
-        <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            {t('This template has no variables to personalize.')}
-          </p>
-        </div>
+        <p className="border-y border-border py-6 text-center text-sm text-muted-foreground">
+          {t('This template has no variables to personalize.')}
+        </p>
       ) : placeholders.length === 0 ? null : (
-        <div className="space-y-4">
+        <ul className="divide-y divide-border border-y border-border">
           {placeholders.map((placeholder) => {
             const key = placeholder.replace(/^\{\{|\}\}$/g, '');
             const mapping = variables[key] ?? { type: 'static', value: '' };
+            const typeId = `broadcast-var-${key}-type`;
+            const valueId = `broadcast-var-${key}-value`;
 
             return (
-              <div
+              <li
                 key={placeholder}
-                className="rounded-xl border border-border bg-card/50 p-4"
+                className="grid grid-cols-1 items-end gap-3 py-3 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(0,1fr)]"
               >
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-mono font-medium text-primary">
-                    {placeholder}
-                  </span>
+                <span className="self-center font-mono text-xs font-medium text-muted-foreground">{placeholder}</span>
+
+                <div className="space-y-1">
+                  <label id={typeId} className="block text-xs text-muted-foreground">
+                    {t('Mapping type')}
+                  </label>
+                  <Select
+                    value={mapping.type}
+                    items={{
+                      static: t('Static Value'),
+                      field: t('Contact Field'),
+                      custom_field: t('Custom Field'),
+                    }}
+                    onValueChange={(val) =>
+                      updateVariable(key, {
+                        type: val as VariableType,
+                        value: '',
+                      })
+                    }
+                  >
+                    <SelectTrigger aria-labelledby={typeId} className="h-8 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="border-border bg-popover">
+                      <SelectItem value="static">{t('Static Value')}</SelectItem>
+                      <SelectItem value="field">{t('Contact Field')}</SelectItem>
+                      <SelectItem value="custom_field">
+                        {t('Custom Field')}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {t('Mapping type')}
-                    </label>
+                <div className="space-y-1">
+                  <label id={valueId} htmlFor={mapping.type === 'static' ? `${valueId}-input` : undefined} className="block text-xs text-muted-foreground">
+                    {mapping.type === 'static' ? t('Value') : t('Field')}
+                  </label>
+                  {mapping.type === 'static' ? (
+                    <Input
+                      id={`${valueId}-input`}
+                      value={mapping.value}
+                      onChange={(e) =>
+                        updateVariable(key, { value: e.target.value })
+                      }
+                      placeholder={t('Enter value...')}
+                      className="h-8"
+                    />
+                  ) : mapping.type === 'field' ? (
                     <Select
-                      value={mapping.type}
-                      items={{
-                        static: t('Static Value'),
-                        field: t('Contact Field'),
-                        custom_field: t('Custom Field'),
-                      }}
+                      // null (not undefined) keeps the Select controlled before a pick.
+                      value={mapping.value || null}
+                      items={Object.fromEntries(contactFields.map((f) => [f.value, t(f.label)]))}
                       onValueChange={(val) =>
-                        updateVariable(key, {
-                          type: val as VariableType,
-                          value: '',
-                        })
+                        updateVariable(key, { value: val || '' })
                       }
                     >
-                      <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                        <SelectValue />
+                      <SelectTrigger aria-labelledby={valueId} className="h-8 w-full">
+                        <SelectValue placeholder={t('Select field…')} />
                       </SelectTrigger>
                       <SelectContent className="border-border bg-popover">
-                        <SelectItem value="static">{t('Static Value')}</SelectItem>
-                        <SelectItem value="field">{t('Contact Field')}</SelectItem>
-                        <SelectItem value="custom_field">
-                          {t('Custom Field')}
-                        </SelectItem>
+                        {contactFields.map((field) => (
+                          <SelectItem key={field.value} value={field.value}>
+                            {t(field.label)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {mapping.type === 'static' ? t('Value') : t('Field')}
-                    </label>
-                    {mapping.type === 'static' ? (
-                      <Input
-                        value={mapping.value}
-                        onChange={(e) =>
-                          updateVariable(key, { value: e.target.value })
-                        }
-                        placeholder={t('Enter value...')}
-                        className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                      />
-                    ) : mapping.type === 'field' ? (
-                      <Select
-                        value={mapping.value || undefined}
-                        onValueChange={(val) =>
-                          updateVariable(key, { value: val || '' })
-                        }
-                      >
-                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                          <SelectValue placeholder={t('Select field…')} />
-                        </SelectTrigger>
-                        <SelectContent className="border-border bg-popover">
-                          {contactFields.map((field) => (
-                            <SelectItem key={field.value} value={field.value}>
-                              {t(field.label)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Select
-                        value={mapping.value || undefined}
-                        onValueChange={(val) =>
-                          updateVariable(key, { value: val || '' })
-                        }
-                      >
-                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                          <SelectValue
-                            placeholder={
-                              loadingFields
-                                ? t('Loading…')
-                                : customFields.length === 0
-                                  ? t('No custom fields')
-                                  : t('Select custom field…')
-                            }
-                          />
-                        </SelectTrigger>
-                        <SelectContent className="border-border bg-popover">
-                          {customFields.map((f) => (
-                            <SelectItem key={f.id} value={f.id}>
-                              {f.field_name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </div>
+                  ) : (
+                    <Select
+                      value={mapping.value || null}
+                      items={Object.fromEntries(customFields.map((f) => [f.id, f.field_name]))}
+                      onValueChange={(val) =>
+                        updateVariable(key, { value: val || '' })
+                      }
+                    >
+                      <SelectTrigger aria-labelledby={valueId} className="h-8 w-full">
+                        <SelectValue
+                          placeholder={
+                            loadingFields
+                              ? t('Loading…')
+                              : customFields.length === 0
+                                ? t('No custom fields')
+                                : t('Select custom field…')
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="border-border bg-popover">
+                        {customFields.map((f) => (
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.field_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
 
-      {/* Live Preview — rendered as a WhatsApp-style bubble so the user
-          sees approximately what the recipient will see. */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Eye className="h-4 w-4 text-primary" />
-          <p className="text-sm font-medium text-foreground">{t('Live Preview')}</p>
-          <span className="text-xs text-muted-foreground">({previewLabel})</span>
-          {loadingPreview && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-          )}
-        </div>
-        <div className="rounded-lg bg-[#0e1a12] p-3">
-          <div className="ml-auto max-w-[85%] rounded-lg bg-primary/30 px-3 py-2 shadow-sm">
-            <p className="whitespace-pre-wrap text-sm text-primary">
-              {previewText}
-            </p>
+      {/* Live preview — an outgoing bubble like the inbox (brand fill),
+          on a plain muted surface. */}
+      <section className="space-y-2">
+        <h3 className={SECTION_TITLE}>
+          {t('Live Preview')} <span className="normal-case tracking-normal">· {previewLabel}</span>
+          {loadingPreview && <Loader2 className="ml-1.5 inline size-3 animate-spin" aria-hidden />}
+        </h3>
+        <div className="rounded-[var(--radius)] bg-muted/50 p-3" aria-live="polite">
+          <div className="ml-auto max-w-[85%] rounded-[calc(var(--radius)+2px)] rounded-br-[4px] bg-primary px-3 py-2 text-primary-foreground">
+            <p className="whitespace-pre-wrap text-sm">{previewText}</p>
           </div>
         </div>
-      </div>
+      </section>
 
       {unmappedKeys.length > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        <p role="status" className="border-l-2 border-amber-500/70 pl-3 text-xs text-muted-foreground">
           {t('Map every placeholder before continuing — still missing')}{' '}
-          <span className="font-mono font-semibold">
-            {unmappedKeys.join(', ')}
-          </span>
+          <span className="font-mono font-semibold text-foreground">{unmappedKeys.join(', ')}</span>
           {t('. Otherwise those placeholders will ship to Meta as empty strings.')}
-        </div>
+        </p>
       )}
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
-        <Button
-          variant="outline"
-          onClick={onBack}
-          className="border-border text-muted-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
+      <StepFooter>
+        <Button variant="ghost" onClick={onBack} className="text-muted-foreground hover:text-foreground">
+          <ArrowLeft />
           {t('Back')}
         </Button>
-        <Button
-          onClick={onNext}
-          disabled={unmappedKeys.length > 0 || headerMediaError !== null}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        <Button onClick={onNext} disabled={unmappedKeys.length > 0 || headerMediaError !== null}>
           {t('Next')}
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight />
         </Button>
-      </div>
+      </StepFooter>
     </div>
   );
 }
