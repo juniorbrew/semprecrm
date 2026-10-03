@@ -27,7 +27,8 @@ interface DetailResponse {
   knowledge_items: number | null;
 }
 
-const TAB_CLASS = "px-3 text-sm";
+const TAB_CLASS =
+  "px-3 text-sm text-muted-foreground data-active:text-foreground after:bg-primary transition-colors duration-150 motion-reduce:transition-none";
 
 /** One AI agent: operation bar + Configuração | Teste. */
 export default function AiAgentPage() {
@@ -95,11 +96,14 @@ export default function AiAgentPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/ai/agents" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <Link
+          href="/ai/agents"
+          className="inline-flex items-center gap-1 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+        >
           <ArrowLeft className="size-3.5" />
           {t("AI agents")}
         </Link>
-        <h1 className="mt-1 text-2xl font-bold text-foreground" data-no-translate>
+        <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground" data-no-translate>
           {data?.agent.name ?? " "}
         </h1>
         {data?.agent.description ? (
@@ -112,7 +116,7 @@ export default function AiAgentPage() {
       {loadError ? (
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
           {t(loadError)}
-          <Button size="sm" variant="outline" onClick={() => void load()}>
+          <Button size="sm" variant="ghost" onClick={() => void load()}>
             {t("Try again")}
           </Button>
         </div>

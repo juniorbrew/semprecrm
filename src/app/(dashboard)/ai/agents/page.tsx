@@ -62,23 +62,30 @@ export default function AiAgentsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("AI agents")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("Assistants that suggest or send replies on WhatsApp, each with its own instructions, channels and limits.")}
-          </p>
+    <div className="space-y-4">
+      {/* Header: title + count, one filled action */}
+      <div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">{t("AI agents")}</h1>
+          {data && data.agents.length > 0 ? (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold tabular-nums text-muted-foreground">
+              {data.agents.length}
+            </span>
+          ) : null}
+          <GatedButton
+            size="sm"
+            canAct={canEdit}
+            gateReason="create AI agents"
+            onClick={() => setNewOpen(true)}
+            className="ml-auto"
+          >
+            <Plus />
+            {t("New agent")}
+          </GatedButton>
         </div>
-        <GatedButton
-          canAct={canEdit}
-          gateReason="create AI agents"
-          onClick={() => setNewOpen(true)}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="size-4" />
-          {t("New agent")}
-        </GatedButton>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t("Assistants that suggest or send replies on WhatsApp, each with its own instructions, channels and limits.")}
+        </p>
       </div>
 
       {loadError ? (
