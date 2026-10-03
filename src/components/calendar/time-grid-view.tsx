@@ -225,7 +225,7 @@ export function TimeGridView({ days, events, tz, now, compact, readOnly, onOpenE
   }, [days, tz, HOUR_PX, onCreateSlot, onMoveEvent, onOpenEvent, onResizeEvent]);
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
-  const gutter = "w-12 shrink-0";
+  const gutter = "w-14 shrink-0";
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-background">
@@ -249,7 +249,7 @@ export function TimeGridView({ days, events, tz, now, compact, readOnly, onOpenE
 
       {/* All-day strip */}
       <div className="flex shrink-0 border-b border-border">
-        <div className={cn(gutter, "flex items-start justify-end pr-1 pt-1 text-[10px] text-muted-foreground")}>{t("All day")}</div>
+        <div className={cn(gutter, "flex items-start justify-end pr-1.5 pt-1.5 text-right text-[10px] leading-3 text-muted-foreground")}>{t("All day")}</div>
         {days.map((day, i) => (
           <div key={day.key} className={cn("flex min-h-7 flex-1 flex-col gap-0.5 p-0.5", i > 0 && "border-l border-border/60")}>
             {perDay[i].allDay.map((ev) => (
