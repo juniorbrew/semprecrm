@@ -53,9 +53,11 @@ export const PRIORITY_LABELS: Record<TaskPriority, string> = {
   urgent: "Urgent",
 };
 
+// Only what needs attention gets a soft tinted pill (high / urgent);
+// low and normal stay quiet muted text.
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
-  low: "bg-muted text-muted-foreground",
-  normal: "bg-muted text-foreground",
+  low: "text-muted-foreground",
+  normal: "text-muted-foreground",
   high: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
   urgent: "bg-red-500/15 text-red-600 dark:text-red-400",
 };
@@ -86,12 +88,12 @@ export function PriorityChip({
       title={label}
       aria-label={label}
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+        "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[11px] font-medium",
         PRIORITY_CLASS[priority],
         className,
       )}
     >
-      <Icon className="h-3 w-3" />
+      <Icon className="size-3" aria-hidden />
       {!compact && label}
     </span>
   );
@@ -114,13 +116,13 @@ export function StatusChip({
     <span
       data-no-translate
       className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-foreground",
+        "inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground",
         className,
       )}
     >
       <span
         aria-hidden
-        className="h-2 w-2 rounded-full"
+        className="size-1.5 shrink-0 rounded-full"
         style={{ backgroundColor: status.color }}
       />
       {statusName(status, language)}
@@ -132,11 +134,13 @@ export function StatusChip({
 // Due
 // ------------------------------------------------------------
 
-const DUE_TONE_CLASS: Record<DueTone, string> = {
-  overdue: "bg-red-500/10 text-red-600 dark:text-red-400 font-semibold",
-  today: "bg-amber-500/15 text-amber-700 dark:text-amber-400 font-semibold",
-  soon: "bg-muted text-foreground",
-  later: "text-muted-foreground",
+// Urgency as dot + text (overdue red, today amber), like the deal
+// card's close date; the rest is a quiet date with a calendar icon.
+const DUE_TONE: Record<DueTone, { text: string; dot?: string }> = {
+  overdue: { text: "font-medium text-red-600 dark:text-red-400", dot: "bg-red-500" },
+  today: { text: "font-medium text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  soon: { text: "text-foreground/80" },
+  later: { text: "text-muted-foreground" },
 };
 
 export function DueChip({
@@ -152,16 +156,21 @@ export function DueChip({
   const { language } = useLanguage();
   const info = dueInfo(dueAt, language);
   if (!info) return null;
+  const tone = done ? null : DUE_TONE[info.tone];
   return (
     <span
       title={info.long}
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
-        done ? "text-muted-foreground line-through" : DUE_TONE_CLASS[info.tone],
+        "inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 text-[11px]",
+        tone ? tone.text : "text-muted-foreground line-through",
         className,
       )}
     >
-      <CalendarClock className="h-3 w-3" />
+      {tone?.dot ? (
+        <span aria-hidden className={cn("size-1.5 rounded-full", tone.dot)} />
+      ) : (
+        <CalendarClock className="size-3" aria-hidden />
+      )}
       {info.short}
     </span>
   );

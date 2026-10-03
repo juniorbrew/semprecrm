@@ -28,9 +28,9 @@ import { Plus } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
 import { dndAccessibility } from "@/lib/dnd-accessibility";
 import { groupByStatus, sortStatuses, type Task, type TaskMember, type TaskStatus } from "@/lib/tasks";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { tasksCopy } from "./copy";
 import { TaskCard } from "./task-card";
 import { statusName } from "./task-chips";
 
@@ -45,7 +45,10 @@ export interface TaskBoardProps {
    */
   onMove: (taskId: string, statusId: string, orderedIds: string[]) => void;
   onAdd?: (statusId: string) => void;
+  /** Quick "Concluir" on the cards (writers only). */
+  onComplete?: (task: Task) => void;
   readOnly?: boolean;
+  compact?: boolean;
 }
 
 type Columns = Record<string, string[]>;
@@ -69,7 +72,9 @@ export function TaskBoard({
   onOpen,
   onMove,
   onAdd,
+  onComplete,
   readOnly,
+  compact,
 }: TaskBoardProps) {
   const { language } = useLanguage();
   const sorted = useMemo(() => sortStatuses(statuses), [statuses]);
@@ -91,7 +96,12 @@ export function TaskBoard({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    // Space picks a card up, arrows move, Space / Enter drop, Esc cancels.
+    // Enter is not a start key so it keeps opening the focused card.
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] },
+    }),
   );
 
   function findColumn(id: UniqueIdentifier): string | null {
@@ -169,7 +179,7 @@ export function TaskBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 lg:snap-none board-fit:min-h-0 board-fit:flex-1">
+      <div className="flex snap-x snap-mandatory scroll-px-4 gap-2.5 overflow-x-auto pb-3 lg:snap-none board-fit:min-h-0 board-fit:flex-1">
         {sorted.map((status) => {
           const ids = columns[status.id] ?? [];
           const columnTasks = ids
@@ -183,7 +193,9 @@ export function TaskBoard({
               memberById={memberById}
               onOpen={onOpen}
               onAdd={onAdd}
+              onComplete={onComplete}
               readOnly={readOnly}
+              compact={compact}
             />
           );
         })}
@@ -191,8 +203,9 @@ export function TaskBoard({
 
       <DragOverlay dropAnimation={{ duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" }}>
         {activeTask ? (
-          <div className="opacity-90">
+          <div>
             <TaskCard
+              compact={compact}
               task={activeTask}
               status={sorted.find((s) => s.id === (findColumn(activeTask.id) ?? activeTask.status_id)) ?? null}
               assignee={
@@ -216,41 +229,76 @@ function BoardColumn({
   memberById,
   onOpen,
   onAdd,
+  onComplete,
   readOnly,
+  compact,
 }: {
   status: TaskStatus;
   tasks: Task[];
   memberById: Map<string, TaskMember>;
   onOpen: (task: Task) => void;
   onAdd?: (statusId: string) => void;
+  onComplete?: (task: Task) => void;
   readOnly?: boolean;
+  compact?: boolean;
 }) {
-  const { t, language } = useLanguage();
+  const { language } = useLanguage();
+  const copy = tasksCopy(language);
+  // Droppable on the card list, not the header (a drag over the header
+  // does not tint it) — same as the pipelines board.
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
+  const name = statusName(status, language);
+  const canAdd = !!onAdd && !readOnly;
 
   return (
-    <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none">
-      <div className="-mx-4 -mt-4 h-[3px] rounded-t-xl" style={{ backgroundColor: status.color }} />
-      <div className="flex items-center justify-between pt-3">
-        <h3 className="truncate text-sm font-semibold text-foreground" data-no-translate>
-          {statusName(status, language)}
+    <section
+      aria-label={copy.column(name, tasks.length)}
+      className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-[var(--radius)] bg-muted/45 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none dark:bg-muted/30"
+    >
+      <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2.5">
+        <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
+        <h3 className="min-w-0 truncate text-[13px] font-semibold text-foreground" data-no-translate>
+          {name}
         </h3>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+        <span className="shrink-0 rounded-full bg-background px-1.5 py-px text-[11px] font-semibold tabular-nums text-muted-foreground">
           {tasks.length}
         </span>
-      </div>
+        {canAdd && (
+          <button
+            type="button"
+            onClick={() => onAdd!(status.id)}
+            aria-label={copy.addTo(name)}
+            title={copy.add}
+            className="-mr-1 ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+          >
+            <Plus className="size-3.5" aria-hidden />
+          </button>
+        )}
+      </header>
 
       <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
         <div
           ref={setNodeRef}
+          data-over={isOver || undefined}
           className={cn(
-            "mt-3 flex flex-1 flex-col gap-2 rounded-lg transition-all board-fit:min-h-0 board-fit:overflow-y-auto",
-            isOver && "bg-primary/5 outline outline-2 outline-dashed outline-primary outline-offset-2",
+            "flex flex-1 flex-col rounded-b-[var(--radius)] p-2 transition-colors duration-150 motion-reduce:transition-none board-fit:min-h-0 board-fit:overflow-y-auto",
+            compact ? "gap-1" : "gap-1.5",
+            isOver && "bg-primary/8 ring-1 ring-inset ring-primary/35",
           )}
         >
           {tasks.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center rounded-lg border-2 border-dashed border-border py-10 text-xs text-muted-foreground">
-              {t("Drop a task here")}
+            <div className="flex flex-1 flex-col items-start gap-1 px-1.5 py-3 text-xs text-muted-foreground">
+              <p>{isOver ? copy.dropHere : copy.emptyColumn}</p>
+              {canAdd && !isOver && (
+                <button
+                  type="button"
+                  onClick={() => onAdd!(status.id)}
+                  className="inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Plus className="size-3" aria-hidden />
+                  {copy.add}
+                </button>
+              )}
             </div>
           ) : (
             tasks.map((task) => (
@@ -260,25 +308,15 @@ function BoardColumn({
                 status={status}
                 assignee={task.assignee_user_id ? memberById.get(task.assignee_user_id) ?? null : null}
                 onOpen={onOpen}
+                onComplete={onComplete}
                 disabled={readOnly}
+                compact={compact}
               />
             ))
           )}
         </div>
       </SortableContext>
-
-      {onAdd && !readOnly && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onAdd(status.id)}
-          className="mt-3 w-full justify-start border border-dashed border-border bg-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
-        >
-          <Plus className="mr-1 h-3 w-3" />
-          {t("Add task")}
-        </Button>
-      )}
-    </div>
+    </section>
   );
 }
 
@@ -287,31 +325,42 @@ function SortableTaskCard({
   status,
   assignee,
   onOpen,
+  onComplete,
   disabled,
+  compact,
 }: {
   task: Task;
   status: TaskStatus;
   assignee: TaskMember | null;
   onOpen: (task: Task) => void;
+  onComplete?: (task: Task) => void;
   disabled?: boolean;
+  compact?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: task.id,
-    disabled,
-  });
+  // The card's main button is the drag handle (activator), so the
+  // quick-action buttons never start a drag.
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: task.id, disabled });
   return (
     <div
       ref={setNodeRef}
-      {...listeners}
-      {...attributes}
       style={{
         transform: CSS.Translate.toString(transform),
         transition,
-        opacity: isDragging ? 0.3 : 1,
-        touchAction: "none",
+        opacity: isDragging ? 0.4 : 1,
       }}
     >
-      <TaskCard task={task} status={status} assignee={assignee} onOpen={onOpen} />
+      <TaskCard
+        task={task}
+        status={status}
+        assignee={assignee}
+        onOpen={onOpen}
+        onComplete={onComplete}
+        dragging={isDragging}
+        compact={compact}
+        handleRef={setActivatorNodeRef}
+        handleProps={{ ...attributes, ...listeners }}
+      />
     </div>
   );
 }

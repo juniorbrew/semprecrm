@@ -28,7 +28,7 @@ const SCOPE_LABELS: Record<TaskScope, string> = {
 };
 
 const SELECT_CLASS =
-  "h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary";
+  "h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none transition-colors duration-150 hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none";
 
 export interface TaskFiltersProps {
   filters: TaskListFilters;
@@ -61,7 +61,7 @@ export function TaskFilters({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1">
+        <div className="flex flex-wrap items-center gap-1.5">
           {TASK_SCOPES.map((scope) => {
             const active = filters.scope === scope;
             const n = chipCount[scope];
@@ -72,20 +72,21 @@ export function TaskFilters({
                 onClick={() => onChange({ ...filters, scope })}
                 aria-pressed={active}
                 className={cn(
-                  "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
+                  "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                   active
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ? "bg-primary/15 text-primary"
+                    : "bg-muted text-muted-foreground hover:text-foreground",
                 )}
               >
+                {scope === "overdue" && n !== null && n > 0 && (
+                  <span aria-hidden className="size-1.5 rounded-full bg-red-500" />
+                )}
                 {t(SCOPE_LABELS[scope])}
                 {n !== null && n > 0 && (
                   <span
                     className={cn(
-                      "rounded-full px-1.5 text-[10px] font-semibold",
-                      scope === "overdue"
-                        ? "bg-red-500/15 text-red-600 dark:text-red-400"
-                        : "bg-muted text-muted-foreground",
+                      "text-[11px] font-bold tabular-nums",
+                      active ? "text-primary" : "text-muted-foreground",
                     )}
                   >
                     {n}
@@ -153,14 +154,14 @@ export function TaskFilters({
             onChange={(e) => onChange({ ...filters, search: e.target.value })}
             placeholder={t("Search tasks")}
             aria-label={t("Search tasks")}
-            className="h-8 border-border bg-card pl-8 text-xs text-foreground md:text-xs"
+            className="h-8 pl-8 text-xs md:text-xs"
           />
         </div>
 
         <div
           role="tablist"
           aria-label={t("View")}
-          className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5"
+          className="flex items-center gap-0.5 rounded-md bg-muted p-0.5"
         >
           <ViewButton
             active={view === "list"}
@@ -199,8 +200,8 @@ function ViewButton({
       onClick={onClick}
       title={label}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors",
-        active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        "inline-flex h-7 items-center gap-1.5 rounded-[calc(var(--radius)-4px)] px-2 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+        active ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground",
       )}
     >
       {icon}

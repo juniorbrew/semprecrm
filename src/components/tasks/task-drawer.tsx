@@ -74,8 +74,11 @@ const TASK_DATES_COPY: Record<Language, { created: string; completed: string }> 
   "en-US": { created: "Created", completed: "Completed" },
 };
 
+/** Section heading, as in the inbox contact panel: small, muted, uppercase. */
+const SECTION_TITLE = "text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground";
+
 const SELECT_CLASS =
-  "h-8 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
+  "h-8 w-full rounded-md border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
 
 export interface TaskDrawerProps {
   open: boolean;
@@ -386,7 +389,7 @@ function TaskDrawerBody({
 
   return (
     <div className="flex h-full flex-col">
-      <SheetHeader className="gap-1 border-b border-border/50 p-4 pr-12">
+      <SheetHeader className="gap-1 border-b border-border p-4 pr-12">
         <div className="flex items-center gap-2">
           <SheetTitle className="text-popover-foreground">
             {isEdit ? t("Task") : t("New task")}
@@ -579,10 +582,8 @@ function TaskDrawerBody({
         )}
 
         {/* Links */}
-        <div className="grid gap-3 rounded-lg border border-border/60 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {t("Links")}
-          </p>
+        <div className="grid gap-3 border-t border-border pt-4">
+          <p className={SECTION_TITLE}>{t("Links")}</p>
           <div className="grid gap-1.5">
             <Label className="text-muted-foreground">{t("Contact")}</Label>
             <ContactPicker
@@ -629,7 +630,7 @@ function TaskDrawerBody({
                   <Link
                     href="/pipelines"
                     title={t("Open in Pipelines")}
-                    className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
                     <GitBranch className="h-3.5 w-3.5" />
                   </Link>
@@ -678,11 +679,9 @@ function TaskDrawerBody({
             its title and contact; optionally sets the due date to the
             appointment start) and the task's upcoming appointments. */}
         {calendarEnabled && isEdit && task && (
-          <div className="grid gap-2 rounded-lg border border-border/60 p-3">
+          <div className="grid gap-2 border-t border-border pt-4">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {t("Calendar")}
-              </p>
+              <p className={SECTION_TITLE}>{t("Calendar")}</p>
               {!readOnly && (
                 <ScheduleButton
                   size="xs"
@@ -718,10 +717,10 @@ function TaskDrawerBody({
       </div>
 
       {/* Footer */}
-      <div className="border-t border-border/50 bg-popover/50 p-3">
+      <div className="border-t border-border p-3">
         {isEdit ? (
           confirmDelete ? (
-            <div className="flex items-center gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+            <div className="flex items-center gap-3 rounded-md bg-red-500/10 px-3 py-2" role="alert">
               <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
               <p className="flex-1 text-xs text-foreground">{t("Delete this task? This cannot be undone.")}</p>
               <Button
@@ -864,7 +863,7 @@ function ContactPicker({
 
   if (contact) {
     return (
-      <div className="flex h-8 items-center gap-2 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground">
+      <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2.5 text-sm text-foreground">
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
           {(contact.name || contact.phone).charAt(0).toUpperCase()}
         </span>
@@ -994,23 +993,21 @@ function TaskComments({
   }
 
   return (
-    <div className="grid gap-2">
-      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="grid gap-2 border-t border-border pt-4">
+      <p className={SECTION_TITLE}>
         {t("Comments")}
         {comments && comments.length > 0 && (
-          <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal">
-            {comments.length}
-          </span>
+          <span className="ml-1.5 tabular-nums normal-case tracking-normal">{comments.length}</span>
         )}
       </p>
       {comments === null ? (
-        <div className="h-10 animate-pulse rounded-lg bg-muted/50" />
+        <div className="h-10 animate-pulse rounded-md bg-muted/50 motion-reduce:animate-none" />
       ) : withAuthors.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t("No comments yet.")}</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="divide-y divide-border">
           {withAuthors.map((c) => (
-            <li key={c.id} className="rounded-lg border border-border/60 bg-muted/40 p-2.5">
+            <li key={c.id} className="py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <AssigneeAvatar member={c.author} showName />
                 <span
@@ -1046,9 +1043,10 @@ function TaskComments({
             size="icon"
             onClick={() => void send()}
             disabled={!text.trim() || sending}
+            variant="ghost"
             title={t("Ctrl+Enter to send")}
             aria-label={t("Send comment")}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
+            className="text-primary hover:bg-primary/10 hover:text-primary"
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
