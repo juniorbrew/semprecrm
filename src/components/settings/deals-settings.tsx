@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Coins, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
@@ -10,14 +10,8 @@ import { useLanguage } from "@/hooks/use-language";
 import { CURRENCIES } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
 import { LossReasonsSettings } from "./loss-reasons-settings";
+import { SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
 
 /**
@@ -71,32 +65,24 @@ export function DealsSettings() {
   }
 
   return (
-    <section className="max-w-2xl animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title="Negócios e moeda"
         description="The currency used for new deals and for pipeline and dashboard totals, and the reasons a deal can be marked as lost."
       />
-      <div className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-foreground">
-              <Coins className="size-4 text-primary" />
-              Default currency
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              New deals default to this currency, and pipeline and
-              dashboard totals are shown in it. Existing deals keep the
-              currency they were saved with.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+      <div className="space-y-8">
+        <SettingsGroup
+          title="Default currency"
+          description="New deals default to this currency, and pipeline and dashboard totals are shown in it. Existing deals keep the currency they were saved with."
+        >
             <div className="grid gap-2 sm:max-w-xs">
-              <Label className="text-muted-foreground">{t("Currency")}</Label>
+              <Label htmlFor="deals-default-currency">{t("Currency")}</Label>
               <select
+                id="deals-default-currency"
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}
                 disabled={!canEditSettings || profileLoading}
-                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {CURRENCIES.map((c) => (
                   <option key={c.code} value={c.code}>
@@ -112,23 +98,20 @@ export function DealsSettings() {
             </div>
 
             {canEditSettings && (
-              <Button
-                onClick={handleSave}
-                disabled={saving || !dirty}
-                className="bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  "Salvar"
-                )}
-              </Button>
+              <div className="flex pt-2">
+                <Button onClick={handleSave} disabled={saving || !dirty}>
+                  {saving ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Salvar"
+                  )}
+                </Button>
+              </div>
             )}
-          </CardContent>
-        </Card>
+        </SettingsGroup>
 
         <LossReasonsSettings />
       </div>

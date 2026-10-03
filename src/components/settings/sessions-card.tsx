@@ -7,13 +7,7 @@ import { Loader2, LogOut } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useLanguage } from '@/hooks/use-language';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card';
+import { DANGER_TEXT_BUTTON, SettingsGroup } from './settings-group';
 import {
   Dialog,
   DialogContent,
@@ -51,29 +45,23 @@ export function SessionsCard() {
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <LogOut className="size-4 text-primary" />
-            Active sessions
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t(
-              "Sign out of every device where you're logged in — including this one. Useful if you lost a laptop or shared your password.",
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setOpen(true)}
-          >
-            <LogOut className="size-4" />
-            Sign out of all devices
-          </Button>
-        </CardContent>
-      </Card>
+      <SettingsGroup
+        title="Active sessions"
+        description={t(
+          "Sign out of every device where you're logged in — including this one. Useful if you lost a laptop or shared your password.",
+        )}
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={DANGER_TEXT_BUTTON}
+          onClick={() => setOpen(true)}
+        >
+          <LogOut className="size-3.5" />
+          Sign out of all devices
+        </Button>
+      </SettingsGroup>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

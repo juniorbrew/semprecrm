@@ -46,9 +46,7 @@ import type {
   PipelineStage,
   Tag,
 } from '@/types';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -62,6 +60,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
+import { SettingsChip } from './settings-chip';
+import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
 
 const SELECT_CLASS =
@@ -209,7 +209,7 @@ export function LeadSourcesSettings() {
   // ---- gates ---------------------------------------------------------
   if (profileLoading || !entitlements.ready) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead title={t('Integrations')} />
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
@@ -222,65 +222,56 @@ export function LeadSourcesSettings() {
 
   if (!canManageMembers) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead title={t('Integrations')} />
-        <Alert className="border-border bg-card">
-          <AlertTitle className="mb-1 text-foreground">{t('Admins only')}</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground">
+        <div role="note">
+          <p className="text-sm font-medium text-foreground">{t('Admins only')}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t('Only account admins can manage lead sources — the webhook URL is a credential.')}
-          </AlertDescription>
-        </Alert>
+          </p>
+        </div>
       </section>
     );
   }
 
   if (!moduleOn) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead
           title={t('Integrations')}
           description={t('Receive leads from landing pages, forms, Zapier and n8n straight into the CRM.')}
         />
-        <Alert className="border-border bg-card">
-          <AlertTitle className="mb-1 text-foreground">{t('Module not included in your plan')}</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground">
+        <div role="note">
+          <p className="text-sm font-medium text-foreground">{t('Module not included in your plan')}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t('Lead capture by webhook is not part of your current plan. Get in touch with the SempreCRM team to add it.')}
-          </AlertDescription>
-        </Alert>
+          </p>
+        </div>
       </section>
     );
   }
 
   return (
-    <section className="max-w-4xl animate-in fade-in-50 duration-200">
+    <section className="max-w-3xl">
       <SettingsPanelHead
         title={t('Integrations')}
         description={t(
           'Each lead source gets its own webhook URL. Post a form to it and the lead becomes a contact (deduplicated by phone), lands in the pipeline you choose, gets tagged and fires your automations.',
         )}
         action={
-          <Button
-            size="sm"
-            onClick={() => setDialog({ mode: 'create' })}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" />
+          <Button onClick={() => setDialog({ mode: 'create' })}>
+            <Plus className="size-4" />
             {t('New lead source')}
           </Button>
         }
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <Webhook className="size-4 text-primary" />
-            {t('Lead sources')}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t('Pick a source to see its URL, examples and the latest submissions.')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <div className="space-y-8">
+      <SettingsGroup
+        title={t('Lead sources')}
+        description={t('Pick a source to see its URL, examples and the latest submissions.')}
+      >
+        <div>
           {loading ? (
             <div className="space-y-2">
               {[1, 2].map((i) => (
@@ -288,8 +279,8 @@ export function LeadSourcesSettings() {
               ))}
             </div>
           ) : sources.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border p-6 text-center">
-              <Webhook className="mx-auto h-6 w-6 text-muted-foreground" />
+            <div className="py-6 text-center">
+              <Webhook className="mx-auto size-5 text-muted-foreground" />
               <p className="mt-2 text-sm font-medium text-foreground">{t('No lead sources yet')}</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {t('Create one per landing page or form — each gets its own URL and counters.')}
@@ -298,38 +289,38 @@ export function LeadSourcesSettings() {
                 variant="outline"
                 size="sm"
                 onClick={() => setDialog({ mode: 'create' })}
-                className="mt-3 border-border bg-transparent text-muted-foreground hover:bg-muted"
+                className="mt-3"
               >
-                <Plus className="h-3 w-3" />
+                <Plus className="size-3.5" />
                 {t('New lead source')}
               </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
+                <thead className="text-left text-xs text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2 font-medium">{t('Name')}</th>
-                    <th className="px-3 py-2 font-medium">{t('Active')}</th>
-                    <th className="px-3 py-2 text-right font-medium">{t('Received')}</th>
-                    <th className="hidden px-3 py-2 font-medium md:table-cell">{t('Last received')}</th>
+                    <th className="px-3 py-2 font-normal">{t('Name')}</th>
+                    <th className="px-3 py-2 font-normal">{t('Active')}</th>
+                    <th className="px-3 py-2 text-right font-normal">{t('Received')}</th>
+                    <th className="hidden px-3 py-2 font-normal md:table-cell">{t('Last received')}</th>
                     <th className="w-24 px-3 py-2" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border border-t border-border">
                   {sources.map((source) => {
                     const isSelected = source.id === selectedId;
                     return (
                       <tr
                         key={source.id}
                         className={cn(
-                          'cursor-pointer border-t border-border align-middle transition-colors hover:bg-muted/40',
-                          isSelected && 'bg-primary-soft/40',
+                          'cursor-pointer align-middle transition-colors duration-150 hover:bg-muted/50 motion-reduce:transition-none',
+                          isSelected && 'bg-primary/10 shadow-[inset_3px_0_0_var(--primary)] hover:bg-primary/10',
                         )}
                         onClick={() => setSelectedId(isSelected ? null : source.id)}
                         aria-selected={isSelected}
                       >
-                        <td className="px-3 py-2 font-medium text-foreground">
+                        <td className="px-3 py-2.5 font-medium text-foreground">
                           <span className="flex items-center gap-1.5">
                             {isSelected ? (
                               <ChevronDown className="size-3.5 text-muted-foreground" />
@@ -339,17 +330,17 @@ export function LeadSourcesSettings() {
                             {source.name}
                           </span>
                         </td>
-                        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                           <Switch
                             checked={source.is_active}
                             onCheckedChange={(checked) => void toggleActive(source, checked)}
                             aria-label={source.is_active ? t('Active') : t('Paused source')}
                           />
                         </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-foreground">
+                        <td className="px-3 py-2.5 text-right tabular-nums text-foreground">
                           {source.received_count}
                         </td>
-                        <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
+                        <td className="hidden px-3 py-2.5 text-muted-foreground md:table-cell">
                           {formatRelative(source.last_received_at, language)}
                         </td>
                         <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
@@ -359,18 +350,18 @@ export function LeadSourcesSettings() {
                               onClick={() => setDialog({ mode: 'edit', source })}
                               aria-label={t('Edit')}
                               title={t('Edit')}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none hover:bg-muted hover:text-foreground"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
+                              <Pencil className="size-3.5" />
                             </button>
                             <button
                               type="button"
                               onClick={() => setToDelete(source)}
                               aria-label={t('Delete')}
                               title={t('Delete')}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500"
+                              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none hover:bg-destructive/10 hover:text-destructive"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="size-3.5" />
                             </button>
                           </div>
                         </td>
@@ -381,8 +372,8 @@ export function LeadSourcesSettings() {
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </SettingsGroup>
 
       {selected && (
         <SourceDetail
@@ -393,6 +384,7 @@ export function LeadSourcesSettings() {
           onRefresh={reload}
         />
       )}
+      </div>
 
       {dialog.mode !== 'closed' && accountId && (
         <LeadSourceDialog
@@ -555,19 +547,20 @@ function SourceDetail({
     .filter((tg): tg is Tag => Boolean(tg));
 
   return (
-    <div className="mt-4 space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-foreground">{source.name}</CardTitle>
-          <CardDescription className="text-muted-foreground">
+    <>
+      <SettingsGroup
+        title={source.name}
+        description={
+          <>
             {pipeline && stage
               ? `${t('Deals go to')} ${pipeline.name} → ${stage.name}`
               : t('No deal is created — the lead becomes a contact only.')}
             {assignee ? ` · ${t('Assignee')}: ${assignee.full_name}` : ''}
             {tags.length > 0 ? ` · ${t('Tags')}: ${tags.map((tg) => tg.name).join(', ')}` : ''}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+          </>
+        }
+      >
+        <div className="space-y-4">
           <div>
             <Label className="text-muted-foreground">{t('Webhook URL')}</Label>
             <div className="mt-1 flex gap-2">
@@ -576,7 +569,7 @@ function SourceDetail({
                 variant="outline"
                 size="sm"
                 onClick={() => void copy('url', url)}
-                className="shrink-0 border-border text-muted-foreground hover:bg-muted"
+                className="shrink-0"
               >
                 {copied === 'url' ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
                 {t('Copy')}
@@ -602,7 +595,7 @@ function SourceDetail({
             />
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
             <div className="flex items-start gap-2 text-xs text-muted-foreground">
               <KeyRound className="mt-0.5 size-4 shrink-0" />
               <span>{t('Generating a new token changes the URL. Every form still posting to the old one will get 404.')}</span>
@@ -610,19 +603,18 @@ function SourceDetail({
             {confirmRotate ? (
               <div className="flex items-center gap-2">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   disabled={rotating}
                   onClick={() => setConfirmRotate(false)}
-                  className="border-border text-muted-foreground hover:bg-muted"
                 >
                   {t('Cancel')}
                 </Button>
                 <Button
+                  variant="destructive"
                   size="sm"
                   disabled={rotating}
                   onClick={() => void rotateToken()}
-                  className="bg-red-600 text-white hover:bg-red-700"
                 >
                   {rotating ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                   {t('Yes, generate new token')}
@@ -630,28 +622,23 @@ function SourceDetail({
               </div>
             ) : (
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => setConfirmRotate(true)}
-                className="border-border text-muted-foreground hover:bg-muted"
+                className="text-muted-foreground"
               >
                 <RefreshCw className="size-4" />
                 {t('Generate new token')}
               </Button>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingsGroup>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-foreground">{t('Latest submissions')}</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                {t('The last 50 payloads received, newest first. Click a row to see the payload.')}
-              </CardDescription>
-            </div>
+      <SettingsGroup
+        title={t('Latest submissions')}
+        description={t('The last 50 payloads received, newest first. Click a row to see the payload.')}
+        action={
             <Button
               variant="ghost"
               size="sm"
@@ -662,9 +649,9 @@ function SourceDetail({
             >
               <RefreshCw className={cn('size-4', eventsLoading && 'animate-spin')} />
             </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
+        }
+      >
+        <div>
           {eventsLoading && events.length === 0 ? (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
@@ -676,16 +663,16 @@ function SourceDetail({
               {t('Nothing received yet. Try the curl example above.')}
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
+                <thead className="text-left text-xs text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2 font-medium">{t('Status')}</th>
-                    <th className="px-3 py-2 font-medium">{t('Contact')}</th>
-                    <th className="px-3 py-2 font-medium">{t('When')}</th>
+                    <th className="px-3 py-2 font-normal">{t('Status')}</th>
+                    <th className="px-3 py-2 font-normal">{t('Contact')}</th>
+                    <th className="px-3 py-2 font-normal">{t('When')}</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border border-t border-border">
                   {events.map((ev) => {
                     const open = openEvent === ev.id;
                     return (
@@ -701,9 +688,9 @@ function SourceDetail({
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </SettingsGroup>
+    </>
   );
 }
 
@@ -726,23 +713,23 @@ function CodeBlock({
         <button
           type="button"
           onClick={onCopy}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="flex items-center gap-1 rounded-sm text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
         >
           {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
           {t('Copy')}
         </button>
       </div>
-      <pre className="overflow-x-auto rounded-lg border border-border bg-muted p-3 font-mono text-[11px] leading-relaxed text-foreground">
+      <pre className="overflow-x-auto rounded-lg bg-muted p-3 font-mono text-[11px] leading-relaxed text-foreground">
         {code}
       </pre>
     </div>
   );
 }
 
-const STATUS_STYLE: Record<LeadSourceEvent['status'], { label: string; className: string }> = {
-  ok: { label: 'Contact created', className: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30' },
-  duplicate: { label: 'Existing contact', className: 'bg-amber-500/10 text-amber-600 border-amber-500/30' },
-  error: { label: 'Error', className: 'bg-red-500/10 text-red-600 border-red-500/30' },
+const STATUS_STYLE: Record<LeadSourceEvent['status'], { label: string; variant: 'ok' | 'warn' | 'bad' }> = {
+  ok: { label: 'Contact created', variant: 'ok' },
+  duplicate: { label: 'Existing contact', variant: 'warn' },
+  error: { label: 'Error', variant: 'bad' },
 };
 
 const ERROR_LABELS: Record<string, string> = {
@@ -768,29 +755,27 @@ function EventRow({
   return (
     <>
       <tr
-        className="cursor-pointer border-t border-border align-middle transition-colors hover:bg-muted/40"
+        className="cursor-pointer align-middle transition-colors duration-150 hover:bg-muted/50 motion-reduce:transition-none"
         onClick={onToggle}
         aria-expanded={open}
       >
-        <td className="px-3 py-2">
+        <td className="px-3 py-2.5">
           <span className="flex items-center gap-1.5">
             {open ? (
               <ChevronDown className="size-3.5 text-muted-foreground" />
             ) : (
               <ChevronRight className="size-3.5 text-muted-foreground" />
             )}
-            <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', style.className)}>
-              {t(style.label)}
-            </span>
+            <SettingsChip variant={style.variant}>{t(style.label)}</SettingsChip>
             {errorText ? (
-              <span className="flex items-center gap-1 text-xs text-red-600">
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <AlertTriangle className="size-3" />
                 {errorText}
               </span>
             ) : null}
           </span>
         </td>
-        <td className="px-3 py-2 text-foreground">
+        <td className="px-3 py-2.5 text-foreground">
           {event.contact ? (
             <span>
               {event.contact.name || event.contact.phone}
@@ -800,12 +785,12 @@ function EventRow({
             <span className="text-muted-foreground">—</span>
           )}
         </td>
-        <td className="whitespace-nowrap px-3 py-2 text-muted-foreground" title={new Date(event.created_at).toLocaleString(language)}>
+        <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground" title={new Date(event.created_at).toLocaleString(language)}>
           {formatRelative(event.created_at, language)}
         </td>
       </tr>
       {open ? (
-        <tr className="border-t border-border bg-muted/30">
+        <tr className="bg-muted/30">
           <td colSpan={3} className="px-3 py-2">
             <pre className="overflow-x-auto font-mono text-[11px] leading-relaxed text-foreground">
               {JSON.stringify(event.payload, null, 2)}

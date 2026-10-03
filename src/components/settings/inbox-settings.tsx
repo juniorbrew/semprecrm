@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
-import { Ban, Loader2, Snowflake, Timer, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
@@ -13,15 +13,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { BusinessHours } from "@/types";
+import { SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
 import {
   AutoAssignCard,
@@ -157,7 +151,7 @@ export function InboxSettings() {
   }
 
   return (
-    <section className="animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title={t("Service")}
         description={t(
@@ -165,22 +159,16 @@ export function InboxSettings() {
         )}
       />
 
-      <div className="grid gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-foreground">
-              <Timer className="size-4 text-primary" />
-              {t("Response times")}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t(
-                "Waiting means the customer has gone unanswered for longer than the SLA; cooling means the customer has not replied to you for the given hours.",
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-5 sm:grid-cols-2">
+      <div className="space-y-8">
+        <SettingsGroup
+          title={t("Response times")}
+          description={t(
+            "Waiting means the customer has gone unanswered for longer than the SLA; cooling means the customer has not replied to you for the given hours.",
+          )}
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="inbox-sla" className="text-foreground">
+              <Label htmlFor="inbox-sla">
                 {t("Reply SLA (minutes)")}
               </Label>
               <Input
@@ -193,7 +181,7 @@ export function InboxSettings() {
                 onChange={(e) => setSla(e.target.value)}
                 disabled={disabled}
                 aria-invalid={!slaValid || undefined}
-                className="bg-card text-foreground"
+                className="tabular-nums"
               />
               <p className="text-xs text-muted-foreground">
                 {slaValid
@@ -202,8 +190,7 @@ export function InboxSettings() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="inbox-cooling" className="flex items-center gap-1.5 text-foreground">
-                <Snowflake className="size-3.5 text-sky-500" />
+              <Label htmlFor="inbox-cooling">
                 {t("Cooling after (hours)")}
               </Label>
               <Input
@@ -216,7 +203,7 @@ export function InboxSettings() {
                 onChange={(e) => setCooling(e.target.value)}
                 disabled={disabled}
                 aria-invalid={!coolingValid || undefined}
-                className="bg-card text-foreground"
+                className="tabular-nums"
               />
               <p className="text-xs text-muted-foreground">
                 {coolingValid
@@ -224,25 +211,19 @@ export function InboxSettings() {
                   : `${t("Enter a value between")} ${PREFERENCE_LIMITS.cooling_hours.min} ${t("and")} ${PREFERENCE_LIMITS.cooling_hours.max}.`}
               </p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </SettingsGroup>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-foreground">
-              <Ban className="size-4 text-primary" />
-              {t("Opt-out words")}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t(
-                "When a customer sends exactly one of these words (accents and punctuation ignored), the contact is marked as opted out: automations stop messaging them and broadcasts skip them. An admin can reactivate the contact from the inbox panel.",
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <SettingsGroup
+          title={t("Opt-out words")}
+          description={t(
+            "When a customer sends exactly one of these words (accents and punctuation ignored), the contact is marked as opted out: automations stop messaging them and broadcasts skip them. An admin can reactivate the contact from the inbox panel.",
+          )}
+        >
+          <div className="space-y-2">
             <div
               className={cn(
-                "flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5",
+                "flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-input px-2 py-1.5 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
                 disabled && "opacity-70",
               )}
               onClick={() => document.getElementById("opt-out-keyword-input")?.focus()}
@@ -261,7 +242,7 @@ export function InboxSettings() {
                         e.stopPropagation();
                         setKeywords((prev) => prev.filter((x) => x !== k));
                       }}
-                      className="rounded-full text-muted-foreground transition-colors hover:text-foreground"
+                      className="rounded-full text-muted-foreground transition-colors duration-150 hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
                     >
                       <X className="size-3" />
                     </button>
@@ -285,8 +266,8 @@ export function InboxSettings() {
                 ? t("No words — opt-out by message is off for this account.")
                 : t("Press Enter or comma to add a word; Backspace removes the last one.")}
             </p>
-          </CardContent>
-        </Card>
+          </div>
+        </SettingsGroup>
 
         <BusinessHoursEditor value={businessHours} onChange={setBusinessHours} disabled={disabled} />
 
@@ -300,7 +281,7 @@ export function InboxSettings() {
 
         <AutoAssignCard enabled={autoAssign} onEnabledChange={setAutoAssign} disabled={disabled} />
 
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-6">
           <p className="text-xs text-muted-foreground">
             {!canEditSettings && !profileLoading
               ? t("Only admins can change service settings.")
@@ -317,7 +298,6 @@ export function InboxSettings() {
               !oohValid ||
               (!dirty && !keywordDraft.trim())
             }
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
             {saving && <Loader2 className="size-4 animate-spin" />}
             {t("Save changes")}

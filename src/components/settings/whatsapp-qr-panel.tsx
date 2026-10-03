@@ -2,23 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  LogOut,
-  QrCode,
-  RefreshCw,
-  Smartphone,
-  Unplug,
-} from 'lucide-react';
+import { AlertTriangle, Loader2, LogOut, QrCode, RefreshCw, Unplug } from 'lucide-react';
 
 import { useLanguage } from '@/hooks/use-language';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { SettingsChip, type ChipVariant } from './settings-chip';
+import type { Language } from '@/lib/i18n';
+import { StatusDot } from './settings-chip';
+import { DANGER_TEXT_BUTTON, SettingsDangerZone, SettingsGroup } from './settings-group';
 import type { WaQrSessionStatus } from '@/types';
 
 /** Shape of `session` in every /api/channels/qr/* response. */
@@ -38,11 +29,16 @@ type GatewayProblem = 'gateway_unconfigured' | 'gateway_unreachable' | 'module_n
 
 const POLL_MS = 2_000;
 
-const STATUS_CHIP: Record<WaQrSessionStatus, ChipVariant> = {
+const STATUS_TONE: Record<WaQrSessionStatus, 'ok' | 'warn' | 'bad' | 'muted'> = {
   disconnected: 'muted',
-  qr: 'admin',
+  qr: 'warn',
   connecting: 'warn',
   connected: 'ok',
+};
+
+const COPY: Record<Language, { danger: string }> = {
+  'pt-BR': { danger: 'Zona de risco' },
+  'en-US': { danger: 'Danger zone' },
 };
 
 /**
@@ -194,203 +190,180 @@ export function WhatsAppQrPanel() {
     connected: t('Connected'),
   };
   const disabled = problem !== null;
+  const copy = COPY[language] ?? COPY['pt-BR'];
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-      <div className="space-y-6">
-        {/* Risk notice — always visible, it is the point of this screen. */}
-        <Alert className="border-amber-600/40 bg-amber-950/30">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-400" />
-            <div className="flex-1">
-              <AlertTitle className="mb-1 text-amber-200">{t('Unofficial channel — use with care')}</AlertTitle>
-              <AlertDescription className="text-sm leading-relaxed text-amber-100/80">
-                {t(
-                  'The WhatsApp Web protocol is reverse-engineered (Baileys library). It is not official, it violates WhatsApp’s terms and the number can be banned, especially with bulk sending. Broadcasts and templates therefore stay exclusive to the official API; the QR channel is for 1:1 support and reply automations.',
-                )}
-              </AlertDescription>
+    <div className="space-y-8">
+      {/* Risk notice — always visible, it is the point of this screen. */}
+      <div role="note" className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">{t('Unofficial channel — use with care')}</p>
+          <p className="mt-1 max-w-[62ch] text-sm leading-relaxed text-muted-foreground">
+            {t(
+              'The WhatsApp Web protocol is reverse-engineered (Baileys library). It is not official, it violates WhatsApp’s terms and the number can be banned, especially with bulk sending. Broadcasts and templates therefore stay exclusive to the official API; the QR channel is for 1:1 support and reply automations.',
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Gateway problems — the panel degrades instead of crashing. */}
+      {problem === 'gateway_unconfigured' && (
+        <div role="status" className="flex items-start gap-2.5">
+          <Unplug className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-medium text-foreground">{t('QR connection not available')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t('The QR code connection has not been set up by the server administrator yet.')}
+            </p>
+          </div>
+        </div>
+      )}
+      {problem === 'gateway_unreachable' && (
+        <div role="alert" className="flex items-start gap-2.5">
+          <StatusDot tone="bad" className="mt-2" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-foreground">{t('Could not connect')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {problemMessage ||
+                t('Could not connect to the WhatsApp service. Try again in a moment; if it keeps failing, contact the server administrator.')}
+            </p>
+            <Button size="sm" variant="outline" className="mt-3" onClick={() => void fetchStatus()}>
+              <RefreshCw className="size-3.5" />
+              {t('Try again')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {problem === 'module_not_included' && (
+        <div role="status">
+          <p className="text-sm font-medium text-foreground">{t('Module not included in your plan')}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('The QR channel is not part of your current plan. Get in touch with the SempreCRM team to add it.')}
+          </p>
+        </div>
+      )}
+
+      <SettingsGroup
+        title={t('WhatsApp Web session')}
+        description={t('Scan the QR code with the phone that owns the number: WhatsApp → Linked devices → Link a device.')}
+        action={
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium whitespace-nowrap text-foreground">
+            <StatusDot tone={STATUS_TONE[status]} />
+            {statusLabel[status]}
+          </span>
+        }
+      >
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : status === 'connected' ? (
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-sm text-foreground">
+              <StatusDot tone="ok" />
+              {t('Connected as')}{' '}
+              <span data-no-translate className="font-medium">
+                {name || t('Unknown name')} · {phone || t('unknown number')}
+              </span>
+            </p>
+            {session?.connected_at && (
+              <p data-no-translate className="mt-0.5 pl-3.5 text-xs text-muted-foreground tabular-nums">
+                {t('Since')} {new Date(session.connected_at).toLocaleString(language)}
+              </p>
+            )}
+          </div>
+        ) : status === 'qr' && session?.qr ? (
+          <div className="flex flex-col items-center gap-3 py-2">
+            {/* eslint-disable-next-line @next/next/no-img-element -- data: URL from the gateway */}
+            <img
+              src={session.qr}
+              alt={t('WhatsApp QR code')}
+              width={264}
+              height={264}
+              className="size-[264px] rounded-lg border border-border bg-white p-2"
+            />
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              {t('The code refreshes automatically. Waiting for the scan…')}
+            </p>
+          </div>
+        ) : status === 'qr' || status === 'connecting' ? (
+          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            {status === 'connecting' ? t('Reconnecting to WhatsApp…') : t('Generating QR code…')}
+          </div>
+        ) : (
+          <div className="flex items-start gap-2.5">
+            <QrCode className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <div className="text-sm text-muted-foreground">
+              {t('No number connected. Click Connect to get a QR code.')}
+              {session?.last_error && (
+                <p data-no-translate className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <StatusDot tone="bad" />
+                  {t('Last error')}: {session.last_error}
+                </p>
+              )}
             </div>
           </div>
-        </Alert>
-
-        {/* Gateway problems — the panel degrades instead of crashing. */}
-        {problem === 'gateway_unconfigured' && (
-          <Alert className="border-border bg-card">
-            <div className="flex items-start gap-3">
-              <Unplug className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-              <div>
-                <AlertTitle className="mb-1 text-foreground">{t('QR connection not available')}</AlertTitle>
-                <AlertDescription className="text-sm text-muted-foreground">
-                  {t(
-                    'The QR code connection has not been set up by the server administrator yet.',
-                  )}
-                </AlertDescription>
-              </div>
-            </div>
-          </Alert>
-        )}
-        {problem === 'gateway_unreachable' && (
-          <Alert className="border-red-900/60 bg-red-950/30">
-            <div className="flex items-start gap-3">
-              <Unplug className="mt-0.5 size-5 shrink-0 text-red-400" />
-              <div className="flex-1">
-                <AlertTitle className="mb-1 text-red-200">{t('Could not connect')}</AlertTitle>
-                <AlertDescription className="text-sm text-red-100/80">
-                  {problemMessage ||
-                    t('Could not connect to the WhatsApp service. Try again in a moment; if it keeps failing, contact the server administrator.')}
-                </AlertDescription>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3 border-border bg-transparent text-foreground hover:bg-muted"
-                  onClick={() => void fetchStatus()}
-                >
-                  <RefreshCw className="size-3.5" />
-                  {t('Try again')}
-                </Button>
-              </div>
-            </div>
-          </Alert>
-        )}
-        {problem === 'module_not_included' && (
-          <Alert className="border-border bg-card">
-            <AlertTitle className="mb-1 text-foreground">{t('Module not included in your plan')}</AlertTitle>
-            <AlertDescription className="text-sm text-muted-foreground">
-              {t('The QR channel is not part of your current plan. Get in touch with the SempreCRM team to add it.')}
-            </AlertDescription>
-          </Alert>
         )}
 
-        {/* Session card */}
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="flex items-center gap-2 text-foreground">
-                <Smartphone className="size-4 text-primary" />
-                {t('WhatsApp Web session')}
-              </CardTitle>
-              <SettingsChip variant={STATUS_CHIP[status]}>{statusLabel[status]}</SettingsChip>
-            </div>
-            <CardDescription className="text-muted-foreground">
-              {t('Scan the QR code with the phone that owns the number: WhatsApp → Linked devices → Link a device.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {loading ? (
-              <div className="flex items-center justify-center py-10">
-                <Loader2 className="size-6 animate-spin text-primary" />
-              </div>
-            ) : status === 'connected' ? (
-              <div className="flex items-start gap-3 rounded-lg border border-emerald-700/50 bg-emerald-950/30 px-4 py-3">
-                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-400" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-emerald-200">
-                    {t('Connected as')}{' '}
-                    <span data-no-translate className="text-foreground">
-                      {name || t('Unknown name')} · {phone || t('unknown number')}
-                    </span>
-                  </p>
-                  {session?.connected_at && (
-                    <p data-no-translate className="mt-0.5 text-xs text-muted-foreground">
-                      {t('Since')} {new Date(session.connected_at).toLocaleString(language)}
-                    </p>
-                  )}
-                </div>
-              </div>
-            ) : status === 'qr' && session?.qr ? (
-              <div className="flex flex-col items-center gap-3 py-2">
-                {/* eslint-disable-next-line @next/next/no-img-element -- data: URL from the gateway */}
-                <img
-                  src={session.qr}
-                  alt={t('WhatsApp QR code')}
-                  width={264}
-                  height={264}
-                  className="size-[264px] rounded-lg border border-border bg-white p-2"
-                />
-                <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" />
-                  {t('The code refreshes automatically. Waiting for the scan…')}
-                </p>
-              </div>
-            ) : status === 'qr' || status === 'connecting' ? (
-              <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin text-primary" />
-                {status === 'connecting' ? t('Reconnecting to WhatsApp…') : t('Generating QR code…')}
-              </div>
-            ) : (
-              <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3">
-                <QrCode className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-                <div className="text-sm text-muted-foreground">
-                  {t('No number connected. Click Connect to get a QR code.')}
-                  {session?.last_error && (
-                    <p data-no-translate className="mt-1 text-xs text-red-300">
-                      {t('Last error')}: {session.last_error}
-                    </p>
-                  )}
-                </div>
-              </div>
+        {status !== 'connected' || !canManage ? (
+          <div className="flex flex-wrap items-center gap-3">
+            {status !== 'connected' && (
+              <Button
+                onClick={handleConnect}
+                disabled={connecting || loading || disabled || !canManage || status === 'qr'}
+              >
+                {connecting ? <Loader2 className="size-4 animate-spin" /> : <QrCode className="size-4" />}
+                {status === 'connecting' ? t('Retry') : t('Connect')}
+              </Button>
             )}
+            {status !== 'disconnected' && status !== 'connected' && (
+              <Button
+                variant="ghost"
+                onClick={handleDisconnect}
+                disabled={disconnecting || disabled || !canManage}
+              >
+                {t('Cancel')}
+              </Button>
+            )}
+            {!canManage && (
+              <p className="text-xs text-muted-foreground">
+                {t('Only account admins can connect or disconnect the number.')}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </SettingsGroup>
 
-            <div className="flex flex-wrap gap-3">
-              {status === 'connected' ? (
-                <Button
-                  variant="outline"
-                  onClick={handleDisconnect}
-                  disabled={disconnecting || disabled || !canManage}
-                  className="border-red-900 text-red-400 hover:bg-red-950/40 hover:text-red-300"
-                >
-                  {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
-                  {t('Disconnect')}
-                </Button>
-              ) : (
-                <Button
-                  onClick={handleConnect}
-                  disabled={connecting || loading || disabled || !canManage || status === 'qr'}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {connecting ? <Loader2 className="size-4 animate-spin" /> : <QrCode className="size-4" />}
-                  {status === 'connecting' ? t('Retry') : t('Connect')}
-                </Button>
-              )}
-              {status !== 'disconnected' && status !== 'connected' && (
-                <Button
-                  variant="outline"
-                  onClick={handleDisconnect}
-                  disabled={disconnecting || disabled || !canManage}
-                  className="border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  {t('Cancel')}
-                </Button>
-              )}
-              {!canManage && (
-                <p className="self-center text-xs text-muted-foreground">
-                  {t('Only account admins can connect or disconnect the number.')}
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <SettingsGroup
+        title={t('How it works')}
+        description={t('What the QR channel can and cannot do.')}
+      >
+        <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground marker:text-border">
+          <li>{t('Receives and sends 1:1 messages (text, images, audio, video, documents).')}</li>
+          <li>{t('Reply automations work; buttons and lists are sent as numbered text.')}</li>
+          <li>{t('Broadcasts and message templates stay on the official API.')}</li>
+          <li>{t('Keep the phone online — WhatsApp Web depends on it.')}</li>
+          <li>{t('Counts as one channel against your plan limit while connected.')}</li>
+        </ul>
+      </SettingsGroup>
 
-      <div>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base text-foreground">{t('How it works')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('What the QR channel can and cannot do.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>{t('Receives and sends 1:1 messages (text, images, audio, video, documents).')}</li>
-              <li>{t('Reply automations work; buttons and lists are sent as numbered text.')}</li>
-              <li>{t('Broadcasts and message templates stay on the official API.')}</li>
-              <li>{t('Keep the phone online — WhatsApp Web depends on it.')}</li>
-              <li>{t('Counts as one channel against your plan limit while connected.')}</li>
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
+      {status === 'connected' && canManage && (
+        <SettingsDangerZone title={copy.danger} className="mt-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={DANGER_TEXT_BUTTON}
+            onClick={handleDisconnect}
+            disabled={disconnecting || disabled}
+          >
+            {disconnecting ? <Loader2 className="size-3.5 animate-spin" /> : <LogOut className="size-3.5" />}
+            {t('Disconnect')}
+          </Button>
+        </SettingsDangerZone>
+      )}
     </div>
   );
 }

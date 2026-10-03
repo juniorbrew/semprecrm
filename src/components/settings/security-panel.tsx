@@ -11,13 +11,13 @@ import { SettingsPanelHead } from './settings-panel-head';
  */
 export function SecurityPanel() {
   return (
-    <section className="max-w-2xl animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title="Login e segurança"
         description="Change your password and sign out of your devices. These keep your account safe."
       />
       <MfaRequiredNotice />
-      <div className="space-y-4">
+      <div className="space-y-8">
         <MfaCard />
         <PasswordForm />
         <SessionsCard />

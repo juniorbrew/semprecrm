@@ -3,9 +3,10 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Section header shown at the top of every settings panel — a title,
- * a one-line description, and an optional right-aligned action (e.g.
- * "New template", "Convidar membro"). Mirrors the mockup's `.panel-head`.
+ * Header at the top of every settings panel: the section title, one line
+ * of description, and an optional right-aligned action (e.g. "Novo
+ * modelo", "Convidar membro"). A hairline below separates it from the
+ * first group.
  */
 export function SettingsPanelHead({
   title,
@@ -21,7 +22,7 @@ export function SettingsPanelHead({
   return (
     <div
       className={cn(
-        'mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between',
+        'mb-6 flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between',
         className,
       )}
     >

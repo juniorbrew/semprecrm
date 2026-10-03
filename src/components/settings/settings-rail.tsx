@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import { useAuth, useEntitlements } from '@/hooks/use-auth';
+import { useLanguage } from '@/hooks/use-language';
 import { cn } from '@/lib/utils';
 import {
   RAIL_GROUPS,
@@ -34,6 +35,7 @@ export function SettingsRail({
   const activeRef = useRef<HTMLButtonElement>(null);
   const { canManageMembers } = useAuth();
   const entitlements = useEntitlements();
+  const { language } = useLanguage();
 
   // When horizontal (mobile), keep the active chip in view. On desktop
   // the rail is a static column, so skip.
@@ -49,7 +51,7 @@ export function SettingsRail({
 
   return (
     <nav
-      aria-label="Settings sections"
+      aria-label={language === 'en-US' ? 'Settings sections' : 'Seções das configurações'}
       className={cn(
         'flex gap-1 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         'border-b border-border',
@@ -70,7 +72,7 @@ export function SettingsRail({
             className="flex shrink-0 gap-1 lg:flex-col lg:gap-0.5"
           >
             {label ? (
-              <div className="hidden px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase lg:block">
+              <div className="hidden px-2.5 pt-3.5 pb-[5px] text-[10.5px] font-semibold tracking-[0.08em] text-muted-foreground uppercase lg:block">
                 {label}
               </div>
             ) : null}
@@ -86,22 +88,24 @@ export function SettingsRail({
                   onClick={() => onSelect(s)}
                   aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium whitespace-nowrap transition-colors',
+                    'group/item flex shrink-0 items-center gap-2.5 rounded-[calc(var(--radius)-2px)] px-2.5 py-2 text-left text-sm whitespace-nowrap',
+                    'transition-colors duration-150 motion-reduce:transition-none',
+                    'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
                     'lg:w-full',
                     isActive
-                      ? 'bg-primary-soft text-primary'
+                      ? 'bg-primary/10 font-semibold text-foreground shadow-[inset_0_-2px_0_var(--primary)] lg:shadow-[inset_2px_0_0_var(--primary)]'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                   )}
                 >
-                  <Icon className="size-4 shrink-0" />
+                  <Icon
+                    className={cn(
+                      'size-4 shrink-0',
+                      isActive ? 'text-primary' : 'opacity-70',
+                    )}
+                  />
                   <span className="flex-1">{meta.label}</span>
                   {hints?.[s] != null ? (
-                    <span
-                      className={cn(
-                        'hidden items-center gap-1.5 text-xs lg:inline-flex',
-                        isActive ? 'text-primary' : 'text-muted-foreground',
-                      )}
-                    >
+                    <span className="hidden items-center gap-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground lg:inline-flex">
                       {hints[s]}
                     </span>
                   ) : null}

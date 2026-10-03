@@ -11,11 +11,11 @@ import { useLanguage } from '@/hooks/use-language';
 import { THEMES } from '@/lib/themes';
 import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 import { formatTaxId } from '@/lib/br/documents';
-import { SECTION_META, type SettingsSection } from './settings-sections';
+import { RAIL_GROUPS, SECTION_META, type SettingsSection } from './settings-sections';
+import { SETTINGS_HEADING } from './settings-group';
 import { SettingsChip, StatusDot } from './settings-chip';
 import { planStatusLabelKey } from '@/components/platform/plan-status-chip';
 import { ROLE_META } from './role-meta';
@@ -306,15 +306,20 @@ export function SettingsOverview({
     },
   ];
 
+  const groups = RAIL_GROUPS.filter((g) => g.label).map(({ label, group }) => ({
+    label: label as string,
+    rows: tiles.filter((tile) => SECTION_META[tile.section].group === group),
+  }));
+
   return (
-    <section className="animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       {/* Identity */}
-      <Card className="flex-row items-center gap-4 px-5 py-5">
-        <Avatar size="lg" className="size-14">
+      <div className="flex items-center gap-4 border-b border-border pb-5">
+        <Avatar size="lg" className="size-12">
           {profile?.avatar_url ? (
             <AvatarImage src={profile.avatar_url} alt={displayName} />
           ) : null}
-          <AvatarFallback className="bg-primary/10 text-xl text-primary">
+          <AvatarFallback className="bg-primary/10 text-lg text-primary">
             {initial}
           </AvatarFallback>
         </Avatar>
@@ -334,45 +339,54 @@ export function SettingsOverview({
             {roleMeta.label}
           </SettingsChip>
         ) : null}
-      </Card>
-
-      {/* Status tiles */}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {tiles.map(({ section, loading, subtitle }) => {
-          const meta = SECTION_META[section];
-          const Icon = meta.icon;
-          return (
-            <button
-              key={section}
-              type="button"
-              onClick={() => onSelect(section)}
-              className={cn(
-                'group flex items-start gap-3.5 rounded-xl border border-border bg-card p-4 text-left transition-colors',
-                'hover:border-primary-soft-2 hover:bg-card-2',
-              )}
-            >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                <Icon className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-foreground">
-                  {meta.label}
-                </span>
-                <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {loading ? (
-                    <>
-                      <Loader2 className="size-3 animate-spin" /> {t('Loading…')}
-                    </>
-                  ) : (
-                    subtitle
-                  )}
-                </span>
-              </span>
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-            </button>
-          );
-        })}
       </div>
+
+      {groups.map(({ label, rows }) =>
+        rows.length === 0 ? null : (
+          <div key={label} className="mt-6">
+            <h3 className={cn(SETTINGS_HEADING, 'mb-1')}>{label}</h3>
+            <ul className="divide-y divide-border">
+              {rows.map(({ section, loading, subtitle }) => {
+                const meta = SECTION_META[section];
+                const Icon = meta.icon;
+                return (
+                  <li key={section}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(section)}
+                      className={cn(
+                        'group flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left',
+                        'transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/50',
+                        'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+                      )}
+                    >
+                      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+                        <span className="shrink-0 truncate text-sm font-medium text-foreground sm:w-44">
+                          {meta.label}
+                        </span>
+                        <span className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground tabular-nums">
+                          {loading ? (
+                            <>
+                              <Loader2 className="size-3 animate-spin" /> {t('Loading…')}
+                            </>
+                          ) : (
+                            subtitle
+                          )}
+                        </span>
+                      </span>
+                      <ChevronRight
+                        className="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ),
+      )}
     </section>
   );
 }

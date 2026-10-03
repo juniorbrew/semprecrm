@@ -27,7 +27,6 @@ import {
 } from '@/lib/plans';
 import type { AccountMember } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -342,11 +341,11 @@ export function AuditLogSettings() {
 
   if (!profileLoading && !canManageMembers) {
     return (
-      <section className="animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead title={t('Audit log')} />
-        <Card className="p-6 text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {t('Only admins can view the audit log.')}
-        </Card>
+        </p>
       </section>
     );
   }
@@ -354,7 +353,7 @@ export function AuditLogSettings() {
   const hasFilters = !!action || !!actor || period !== 'all';
 
   return (
-    <section className="animate-in fade-in-50 duration-200">
+    <section className="max-w-3xl">
       <SettingsPanelHead
         title={t('Audit log')}
         description={t(
@@ -362,7 +361,7 @@ export function AuditLogSettings() {
         )}
         action={
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={() => void load(null)}
             disabled={loading}
@@ -430,7 +429,7 @@ export function AuditLogSettings() {
         {hasFilters && (
           <button
             type="button"
-            className="text-xs text-primary underline-offset-2 hover:underline"
+            className="rounded-sm text-xs text-primary underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
             onClick={() => {
               setAction('');
               setActor('');
@@ -442,7 +441,7 @@ export function AuditLogSettings() {
         )}
       </div>
 
-      <Card className="overflow-hidden p-0">
+      <div className="border-t border-border">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -462,13 +461,13 @@ export function AuditLogSettings() {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="hover:bg-transparent">
                   <TableHead className="w-8" />
-                  <TableHead className="whitespace-nowrap">{t('When')}</TableHead>
-                  <TableHead className="whitespace-nowrap">{t('Who')}</TableHead>
-                  <TableHead className="whitespace-nowrap">{t('Action')}</TableHead>
-                  <TableHead className="whitespace-nowrap">{t('Entity')}</TableHead>
-                  <TableHead>{t('Details')}</TableHead>
+                  <TableHead className="whitespace-nowrap text-xs font-normal text-muted-foreground">{t('When')}</TableHead>
+                  <TableHead className="whitespace-nowrap text-xs font-normal text-muted-foreground">{t('Who')}</TableHead>
+                  <TableHead className="whitespace-nowrap text-xs font-normal text-muted-foreground">{t('Action')}</TableHead>
+                  <TableHead className="whitespace-nowrap text-xs font-normal text-muted-foreground">{t('Entity')}</TableHead>
+                  <TableHead className="text-xs font-normal text-muted-foreground">{t('Details')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -561,7 +560,7 @@ export function AuditLogSettings() {
         {!loading && !error && nextCursor && (
           <div className="border-t border-border px-4 py-3 text-center">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               disabled={loadingMore}
               onClick={() => void load(nextCursor)}
@@ -572,7 +571,7 @@ export function AuditLogSettings() {
             </Button>
           </div>
         )}
-      </Card>
+      </div>
     </section>
   );
 }

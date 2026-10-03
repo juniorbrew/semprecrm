@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, KeyRound } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -11,13 +11,7 @@ import { verifyPassword } from '@/lib/auth/reauth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card';
+import { SettingsGroup } from './settings-group';
 
 const MIN_PASSWORD = 8;
 
@@ -80,19 +74,15 @@ export function PasswordForm() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
-          <KeyRound className="size-4 text-primary" />
-          Password
-        </CardTitle>
-        <CardDescription className="text-muted-foreground">
+    <SettingsGroup
+      title="Password"
+      description={
+        <>
           Use at least {MIN_PASSWORD} characters. You will stay signed in on
           this device after changing it.
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent>
+        </>
+      }
+    >
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="current-password" className="text-foreground">
@@ -143,14 +133,15 @@ export function PasswordForm() {
           </div>
 
           {confirmError && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p role="alert" className="text-xs text-destructive">
               {confirmError}
             </p>
           )}
 
-          <div className="flex justify-end">
+          <div className="flex justify-end pt-2">
             <Button
               type="submit"
+              variant="outline"
               disabled={saving || !current || !next || !confirm}
             >
               {saving ? (
@@ -164,7 +155,6 @@ export function PasswordForm() {
             </Button>
           </div>
         </form>
-      </CardContent>
-    </Card>
+    </SettingsGroup>
   );
 }

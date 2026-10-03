@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Download } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
@@ -38,8 +39,11 @@ interface Data {
   backlog: BacklogRow[];
 }
 
-const SELECT_CLASS =
-  "h-8 rounded-md border border-border bg-transparent px-2 text-sm text-foreground disabled:opacity-60";
+/** Period pills: same tinted-active pill as the inbox / contacts filters. */
+const PILL =
+  "h-7 rounded-full px-3 text-xs transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none";
+const PILL_ON = "bg-primary/15 font-medium text-primary";
+const PILL_OFF = "text-muted-foreground hover:bg-muted hover:text-foreground";
 
 /**
  * /reports: period + filters on top, then plain tables. Every number comes
@@ -143,22 +147,23 @@ export function ReportsView() {
           <p className="mt-1 text-sm text-muted-foreground">{copy.intro}</p>
         </div>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           disabled={!periodOk}
           render={<a href={exportHref} download />}
           nativeButton={false}
         >
+          <Download aria-hidden />
           {copy.export}
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-        <div className="space-y-1.5">
-          <span id="reports-period" className="text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span id="reports-period" className="mr-1 text-xs text-muted-foreground">
             {copy.period}
           </span>
-          <div role="group" aria-labelledby="reports-period" className="flex items-center gap-1">
+          <div role="group" aria-labelledby="reports-period" className="flex flex-wrap items-center gap-1">
             {([7, 30, 90, "custom"] as const).map((p) => (
               <button
                 key={p}
@@ -169,10 +174,7 @@ export function ReportsView() {
                   setState("loading");
                   setPreset(p);
                 }}
-                className={cn(
-                  "h-8 rounded-md px-2.5 text-sm transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
-                  preset === p ? "bg-secondary font-medium text-secondary-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
+                className={cn(PILL, preset === p ? PILL_ON : PILL_OFF)}
               >
                 {p === "custom" ? copy.custom : copy.days(p)}
               </button>
@@ -181,9 +183,9 @@ export function ReportsView() {
         </div>
 
         {preset === "custom" && (
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {(["from", "to"] as const).map((k) => (
-              <div key={k} className="space-y-1.5">
+              <div key={k} className="flex items-center gap-1.5">
                 <Label htmlFor={`reports-${k}`} className="text-xs font-normal text-muted-foreground">
                   {copy[k]}
                 </Label>
@@ -196,12 +198,14 @@ export function ReportsView() {
                     setState("loading");
                     setCustom((c) => ({ ...c, [k]: e.target.value }));
                   }}
-                  className="h-8 w-36"
+                  className="h-7 w-36 text-xs"
                 />
               </div>
             ))}
           </div>
         )}
+
+        <span aria-hidden className="hidden h-4 w-px bg-border sm:block" />
 
         <FilterSelect label={copy.team} value={filters.team_id} all={copy.all} onChange={(v) => setFilter({ team_id: v })}>
           {teams.map((t) => (
@@ -260,7 +264,12 @@ export function ReportsView() {
         ) : !data ? (
           <p className="text-sm text-muted-foreground">{copy.loading}</p>
         ) : (
-          <div className={cn("space-y-8 transition-opacity", state === "loading" && "opacity-60")}>
+          <div
+            className={cn(
+              "space-y-8 transition-opacity duration-200 motion-reduce:transition-none",
+              state === "loading" && "opacity-60",
+            )}
+          >
             <OverviewSection row={data.all[0]} copy={copy} language={language} />
             <GroupSection title={copy.byCategory} rows={data.category} labelFor={categoryLabel} copy={copy} language={language} testId="reports-category" />
             <GroupSection title={copy.byTeam} rows={data.team} labelFor={teamLabel} copy={copy} language={language} testId="reports-team" />
@@ -288,12 +297,28 @@ function FilterSelect({
   children: React.ReactNode;
 }) {
   const id = `reports-filter-${label}`;
+  const active = !!value;
+  // A pill: the label inside, the native select (keyboard + mobile pickers
+  // for free) borderless next to it. Tinted when a value is set.
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
+    <div
+      className={cn(
+        "inline-flex h-7 items-center gap-1 rounded-full border pl-3 pr-1 text-xs transition-colors duration-150 motion-reduce:transition-none focus-within:ring-3 focus-within:ring-ring/50",
+        active ? "border-transparent bg-primary/15 text-primary" : "border-border text-muted-foreground hover:bg-muted",
+      )}
+    >
+      <Label htmlFor={id} className="text-xs font-normal text-inherit">
         {label}
       </Label>
-      <select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} className={SELECT_CLASS}>
+      <select
+        id={id}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+        className={cn(
+          "h-full max-w-40 truncate rounded-full bg-transparent pr-1 text-xs outline-none",
+          active ? "font-medium text-primary" : "text-foreground",
+        )}
+      >
         <option value="">{all}</option>
         {children}
       </select>

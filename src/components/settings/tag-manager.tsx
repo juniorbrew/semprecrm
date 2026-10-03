@@ -2,19 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Plus, Tag as TagIcon, X } from 'lucide-react';
+import { Loader2, Plus, X } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -25,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { Tag } from '@/types';
+import { SettingsGroup } from './settings-group';
 
 const PRESET_COLORS = [
   { name: 'Red', value: '#ef4444' },
@@ -151,47 +145,36 @@ export function TagManager() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
-          <TagIcon className="size-4 text-primary" />
-          Etiquetas
-        </CardTitle>
-        <CardDescription className="text-muted-foreground">
-          Colour-coded labels for grouping and filtering contacts.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <SettingsGroup
+      title="Etiquetas"
+      description="Colour-coded labels for grouping and filtering contacts."
+    >
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="size-6 animate-spin text-primary" />
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
           <>
             {tags.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {tags.map((tag) => (
                   <span
                     key={tag.id}
-                    className="group inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
-                    style={{
-                      backgroundColor: `${tag.color}20`,
-                      color: tag.color,
-                      border: `1px solid ${tag.color}40`,
-                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-muted py-1 pr-1 pl-2.5 text-sm text-foreground"
                   >
                     <span
-                      className="size-2 rounded-full"
+                      className="size-2 shrink-0 rounded-full"
                       style={{ backgroundColor: tag.color }}
+                      aria-hidden
                     />
                     {tag.name}
                     <button
                       type="button"
                       onClick={() => confirmDelete(tag)}
                       aria-label={`${t('Delete')} ${tag.name}`}
-                      className="ml-0.5 rounded-full p-0.5 opacity-60 transition-opacity hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+                      className="rounded-full p-0.5 text-muted-foreground transition-colors duration-150 hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
                     >
-                      <X className="size-3" />
+                      <X className="size-3.5" />
                     </button>
                   </span>
                 ))}
@@ -224,9 +207,9 @@ export function TagManager() {
                     aria-label={`${t('Use color')} ${t(color.name)}`}
                     aria-pressed={selectedColor === color.value}
                     className={cn(
-                      'size-6 rounded-md transition-transform hover:scale-110',
+                      'size-6 rounded-md focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
                       selectedColor === color.value &&
-                        'outline outline-2 outline-offset-2 outline-primary',
+                        'ring-2 ring-primary ring-offset-2 ring-offset-background',
                     )}
                     style={{ backgroundColor: color.value }}
                     title={t(color.name)}
@@ -249,7 +232,6 @@ export function TagManager() {
             </div>
           </>
         )}
-      </CardContent>
 
       {/* Delete confirmation */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -286,6 +268,6 @@ export function TagManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </SettingsGroup>
   );
 }

@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
-import { Card, CardContent } from '@/components/ui/card';
+import { StatusDot } from './settings-chip';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
@@ -63,11 +63,7 @@ export function MfaRequirementToggle() {
   const showSelfWarning = checked && mfaReady && !hasVerifiedMfa;
 
   return (
-    <Card data-testid="mfa-requirement-card">
-      <CardContent className="flex items-start gap-4 py-4">
-        <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-          <ShieldCheck className="size-4 text-primary" />
-        </div>
+    <div data-testid="mfa-requirement-card" className="flex items-start gap-4 py-2.5">
         <div className="min-w-0 flex-1">
           <Label htmlFor="require-mfa-admins" className="text-sm font-medium text-foreground">
             {t('Require two-step verification for administrators')}
@@ -78,7 +74,8 @@ export function MfaRequirementToggle() {
             )}
           </p>
           {showSelfWarning && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1 flex items-center gap-2 text-xs text-foreground">
+              <StatusDot tone="warn" />
               {t('You have not enabled two-step verification yet — this applies to you too.')}
             </p>
           )}
@@ -94,7 +91,6 @@ export function MfaRequirementToggle() {
             data-testid="require-mfa-admins"
           />
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 }

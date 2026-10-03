@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Pencil, Plus, Search, Trash2, Zap } from 'lucide-react';
+import { Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { createClient } from '@/lib/supabase/client';
@@ -21,7 +21,6 @@ import {
 } from '@/lib/quick-replies';
 import type { QuickReply } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -35,6 +34,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
+import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
 
 /** Soft ceiling — WhatsApp text messages cap at 4096 chars. */
@@ -123,7 +123,7 @@ export function QuickRepliesSettings() {
   }
 
   return (
-    <section className="max-w-3xl animate-in fade-in-50 duration-200">
+    <section className="max-w-3xl">
       <SettingsPanelHead
         title={t('Quick replies')}
         description={t(
@@ -134,47 +134,38 @@ export function QuickRepliesSettings() {
             <Button
               size="sm"
               onClick={() => setDialog({ mode: 'create' })}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="size-4" />
               {t('New quick reply')}
             </Button>
           ) : null
         }
       />
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <Zap className="size-4 text-primary" />
-            {t('Library')}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t('Shortcuts are lower-case, without spaces, and unique in the account.')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <SettingsGroup
+        title={t('Library')}
+        description={t('Shortcuts are lower-case, without spaces, and unique in the account.')}
+      >
+          <div className="relative max-w-sm">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t('Search by shortcut or title')}
               aria-label={t('Search by shortcut or title')}
-              className="border-border bg-muted pl-8 text-sm text-foreground"
+              className="pl-8 text-sm"
             />
           </div>
 
           {loading || profileLoading ? (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
+                <div key={i} className="h-10 animate-pulse rounded-md bg-muted/60" />
               ))}
             </div>
           ) : replies.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border p-6 text-center">
-              <Zap className="mx-auto h-6 w-6 text-muted-foreground" />
-              <p className="mt-2 text-sm font-medium text-foreground">{t('No quick replies yet')}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
+            <div className="py-6">
+              <p className="text-sm font-medium text-foreground">{t('No quick replies yet')}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
                 {t('Create the first one — for example /oi with a greeting that uses the contact name.')}
               </p>
               {!readOnly && (
@@ -182,60 +173,60 @@ export function QuickRepliesSettings() {
                   variant="outline"
                   size="sm"
                   onClick={() => setDialog({ mode: 'create' })}
-                  className="mt-3 border-border bg-transparent text-muted-foreground hover:bg-muted"
+                  className="mt-3"
                 >
-                  <Plus className="h-3 w-3" />
+                  <Plus className="size-3.5" />
                   {t('New quick reply')}
                 </Button>
               )}
             </div>
           ) : visible.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
+            <p className="py-4 text-sm text-muted-foreground">
               {t('Nothing matches your search.')}
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
+                <thead className="border-b border-border text-left text-xs text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2 font-medium">{t('Shortcut')}</th>
-                    <th className="px-3 py-2 font-medium">{t('Title')}</th>
-                    <th className="hidden px-3 py-2 font-medium md:table-cell">{t('Preview')}</th>
-                    {!readOnly && <th className="w-20 px-3 py-2" />}
+                    <th className="py-2 pr-3 font-normal">{t('Shortcut')}</th>
+                    <th className="px-3 py-2 font-normal">{t('Title')}</th>
+                    <th className="hidden px-3 py-2 font-normal md:table-cell">{t('Preview')}</th>
+                    {!readOnly && <th className="w-20 py-2 pl-3" />}
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border">
                   {visible.map((reply) => (
-                    <tr key={reply.id} className="border-t border-border align-top">
-                      <td className="whitespace-nowrap px-3 py-2">
+                    <tr key={reply.id} className="align-middle">
+                      <td className="whitespace-nowrap py-2.5 pr-3">
                         <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                           /{reply.shortcut}
                         </code>
                       </td>
-                      <td className="px-3 py-2 font-medium text-foreground">{reply.title}</td>
-                      <td className="hidden max-w-[28ch] truncate px-3 py-2 text-muted-foreground md:table-cell">
+                      <td className="px-3 py-2.5 font-medium text-foreground">{reply.title}</td>
+                      <td className="hidden max-w-[28ch] truncate px-3 py-2.5 text-muted-foreground md:table-cell">
                         {reply.body.replace(/\s+/g, ' ')}
                       </td>
                       {!readOnly && (
-                        <td className="px-3 py-1.5">
-                          <div className="flex justify-end gap-1">
+                        <td className="py-1.5 pl-3">
+                          <div className="flex justify-end gap-0.5">
                             <button
                               type="button"
                               onClick={() => setDialog({ mode: 'edit', reply })}
                               aria-label={t('Edit')}
                               title={t('Edit')}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
+                              <Pencil className="size-3.5" />
                             </button>
                             <button
                               type="button"
                               onClick={() => setToDelete(reply)}
                               aria-label={t('Delete')}
                               title={t('Delete')}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500"
+                              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="size-3.5" />
                             </button>
                           </div>
                         </td>
@@ -252,8 +243,7 @@ export function QuickRepliesSettings() {
               {t('Only agents and admins can change quick replies.')}
             </p>
           )}
-        </CardContent>
-      </Card>
+      </SettingsGroup>
 
       {dialog.mode !== 'closed' && accountId && (
         <QuickReplyDialog

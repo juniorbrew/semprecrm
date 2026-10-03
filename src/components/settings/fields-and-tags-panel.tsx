@@ -17,13 +17,15 @@ export function FieldsAndTagsPanel() {
   const canEditSettings = useCan('edit-settings');
 
   return (
-    <section className="max-w-3xl animate-in fade-in-50 space-y-4 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title="Campos e etiquetas"
         description="Two ways to organize contacts: colour-coded tags for quick grouping, and custom fields for structured data."
       />
-      <TagManager />
-      {canEditSettings ? <CustomFieldsSettings /> : null}
+      <div className="space-y-8">
+        <TagManager />
+        {canEditSettings ? <CustomFieldsSettings /> : null}
+      </div>
     </section>
   );
 }

@@ -29,8 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
+import { SettingsChip, StatusDot } from './settings-chip';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
   Dialog,
@@ -49,6 +48,7 @@ import {
 } from '@/components/ui/select';
 import type {
   MessageTemplate,
+  MessageTemplateStatus,
   TemplateButton,
   TemplateSampleValues,
 } from '@/types';
@@ -111,10 +111,14 @@ function languageLabel(code: string): string {
   return code.replace(/_/g, '-');
 }
 
-const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
-  Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
-  Authentication: 'bg-amber-600/20 text-amber-400 border-amber-600/30',
+/** Meta template status → dot tone in the list (unlisted = neutral). */
+const STATUS_TONE: Partial<Record<MessageTemplateStatus, 'ok' | 'warn' | 'bad' | 'muted'>> = {
+  APPROVED: 'ok',
+  PENDING: 'warn',
+  PAUSED: 'warn',
+  IN_APPEAL: 'warn',
+  REJECTED: 'bad',
+  DISABLED: 'bad',
 };
 
 interface TemplateFormData {
@@ -511,7 +515,7 @@ export function TemplateManager() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="size-6 animate-spin text-primary" />
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -555,7 +559,7 @@ export function TemplateManager() {
   }
 
   return (
-    <section className="animate-in fade-in-50 space-y-4 duration-200">
+    <section className="max-w-3xl">
       <SettingsPanelHead
         title="Message templates"
         description={
@@ -581,63 +585,69 @@ export function TemplateManager() {
       />
 
       {templates.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-muted-foreground text-sm">No templates yet.</p>
-            <p className="text-muted-foreground text-xs mt-1">
-              Create your first message template to get started.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="py-8">
+          <p className="text-sm font-medium text-foreground">No templates yet.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Create your first message template to get started.
+          </p>
+        </div>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
+        <div className="divide-y divide-border">
           {templates.map((template) => {
             const statusKey = template.status || 'DRAFT';
             const status = templateStatusConfig[statusKey];
+            const tone = STATUS_TONE[statusKey] ?? 'muted';
             return (
-              <Card key={template.id}>
-                <CardContent className="flex items-start justify-between pt-4">
-                  <div className="space-y-2 min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-medium text-foreground">{template.name}</h3>
-                      <Badge
-                        className={`text-xs border ${categoryColors[template.category] || ''}`}
-                      >
-                        {template.category}
-                      </Badge>
-                      <Badge className={`text-xs border ${status.classes}`}>
-                        {status.label}
-                      </Badge>
-                      {template.language && (
-                        <span className="text-xs text-muted-foreground" data-no-translate>
-                          {languageLabel(template.language)}
+              <div key={template.id} className="flex items-start justify-between gap-3 py-3">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <h3 className="text-sm font-medium text-foreground">{template.name}</h3>
+                      {tone === 'muted' ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                          <StatusDot tone="muted" />
+                          {status.label}
                         </span>
-                      )}
-                      {template.quality_score && (
-                        <span
-                          className={`text-[10px] uppercase font-medium ${
-                            template.quality_score === 'GREEN'
-                              ? 'text-emerald-400'
-                              : template.quality_score === 'YELLOW'
-                                ? 'text-yellow-400'
-                                : 'text-red-400'
-                          }`}
-                          title={t('Meta quality score')}
-                        >
-                          {t(QUALITY_LABELS[template.quality_score] ?? template.quality_score)}
-                        </span>
+                      ) : (
+                        <SettingsChip variant={tone}>{status.label}</SettingsChip>
                       )}
                       {isStubTemplate(template) && (
-                        <Badge className="text-xs border border-amber-600/40 bg-amber-950/40 text-amber-200">
-                          {t('Needs sync')}
-                        </Badge>
+                        <SettingsChip variant="warn">{t('Needs sync')}</SettingsChip>
                       )}
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      {template.category}
+                      {template.language && (
+                        <>
+                          {' · '}
+                          <span data-no-translate>{languageLabel(template.language)}</span>
+                        </>
+                      )}
+                      {template.quality_score && (
+                        <>
+                          {' · '}
+                          <span
+                            className="inline-flex items-center gap-1"
+                            title={t('Meta quality score')}
+                          >
+                            <StatusDot
+                              tone={
+                                template.quality_score === 'GREEN'
+                                  ? 'ok'
+                                  : template.quality_score === 'YELLOW'
+                                    ? 'warn'
+                                    : 'bad'
+                              }
+                            />
+                            {t(QUALITY_LABELS[template.quality_score] ?? template.quality_score)}
+                          </span>
+                        </>
+                      )}
+                    </p>
                     {isStubTemplate(template) && (
-                      <div className="flex items-start gap-1.5 text-xs text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded px-2 py-1.5">
-                        <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
+                      <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                        <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                         <span>{t(NEEDS_SYNC_HINT)}</span>
-                      </div>
+                      </p>
                     )}
                     <p className="text-sm text-muted-foreground line-clamp-2">
                       {template.body_text}
@@ -648,15 +658,15 @@ export function TemplateManager() {
                       </p>
                     )}
                     {(template.rejection_reason || template.submission_error) && (
-                      <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-950/20 border border-red-900/40 rounded px-2 py-1.5">
-                        <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
+                      <p className="flex items-start gap-1.5 text-xs text-destructive">
+                        <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                         <span>
                           {template.rejection_reason || template.submission_error}
                         </span>
-                      </div>
+                      </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                  <div className="flex shrink-0 items-center gap-0.5">
                     {statusKey === 'APPROVED' && (
                       <Button
                         variant="ghost"
@@ -664,7 +674,7 @@ export function TemplateManager() {
                         onClick={() => openEdit(template)}
                         title="Editing triggers Meta re-review — status flips to PENDING."
                         aria-label="Edit template"
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                        className="h-8 px-2 text-muted-foreground"
                       >
                         <Pencil className="size-3.5" />
                         Editar
@@ -677,7 +687,7 @@ export function TemplateManager() {
                         onClick={() => openEdit(template)}
                         title="Edit the template and resubmit to Meta for review."
                         aria-label="Edit and resubmit template"
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                        className="h-8 px-2 text-muted-foreground"
                       >
                         <RotateCcw className="size-3.5" />
                         {t('Resubmit')}
@@ -698,17 +708,16 @@ export function TemplateManager() {
                           ? 'Delete from Meta and locally'
                           : 'Delete locally'
                       }
-                      className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
+                      className="size-8 text-muted-foreground hover:text-destructive"
                     >
                       {deletingId === template.id ? (
-                        <Loader2 className="size-4 animate-spin" />
+                        <Loader2 className="size-3.5 animate-spin" />
                       ) : (
-                        <Trash2 className="size-4" />
+                        <Trash2 className="size-3.5" />
                       )}
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
+              </div>
             );
           })}
         </div>
@@ -737,8 +746,8 @@ export function TemplateManager() {
           </DialogHeader>
 
           {form.category === 'Authentication' && (
-            <div className="flex items-start gap-2 rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-              <AlertCircle className="size-4 mt-0.5 shrink-0" />
+            <div role="status" className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
               <p>
                 AUTHENTICATION templates have a fixed body + OTP button shape
                 that needs a different builder. Create them in Meta WhatsApp
