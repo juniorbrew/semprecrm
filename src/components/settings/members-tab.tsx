@@ -349,10 +349,10 @@ export function MembersTab() {
                       </div>
                       <p className="truncate text-xs text-muted-foreground">
                         {member.email}
-                        {member.email ? ' · ' : ''}
                         {/* Joined date stays desktop-only. The mobile row's
                             vertical density makes the joined date noise. */}
                         <span className="hidden tabular-nums sm:inline">
+                          {member.email ? ' · ' : ''}
                           {t('Joined')} {fmtDate(member.joined_at, language)}
                         </span>
                       </p>
