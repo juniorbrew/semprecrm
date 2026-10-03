@@ -25,6 +25,8 @@ export interface MonthViewProps {
   days: GridDay[];
   events: CalendarEvent[];
   tz: string;
+  /** Compact density: shorter cells, two chips per day. */
+  compact?: boolean;
   readOnly?: boolean;
   onOpenEvent: (event: CalendarEvent) => void;
   /** Click on the empty part of a day → quick-create at that position. */
@@ -50,7 +52,7 @@ interface DragState {
  * events; a plain click opens the drawer; a click on the empty part of
  * a cell opens the quick-create.
  */
-export function MonthView({ days, events, tz, readOnly, onOpenEvent, onCreateAt, onMoveEvent, onShowDay }: MonthViewProps) {
+export function MonthView({ days, events, tz, compact, readOnly, onOpenEvent, onCreateAt, onMoveEvent, onShowDay }: MonthViewProps) {
   const { t, language } = useLanguage();
   const names = weekdayNames(language);
   const dragRef = useRef<DragState | null>(null);
@@ -106,10 +108,10 @@ export function MonthView({ days, events, tz, readOnly, onOpenEvent, onCreateAt,
   }, [days, keyAt, onMoveEvent, onOpenEvent, tz]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-background">
       <div className="grid shrink-0 grid-cols-7 border-b border-border">
         {names.map((n) => (
-          <div key={n} className="px-2 py-1.5 text-center text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div key={n} className="px-2 py-1.5 text-center text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
             {n}
           </div>
         ))}
@@ -119,7 +121,7 @@ export function MonthView({ days, events, tz, readOnly, onOpenEvent, onCreateAt,
           const list = eventsForDay(events, day).sort(
             (a, b) => Number(isAllDayLike(b)) - Number(isAllDayLike(a)) || new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime(),
           );
-          const visible = list.slice(0, MAX_PER_DAY);
+          const visible = list.slice(0, compact ? MAX_PER_DAY - 1 : MAX_PER_DAY);
           const hidden = list.length - visible.length;
           return (
             <div
@@ -131,18 +133,19 @@ export function MonthView({ days, events, tz, readOnly, onOpenEvent, onCreateAt,
                 onCreateAt(day, { x: e.clientX, y: e.clientY });
               }}
               className={cn(
-                "flex min-h-[88px] flex-col gap-0.5 border-b border-border/60 p-1 transition-colors",
+                "flex flex-col gap-0.5 border-b border-border p-1 transition-colors duration-150 motion-reduce:transition-none",
+                compact ? "min-h-[64px]" : "min-h-[88px]",
                 i % 7 !== 6 && "border-r",
                 !day.inMonth && "bg-muted/30 text-muted-foreground",
                 !readOnly && "cursor-pointer hover:bg-muted/40",
-                overKey === day.key && draggingId && "bg-primary/10 ring-1 ring-inset ring-primary/40",
+                overKey === day.key && draggingId && "bg-primary/8 ring-1 ring-inset ring-primary/35",
               )}
             >
               <div className="flex items-center justify-between px-0.5">
                 <span
                   className={cn(
-                    "inline-flex h-6 w-6 items-center justify-center rounded-full text-xs tabular-nums",
-                    day.isToday ? "bg-primary font-semibold text-primary-foreground" : day.inMonth ? "text-foreground" : "text-muted-foreground",
+                    "inline-flex size-6 items-center justify-center rounded-full text-xs tabular-nums",
+                    day.isToday ? "bg-primary/15 font-semibold text-primary" : day.inMonth ? "text-foreground" : "text-muted-foreground",
                   )}
                 >
                   {day.dayOfMonth}
@@ -175,7 +178,7 @@ export function MonthView({ days, events, tz, readOnly, onOpenEvent, onCreateAt,
                     e.stopPropagation();
                     onShowDay(day);
                   }}
-                  className="self-start rounded px-1 text-[11px] font-medium text-primary hover:underline"
+                  className="self-start rounded-sm px-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   +{hidden} {t("more")}
                 </button>

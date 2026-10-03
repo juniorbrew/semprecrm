@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
@@ -28,6 +28,9 @@ import {
   type GridDay,
 } from "@/lib/calendar";
 import { GatedButton } from "@/components/ui/gated-button";
+import type { Language } from "@/lib/i18n";
+import { useDensity } from "@/components/tasks/density";
+import { DensityToggle } from "@/components/tasks/density-toggle";
 import { cn } from "@/lib/utils";
 
 import { EventDrawer } from "./event-drawer";
@@ -39,6 +42,19 @@ import { TimeGridView } from "./time-grid-view";
 const VIEW_STORAGE_KEY = "calendar:view";
 
 const VIEW_LABELS: Record<CalendarView, string> = { month: "Month", week: "Week", day: "Day" };
+
+const AGENDA_COPY: Record<Language, { title: string; compact: string; count: (n: number) => string }> = {
+  "pt-BR": {
+    title: "Agenda",
+    compact: "Grade compacta",
+    count: (n) => (n === 1 ? "1 compromisso" : `${n} compromissos`),
+  },
+  "en-US": {
+    title: "Calendar",
+    compact: "Compact grid",
+    count: (n) => (n === 1 ? "1 appointment" : `${n} appointments`),
+  },
+};
 
 function readStoredView(): CalendarView {
   if (typeof window === "undefined") return "week";
@@ -59,6 +75,9 @@ function readStoredView(): CalendarView {
 export function CalendarBoard() {
   const supabase = useMemo(() => createClient(), []);
   const { t, language } = useLanguage();
+  const copy = AGENDA_COPY[language] ?? AGENDA_COPY["pt-BR"];
+  const [density, toggleDensity] = useDensity("agenda");
+  const compact = density === "compact";
   const { accountId, user } = useAuth();
   const canWrite = useCan("send-messages");
   const tz = useCalendarTimezone();
@@ -238,64 +257,66 @@ export function CalendarBoard() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <CalendarDays className="h-4.5 w-4.5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground">{t("Calendar")}</h1>
-            <p className="text-xs text-muted-foreground">
-              {loading ? t("Loading...") : `${visibleEvents.length} ${t(visibleEvents.length === 1 ? "appointment" : "appointments")}`}
-            </p>
-          </div>
+      {/* Header: title + neutral count, density, one filled action. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">{copy.title}</h1>
+        {!loading && (
+          <span
+            className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold tabular-nums text-muted-foreground"
+            title={copy.count(visibleEvents.length)}
+            aria-label={copy.count(visibleEvents.length)}
+          >
+            {visibleEvents.length}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          <DensityToggle density={density} onToggle={toggleDensity} label={copy.compact} />
+          <GatedButton
+            canAct={canWrite}
+            gateReason="create appointments"
+            onClick={() => openCreate()}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="mr-1 size-4" />
+            {t("New appointment")}
+          </GatedButton>
         </div>
-        <GatedButton
-          canAct={canWrite}
-          gateReason="create appointments"
-          onClick={() => openCreate()}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          {t("New appointment")}
-        </GatedButton>
       </div>
 
-      {/* Toolbar */}
+      {/* Toolbar: today, ‹ ›, period, view segments, whose. */}
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setAnchor(new Date())}
-          className="h-8 rounded-lg border border-border px-3 text-xs font-medium text-foreground hover:bg-muted"
+          className="h-8 rounded-md border border-border px-3 text-xs font-medium text-foreground transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
         >
           {t("Today")}
         </button>
-        <div className="flex items-center rounded-lg border border-border">
+        <div className="flex items-center">
           <button
             type="button"
             aria-label={t("Previous")}
             title={t("Previous")}
             onClick={() => setAnchor((a) => shiftAnchor(view, a, -1, tz))}
-            className="flex h-8 w-8 items-center justify-center rounded-l-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="size-4" />
           </button>
           <button
             type="button"
             aria-label={t("Next")}
             title={t("Next")}
             onClick={() => setAnchor((a) => shiftAnchor(view, a, 1, tz))}
-            className="flex h-8 w-8 items-center justify-center rounded-r-lg border-l border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="size-4" />
           </button>
         </div>
-        <h2 className="min-w-0 truncate text-sm font-semibold text-foreground" data-testid="period-title">
+        <h2 className="min-w-0 truncate text-base font-semibold text-foreground" data-testid="period-title" aria-live="polite">
           {title}
         </h2>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <div role="tablist" aria-label={t("View")} className="flex items-center rounded-lg border border-border p-0.5">
+          <div role="tablist" aria-label={t("View")} className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
             {CALENDAR_VIEWS.map((v) => (
               <button
                 key={v}
@@ -304,8 +325,8 @@ export function CalendarBoard() {
                 aria-selected={view === v}
                 onClick={() => changeView(v)}
                 className={cn(
-                  "h-7 rounded-md px-2.5 text-xs font-medium transition-colors",
-                  view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground",
+                  "h-7 rounded-[calc(var(--radius)-4px)] px-2.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                  view === v ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {t(VIEW_LABELS[v])}
@@ -319,7 +340,7 @@ export function CalendarBoard() {
               const v = e.target.value;
               setScope(v === "mine" ? "mine" : v === "team" ? "team" : { userId: v });
             }}
-            className="h-8 rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none transition-colors duration-150 hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
           >
             <option value="mine">{t("Mine")}</option>
             <option value="team">{t("Team")}</option>
@@ -341,6 +362,7 @@ export function CalendarBoard() {
             days={days}
             events={visibleEvents}
             tz={tz}
+            compact={compact}
             readOnly={!canWrite}
             onOpenEvent={openEvent}
             onCreateAt={handleCreateAtDay}
@@ -354,6 +376,7 @@ export function CalendarBoard() {
             events={visibleEvents}
             tz={tz}
             now={now}
+            compact={compact}
             readOnly={!canWrite}
             onOpenEvent={openEvent}
             onCreateSlot={handleCreateSlot}
