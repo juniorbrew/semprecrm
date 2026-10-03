@@ -3,22 +3,27 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Small status / role pill used across the settings redesign
- * (Overview tiles, WhatsApp banner, the "Ativo" appearance markers).
+ * Small status / role marker used across settings (Overview, WhatsApp,
+ * calendar, plan, members).
  *
- * Status colours (emerald = good, amber = attention) follow the same
- * Tailwind palette the members tab already uses for role chips — they
- * are semantic accents, not neutrals, so they're intentionally not
- * tokenized. Neutrals stay on design tokens.
+ * Status (`ok`, `warn`, `bad`) reads as a dot + text, never a coloured
+ * pill: the dot carries the colour, the text stays readable. Roles keep a
+ * soft pill (`admin` brand-tinted, `owner` amber) and `muted` is the
+ * neutral count pill. Emerald/amber/red are semantic accents, so they are
+ * intentionally not tokenized; neutrals stay on design tokens.
  */
-export type ChipVariant = 'owner' | 'admin' | 'ok' | 'warn' | 'muted';
+export type ChipVariant = 'owner' | 'admin' | 'ok' | 'warn' | 'bad' | 'muted';
 
-const VARIANTS: Record<ChipVariant, string> = {
-  owner: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
-  admin: 'border-primary-soft-2 bg-primary-soft text-primary',
-  ok: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
-  warn: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
-  muted: 'border-border bg-muted text-muted-foreground',
+const PILLS: Partial<Record<ChipVariant, string>> = {
+  owner: 'bg-amber-500/12 text-amber-700 dark:text-amber-300',
+  admin: 'bg-primary/10 text-primary',
+  muted: 'bg-muted text-muted-foreground',
+};
+
+const DOT_TONE: Partial<Record<ChipVariant, StatusTone>> = {
+  ok: 'ok',
+  warn: 'warn',
+  bad: 'bad',
 };
 
 export function SettingsChip({
@@ -30,11 +35,25 @@ export function SettingsChip({
   className?: string;
   children: ReactNode;
 }) {
+  const tone = DOT_TONE[variant];
+  if (tone) {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1.5 text-xs font-medium whitespace-nowrap text-foreground [&_svg]:size-3.5',
+          className,
+        )}
+      >
+        <StatusDot tone={tone} />
+        {children}
+      </span>
+    );
+  }
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap [&_svg]:size-3.5',
-        VARIANTS[variant],
+        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap [&_svg]:size-3',
+        PILLS[variant],
         className,
       )}
     >
@@ -43,22 +62,27 @@ export function SettingsChip({
   );
 }
 
-/** A small live status dot (e.g. WhatsApp connected indicator). */
+type StatusTone = 'ok' | 'warn' | 'bad' | 'muted';
+
+const DOT: Record<StatusTone, string> = {
+  ok: 'bg-emerald-500',
+  warn: 'bg-amber-500',
+  bad: 'bg-red-500',
+  muted: 'bg-muted-foreground',
+};
+
+/** A small status dot; always next to text (status is never colour only). */
 export function StatusDot({
   tone = 'ok',
   className,
 }: {
-  tone?: 'ok' | 'muted';
+  tone?: StatusTone;
   className?: string;
 }) {
   return (
     <span
       aria-hidden
-      className={cn(
-        'inline-block size-1.5 shrink-0 rounded-full',
-        tone === 'ok' ? 'bg-emerald-500' : 'bg-muted-foreground',
-        className,
-      )}
+      className={cn('inline-block size-1.5 shrink-0 rounded-full', DOT[tone], className)}
     />
   );
 }

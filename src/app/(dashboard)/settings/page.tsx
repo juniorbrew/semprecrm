@@ -90,7 +90,7 @@ export default function SettingsPage() {
   return (
     <div>
       <div>
-        <h1 className="text-foreground text-2xl font-bold tracking-tight">
+        <h1 className="text-foreground text-xl font-semibold tracking-tight">
           {t('Settings')}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
@@ -100,9 +100,14 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
+      <div className="mt-6 grid gap-6 lg:grid-cols-[224px_minmax(0,1fr)] lg:items-start lg:gap-10">
         <SettingsRail active={section} onSelect={go} hints={hints} />
-        <div className="min-w-0">{panel[section]}</div>
+        <div
+          key={section}
+          className="min-w-0 animate-in fade-in-0 duration-200 motion-reduce:animate-none"
+        >
+          {panel[section]}
+        </div>
       </div>
     </div>
   );
