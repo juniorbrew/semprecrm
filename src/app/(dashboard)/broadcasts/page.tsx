@@ -250,7 +250,7 @@ export default function BroadcastsPage() {
             className="h-8 pl-8 text-sm"
           />
         </div>
-        <div role="group" aria-label={copy.filters} className="-mx-1 flex min-w-0 gap-1 overflow-x-auto px-1">
+        <div role="group" aria-label={copy.filters} className="order-last -mx-1 flex w-full min-w-0 gap-1 overflow-x-auto px-1 sm:order-none sm:w-auto">
           {STATUS_FILTERS.filter((s) => s === 'all' || s === statusFilter || (counts[s] ?? 0) > 0).map((s) => (
             <button
               key={s}

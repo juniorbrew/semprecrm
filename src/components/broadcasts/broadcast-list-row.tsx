@@ -115,7 +115,7 @@ export const BROADCASTS_COPY = {
     scheduledFor: (when: string) => `Agendado para ${when}`,
     delivered: 'entregues',
     read: 'lidas',
-    failed: 'falhas',
+    failed: (n: number) => (n === 1 ? '1 falha' : `${n} falhas`),
     uncertain: (n: number) => `${n} incerto${n === 1 ? '' : 's'}`,
     uncertainTitle: 'A Meta pode ou não ter recebido estas mensagens. Nunca são reenviadas automaticamente.',
     open: (name: string) => `Abrir ${name}`,
@@ -145,7 +145,7 @@ export const BROADCASTS_COPY = {
     scheduledFor: (when: string) => `Scheduled for ${when}`,
     delivered: 'delivered',
     read: 'read',
-    failed: 'failed',
+    failed: (n: number) => `${n} failed`,
     uncertain: (n: number) => `${n} uncertain`,
     uncertainTitle: 'Meta may or may not have received these messages. They are never resent automatically.',
     open: (name: string) => `Open ${name}`,
@@ -241,7 +241,7 @@ export function BroadcastListRow({ broadcast: b, compact, copy, dateLabel, sched
               </span>
               {b.failed_count > 0 && (
                 <span className="text-red-600 dark:text-red-400">
-                  {b.failed_count} {copy.failed}
+                  {copy.failed(b.failed_count)}
                 </span>
               )}
             </span>

@@ -404,7 +404,7 @@ export default function BroadcastDetailPage() {
 
   const total = broadcast.total_recipients;
   const stats = [
-    { key: 'total', label: t('Total Recipients'), value: total, pct: null as number | null },
+    { key: 'total', label: t('Recipients'), value: total, pct: null as number | null },
     { key: 'sent', label: t('Sent'), value: broadcast.sent_count, pct: rate(broadcast.sent_count, total) },
     { key: 'delivered', label: t('Delivered'), value: broadcast.delivered_count, pct: rate(broadcast.delivered_count, total) },
     { key: 'read', label: t('Read'), value: broadcast.read_count, pct: rate(broadcast.read_count, total) },
