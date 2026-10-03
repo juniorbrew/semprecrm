@@ -92,6 +92,17 @@ Quadro de negócios (`src/app/(dashboard)/pipelines/page.tsx`, `src/components/p
 - **Arrastar:** o botão principal do cartão é a alça. Mouse/toque a partir de 5 px; teclado: Espaço pega, setas movem, Espaço/Enter solta, Esc cancela; Enter sozinho abre o negócio. Durante o arraste o cartão flutuante ganha anel `ring-primary/30` e a lista de destino um tom `bg-primary/8`.
 - **Densidade:** confortável ou compacta (sem contato e sem a linha quieta), salva por usuário neste aparelho (`sempre:pipelines:density:<userId>`).
 
+## Contatos
+
+Lista (`src/app/(dashboard)/contacts/page.tsx`, linha em `src/components/contacts/contact-list-row.tsx`) e ficha do contato (`contact-detail-view.tsx`).
+
+- **Cabeçalho:** título + contagem em pílula neutra; Campos personalizados e Importar são ghost, Novo contato é o único preenchido. Abaixo, busca compacta (`h-8`), o filtro Descadastrados em pílula (`bg-primary/15 text-primary` quando ativo) e a alternância de densidade.
+- **Tabela sem caixa:** cabeçalho fixo ao rolar, rótulos de coluna em 12 px muted, linhas separadas por `border-border`. Coluna Contato com avatar (iniciais), nome e **uma** linha de metadados (empresa · telefone); E-mail, Etiquetas (ponto + texto, até 3 e "+N") e Criado em somem em telas menores. Descadastrado e anonimizado são texto discreto ao lado do nome, não pílula.
+- **Seleção:** linha selecionada em `bg-primary/10` com acento de 3 px; a barra de ações em massa (Limpar, Excluir selecionados — a exclusão segue só para admin no servidor) aparece acima da tabela em `bg-primary/10`.
+- **Ações rápidas:** com o mouse sobre a linha ou foco dentro dela, Abrir conversa e Editar (não em anonimizados), ícones `size-3.5`; escondidas de leitores e do Tab, porque o menu "…" tem as mesmas ações com rótulo.
+- **Densidade:** confortável ou compacta (avatar menor e metadados na mesma linha do nome), salva por usuário neste aparelho. No celular a tabela vira lista: só seleção, contato e "…", sem rolagem lateral.
+- **Ficha:** identidade (avatar, nome, empresa, chips de situação — Descadastrado em pílula `bg-red-500/18`), Abrir/Iniciar conversa como único botão preenchido, abas sublinhadas com acento `primary` na ordem de sempre (Conversas, Etiquetas, Notas, Campos, Negócios, Empresas, Agenda, Privacidade). Cada aba abre com o título pequeno em caixa alta do painel da caixa de entrada; conversas e negócios em linhas com divisória fina (etapa como ponto + texto), notas com filete âmbar, etiquetas como ponto + texto com `aria-pressed`. `?contact=<id>` continua abrindo a ficha.
+
 ## Atalhos e paleta
 
 - **Paleta de comandos** (`src/components/layout/command-palette.tsx`): Ctrl K / ⌘K em qualquer tela (também dentro de um campo) ou o campo "Buscar ou executar…" do cabeçalho (só ícone no celular). Diálogo com combobox: setas movem, Enter abre, Esc fecha e devolve o foco. Grupos: Recentes (consulta vazia; últimas 5 páginas/conversas/contatos, por usuário neste aparelho), Ações (Resolver conversa atual só na caixa de entrada com uma aberta e permitida, Nova tarefa para quem escreve, Alternar tema), Ir para (a mesma lista e as mesmas regras de perfil/plano da barra lateral, `nav-config.ts`) e, ao digitar 2+ letras, Conversas e Contatos (até 6 cada, busca com 200 ms de espera, pelo cliente do usuário/RLS, pedido antigo cancelado). No celular vira uma folha de largura total no topo.

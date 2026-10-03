@@ -51,9 +51,7 @@ import {
   Plus,
   Trash2,
   Save,
-  DollarSign,
   MessageCircle,
-  MessageSquare,
   Pencil,
   ArrowUpRight,
   X,
@@ -79,6 +77,14 @@ const STATUS_DOT: Record<ConversationStatus, string> = {
   pending: 'bg-amber-500',
   closed: 'bg-muted-foreground',
 };
+
+/** Underline tab (brand accent on the active one), same scale as the panel. */
+const TAB_TRIGGER =
+  'flex-none px-0 text-xs text-muted-foreground data-active:text-foreground after:bg-primary transition-colors duration-150 motion-reduce:transition-none';
+
+/** Small uppercase muted section heading (same as the inbox contact panel). */
+const SECTION_LABEL =
+  'mb-2 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground';
 
 /**
  * Conversation status chip. Language-keyed (not `t()`) because the pt-BR
@@ -493,7 +499,7 @@ export function ContactDetailView({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
-        className="bg-popover border-border text-popover-foreground w-full p-0 data-[side=right]:sm:max-w-md"
+        className="bg-popover border-border text-popover-foreground w-full p-0 gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md"
       >
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
@@ -502,9 +508,9 @@ export function ContactDetailView({
         ) : (
           <div className="flex flex-col h-full">
             {/* Header: identity block + primary actions */}
-            <SheetHeader className="p-4 pb-3 border-b border-border/50 gap-3">
+            <SheetHeader className="p-4 pb-3 border-b border-border gap-3">
               <div className="flex items-start gap-3 pr-8">
-                <Avatar className="size-14 bg-muted border border-border">
+                <Avatar className="size-12 bg-muted">
                   {contact.avatar_url && (
                     <AvatarImage src={contact.avatar_url} alt={displayName} />
                   )}
@@ -513,33 +519,46 @@ export function ContactDetailView({
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <SheetTitle className="text-popover-foreground text-lg leading-tight truncate">
+                  <SheetTitle className="text-popover-foreground text-base font-semibold leading-tight truncate">
                     {contact.name || contact.phone}
                   </SheetTitle>
                   <SheetDescription className="sr-only">
                     {t('Contact details')}
                   </SheetDescription>
-                  {contact.anonymized_at && (
-                    <span
-                      className="mt-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-                      title={t('Personal data removed (LGPD)')}
-                    >
-                      <ShieldCheck className="size-3" aria-hidden />
-                      {t('Anonymized')}
-                    </span>
-                  )}
                   {contact.company && (
                     <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground truncate">
-                      <Building2 className="size-3 shrink-0" />
+                      <Building2 className="size-3 shrink-0" aria-hidden />
                       <span className="truncate">{contact.company}</span>
                     </p>
+                  )}
+                  {(contact.anonymized_at || contact.opted_out_at) && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {contact.anonymized_at && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                          title={t('Personal data removed (LGPD)')}
+                        >
+                          <ShieldCheck className="size-3" aria-hidden />
+                          {t('Anonymized')}
+                        </span>
+                      )}
+                      {contact.opted_out_at && (
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-full bg-red-500/18 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-300"
+                          title={t('Asked to stop receiving messages')}
+                        >
+                          <span className="size-1.5 rounded-full bg-red-500" aria-hidden />
+                          {t('Opted out')}
+                        </span>
+                      )}
+                    </div>
                   )}
                   <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                     <button
                       type="button"
                       onClick={copyPhone}
                       title={t('Copy phone')}
-                      className="flex max-w-full items-center gap-1.5 hover:text-primary transition-colors cursor-pointer"
+                      className="flex max-w-full items-center gap-1.5 rounded-sm hover:text-primary transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <Phone className="size-3 shrink-0" />
                       <span className="font-mono truncate">{contact.phone}</span>
@@ -604,7 +623,7 @@ export function ContactDetailView({
                   )}
                 </div>
               ) : (
-                <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Pencil className="size-3" />
                   {t('Edit contact')}
                 </div>
@@ -678,59 +697,59 @@ export function ContactDetailView({
                 </div>
               </div>
             ) : (
-              <Tabs defaultValue="conversations" className="flex-1 flex flex-col min-h-0">
+              <Tabs defaultValue="conversations" className="flex-1 flex flex-col min-h-0 gap-0">
                 {/* Tab strip. Earlier build overflowed the sheet (five long
                     labels in a fixed-height list). Labels are short, the
                     list is full-width and wraps if the sheet ever gets
                     narrower than the strip. */}
-                <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3 flex w-auto flex-wrap group-data-horizontal/tabs:h-auto">
+                <TabsList variant="line" className="w-full justify-start gap-4 overflow-x-auto border-b border-border px-4 group-data-horizontal/tabs:h-9">
                   <TabsTrigger
                     value="conversations"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     {t('Conversations')}
                   </TabsTrigger>
                   <TabsTrigger
                     value="tags"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     {t('Tags')}
                   </TabsTrigger>
                   <TabsTrigger
                     value="notes"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     <span data-no-translate>{NOTES_LABEL[language]}</span>
                   </TabsTrigger>
                   <TabsTrigger
                     value="custom"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     {t('Fields')}
                   </TabsTrigger>
                   <TabsTrigger
                     value="deals"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     {t('Deals')}
                   </TabsTrigger>
                   <TabsTrigger
                     value="companies"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     {t('Companies')}
                   </TabsTrigger>
                   {calendarEnabled && (
                     <TabsTrigger
                       value="calendar"
-                      className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                      className={TAB_TRIGGER}
                     >
                       {t('Calendar')}
                     </TabsTrigger>
                   )}
                   <TabsTrigger
                     value="privacy"
-                    className="text-xs px-2 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                    className={TAB_TRIGGER}
                   >
                     {t('Privacy')}
                   </TabsTrigger>
@@ -738,16 +757,20 @@ export function ContactDetailView({
 
                 {/* Conversations Tab (default) */}
                 <TabsContent value="conversations" className="flex-1 overflow-y-auto px-4 py-3">
-                  <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <p className={SECTION_LABEL}>
                     {t('Previous conversations')}
+                    {conversations.length > 0 && (
+                      <span className="font-normal normal-case tracking-normal tabular-nums">
+                        {conversations.length}
+                      </span>
+                    )}
                   </p>
                   {loadingConversations ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="size-5 animate-spin text-muted-foreground" />
                     </div>
                   ) : conversations.length === 0 ? (
-                    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-8 text-center">
-                      <MessageSquare className="size-6 text-muted-foreground" />
+                    <div className="flex flex-col items-start gap-2 py-2">
                       <p className="text-sm text-muted-foreground">
                         {t('No conversations with this contact yet.')}
                       </p>
@@ -757,7 +780,6 @@ export function ContactDetailView({
                           variant="outline"
                           onClick={openConversation}
                           disabled={openingConversation}
-                          className="mt-1 border-border text-foreground hover:bg-muted"
                         >
                           {openingConversation ? (
                             <Loader2 className="size-3.5 animate-spin" />
@@ -769,21 +791,22 @@ export function ContactDetailView({
                       )}
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="-mx-2 divide-y divide-border">
                       {conversations.map((conv) => (
                         <button
                           key={conv.id}
                           type="button"
                           onClick={() => goToInbox(conv.id)}
-                          className="group w-full rounded-lg border border-border bg-muted/40 p-3 text-left transition-colors hover:bg-muted hover:border-primary/40 cursor-pointer"
+                          className="group block w-full rounded-md px-2 py-2.5 text-left transition-colors duration-150 hover:bg-muted/60 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                               <span
                                 className={cn(
-                                  'size-2 rounded-full shrink-0',
+                                  'size-1.5 rounded-full shrink-0',
                                   STATUS_DOT[conv.status]
                                 )}
+                                aria-hidden
                               />
                               <span data-no-translate>
                                 {STATUS_LABEL[language][conv.status]}
@@ -794,17 +817,18 @@ export function ContactDetailView({
                                 </span>
                               )}
                             </span>
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                            <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
                               {relativeTime(conv.last_message_at ?? conv.created_at)}
+                              <ArrowUpRight
+                                className="size-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                                aria-hidden
+                              />
                             </span>
                           </div>
-                          <p className="mt-1.5 text-sm text-foreground/90 line-clamp-2 break-words">
+                          <p className="mt-1 text-sm text-muted-foreground line-clamp-2 break-words">
                             {conv.last_message_text || t('No messages yet')}
                           </p>
-                          <span className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground group-hover:text-primary transition-colors">
-                            <ArrowUpRight className="size-3" />
-                            {t('Open in inbox')}
-                          </span>
+                          <span className="sr-only">{t('Open in inbox')}</span>
                         </button>
                       ))}
                     </div>
@@ -813,57 +837,69 @@ export function ContactDetailView({
 
                 {/* Tags Tab */}
                 <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
-                  <div className="space-y-3">
-                    <p className="text-xs text-muted-foreground">
-                      {t('Click a tag to add or remove it from this contact.')}
+                  <p className={SECTION_LABEL}>{t('Tags')}</p>
+                  {allTags.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t('No tags available. Create tags in Settings.')}
                     </p>
-                    {allTags.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        {t('No tags available. Create tags in Settings.')}
+                  ) : (
+                    <>
+                      <p className="mb-3 text-xs text-muted-foreground">
+                        {t('Click a tag to add or remove it from this contact.')}
                       </p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-1.5">
                         {allTags.map((tag) => {
                           const selected = contactTagIds.includes(tag.id);
                           return (
                             <button
                               key={tag.id}
                               type="button"
+                              aria-pressed={selected}
                               onClick={() => toggleTag(tag.id)}
                               disabled={savingTags}
-                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
+                              className={cn(
+                                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
                                 selected
-                                  ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                  : 'opacity-50 hover:opacity-80'
-                              }`}
-                              style={{
-                                backgroundColor: tag.color + '20',
-                                color: tag.color,
-                              }}
+                                  ? 'bg-primary/10 text-foreground ring-1 ring-primary/40'
+                                  : 'bg-muted text-muted-foreground hover:text-foreground',
+                              )}
                             >
-                              {selected && <Check className="size-3 mr-1" />}
+                              <span
+                                className="size-1.5 rounded-full"
+                                style={{ backgroundColor: tag.color }}
+                                aria-hidden
+                              />
                               {tag.name}
+                              {selected && <Check className="size-3 text-primary" aria-hidden />}
                             </button>
                           );
                         })}
                       </div>
-                    )}
-                  </div>
+                    </>
+                  )}
                 </TabsContent>
-
                 {/* Notes Tab */}
                 <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
+                  <p className={SECTION_LABEL}>
+                    <span data-no-translate>{NOTES_LABEL[language]}</span>
+                    {notes.length > 0 && (
+                      <span className="font-normal normal-case tracking-normal tabular-nums">
+                        {notes.length}
+                      </span>
+                    )}
+                  </p>
                   <div className="space-y-2 mb-3">
                     <Textarea
                       value={newNote}
                       onChange={(e) => setNewNote(e.target.value)}
                       placeholder={t('Write a note...')}
-                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
+                      aria-label={t('Write a note...')}
+                      className="min-h-[60px] text-sm resize-none"
                     />
                     <Button
                       onClick={addNote}
                       disabled={!newNote.trim() || savingNote}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                      variant="outline"
                       size="sm"
                     >
                       {savingNote ? (
@@ -875,35 +911,35 @@ export function ContactDetailView({
                     </Button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto space-y-2">
+                  <div className="flex-1 overflow-y-auto space-y-3">
                     {loadingNotes ? (
                       <div className="flex items-center justify-center py-8">
                         <Loader2 className="size-5 animate-spin text-muted-foreground" />
                       </div>
                     ) : notes.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-8">
+                      <p className="text-sm text-muted-foreground py-2">
                         {t('No notes yet.')}
                       </p>
                     ) : (
                       notes.map((note) => (
                         <div
                           key={note.id}
-                          className="rounded-lg bg-muted/50 border border-border/50 p-3 group"
+                          className="group border-l-2 border-amber-500/60 pl-3"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap flex-1">
+                            <p className="text-sm text-foreground whitespace-pre-wrap flex-1 break-words">
                               {note.note_text}
                             </p>
                             <button
                               type="button"
                               onClick={() => deleteNote(note.id)}
                               aria-label={t('Delete note')}
-                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
+                              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 rounded-sm text-muted-foreground hover:text-destructive transition-opacity duration-150 cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                             >
                               <Trash2 className="size-3.5" />
                             </button>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1.5">
+                          <p className="text-[11px] text-muted-foreground mt-1">
                             {new Date(note.created_at).toLocaleDateString(language, {
                               month: 'short',
                               day: 'numeric',
@@ -920,22 +956,24 @@ export function ContactDetailView({
 
                 {/* Custom Fields Tab */}
                 <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
+                  <p className={SECTION_LABEL}>{t('Fields')}</p>
                   {loadingCustom ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="size-5 animate-spin text-muted-foreground" />
                     </div>
                   ) : customFields.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
+                    <p className="text-sm text-muted-foreground py-2">
                       {t('No custom fields defined. Create them in Settings.')}
                     </p>
                   ) : (
                     <div className="space-y-3">
                       {customFields.map((field) => (
                         <div key={field.id} className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">
+                          <Label htmlFor={`cf-${field.id}`} className="text-muted-foreground text-xs">
                             {field.field_name}
                           </Label>
                           <Input
+                            id={`cf-${field.id}`}
                             type={dateFieldIds.has(field.id) ? 'date' : 'text'}
                             value={customValues[field.id] ?? ''}
                             onChange={(e) =>
@@ -944,14 +982,14 @@ export function ContactDetailView({
                                 [field.id]: e.target.value,
                               }))
                             }
-                            className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
+                            className="h-8 text-sm"
                           />
                         </div>
                       ))}
                       <Button
                         onClick={saveCustomFields}
                         disabled={savingCustom}
-                        className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                        variant="outline"
                         size="sm"
                       >
                         {savingCustom ? (
@@ -967,53 +1005,57 @@ export function ContactDetailView({
 
                 {/* Deals Tab */}
                 <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
+                  <p className={SECTION_LABEL}>
+                    {t('Deals')}
+                    {deals.length > 0 && (
+                      <span className="font-normal normal-case tracking-normal tabular-nums">
+                        {deals.length}
+                      </span>
+                    )}
+                  </p>
                   {loadingDeals ? (
                     <div className="flex items-center justify-center py-8">
-                      <Loader2 className="size-5 animate-spin text-primary" />
+                      <Loader2 className="size-5 animate-spin text-muted-foreground" />
                     </div>
                   ) : deals.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
+                    <p className="text-sm text-muted-foreground py-2">
                       {t('No deals yet')}
                     </p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="divide-y divide-border">
                       {deals.map((deal) => (
-                        <div
-                          key={deal.id}
-                          className="rounded-lg border border-border bg-muted/50 p-3"
-                        >
+                        <div key={deal.id} className="py-2.5">
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-medium text-foreground">
+                            <p className="min-w-0 truncate text-sm font-medium text-foreground">
                               {deal.title}
                             </p>
-                            {deal.stage && (
-                              <span
-                                className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                                style={{
-                                  backgroundColor: `${deal.stage.color}20`,
-                                  color: deal.stage.color,
-                                }}
-                              >
-                                {deal.stage.name}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <DollarSign className="size-3" />
+                            <span className="shrink-0 text-xs tabular-nums text-foreground">
                               {formatCurrency(
                                 deal.value ?? 0,
                                 deal.currency || defaultCurrency,
                               )}
                             </span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                            {deal.stage && (
+                              <span className="inline-flex min-w-0 items-center gap-1.5">
+                                <span
+                                  className="size-1.5 shrink-0 rounded-full"
+                                  style={{ backgroundColor: deal.stage.color }}
+                                  aria-hidden
+                                />
+                                <span className="truncate">{deal.stage.name}</span>
+                              </span>
+                            )}
                             {deal.status && deal.status !== 'open' && (
                               <span
                                 className={
                                   deal.status === 'won'
                                     ? 'text-primary'
-                                    : 'text-red-400'
+                                    : 'text-red-600 dark:text-red-400'
                                 }
                               >
+                                {deal.stage && '· '}
                                 {t(deal.status === 'won' ? 'Won' : 'Lost')}
                               </span>
                             )}
@@ -1038,6 +1080,7 @@ export function ContactDetailView({
 
                 {/* Privacy Tab (LGPD, migration 035) */}
                 <TabsContent value="privacy" className="flex-1 overflow-y-auto px-4 py-3">
+                  <p className={SECTION_LABEL}>{t('Privacy')}</p>
                   <p className="mb-3 text-xs text-muted-foreground">
                     {t(
                       'Record the consent this contact gave, export everything the workspace holds about them, or remove their personal data for good.',
