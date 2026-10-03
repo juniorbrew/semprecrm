@@ -406,7 +406,7 @@ export default function ContactsPage() {
 
       {/* Search + filter pill + density */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-48 max-w-xs flex-1">
+        <div className="relative min-w-0 max-w-xs flex-1">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden
@@ -463,7 +463,7 @@ export default function ContactsPage() {
       {/* Bulk action bar */}
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-md bg-primary/10 px-3 py-1.5">
-          <p className="text-sm font-medium text-foreground" aria-live="polite">
+          <p className="whitespace-nowrap text-sm font-medium text-foreground" aria-live="polite">
             {copy.selected(selected.size)}
           </p>
           <div className="ml-auto flex items-center gap-1.5">
@@ -483,15 +483,17 @@ export default function ContactsPage() {
               onClick={() => setBulkDeleteOpen(true)}
             >
               <Trash2 />
-              {copy.deleteSelected}
+              <span className="sm:hidden">{copy.delete}</span>
+              <span className="hidden sm:inline">{copy.deleteSelected}</span>
             </GatedButton>
           </div>
         </div>
       )}
 
       {/* List: card-less table, sticky header, hairline rows */}
-      <table className="w-full text-sm">
-        <thead className="sticky top-0 z-10 bg-background">
+      <table className="w-full table-fixed text-sm md:table-auto">
+        {/* Negative top = <main> padding, so the header sits flush under the app bar. */}
+        <thead className="sticky -top-4 z-10 bg-background sm:-top-6">
           <tr className="border-y border-border">
             <th scope="col" className="h-9 w-10 pl-3 pr-1 text-left">
               <Checkbox
@@ -500,13 +502,14 @@ export default function ContactsPage() {
                 onCheckedChange={toggleSelectAll}
                 disabled={contacts.length === 0}
                 aria-label={copy.selectAll}
+                className="flex"
               />
             </th>
             <th scope="col" className={TH}>{copy.colContact}</th>
             <th scope="col" className={cn(TH, 'hidden md:table-cell')}>{copy.colEmail}</th>
             <th scope="col" className={cn(TH, 'hidden md:table-cell')}>{copy.colTags}</th>
             <th scope="col" className={cn(TH, 'hidden lg:table-cell')}>{copy.colCreated}</th>
-            <th scope="col" className="w-px pr-3">
+            <th scope="col" className="w-11 pr-3 md:w-px">
               <span className="sr-only">{copy.colActions}</span>
             </th>
           </tr>

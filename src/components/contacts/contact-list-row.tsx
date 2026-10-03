@@ -184,6 +184,7 @@ export function ContactListRow({
           checked={selected}
           onCheckedChange={onToggleSelect}
           aria-label={copy.select(name)}
+          className="flex"
         />
       </td>
       <td className={cn('min-w-0 px-2 align-middle', cell)}>
@@ -207,7 +208,7 @@ export function ContactListRow({
               compact ? 'flex-row items-baseline gap-2' : 'flex-col',
             )}
           >
-            <span className="flex min-w-0 items-center gap-2">
+            <span className={cn('flex min-w-0 items-center gap-2', compact && 'max-w-full shrink-0')}>
               <span
                 className={cn(
                   'truncate text-sm font-medium text-foreground',
@@ -235,7 +236,7 @@ export function ContactListRow({
               ) : null}
             </span>
             {meta && (
-              <span className="truncate text-xs tabular-nums text-muted-foreground">{meta}</span>
+              <span className="min-w-0 truncate text-xs tabular-nums text-muted-foreground">{meta}</span>
             )}
           </span>
         </button>
@@ -247,7 +248,12 @@ export function ContactListRow({
         {tags.length === 0 ? (
           <span className="text-xs text-muted-foreground">—</span>
         ) : (
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span
+            className={cn(
+              'flex items-center gap-x-3 gap-y-1 text-xs text-muted-foreground',
+              compact ? 'max-w-64 flex-nowrap overflow-hidden whitespace-nowrap' : 'flex-wrap',
+            )}
+          >
             {tags.slice(0, 3).map((tag) => (
               <span key={tag.id} className="inline-flex items-center gap-1.5">
                 <span
@@ -269,7 +275,7 @@ export function ContactListRow({
         <div className="flex items-center justify-end gap-0.5">
           <div
             aria-hidden
-            className="hidden items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/row:opacity-100 group-focus-within/row:opacity-100 motion-reduce:transition-none sm:flex"
+            className="hidden items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/row:opacity-100 group-focus-within/row:opacity-100 motion-reduce:transition-none md:flex"
           >
             <button
               type="button"
