@@ -15,9 +15,10 @@ import {
   Loader2,
   ArrowRight,
   ArrowLeft,
-  X,
 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
+import { cn } from '@/lib/utils';
+import { SECTION_TITLE, StepFooter, StepHeader, optionRowClass, pillClass } from './wizard-ui';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -312,108 +313,81 @@ export function Step2SelectAudience({
       audience.csvContacts &&
       audience.csvContacts.length > 0);
 
+  const tagPill = (tag: Tag, on: boolean, tone: 'primary' | 'danger', toggle: () => void) => (
+    <button key={tag.id} type="button" aria-pressed={on} onClick={toggle} className={pillClass(on, tone)}>
+      <span aria-hidden className="size-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
+      {tag.name}
+    </button>
+  );
+  const selectClass =
+    'h-8 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">{t('Select Audience')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('Choose who will receive this broadcast.')}
-        </p>
-      </div>
+      <StepHeader title={t('Select Audience')} description={t('Choose who will receive this broadcast.')} />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <ul className="divide-y divide-border border-y border-border">
         {audienceOptions.map((option) => {
           const isSelected = audience.type === option.type;
           const Icon = option.icon;
           return (
-            <button
-              key={option.type}
-              type="button"
-              aria-pressed={isSelected}
-              onClick={() =>
-                onUpdate({
-                  ...audience,
-                  type: option.type,
-                  // Wipe shape fields from other types to avoid stale
-                  // config leaking across selections.
-                  tagIds: option.type === 'tags' ? audience.tagIds : undefined,
-                  customField:
-                    option.type === 'custom_field'
-                      ? audience.customField
-                      : undefined,
-                  csvContacts:
-                    option.type === 'csv' ? audience.csvContacts : undefined,
-                })
-              }
-              className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
-                isSelected
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                  : 'border-border bg-card/50 hover:border-border'
-              }`}
-            >
-              <div
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-                  isSelected
-                    ? 'bg-primary/10 text-primary'
-                    : 'bg-muted text-muted-foreground'
-                }`}
+            <li key={option.type}>
+              <button
+                type="button"
+                aria-pressed={isSelected}
+                onClick={() =>
+                  onUpdate({
+                    ...audience,
+                    type: option.type,
+                    // Wipe shape fields from other types to avoid stale
+                    // config leaking across selections.
+                    tagIds: option.type === 'tags' ? audience.tagIds : undefined,
+                    customField:
+                      option.type === 'custom_field'
+                        ? audience.customField
+                        : undefined,
+                    csvContacts:
+                      option.type === 'csv' ? audience.csvContacts : undefined,
+                  })
+                }
+                className={optionRowClass(isSelected)}
               >
-                <Icon className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">{t(option.label)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {t(option.description)}
-                </p>
-              </div>
-            </button>
+                <Icon
+                  className={cn('mt-0.5 size-4 shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')}
+                  aria-hidden
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">{t(option.label)}</span>
+                  <span className="block text-xs text-muted-foreground">{t(option.description)}</span>
+                </span>
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
 
       {audience.type === 'tags' && (
-        <div className="rounded-xl border border-border bg-card/50 p-4">
-          <p className="mb-3 text-sm font-medium text-foreground">{t('Select Tags')}</p>
+        <section className="space-y-2">
+          <h3 className={SECTION_TITLE}>{t('Select Tags')}</h3>
           {loadingTags ? (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label={t('Loading…')} />
           ) : tags.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {t('No tags found. Create tags in Settings.')}
-            </p>
+            <p className="text-xs text-muted-foreground">{t('No tags found. Create tags in Settings.')}</p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {tags.map((tag) => {
-                const isSelected = audience.tagIds?.includes(tag.id);
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    aria-pressed={isSelected}
-                    onClick={() => toggleTag(tag.id)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
-                      isSelected
-                        ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-border bg-muted text-muted-foreground hover:border-border'
-                    }`}
-                  >
-                    <span
-                      className="mr-1.5 h-2 w-2 rounded-full"
-                      style={{ backgroundColor: tag.color }}
-                    />
-                    {tag.name}
-                  </button>
-                );
-              })}
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((tag) =>
+                tagPill(tag, !!audience.tagIds?.includes(tag.id), 'primary', () => toggleTag(tag.id)),
+              )}
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {audience.type === 'custom_field' && (
-        <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
-          <p className="text-sm font-medium text-foreground">{t('Custom Field Filter')}</p>
+        <section className="space-y-2">
+          <h3 className={SECTION_TITLE}>{t('Custom Field Filter')}</h3>
           {loadingFields ? (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label={t('Loading…')} />
           ) : customFields.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {t('No custom fields defined. Create one in Settings → Custom fields.')}
@@ -424,7 +398,7 @@ export function Step2SelectAudience({
                 aria-label={t('Field')}
                 value={audience.customField?.fieldId ?? ''}
                 onChange={(e) => updateCustomField({ fieldId: e.target.value })}
-                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                className={selectClass}
               >
                 <option value="">{t('Select field…')}</option>
                 {customFields.map((f) => (
@@ -441,7 +415,7 @@ export function Step2SelectAudience({
                     operator: e.target.value as CustomFieldOperator,
                   })
                 }
-                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                className={selectClass}
               >
                 {OPERATOR_OPTIONS.map((op) => (
                   <option key={op.value} value={op.value}>
@@ -455,43 +429,35 @@ export function Step2SelectAudience({
                 onChange={(e) => updateCustomField({ value: e.target.value })}
                 placeholder={t('Value')}
                 aria-label={t('Value')}
-                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                className={cn(selectClass, 'placeholder:text-muted-foreground')}
               />
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {audience.type === 'csv' && (
-        <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
-          <div>
-            <p className="text-sm font-medium text-foreground">{t('Upload CSV')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t('A "phone" column is required (with country code, e.g. +55 11 99999-0000); "name" is optional.')}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => csvInputRef.current?.click()}
-            className="group flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center transition-colors hover:border-primary/40 hover:bg-muted/70"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-foreground">
-              {csvFileName ? (
-                <FileText className="h-5 w-5" />
-              ) : (
-                <Upload className="h-5 w-5" />
-              )}
-            </div>
-            <p className="text-sm text-foreground" data-no-translate={csvFileName ? true : undefined}>
-              {csvFileName ?? t('Choose a CSV file')}
-            </p>
-            {csvCount > 0 && (
-              <p className="text-xs text-primary">
-                {t('Contacts found in the file')}: {csvCount}
-              </p>
+        <section className="space-y-2">
+          <h3 className={SECTION_TITLE}>{t('Upload CSV')}</h3>
+          <p className="text-xs text-muted-foreground">
+            {t('A "phone" column is required (with country code, e.g. +55 11 99999-0000); "name" is optional.')}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => csvInputRef.current?.click()}>
+              {csvFileName ? <FileText /> : <Upload />}
+              {t('Choose a CSV file')}
+            </Button>
+            {csvFileName && (
+              <span className="min-w-0 truncate text-sm text-foreground" data-no-translate>
+                {csvFileName}
+              </span>
             )}
-          </button>
+            {csvCount > 0 && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {t('Contacts found in the file')}: {csvCount}
+              </span>
+            )}
+          </div>
 
           <input
             ref={csvInputRef}
@@ -501,95 +467,63 @@ export function Step2SelectAudience({
             className="hidden"
             aria-label={t('Choose a CSV file')}
           />
-        </div>
+        </section>
       )}
 
       {/* Exclude list — applies regardless of audience type */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <X className="h-4 w-4 text-red-400" />
-          <p className="text-sm font-medium text-foreground">
-            {t('Exclude contacts with these tags')}
-          </p>
-          <span className="text-xs text-muted-foreground">{t('(optional)')}</span>
-        </div>
+      <section className="space-y-2 border-t border-border pt-4">
+        <h3 className={SECTION_TITLE}>
+          {t('Exclude contacts with these tags')}{' '}
+          <span className="normal-case tracking-normal">{t('(optional)')}</span>
+        </h3>
         {tags.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t('No tags available.')}</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {tags.map((tag) => {
-              const isExcluded = audience.excludeTagIds?.includes(tag.id);
-              return (
-                <button
-                  key={tag.id}
-                  type="button"
-                  aria-pressed={isExcluded}
-                  onClick={() => toggleExcludeTag(tag.id)}
-                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
-                    isExcluded
-                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
-                      : 'border-border bg-muted text-muted-foreground hover:border-border'
-                  }`}
-                >
-                  <span
-                    className="mr-1.5 h-2 w-2 rounded-full"
-                    style={{ backgroundColor: tag.color }}
-                  />
-                  {tag.name}
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap gap-1.5">
+            {tags.map((tag) =>
+              tagPill(tag, !!audience.excludeTagIds?.includes(tag.id), 'danger', () => toggleExcludeTag(tag.id)),
+            )}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Audience Summary */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
-        <p className="mb-2 text-sm font-medium text-foreground">{t('Audience Summary')}</p>
+      {/* Audience summary — one quiet line */}
+      <section className="space-y-1 border-t border-border pt-4" aria-live="polite">
+        <h3 className={SECTION_TITLE}>{t('Audience Summary')}</h3>
         {loadingCount ? (
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            <span className="text-xs text-muted-foreground">{t('Calculating…')}</span>
-          </div>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            {t('Calculating…')}
+          </p>
         ) : estimatedCount !== null ? (
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-primary" />
-            <span className="text-sm text-foreground">
+          <p className="text-sm text-muted-foreground">
+            <span className="text-base font-semibold tabular-nums text-foreground">
               {estimatedCount.toLocaleString(language)}
-            </span>
-            <span className="text-xs text-muted-foreground">{t('estimated recipients')}</span>
+            </span>{' '}
+            {t('estimated recipients')}
             {excludedOptedOut > 0 && (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs">
+                {' '}
                 · {excludedOptedOut}{' '}
                 {t(excludedOptedOut === 1 ? 'opted-out contact excluded' : 'opted-out contacts excluded')}
               </span>
             )}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            {t('Select an audience type to see the estimate.')}
           </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">{t('Select an audience type to see the estimate.')}</p>
         )}
-      </div>
+      </section>
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
-        <Button
-          variant="outline"
-          onClick={onBack}
-          className="border-border text-muted-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
+      <StepFooter>
+        <Button variant="ghost" onClick={onBack} className="text-muted-foreground hover:text-foreground">
+          <ArrowLeft />
           {t('Back')}
         </Button>
-        <Button
-          onClick={onNext}
-          disabled={!isValid}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        <Button onClick={onNext} disabled={!isValid}>
           {t('Next')}
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight />
         </Button>
-      </div>
+      </StepFooter>
     </div>
   );
 }
