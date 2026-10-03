@@ -5,12 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Loader2,
-  CircleCheck,
-  CircleAlert,
-  Clock,
-  UserPlus,
-  PlayCircle,
-  PauseCircle,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -18,7 +12,6 @@ import { toast } from "sonner";
 import { format, formatDistanceStrict } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
@@ -83,31 +76,25 @@ const STATUS_LABEL: Record<Language, Record<RunRow["status"], string>> = {
 
 const STATUS_META: Record<
   RunRow["status"],
-  { classes: string; icon: typeof Clock }
+  { classes: string }
 > = {
   active: {
-    classes: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
-    icon: PlayCircle,
+    classes: "bg-emerald-500",
   },
   completed: {
-    classes: "border-border bg-muted text-muted-foreground",
-    icon: CircleCheck,
+    classes: "bg-muted-foreground/50",
   },
   handed_off: {
-    classes: "border-amber-600/40 bg-amber-500/10 text-amber-300",
-    icon: UserPlus,
+    classes: "bg-amber-500",
   },
   timed_out: {
-    classes: "border-border bg-muted/60 text-muted-foreground",
-    icon: Clock,
+    classes: "bg-muted-foreground/30",
   },
   paused_by_agent: {
-    classes: "border-border bg-muted text-muted-foreground",
-    icon: PauseCircle,
+    classes: "bg-muted-foreground/50",
   },
   failed: {
-    classes: "border-red-600/40 bg-red-500/10 text-red-300",
-    icon: CircleAlert,
+    classes: "bg-red-500",
   },
 };
 
@@ -190,26 +177,26 @@ export default function FlowRunsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
+    <div className="mx-auto max-w-4xl">
       <button
         type="button"
         onClick={() => router.push(`/flows/${flow.id}`)}
-        className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        className="mb-2 inline-flex items-center gap-1 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
       >
         <ArrowLeft className="h-3 w-3" />
         {flow.name}
       </button>
-      <h1 className="text-xl font-semibold text-foreground">{t("Runs")}</h1>
+      <h1 className="text-xl font-semibold tracking-tight text-foreground">{t("Runs")}</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         {t("The 50 most recent times this flow ran. Expand a row to see the engine's per-step log.")}
       </p>
 
       {runs.length === 0 ? (
-        <div className="mt-6 rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className="mt-6 py-6 text-sm text-muted-foreground">
           {t("No runs yet. Trigger the flow from a personal WhatsApp number to see it appear here.")}
         </div>
       ) : (
-        <div className="mt-6 flex flex-col gap-2">
+        <div className="mt-6 flex flex-col divide-y divide-border border-y border-border">
           {runs.map((run) => (
             <RunCard
               key={run.id}
@@ -239,7 +226,6 @@ function RunCard({
   const { t, language } = useLanguage();
   const dateLocale = language === "pt-BR" ? ptBR : undefined;
   const meta = STATUS_META[run.status];
-  const StatusIcon = meta.icon;
   const contactLabel =
     run.contact?.name?.trim() || run.contact?.phone || t("Unknown contact");
   // How long the run took (start → end), not how long ago it ended.
@@ -249,11 +235,15 @@ function RunCard({
       })
     : null;
   return (
-    <div className="rounded-lg border border-border bg-card">
+    <div>
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        aria-expanded={expanded}
+        className={cn(
+          "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+          expanded && "bg-primary/10 shadow-[inset_3px_0_0_var(--primary)] hover:bg-primary/10",
+        )}
       >
         {expanded ? (
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -265,10 +255,10 @@ function RunCard({
             <span className="truncate text-sm font-medium text-foreground">
               {contactLabel}
             </span>
-            <Badge variant="outline" className={cn("gap-1", meta.classes)}>
-              <StatusIcon className="h-3 w-3" />
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={cn("size-1.5 rounded-full", meta.classes)} aria-hidden />
               {STATUS_LABEL[language][run.status]}
-            </Badge>
+            </span>
             {run.status === "active" && run.current_node_key && (
               <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 {t("at node")} {run.current_node_key}
@@ -295,7 +285,7 @@ function RunCard({
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-border px-4 py-3">
+        <div className="py-3 pl-10 pr-3">
           {Object.keys(run.vars).length > 0 && (
             <details className="mb-3">
               <summary className="cursor-pointer text-xs text-muted-foreground">
@@ -324,15 +314,15 @@ function RunCard({
 }
 
 const EVENT_COLOR: Record<string, string> = {
-  started: "text-emerald-300",
+  started: "text-emerald-600 dark:text-emerald-400",
   node_entered: "text-muted-foreground",
-  message_sent: "text-sky-300",
+  message_sent: "text-foreground",
   reply_received: "text-primary",
-  fallback_fired: "text-amber-300",
-  handoff: "text-amber-300",
+  fallback_fired: "text-amber-600 dark:text-amber-400",
+  handoff: "text-amber-600 dark:text-amber-400",
   timeout: "text-muted-foreground",
-  error: "text-red-300",
-  completed: "text-emerald-300",
+  error: "text-destructive",
+  completed: "text-emerald-600 dark:text-emerald-400",
 };
 
 /** Engine event codes as they read in each language. */

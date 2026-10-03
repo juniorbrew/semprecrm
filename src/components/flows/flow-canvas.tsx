@@ -198,10 +198,10 @@ function FlowNodeCard({ data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        "relative min-w-[220px] max-w-[260px] rounded-lg border bg-card/95 px-3 py-2 text-left shadow-lg backdrop-blur transition-colors",
+        "relative min-w-[220px] max-w-[260px] rounded-lg border bg-card px-3 py-2 text-left transition-[border-color,box-shadow,background-color] duration-150 motion-reduce:transition-none",
         selected
-          ? "border-primary ring-1 ring-primary/40"
-          : "border-border hover:border-border",
+          ? "border-primary/60 bg-[color-mix(in_oklab,var(--primary)_6%,var(--card))] ring-2 ring-primary/25"
+          : "border-border hover:border-muted-foreground/40",
         // Flash overrides hover/selected colors briefly. Tailwind's
         // built-in `animate-pulse` is too gentle; a ring with the
         // amber accent matches the list view's flash semantics.
@@ -217,12 +217,13 @@ function FlowNodeCard({ data, selected }: NodeProps) {
       )}
 
       <div className="flex items-center gap-2">
-        <Icon className={cn("h-3.5 w-3.5 shrink-0", meta.color)} />
-        <span className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <Icon className={cn("size-3.5 shrink-0", selected ? "text-primary" : "text-muted-foreground")} />
+        <span className="truncate text-[10.5px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
           {t(meta.label)}
         </span>
         {isEntry && (
-          <span className="ml-auto rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-300">
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[10.5px] text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
             {t("Entry")}
           </span>
         )}
@@ -533,7 +534,7 @@ function FlowCanvasInner() {
 
   if (rfNodes.length === 0) {
     return (
-      <div className="flex h-[60vh] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-background text-sm text-muted-foreground">
+      <div className="flex h-[60vh] flex-col items-center justify-center gap-3 rounded-lg border border-border bg-background text-sm text-muted-foreground">
         <p>{t("No nodes yet.")}</p>
         <CanvasAddNodeButton />
       </div>
@@ -581,7 +582,7 @@ function FlowCanvasInner() {
             maskColor="color-mix(in oklch, var(--background) 70%, transparent)"
             className="!border !border-border !bg-card"
           />
-          <Panel position="bottom-right" className="!bottom-4 !right-4">
+          <Panel position="top-right" className="!right-3 !top-3">
             <CanvasAddNodeButton />
           </Panel>
         </ReactFlow>
@@ -644,10 +645,13 @@ function NodeEditSheet({
       >
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="flex items-center gap-2 text-popover-foreground">
-            <Icon className={cn("h-4 w-4 shrink-0", meta.color)} />
-            <span>{t(meta.label)}</span>
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Icon className="size-4" />
+            </span>
+            <span className="text-sm font-semibold">{t(meta.label)}</span>
             {isEntry && (
-              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+              <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
                 {t("Entry")}
               </span>
             )}
@@ -657,7 +661,7 @@ function NodeEditSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
+        <div className="@container flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
           <NodeConfigForm
             node={node}
             allNodes={allNodes}
@@ -678,9 +682,9 @@ function NodeEditSheet({
             variant="ghost"
             size="sm"
             onClick={onDelete}
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="size-3.5" />
             {t("Delete node")}
           </Button>
         </SheetFooter>
@@ -737,10 +741,10 @@ function CanvasAddNodeButton() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-lg transition-colors hover:bg-muted"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground shadow-sm transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-muted motion-reduce:transition-none"
         aria-label={t("Add node")}
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="size-3.5" />
         {t("Add node")}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="border-border bg-popover">
@@ -749,7 +753,7 @@ function CanvasAddNodeButton() {
           const Icon = meta.icon;
           return (
             <DropdownMenuItem key={type} onClick={() => handleAdd(type)}>
-              <Icon className={cn("h-3.5 w-3.5", meta.color)} />
+              <Icon className="size-3.5 text-muted-foreground" />
               {t(meta.label)}
             </DropdownMenuItem>
           );

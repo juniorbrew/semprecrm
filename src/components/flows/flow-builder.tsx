@@ -26,7 +26,6 @@ import {
   ChevronUp,
   CornerDownRight,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -161,16 +160,19 @@ export function FlowBuilder() {
 
       <EntryPicker state={state} setState={setState} />
 
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-3 border-t border-border pt-5">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-foreground">
-            {t("Nodes")} ({state.nodes.length})
+          <h2 className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+            {t("Nodes")}
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold normal-case tabular-nums tracking-normal">
+              {state.nodes.length}
+            </span>
           </h2>
           <AddNodeButton onAdd={addNode} />
         </div>
 
         {state.nodes.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card/50 p-8 text-center text-sm text-muted-foreground">
+          <div className="py-6 text-sm text-muted-foreground">
             {t("Add a Start node, then a Send buttons node, then a Handoff — that's the classic welcome-menu shape.")}
           </div>
         ) : (
@@ -267,8 +269,8 @@ function TriggerPanel({
 }) {
   const { t } = useLanguage();
   return (
-    <section className="rounded-lg border border-border bg-card p-4">
-      <h2 className="mb-3 text-sm font-semibold text-foreground">{t("Trigger")}</h2>
+    <section>
+      <h2 className="mb-3 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">{t("Trigger")}</h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">{t("When…")}</label>
@@ -352,8 +354,8 @@ function EntryPicker({
   const { t } = useLanguage();
   if (state.nodes.length === 0) return null;
   return (
-    <section className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
-      <CornerDownRight className="h-4 w-4 shrink-0 text-primary" />
+    <section className="flex items-center gap-3 border-t border-border pt-5">
+      <CornerDownRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span className="text-xs text-muted-foreground">{t("Entry node:")}</span>
       <NodeKeySelect
         value={state.entry_node_id}
@@ -408,12 +410,9 @@ function NodeCard({
     <div
       ref={cardRef}
       className={cn(
-        "rounded-lg border bg-card transition-shadow duration-500",
-        hasError
-          ? "border-red-500/40"
-          : isEntry
-            ? "border-primary/50"
-            : "border-border",
+        "rounded-lg border bg-card transition-[box-shadow,border-color] duration-200 motion-reduce:transition-none",
+        expanded ? "border-primary/60 ring-2 ring-primary/25" : "border-border",
+        hasError && "shadow-[inset_3px_0_0_var(--color-red-500)]",
         isFlashed &&
           "ring-2 ring-primary ring-offset-2 ring-offset-background",
       )}
@@ -421,9 +420,17 @@ function NodeCard({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <meta.icon className={cn("h-4 w-4 shrink-0", meta.color)} />
+        <span
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-md",
+            expanded ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
+          )}
+        >
+          <meta.icon className="size-4" />
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-foreground">
@@ -433,12 +440,10 @@ function NodeCard({
               {node.node_key}
             </code>
             {isEntry && (
-              <Badge
-                variant="outline"
-                className="border-primary/40 bg-primary/10 text-[10px] text-primary"
-              >
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
                 {t("Entry")}
-              </Badge>
+              </span>
             )}
           </div>
           {!expanded && preview && (
@@ -448,7 +453,7 @@ function NodeCard({
           )}
         </div>
         {hasError && (
-          <CircleAlert className="h-3.5 w-3.5 shrink-0 text-red-400" />
+          <CircleAlert className="size-3.5 shrink-0 text-red-500" aria-hidden />
         )}
         {expanded ? (
           <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -476,14 +481,14 @@ function NodeCard({
               variant="ghost"
               size="sm"
               onClick={onRemove}
-              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="size-3.5" />
               {t("Remove node")}
             </Button>
           </div>
           {issues.length > 0 && (
-            <div className="mt-3 flex flex-col gap-1 rounded-md bg-red-500/5 p-2">
+            <div className="mt-3 flex flex-col gap-1">
               {issues.map((i, ix) => (
                 <IssueLine key={ix} issue={i} />
               ))}
@@ -517,7 +522,7 @@ function NodeConfigWithAdvanced({
   const hasReplyIds =
     node.node_type === "send_buttons" || node.node_type === "send_list";
   return (
-    <div className="flex flex-col gap-3">
+    <div className="@container flex flex-col gap-3">
       <NodeConfigForm
         node={node}
         allNodes={allNodes}
@@ -587,10 +592,10 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-muted motion-reduce:transition-none"
         aria-label={t("Add node")}
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="size-3.5" />
         {t("Add node")}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="border-border bg-popover">
@@ -598,7 +603,7 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
           const meta = NODE_META[type];
           return (
             <DropdownMenuItem key={type} onClick={() => onAdd(type)}>
-              <meta.icon className={cn("h-3.5 w-3.5", meta.color)} />
+              <meta.icon className="size-3.5 text-muted-foreground" />
               {t(meta.label)}
             </DropdownMenuItem>
           );

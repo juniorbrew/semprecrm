@@ -283,8 +283,8 @@ function SendButtonsForm({
               className={cn(
                 "grid grid-cols-1 gap-2 rounded-md border border-border bg-muted/40 p-3",
                 showAdvanced
-                  ? "md:grid-cols-[1fr_2fr_2fr_auto]"
-                  : "md:grid-cols-[2fr_2fr_auto]",
+                  ? "@xl:grid-cols-[1fr_2fr_2fr_auto]"
+                  : "@xl:grid-cols-[2fr_2fr_auto]",
               )}
             >
               {showAdvanced && (
@@ -317,7 +317,7 @@ function SendButtonsForm({
                 variant="ghost"
                 size="sm"
                 onClick={() => removeButton(i)}
-                className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 aria-label={t("Remove button")}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -456,7 +456,7 @@ function SendListForm({
         onChange={(v) => onUpdateConfig({ text: v })}
         rows={3}
       />
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
         <TextRow
           label="Tap-to-expand button label (≤20 chars)"
           value={cfg.button_label ?? ""}
@@ -492,7 +492,7 @@ function SendListForm({
                   variant="ghost"
                   size="sm"
                   onClick={() => removeSection(sIdx)}
-                  className="shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   aria-label={t("Remove section")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -505,8 +505,8 @@ function SendListForm({
                 className={cn(
                   "mb-2 grid grid-cols-1 gap-2",
                   showAdvanced
-                    ? "md:grid-cols-[1fr_2fr_2fr_auto]"
-                    : "md:grid-cols-[2fr_2fr_auto]",
+                    ? "@xl:grid-cols-[1fr_2fr_2fr_auto]"
+                    : "@xl:grid-cols-[2fr_2fr_auto]",
                 )}
               >
                 {showAdvanced && (
@@ -546,7 +546,7 @@ function SendListForm({
                   variant="ghost"
                   size="sm"
                   onClick={() => removeRow(sIdx, rIdx)}
-                  className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   aria-label={t("Remove row")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -614,7 +614,7 @@ function ConditionForm({
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-3">
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">{t("If")}</label>
           <Select
@@ -638,7 +638,7 @@ function ConditionForm({
             </SelectContent>
           </Select>
         </div>
-        <div className="md:col-span-2">
+        <div className="@xl:col-span-2">
           <label className="mb-1 block text-xs text-muted-foreground">
             {t(
               subject === "var"
@@ -702,7 +702,7 @@ function ConditionForm({
       <div
         className={cn(
           "grid grid-cols-1 gap-3",
-          showValue ? "md:grid-cols-2" : "",
+          showValue ? "@xl:grid-cols-2" : "",
         )}
       >
         <div>
@@ -742,7 +742,7 @@ function ConditionForm({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
         <NextNodeRow
           value={cfg.true_next ?? ""}
           allNodes={allNodes}
@@ -789,7 +789,7 @@ function SetTagForm({
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">{t("Action")}</label>
           <Select

@@ -80,14 +80,14 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
 
   return (
     <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
-      <div className="mx-auto flex h-full max-w-4xl flex-col gap-6 p-6">
+      <div className="mx-auto flex h-full max-w-4xl flex-col gap-4">
         <EditorHeader />
         {!isMobile && (
           <div className="flex items-center justify-end">
             <div
               role="group"
               aria-label={t("Editor view")}
-              className="inline-flex items-center gap-1 rounded-md border border-border bg-card p-0.5 text-xs"
+              className="inline-flex items-center gap-1 text-xs"
             >
               <ToggleButton
                 active={effectiveView === "canvas"}
@@ -110,7 +110,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
         {/* Sticky-bottom validation panel mirrors the placement used
             when this lived inside FlowBuilder — the activate-readiness
             status follows the user as they scroll, in either view. */}
-        <div className="sticky bottom-4 z-10 shadow-xl shadow-background/60">
+        <div className="sticky bottom-4 z-10">
           <ValidationPanel />
         </div>
       </div>
@@ -157,10 +157,10 @@ function ToggleButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded px-2 py-1 transition-colors",
+        "inline-flex h-7 items-center gap-1.5 rounded-full px-3 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
         active
-          ? "bg-secondary text-secondary-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          ? "bg-primary/15 text-primary"
+          : "bg-muted text-muted-foreground hover:text-foreground",
       )}
     >
       {icon}
