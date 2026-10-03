@@ -16,7 +16,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, Loader2, MessageCircle, Sparkles } from 'lucide-react';
+import { Copy, Loader2, MessageCircle } from 'lucide-react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/select';
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
+import { StatusDot } from './settings-chip';
 
 type InviteRole = 'admin' | 'agent' | 'viewer';
 
@@ -204,7 +205,6 @@ export function InviteMemberDialog({
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-                <Sparkles className="size-4 text-primary" />
                 {t('Invite created')}
               </DialogTitle>
               <DialogDescription className="text-muted-foreground">
@@ -234,26 +234,27 @@ export function InviteMemberDialog({
                 />
                 <Button
                   type="button"
+                  variant="outline"
                   onClick={copyToClipboard}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
+                  className="shrink-0"
                 >
                   <Copy className="size-4" />
                   {t('Copy')}
                 </Button>
               </div>
 
-              {/* Higher-contrast amber than the original 10% / amber-200.
-                  Reviewed against slate-900 to meet WCAG AAA for body
-                  text (target ratio 7:1). Border bumped to /50, bg to
-                  /15, foreground promoted to amber-100 for the strong
-                  intro, amber-200 for the body. */}
-              <div className="rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-xs text-amber-200">
-                <strong className="font-semibold text-amber-100">
+              {/* Warning reads as an amber dot + foreground text so it
+                  stays legible in light and dark mode. */}
+              <div className="flex gap-2 text-xs text-muted-foreground">
+                <StatusDot tone="warn" className="mt-1.5" />
+                <p>
+                <strong className="font-semibold text-foreground">
                   {t('Save this link now.')}
                 </strong>{' '}
                 {t(
                   'We never store the plaintext — once you close this dialog the URL is gone. To re-share, revoke this invite and create a new one.',
                 )}
+                </p>
               </div>
 
               {/* Anchor styled with `buttonVariants` rather than wrapping
@@ -268,7 +269,7 @@ export function InviteMemberDialog({
                 className={buttonVariants({
                   variant: 'outline',
                   className:
-                    'w-full border-border text-muted-foreground hover:bg-muted',
+                    'w-full',
                 })}
               >
                 <MessageCircle className="size-4" />
@@ -279,7 +280,6 @@ export function InviteMemberDialog({
             <DialogFooter className="bg-popover border-border">
               <Button
                 onClick={() => onOpenChange(false)}
-                className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 {t('Done')}
               </Button>
@@ -362,17 +362,12 @@ export function InviteMemberDialog({
             </div>
 
             <DialogFooter className="bg-popover border-border">
-              <Button
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                className="border-border text-muted-foreground hover:bg-muted"
-              >
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 {t('Cancel')}
               </Button>
               <Button
                 onClick={handleCreate}
                 disabled={submitting}
-                className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 {submitting ? (
                   <>

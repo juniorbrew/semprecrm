@@ -30,13 +30,10 @@ import {
   MailX,
   Plus,
   Trash2,
-  UsersRound,
 } from 'lucide-react';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -59,6 +56,8 @@ import { useLanguage } from '@/hooks/use-language';
 import type { AccountRole } from '@/lib/auth/roles';
 import { InviteMemberDialog } from './invite-member-dialog';
 import { MfaRequirementToggle } from './mfa-requirement-toggle';
+import { SettingsChip } from './settings-chip';
+import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
 
@@ -277,7 +276,7 @@ export function MembersTab() {
   }
 
   return (
-    <section className="animate-in fade-in-50 space-y-6 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title={t('Team members')}
         description={t('People with access to this account. Roles control what each teammate can do.')}
@@ -291,9 +290,9 @@ export function MembersTab() {
         }
       />
 
+      <div className="space-y-8">
       {/* Roster */}
-      <Card>
-        <CardContent className="p-0">
+      <div>
           <ul className="divide-y divide-border">
             {members.map((member) => {
               const roleMeta = ROLE_META[member.role];
@@ -310,9 +309,9 @@ export function MembersTab() {
                   // 128px width doesn't force the name into a 50-pixel
                   // truncation. Desktop (sm+): everything inline as
                   // before.
-                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
+                  className="flex flex-col gap-3 py-2.5 sm:flex-row sm:items-center sm:gap-4"
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-4">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <span
                       className="relative shrink-0"
                       title={member.availability === 'away' ? t('Away') : t('Available')}
@@ -342,28 +341,22 @@ export function MembersTab() {
                           {member.full_name || t('Unnamed')}
                         </span>
                         {isSelf && (
-                          <Badge className="bg-muted text-muted-foreground border-border text-[10px] uppercase tracking-wide">
-                            {t('You')}
-                          </Badge>
+                          <SettingsChip variant="muted">{t('You')}</SettingsChip>
                         )}
                         {member.availability === 'away' && (
-                          <Badge className="bg-muted text-muted-foreground border-border text-[10px] uppercase tracking-wide">
-                            {t('Away')}
-                          </Badge>
+                          <SettingsChip variant="muted">{t('Away')}</SettingsChip>
                         )}
                       </div>
-                      {member.email && (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {member.email}
-                        </p>
-                      )}
+                      <p className="truncate text-xs text-muted-foreground">
+                        {member.email}
+                        {member.email ? ' · ' : ''}
+                        {/* Joined date stays desktop-only. The mobile row's
+                            vertical density makes the joined date noise. */}
+                        <span className="hidden tabular-nums sm:inline">
+                          {t('Joined')} {fmtDate(member.joined_at, language)}
+                        </span>
+                      </p>
                     </div>
-                  </div>
-
-                  {/* Joined date stays desktop-only. The mobile row's
-                      vertical density makes the joined date noise. */}
-                  <div className="hidden sm:block text-right text-xs text-muted-foreground">
-                    {t('Joined')} {fmtDate(member.joined_at, language)}
                   </div>
 
                   {/* Actions cluster. On mobile this is its own row
@@ -386,7 +379,8 @@ export function MembersTab() {
                         }
                       >
                         <SelectTrigger
-                          className="w-32 bg-muted border-border text-foreground"
+                          size="sm"
+                          className="w-32"
                           disabled={isBusy}
                         >
                           {/* Base UI renders the raw value ("agent") unless
@@ -407,12 +401,10 @@ export function MembersTab() {
                         </SelectContent>
                       </Select>
                     ) : (
-                      <span
-                        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
-                      >
-                        <RoleIcon className="size-3.5" />
+                      <SettingsChip variant={roleMeta.variant}>
+                        <RoleIcon />
                         {t(ROLE_LABELS[member.role])}
-                      </span>
+                      </SettingsChip>
                     )}
 
                     {/* Remove. Admin+ only; never on the owner row;
@@ -424,11 +416,13 @@ export function MembersTab() {
                         affordance reads at-a-glance. */}
                     {canManageMembers && !isOwnerRow && !isSelf && (
                       <Button
-                        variant="outline"
-                        size="sm"
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => setRemovingMember(member)}
                         disabled={isBusy}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        aria-label={t('Remove member')}
+                        title={t('Remove member')}
+                        className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       >
                         <Trash2 className="size-4" />
                       </Button>
@@ -438,28 +432,27 @@ export function MembersTab() {
               );
             })}
           </ul>
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Pending invitations — admin+ only */}
       <RequireRole min="admin">
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <UsersRound className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold text-foreground">
+        <SettingsGroup
+          title={
+            <>
               {t('Pending invitations')}
-            </h3>
-            <Badge className="bg-muted text-muted-foreground border-border">
-              {invitations.length}
-            </Badge>
-          </div>
+              <SettingsChip variant="muted" className="tabular-nums tracking-normal normal-case">
+                {invitations.length}
+              </SettingsChip>
+            </>
+          }
+        >
           {/* P10 — make the no-resend design explicit. Admins were
               confused why the pending list shows roles + expiry but
               no "copy link again" button. Stating the constraint up
               front (rather than letting the user discover it by
               looking for a button) keeps it from feeling like a bug. */}
           {invitations.length > 0 ? (
-            <p className="mb-3 text-xs text-muted-foreground">
+            <p className="-mt-2 text-xs text-muted-foreground">
               {t(
                 'The plaintext invite URL is only shown once at creation for security — to re-share, revoke the invite below and create a new one.',
               )}
@@ -467,20 +460,18 @@ export function MembersTab() {
           ) : null}
 
           {invitations.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-                <Mail className="size-6 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">
+            <div className="flex items-start gap-3 py-2">
+              <Mail className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">
                   {t('No pending invitations.')}
                 </p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   {t('Click "Invite member" above to generate a shareable link.')}
                 </p>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           ) : (
-            <Card>
-              <CardContent className="p-0">
                 <ul className="divide-y divide-border">
                   {invitations.map((inv) => {
                     const inviteRoleMeta = ROLE_META[inv.role];
@@ -488,21 +479,19 @@ export function MembersTab() {
                     return (
                     <li
                       key={inv.id}
-                      className="flex items-center gap-4 px-4 py-3"
+                      className="flex items-center gap-4 py-2.5"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground">
                             {inv.label || t('Untitled invite')}
                           </span>
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
-                          >
-                            <InviteRoleIcon className="size-3" />
+                          <SettingsChip variant={inviteRoleMeta.variant}>
+                            <InviteRoleIcon />
                             {t(ROLE_LABELS[inv.role])}
-                          </span>
+                          </SettingsChip>
                         </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
+                        <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
                           {t('Created')} {fmtDate(inv.created_at, language)} · {fmtExpiresIn(inv.expires_at, t)}
                         </p>
                       </div>
@@ -512,10 +501,10 @@ export function MembersTab() {
                           read as a neutral secondary button until
                           hover. */}
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleRevoke(inv)}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       >
                         <MailX className="size-4" />
                         {t('Revoke')}
@@ -524,21 +513,17 @@ export function MembersTab() {
                     );
                   })}
                 </ul>
-              </CardContent>
-            </Card>
           )}
-        </div>
+        </SettingsGroup>
       </RequireRole>
 
       {/* Owner-only security policy for the team (round 2 spec, section 7). */}
       <RequireRole min="owner">
-        <div>
-          <h3 className="mb-3 text-sm font-medium text-foreground">
-            {t('Security policy')}
-          </h3>
+        <SettingsGroup title={t('Security policy')}>
           <MfaRequirementToggle />
-        </div>
+        </SettingsGroup>
       </RequireRole>
+      </div>
 
       <InviteMemberDialog
         open={inviteOpen}
