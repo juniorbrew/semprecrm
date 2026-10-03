@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { Check, ImagePlus, Loader2, MessageSquare, Paintbrush, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, ImagePlus, Loader2, MessageSquare, RotateCcw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { createClient } from '@/lib/supabase/client';
@@ -17,14 +17,25 @@ import {
   primaryForeground,
   type Branding,
 } from '@/lib/branding';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
+import type { Language } from '@/lib/i18n';
+import { DANGER_TEXT_BUTTON, SettingsDangerZone, SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
+
+const COPY: Record<Language, { danger: string; restoreHint: string }> = {
+  'pt-BR': {
+    danger: 'Zona de risco',
+    restoreHint: 'Volta ao nome, logo e cor padrão do SempreCRM para toda a conta.',
+  },
+  'en-US': {
+    danger: 'Danger zone',
+    restoreHint: 'Returns the whole account to the default SempreCRM name, logo and colour.',
+  },
+};
 
 const BUCKET = 'account-branding';
 
@@ -44,7 +55,7 @@ function extFor(mime: string): string {
  */
 export function BrandingSettings() {
   const supabase = useMemo(() => createClient(), []);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { accountId, canManageMembers, profileLoading, branding, refreshAccount } = useAuth();
   const entitlements = useEntitlements();
   const moduleOn = entitlements.modules.white_label;
@@ -158,7 +169,7 @@ export function BrandingSettings() {
   // ---- gates ---------------------------------------------------------
   if (profileLoading || !entitlements.ready) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead title={t('Branding')} />
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
@@ -171,77 +182,52 @@ export function BrandingSettings() {
 
   if (!canManageMembers) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead title={t('Branding')} />
-        <Alert className="border-border bg-card">
-          <AlertTitle className="mb-1 text-foreground">{t('Admins only')}</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground">
+        <div role="note">
+          <p className="text-sm font-medium text-foreground">{t('Admins only')}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t('Only account admins can change the branding.')}
-          </AlertDescription>
-        </Alert>
+          </p>
+        </div>
       </section>
     );
   }
 
   if (!moduleOn) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-3xl">
         <SettingsPanelHead
           title={t('Branding')}
           description={t('Your own name, logo and colour across the app for every member of the account.')}
         />
-        <Alert className="border-border bg-card">
-          <AlertTitle className="mb-1 text-foreground">{t('Module not included in your plan')}</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground">
+        <div role="note">
+          <p className="text-sm font-medium text-foreground">{t('Module not included in your plan')}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t('White-label branding is not part of your current plan. Get in touch with the SempreCRM team to add it.')}
-          </AlertDescription>
-        </Alert>
+          </p>
+        </div>
       </section>
     );
   }
 
   const disabled = saving;
+  const copy = COPY[language] ?? COPY['pt-BR'];
 
   return (
-    <section className="max-w-4xl animate-in fade-in-50 duration-200">
+    <section className="max-w-3xl">
       <SettingsPanelHead
         title={t('Branding')}
         description={t('Your own name, logo and colour across the app for every member of the account.')}
-        action={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={disabled || !canRestore}
-              onClick={() => save({ app_name: null, logo_url: null, primary_color: null })}
-            >
-              <RotateCcw className="size-3.5" />
-              {t('Restore defaults')}
-            </Button>
-            <Button
-              size="sm"
-              disabled={disabled || !dirty || !colorValid || !nameValid}
-              onClick={() => save()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-              {t('Save')}
-            </Button>
-          </div>
-        }
       />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
-        <div className="grid gap-4">
-          {/* Name --------------------------------------------------------- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-foreground">{t('App name')}</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                {t('Shown in the sidebar, the header and the browser tab title.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-start">
+        <div className="space-y-8">
+          <SettingsGroup
+            title={t('App name')}
+            description={t('Shown in the sidebar, the header and the browser tab title.')}
+          >
+            <div className="space-y-2">
               <Label htmlFor="branding-name" className="text-foreground">
                 {t('Name')}
               </Label>
@@ -255,21 +241,17 @@ export function BrandingSettings() {
                 aria-invalid={!nameValid || undefined}
                 className="bg-card text-foreground"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground tabular-nums">
                 {appName.trim().length}/{BRANDING_LIMITS.app_name.max}
               </p>
-            </CardContent>
-          </Card>
+            </div>
+          </SettingsGroup>
 
-          {/* Logo --------------------------------------------------------- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-foreground">{t('Logo')}</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                {t('Square works best. PNG or WebP up to 512 KB; it replaces the default mark in the sidebar.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center gap-3">
+          <SettingsGroup
+            title={t('Logo')}
+            description={t('Square works best. PNG or WebP up to 512 KB; it replaces the default mark in the sidebar.')}
+          >
+            <div className="flex flex-wrap items-center gap-3">
               <input
                 ref={fileRef}
                 type="file"
@@ -302,25 +284,18 @@ export function BrandingSettings() {
                 </Button>
               ) : null}
               {pendingLogo ? (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground tabular-nums">
                   {pendingLogo.name} · {Math.ceil(pendingLogo.size / 1024)} KB
                 </span>
               ) : null}
-            </CardContent>
-          </Card>
+            </div>
+          </SettingsGroup>
 
-          {/* Colour ------------------------------------------------------- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-foreground">
-                <Paintbrush className="size-4 text-primary" />
-                {t('Primary colour')}
-              </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                {t('Buttons, links and highlights. Each member keeps their own light or dark mode.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <SettingsGroup
+            title={t('Primary colour')}
+            description={t('Buttons, links and highlights. Each member keeps their own light or dark mode.')}
+          >
+            <div className="space-y-4">
               <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t('Palette')}>
                 {BRANDING_PALETTE.map((swatch) => {
                   const selected = normalizedColor === swatch.hex;
@@ -335,7 +310,7 @@ export function BrandingSettings() {
                       disabled={disabled}
                       onClick={() => setColor(swatch.hex)}
                       className={cn(
-                        'flex size-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                        'flex size-8 items-center justify-center rounded-full border-2 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
                         selected ? 'border-foreground' : 'border-transparent',
                       )}
                       style={{ backgroundColor: swatch.hex }}
@@ -393,19 +368,17 @@ export function BrandingSettings() {
                     : t('Empty keeps the theme each member picked under Appearance.')}
                 </p>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </SettingsGroup>
         </div>
 
         {/* Preview --------------------------------------------------------- */}
-        <Card className="lg:sticky lg:top-4">
-          <CardHeader>
-            <CardTitle className="text-foreground">{t('Preview')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('How the sidebar header looks in light and dark mode.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3">
+        <SettingsGroup
+          title={t('Preview')}
+          description={t('How the sidebar header looks in light and dark mode.')}
+          className="lg:sticky lg:top-4 lg:border-t-0 lg:pt-0"
+        >
+          <div className="grid gap-3">
             {(['light', 'dark'] as const).map((mode) => (
               <div
                 key={mode}
@@ -449,9 +422,35 @@ export function BrandingSettings() {
                 </p>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </SettingsGroup>
       </div>
+
+      <div className="flex justify-end gap-2 pt-6">
+        <Button
+          disabled={disabled || !dirty || !colorValid || !nameValid}
+          onClick={() => save()}
+        >
+          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+          {t('Save')}
+        </Button>
+      </div>
+
+      <SettingsDangerZone title={copy.danger}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={DANGER_TEXT_BUTTON}
+            disabled={disabled || !canRestore}
+            onClick={() => save({ app_name: null, logo_url: null, primary_color: null })}
+          >
+            <RotateCcw className="size-3.5" />
+            {t('Restore defaults')}
+          </Button>
+          <span className="text-xs text-muted-foreground">{copy.restoreHint}</span>
+        </div>
+      </SettingsDangerZone>
     </section>
   );
 }

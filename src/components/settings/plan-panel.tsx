@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, Check, CreditCard, Minus } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
@@ -13,19 +13,13 @@ import {
   daysUntil,
   type PlanStatus,
 } from "@/lib/plans";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
 import { planStatusLabelKey } from "@/components/platform/plan-status-chip";
-import { SettingsChip, type ChipVariant } from "./settings-chip";
+import { StatusDot } from "./settings-chip";
 
-const STATUS_VARIANT: Record<PlanStatus, ChipVariant> = {
-  trial: "admin",
+const STATUS_TONE: Record<PlanStatus, "ok" | "warn" | "bad" | "muted"> = {
+  trial: "ok",
   active: "ok",
   past_due: "warn",
   canceled: "muted",
@@ -57,7 +51,7 @@ export function PlanPanel() {
     : null;
 
   return (
-    <section className="max-w-2xl animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title={t("Plan")}
         description={t(
@@ -65,90 +59,64 @@ export function PlanPanel() {
         )}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <CreditCard className="size-4 text-primary" />
-            {t("Current plan")}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t("Plan, status and validity for this account.")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <div className="space-y-8">
+        <SettingsGroup
+          title={t("Current plan")}
+          description={t("Plan, status and validity for this account.")}
+        >
           {profileLoading ? (
             <div className="h-16 animate-pulse rounded-lg bg-muted" />
           ) : (
-            <dl className="grid gap-4 sm:grid-cols-3">
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {t("Plan")}
-                </dt>
-                <dd className="mt-1 text-base font-semibold text-foreground">
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-base font-semibold text-foreground">
                   {t(PLAN_LABELS[ent.plan])}
-                </dd>
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
+                  <StatusDot tone={STATUS_TONE[ent.status]} />
+                  {t(planStatusLabelKey(ent.status))}
+                </span>
               </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {t("Status")}
-                </dt>
-                <dd className="mt-1">
-                  <SettingsChip variant={STATUS_VARIANT[ent.status]}>
-                    {t(planStatusLabelKey(ent.status))}
-                  </SettingsChip>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {!expiresLabel
-                    ? t("Validity")
-                    : ent.status === "trial"
-                      ? t("Trial ends")
-                      : t("Valid until")}
-                </dt>
-                <dd className="mt-1 flex items-center gap-1.5 text-sm text-foreground">
-                  <CalendarClock className="size-4 text-muted-foreground" />
-                  {expiresLabel ? (
-                    <span data-no-translate>
-                      {expiresLabel}
-                      {days !== null && days >= 0 ? (
-                        <span className="text-muted-foreground">
-                          {" "}
-                          · {days} {days === 1 ? t("day") : t("days")}
-                        </span>
-                      ) : null}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">{t("No end date")}</span>
-                  )}
-                </dd>
-              </div>
-            </dl>
+              <p className="text-sm text-muted-foreground">
+                {!expiresLabel
+                  ? t("Validity")
+                  : ent.status === "trial"
+                    ? t("Trial ends")
+                    : t("Valid until")}
+                {": "}
+                {expiresLabel ? (
+                  <span data-no-translate className="text-foreground tabular-nums">
+                    {expiresLabel}
+                    {days !== null && days >= 0 ? (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · {days} {days === 1 ? t("day") : t("days")}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span>{t("No end date")}</span>
+                )}
+              </p>
+            </div>
           )}
           {ent.blocked ? (
-            <p className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            <p className="flex items-center gap-2 text-sm text-foreground">
+              <StatusDot tone="warn" />
               {t("Access to the app is currently blocked. Contact support to restore it.")}
             </p>
           ) : null}
-        </CardContent>
-      </Card>
+        </SettingsGroup>
 
-      <Card className="mt-4">
-        <CardHeader>
-          <CardTitle className="text-foreground">{t("Modules")}</CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t("Inbox and Contacts are always included.")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="grid gap-2 sm:grid-cols-2">
+        <SettingsGroup
+          title={t("Modules")}
+          description={t("Inbox and Contacts are always included.")}
+        >
+          <ul className="grid gap-x-6 sm:grid-cols-2">
             {MODULES.map((m) => {
               const on = ent.modules[m];
               return (
-                <li
-                  key={m}
-                  className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm"
-                >
+                <li key={m} className="flex items-center gap-2 py-1.5 text-sm">
                   {on ? (
                     <Check className="size-4 text-emerald-500" aria-hidden="true" />
                   ) : (
@@ -161,28 +129,21 @@ export function PlanPanel() {
               );
             })}
           </ul>
-        </CardContent>
-      </Card>
+        </SettingsGroup>
 
-      <Card className="mt-4">
-        <CardHeader>
-          <CardTitle className="text-foreground">{t("Limits")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-4 sm:grid-cols-2">
+        <SettingsGroup title={t("Limits")}>
+          <dl className="divide-y divide-border">
             {LIMIT_KEYS.map((k) => (
-              <div key={k}>
-                <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {t(LIMIT_LABELS[k])}
-                </dt>
-                <dd className="mt-1 text-base font-semibold text-foreground">
+              <div key={k} className="flex items-center justify-between gap-4 py-2.5 text-sm">
+                <dt className="text-muted-foreground">{t(LIMIT_LABELS[k])}</dt>
+                <dd className="font-medium text-foreground tabular-nums">
                   {ent.limits[k] === null ? t("Unlimited") : ent.limits[k]}
                 </dd>
               </div>
             ))}
           </dl>
-        </CardContent>
-      </Card>
+        </SettingsGroup>
+      </div>
     </section>
   );
 }

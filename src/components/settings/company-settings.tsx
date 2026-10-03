@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, Check, Loader2, MapPin } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,6 +29,7 @@ import {
   type RegistrationErrors,
 } from '@/lib/br/documents';
 import { EMPTY_ADDRESS, validateAccountContact, type ContactErrors } from '@/lib/br/lookup';
+import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
 
 /** Wire keys from PATCH /api/account → field names used by the shared inputs. */
@@ -160,7 +160,7 @@ export function CompanySettings() {
 
   if (profileLoading || !account) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-2xl">
         <SettingsPanelHead title={title} />
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
@@ -173,14 +173,14 @@ export function CompanySettings() {
 
   if (!canManageMembers) {
     return (
-      <section className="max-w-4xl animate-in fade-in-50 duration-200">
+      <section className="max-w-2xl">
         <SettingsPanelHead title={title} description={description} />
-        <Alert className="border-border bg-card">
-          <AlertTitle className="mb-1 text-foreground">{t('Admins only')}</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground">
+        <div role="note">
+          <p className="text-sm font-medium text-foreground">{t('Admins only')}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t('Only account admins can change the company registration.')}
-          </AlertDescription>
-        </Alert>
+          </p>
+        </div>
       </section>
     );
   }
@@ -188,96 +188,82 @@ export function CompanySettings() {
   const disabled = saving;
 
   return (
-    <section className="max-w-4xl animate-in fade-in-50 duration-200">
-      <SettingsPanelHead
-        title={title}
-        description={description}
-        action={
-          <Button
-            size="sm"
-            disabled={disabled || !dirty || !!nameError}
-            onClick={save}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-            {t('Save')}
-          </Button>
-        }
-      />
+    <section className="max-w-2xl">
+      <SettingsPanelHead title={title} description={description} />
 
-      <div className="rounded-xl border border-border bg-card p-5">
-        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Building2 className="size-4 text-muted-foreground" />
-          {t('Account type')}
-        </h3>
-        <div className="max-w-md">
-          <PersonTypeToggle
-            value={personType}
-            onChange={(next) => {
-              setPersonType(next);
-              setValues((prev) => ({ ...prev, taxId: '' }));
-              setErrors({});
-            }}
-            disabled={disabled}
-          />
-        </div>
-
-        <div className="mt-6 grid max-w-md gap-4">
-          <RegistrationFields
-            personType={personType}
-            values={values}
-            errors={errors}
-            onChange={(patch) => setValues((prev) => ({ ...prev, ...patch }))}
-            disabled={disabled}
-            showTradeName={false}
-            onCompany={(company) =>
-              setContact({ phone: company.phone, email: company.email, address: company.address })
-            }
-          />
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="account-name" className="text-muted-foreground">
-              {personType === 'pj' ? t('Display name (nome fantasia)') : t('Account name')}
-            </Label>
-            <Input
-              id="account-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={MAX_NAME_LEN}
+      <div className="space-y-8">
+        <SettingsGroup title={t('Account type')}>
+          <div className="max-w-md">
+            <PersonTypeToggle
+              value={personType}
+              onChange={(next) => {
+                setPersonType(next);
+                setValues((prev) => ({ ...prev, taxId: '' }));
+                setErrors({});
+              }}
               disabled={disabled}
-              aria-invalid={!!nameError && name.length > 0}
             />
-            <p className="text-xs text-muted-foreground">
-              {t('Shown in the sidebar, invitations and reports for every member.')}
-            </p>
-            <FieldError message={name.length > 0 ? nameError : null} />
           </div>
-        </div>
-      </div>
 
-      <div className="mt-6 rounded-xl border border-border bg-card p-5">
-        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <MapPin className="size-4 text-muted-foreground" />
-          {t('Contact and address')}
-        </h3>
-        <p className="mb-4 text-xs text-muted-foreground">
-          {t('Type the CEP to fill in the street, neighbourhood, city and state.')}
-        </p>
-        <div className="grid max-w-2xl gap-4">
-          <ContactFields
-            values={contact}
-            errors={contactErrors}
-            onChange={(patch) => setContact((prev) => ({ ...prev, ...patch }))}
-            disabled={disabled}
-            emailLabel={personType === 'pj' ? 'Company e-mail' : 'Contact e-mail'}
-          />
-          <AddressFields
-            address={contact.address}
-            errors={contactErrors}
-            onChange={(address) => setContact((prev) => ({ ...prev, address }))}
-            disabled={disabled}
-          />
-        </div>
+          <div className="grid max-w-md gap-4 pt-2">
+            <RegistrationFields
+              personType={personType}
+              values={values}
+              errors={errors}
+              onChange={(patch) => setValues((prev) => ({ ...prev, ...patch }))}
+              disabled={disabled}
+              showTradeName={false}
+              onCompany={(company) =>
+                setContact({ phone: company.phone, email: company.email, address: company.address })
+              }
+            />
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="account-name" className="text-muted-foreground">
+                {personType === 'pj' ? t('Display name (nome fantasia)') : t('Account name')}
+              </Label>
+              <Input
+                id="account-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={MAX_NAME_LEN}
+                disabled={disabled}
+                aria-invalid={!!nameError && name.length > 0}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('Shown in the sidebar, invitations and reports for every member.')}
+              </p>
+              <FieldError message={name.length > 0 ? nameError : null} />
+            </div>
+          </div>
+        </SettingsGroup>
+
+        <SettingsGroup
+          title={t('Contact and address')}
+          description={t('Type the CEP to fill in the street, neighbourhood, city and state.')}
+        >
+          <div className="grid gap-4">
+            <ContactFields
+              values={contact}
+              errors={contactErrors}
+              onChange={(patch) => setContact((prev) => ({ ...prev, ...patch }))}
+              disabled={disabled}
+              emailLabel={personType === 'pj' ? 'Company e-mail' : 'Contact e-mail'}
+            />
+            <AddressFields
+              address={contact.address}
+              errors={contactErrors}
+              onChange={(address) => setContact((prev) => ({ ...prev, address }))}
+              disabled={disabled}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button disabled={disabled || !dirty || !!nameError} onClick={save}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+              {t('Save')}
+            </Button>
+          </div>
+        </SettingsGroup>
       </div>
     </section>
   );
