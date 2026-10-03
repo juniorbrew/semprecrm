@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest"
 import { renderToString } from "react-dom/server"
 
 import { reportsCopy, type BacklogRow, type ReportRow } from "@/lib/support/reports"
-import { BacklogSection, GroupSection, OverviewSection, PrioritySection } from "./report-sections"
+import { BacklogSection, GroupSection, OverviewSection, PrioritySection, slaTone } from "./report-sections"
+
+describe("slaTone", () => {
+  it("90%+ is fine, 75-89% needs attention, below 75% is at risk, nothing judged has no tone", () => {
+    expect(slaTone(null)).toBeNull()
+    expect(slaTone(100)).toBe("ok")
+    expect(slaTone(90)).toBe("ok")
+    expect(slaTone(89)).toBe("warn")
+    expect(slaTone(75)).toBe("warn")
+    expect(slaTone(74)).toBe("bad")
+    expect(slaTone(0)).toBe("bad")
+  })
+})
 
 const copy = reportsCopy("pt-BR")
 const row = (over: Partial<ReportRow> = {}): ReportRow => ({
@@ -89,9 +101,12 @@ describe("GroupSection", () => {
     expect(html).toBe("")
   })
 
-  it("follows the design rules: no all-caps labels, no gradients, no emoji", () => {
+  it("follows the design rules: only the section heading is uppercase, sticky header, no gradients", () => {
     const html = renderToString(<GroupSection title="Por equipe" rows={rows} labelFor={labelFor} copy={copy} language="pt-BR" testId="t" />)
-    expect(html).not.toMatch(/uppercase|gradient|tracking-widest/)
+    expect(html.match(/uppercase/g)).toHaveLength(1)
+    expect(html).toMatch(/<h2 class="[^"]*uppercase/)
+    expect(html).toContain("sticky top-0")
+    expect(html).not.toMatch(/gradient|tracking-widest/)
   })
 })
 
@@ -106,6 +121,9 @@ describe("PrioritySection", () => {
     expect(html.indexOf("Urgente")).toBeGreaterThan(-1)
     expect(html.indexOf("Urgente")).toBeLessThan(html.indexOf("Baixa"))
     expect(html).toContain("75%")
+    // the SLA rate is dot + text, amber at 75%; no rate (nothing judged) is a dash without a dot
+    expect(html).toContain('data-sla-tone="warn"')
+    expect(html.match(/data-sla-tone/g)).toHaveLength(1)
   })
 })
 

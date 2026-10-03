@@ -20,9 +20,46 @@ function Bar({ value, max }: { value: number; max: number }) {
   return (
     <span className="flex items-center gap-2">
       <span className="w-10 shrink-0 text-right tabular-nums">{value}</span>
-      <span aria-hidden className="h-1.5 w-24 shrink-0 rounded-full bg-muted">
-        <span className="block h-full rounded-full bg-primary/60" style={{ width: `${width}%` }} />
+      <span aria-hidden className="h-1 w-24 shrink-0 overflow-hidden rounded-full bg-muted">
+        <span className="block h-full rounded-full bg-primary/70" style={{ width: `${width}%` }} />
       </span>
+    </span>
+  );
+}
+
+/** Small muted uppercase heading, same as the inbox contact panel. */
+const HEADING = "text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground";
+
+/** Header cells stick to the top of the table's own scroll box. */
+const TH = "sticky top-0 z-10 bg-background pb-2 pr-4 font-normal";
+
+export type SlaTone = "ok" | "warn" | "bad";
+
+/**
+ * How worrying a kept-deadline rate is: 90% or more is fine, 75–89% needs
+ * attention, below 75% is at risk. `null` (nothing judged) has no tone.
+ */
+export function slaTone(rate: number | null): SlaTone | null {
+  if (rate === null) return null;
+  if (rate >= 90) return "ok";
+  if (rate >= 75) return "warn";
+  return "bad";
+}
+
+const TONE_DOT: Record<SlaTone, string> = {
+  ok: "bg-emerald-500",
+  warn: "bg-amber-500",
+  bad: "bg-red-500",
+};
+
+/** The SLA rate as dot + text: the only status colour on the page. */
+function SlaValue({ rate }: { rate: number | null }) {
+  const tone = slaTone(rate);
+  if (rate === null || tone === null) return <>—</>;
+  return (
+    <span className="inline-flex items-center gap-1.5" data-sla-tone={tone}>
+      <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${TONE_DOT[tone]}`} />
+      {`${rate}%`}
     </span>
   );
 }
@@ -30,18 +67,19 @@ function Bar({ value, max }: { value: number; max: number }) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3 border-t border-border pt-6 first:border-t-0 first:pt-0">
-      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <h2 className={HEADING}>{title}</h2>
       {children}
     </section>
   );
 }
 
-function Row({ label, children, detail }: { label: string; children: ReactNode; detail?: ReactNode }) {
+/** One number of the KPI strip: label, value, one quiet line of detail. */
+function Kpi({ label, children, detail }: { label: string; children: ReactNode; detail?: ReactNode }) {
   return (
-    <div className="grid grid-cols-[minmax(9rem,13rem)_1fr] items-baseline gap-4 py-2.5 sm:grid-cols-[minmax(9rem,13rem)_8rem_1fr]">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="text-sm font-medium tabular-nums text-foreground">{children}</dd>
-      <dd className="col-span-2 text-xs text-muted-foreground tabular-nums sm:col-span-1">{detail}</dd>
+    <div className="min-w-0 space-y-1 py-3 pr-4">
+      <dt className="truncate text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-xl font-semibold tabular-nums tracking-tight text-foreground">{children}</dd>
+      {detail ? <dd className="text-[11px] leading-snug text-muted-foreground tabular-nums">{detail}</dd> : null}
     </div>
   );
 }
@@ -68,25 +106,25 @@ export function OverviewSection({ row, copy, language }: { row: ReportRow | unde
   const answered = percent(row.csat_answered, row.csat_sent);
   return (
     <Section title={copy.overview}>
-      <dl className="divide-y divide-border border-y border-border" data-testid="reports-overview">
-        <Row label={m.opened}>{row.opened}</Row>
-        <Row label={m.resolved}>{row.resolved}</Row>
-        <Row label={m.backlog}>{row.backlog}</Row>
-        <Row label={m.firstResponse} detail={times(copy, row.fr_median_seconds, row.fr_p90_seconds)}>
+      <dl className="grid grid-cols-2 gap-x-4 border-y border-border sm:grid-cols-4" data-testid="reports-overview">
+        <Kpi label={m.opened}>{row.opened}</Kpi>
+        <Kpi label={m.resolved}>{row.resolved}</Kpi>
+        <Kpi label={m.backlog}>{row.backlog}</Kpi>
+        <Kpi label={m.sla} detail={sla === null ? "" : `${row.sla_met} / ${row.sla_met + row.sla_missed}`}>
+          <SlaValue rate={sla} />
+        </Kpi>
+        <Kpi label={m.firstResponse} detail={times(copy, row.fr_median_seconds, row.fr_p90_seconds)}>
           {formatDuration(row.fr_avg_seconds)}
-        </Row>
-        <Row label={m.resolution} detail={times(copy, row.res_median_seconds, row.res_p90_seconds)}>
+        </Kpi>
+        <Kpi label={m.resolution} detail={times(copy, row.res_median_seconds, row.res_p90_seconds)}>
           {formatDuration(row.res_avg_seconds)}
-        </Row>
-        <Row label={m.sla} detail={sla === null ? "" : `${row.sla_met} / ${row.sla_met + row.sla_missed}`}>
-          {sla === null ? "—" : `${sla}%`}
-        </Row>
-        <Row label={m.reopenRate} detail={reopen === null ? "" : `${row.reopened} / ${row.opened}`}>
+        </Kpi>
+        <Kpi label={m.reopenRate} detail={reopen === null ? "" : `${row.reopened} / ${row.opened}`}>
           {reopen === null ? "—" : `${reopen}%`}
-        </Row>
-        <Row label={m.csat} detail={row.csat_sent > 0 ? `${m.csatRate} ${m.csatAnswers(row.csat_answered, row.csat_sent)}${answered === null ? "" : ` · ${answered}%`}` : ""}>
+        </Kpi>
+        <Kpi label={m.csat} detail={row.csat_sent > 0 ? `${m.csatRate} ${m.csatAnswers(row.csat_answered, row.csat_sent)}${answered === null ? "" : ` · ${answered}%`}` : ""}>
           {formatScore(row.csat_avg, language)}
-        </Row>
+        </Kpi>
       </dl>
     </Section>
   );
@@ -114,16 +152,16 @@ export function GroupSection({
   const c = copy.columns;
   return (
     <Section title={title}>
-      <div className="overflow-x-auto">
+      <div className="max-h-[26rem] overflow-auto">
         <table className="w-full min-w-[40rem] text-sm" data-testid={testId}>
           <thead>
             <tr className="text-left text-xs text-muted-foreground">
-              <th scope="col" className="pb-2 pr-4 font-normal" />
-              <th scope="col" className="pb-2 pr-4 font-normal">{c.opened}</th>
-              <th scope="col" className="pb-2 pr-4 text-right font-normal">{c.resolved}</th>
-              <th scope="col" className="pb-2 pr-4 text-right font-normal">{c.firstResponse}</th>
-              <th scope="col" className="pb-2 pr-4 text-right font-normal">{c.resolution}</th>
-              <th scope="col" className="pb-2 text-right font-normal">{c.csat}</th>
+              <th scope="col" className={TH} />
+              <th scope="col" className={TH}>{c.opened}</th>
+              <th scope="col" className={`${TH} text-right`}>{c.resolved}</th>
+              <th scope="col" className={`${TH} text-right`}>{c.firstResponse}</th>
+              <th scope="col" className={`${TH} text-right`}>{c.resolution}</th>
+              <th scope="col" className={`${TH} pr-0 text-right`}>{c.csat}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border border-y border-border">
@@ -158,15 +196,15 @@ export function PrioritySection({ rows, copy }: { rows: ReportRow[]; copy: Repor
   const c = copy.columns;
   return (
     <Section title={copy.byPriority}>
-      <div className="overflow-x-auto">
+      <div className="max-h-[26rem] overflow-auto">
         <table className="w-full min-w-[34rem] text-sm" data-testid="reports-priority">
           <thead>
             <tr className="text-left text-xs text-muted-foreground">
-              <th scope="col" className="pb-2 pr-4 font-normal" />
-              <th scope="col" className="pb-2 pr-4 font-normal">{c.opened}</th>
-              <th scope="col" className="pb-2 pr-4 text-right font-normal">{c.met}</th>
-              <th scope="col" className="pb-2 pr-4 text-right font-normal">{c.missed}</th>
-              <th scope="col" className="pb-2 text-right font-normal">{c.sla}</th>
+              <th scope="col" className={TH} />
+              <th scope="col" className={TH}>{c.opened}</th>
+              <th scope="col" className={`${TH} text-right`}>{c.met}</th>
+              <th scope="col" className={`${TH} text-right`}>{c.missed}</th>
+              <th scope="col" className={`${TH} pr-0 text-right`}>{c.sla}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border border-y border-border">
@@ -182,7 +220,9 @@ export function PrioritySection({ rows, copy }: { rows: ReportRow[]; copy: Repor
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{r.sla_met}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{r.sla_missed}</td>
-                  <td className="py-2 text-right tabular-nums">{rate === null ? "—" : `${rate}%`}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    <SlaValue rate={rate} />
+                  </td>
                 </tr>
               );
             })}
