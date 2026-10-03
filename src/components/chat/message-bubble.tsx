@@ -8,6 +8,7 @@ import { useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { titleFromMessage } from "@/lib/calendar";
 import { EventDrawer } from "@/components/calendar";
+import { FRESH_ITEM_CLASS, bubbleFrameClass } from "@/components/inbox/message-bubble";
 import {
   aggregateReactions,
   canDeleteMessage,
@@ -63,6 +64,8 @@ interface ChatMessageBubbleProps {
   onReact: (message: ChatMessage, emoji: string) => void;
   onEdit: (message: ChatMessage, body: string) => Promise<void>;
   onDelete: (message: ChatMessage) => Promise<void>;
+  /** Arrived while the thread was open: short fade/rise (none with reduced motion). */
+  fresh?: boolean;
 }
 
 function timeOf(iso: string | null, language: string): string {
@@ -179,6 +182,7 @@ export function ChatMessageBubble({
   onReact,
   onEdit,
   onDelete,
+  fresh = false,
 }: ChatMessageBubbleProps) {
   const { t, language } = useLanguage();
   const [editing, setEditing] = useState(false);
@@ -250,18 +254,23 @@ export function ChatMessageBubble({
 
   return (
     <div
-      className={cn("group/msg flex w-full flex-col", mine ? "items-end" : "items-start", continued ? "mt-0.5" : "mt-2")}
+      className={cn(
+        "group/msg flex w-full flex-col",
+        mine ? "items-end" : "items-start",
+        continued ? "mt-0.5" : "mt-2",
+        fresh && FRESH_ITEM_CLASS,
+      )}
       data-message-id={message.id}
     >
       {group && !mine && !continued ? (
-        <span className="mb-0.5 ml-1 text-[11px] font-medium text-primary">{nameOf(message.sender_id)}</span>
+        <span className="mb-0.5 ml-1 text-[10px] font-medium text-muted-foreground">{nameOf(message.sender_id)}</span>
       ) : null}
 
       <div className={cn("flex max-w-full items-end gap-1", mine ? "flex-row-reverse" : "flex-row")}>
         <div
           className={cn(
-            "relative max-w-[85vw] rounded-2xl px-3 py-1.5 text-sm shadow-sm sm:max-w-[28rem]",
-            mine ? "rounded-br-md bg-primary text-primary-foreground" : "rounded-bl-md bg-muted text-foreground",
+            "relative max-w-[85vw] text-sm sm:max-w-[28rem]",
+            bubbleFrameClass(mine ? "out" : "in"),
             deleted && "opacity-70",
           )}
         >
@@ -381,9 +390,9 @@ export function ChatMessageBubble({
               aria-pressed={chip.mine}
               title={chip.userIds.map(nameOf).join(", ")}
               className={cn(
-                "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums transition-colors",
+                "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums transition-colors duration-150 motion-reduce:transition-none",
                 chip.mine
-                  ? "border-primary bg-primary/10 text-primary"
+                  ? "border-transparent bg-primary/15 text-primary"
                   : "border-border bg-card text-muted-foreground hover:bg-muted",
               )}
             >

@@ -240,7 +240,7 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
   return (
     <form
       className={cn(
-        "relative flex shrink-0 flex-col gap-2 border-t border-border bg-card p-3 transition-colors",
+        "relative flex shrink-0 flex-col gap-2 px-3 pb-3 pt-1 transition-colors duration-150 sm:px-4 motion-reduce:transition-none",
         dragging && "bg-primary/5",
       )}
       onSubmit={(e) => {
@@ -253,13 +253,13 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
       onDrop={onDrop}
     >
       {dragging ? (
-        <div className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-card/90 text-sm font-medium text-primary">
+        <div className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-[var(--radius)] border border-dashed border-primary/60 bg-card/90 text-sm font-medium text-primary">
           {t("Drop the file to attach it")}
         </div>
       ) : null}
 
       {pending ? (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/60 p-2" aria-live="polite">
+        <div className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-card p-2" aria-live="polite">
           {pending.kind === "image" && pending.previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- local object URL preview
             <img src={pending.previewUrl} alt={pending.file.name} className="size-14 shrink-0 rounded-md object-cover" />
@@ -295,15 +295,15 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
       ) : null}
 
       {recorder.recording ? (
-        <div className="flex items-center gap-3 rounded-xl border border-border bg-muted px-4 py-2.5">
-          <span className="size-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+        <div className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-card px-3 py-2">
+          <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-500 motion-reduce:animate-none" aria-hidden />
           <span className="flex-1 text-sm text-foreground" aria-live="polite">
             {t("Recording…")} {formatDuration(recorder.seconds)} / {formatDuration(recorder.maxSeconds)}
           </span>
           <button
             type="button"
             onClick={recorder.cancel}
-            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-card hover:text-foreground"
+            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {t("Cancel")}
           </button>
@@ -313,13 +313,15 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
             onClick={recorder.stop}
             aria-label={t("Stop and send")}
             title={t("Stop and send")}
-            className="size-9 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+            className="size-8 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            <Square className="size-4" />
+            <Square className="size-3.5" />
           </Button>
         </div>
       ) : (
-        <div className="flex items-end gap-1.5">
+        // One bordered field: text on top, the toolbar underneath (attach
+        // left, send / voice right) — the inbox composer's shape.
+        <div className="rounded-[var(--radius)] border border-border bg-card transition-[border-color,box-shadow] duration-150 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30 motion-reduce:transition-none">
           <input
             ref={fileInputRef}
             type="file"
@@ -331,16 +333,6 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
               if (file) void stage(file);
             }}
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={inputsDisabled}
-            aria-label={t("Attach file")}
-            title={t("Attach file")}
-            className="flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Paperclip className="size-4" />
-          </button>
           <Textarea
             ref={textareaRef}
             value={value}
@@ -356,32 +348,46 @@ export function ChatComposer({ threadId, disabled = false, onSend, onTyping }: C
             disabled={disabled}
             placeholder={t("Type a message")}
             aria-label={t("Message")}
-            className="max-h-40 min-h-10 flex-1 resize-none overflow-y-auto py-2.5"
+            className="max-h-40 min-h-10 w-full resize-none overflow-y-auto rounded-none border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
           />
-          {canSend ? (
-            <Button
-              type="submit"
-              size="icon"
-              disabled={!canSend}
-              aria-label={t("Send")}
-              title={t("Send (Enter)")}
-              className="size-10 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              {sending ? <Loader2 className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
-            </Button>
-          ) : (
-            <Button
+          <div className="flex items-center gap-1 px-1.5 pb-1.5">
+            <button
               type="button"
-              size="icon"
+              onClick={() => fileInputRef.current?.click()}
               disabled={inputsDisabled}
-              onClick={() => void recorder.start()}
-              aria-label={t("Record voice message")}
-              title={t("Record voice message")}
-              className="size-10 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+              aria-label={t("Attach file")}
+              title={t("Attach file")}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {sending ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
-            </Button>
-          )}
+              <Paperclip className="size-4" />
+            </button>
+            <span className="flex-1" />
+            {canSend ? (
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!canSend}
+                aria-label={t("Send")}
+                title={t("Send (Enter)")}
+                className="size-8 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {sending ? <Loader2 className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="icon"
+                disabled={inputsDisabled}
+                onClick={() => void recorder.start()}
+                aria-label={t("Record voice message")}
+                title={t("Record voice message")}
+                variant="ghost"
+                className="size-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                {sending ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </form>
