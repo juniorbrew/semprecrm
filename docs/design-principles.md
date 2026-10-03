@@ -81,6 +81,17 @@ Substitui, para a lista, as regras de "situação como pílula" e "sem caixa alt
 - **Ações rápidas:** ao passar o mouse ou com o foco dentro da linha, uma barra pequena com Resolver (Reabrir nas encerradas) e Assumir, só ícones `size-3.5` com `aria-label`. Só ações que já existem no cabeçalho; sem Adiar. Leitores não veem a barra.
 - **Densidade:** confortável ou compacta (sem a linha de metadados, padding menor), salva por usuário neste aparelho. Abas e filtros ativos em pílula `bg-primary/15 text-primary`.
 
+## Funis
+
+Quadro de negócios (`src/app/(dashboard)/pipelines/page.tsx`, `src/components/pipelines/`).
+
+- **Cabeçalho:** seletor de funil (nome em `text-base font-semibold`, item atual em `bg-primary/10`), densidade e Novo funil como ghost, **Novo negócio** como único botão preenchido. Logo abaixo, uma faixa de números sem caixas: total, valor do funil (o único em `text-primary`), ponderado, ticket médio, ganhos e perdidos no mês (ponto verde/vermelho). Motivos de perda abaixo de uma linha fina. Os números vêm de `src/lib/pipelines/board.ts` (testado).
+- **Colunas:** painéis leves (`bg-muted/45`, `dark:bg-muted/30`, raio `--radius`), sem borda. Cabeçalho com ponto na cor da etapa, nome, contagem em pílula neutra e a soma dos valores em `tabular-nums` na linha de baixo; "+" só para quem cria negócios. Etapa vazia: uma frase muted e "Novo negócio". No celular as colunas têm 85vw com snap horizontal.
+- **Cartão:** plano, borda fina, filete de 3 px na cor da etapa só quando ela existe. Título, contato · empresa, valor e avatar do responsável, depois uma linha quieta com a previsão de fechamento (ponto + texto vermelho/âmbar só quando atrasado/hoje) e a idade da última atividade. Ganho/Perdido como ponto + texto verde/vermelho, motivo da perda ao lado.
+- **Ações rápidas** no hover ou com foco dentro do cartão: Abrir, Ganho e Perdido (este pede o motivo, mesmo diálogo da gaveta). Só para quem altera negócios e só em negócio aberto.
+- **Arrastar:** o botão principal do cartão é a alça. Mouse/toque a partir de 5 px; teclado: Espaço pega, setas movem, Espaço/Enter solta, Esc cancela; Enter sozinho abre o negócio. Durante o arraste o cartão flutuante ganha anel `ring-primary/30` e a lista de destino um tom `bg-primary/8`.
+- **Densidade:** confortável ou compacta (sem contato e sem a linha quieta), salva por usuário neste aparelho (`sempre:pipelines:density:<userId>`).
+
 ## Contatos
 
 Lista (`src/app/(dashboard)/contacts/page.tsx`, linha em `src/components/contacts/contact-list-row.tsx`) e ficha do contato (`contact-detail-view.tsx`).

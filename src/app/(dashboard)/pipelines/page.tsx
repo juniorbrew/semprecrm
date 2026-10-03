@@ -3,12 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Pipeline, PipelineStage, Deal } from "@/types";
+import type { Pipeline, PipelineStage, Deal, DealStatus } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
 import { DealDrawer } from "@/components/pipelines/deal-drawer";
 import { PipelineAnalytics } from "@/components/pipelines/pipeline-analytics";
+import {
+  LostDealDialog,
+  type LostDealInput,
+} from "@/components/pipelines/lost-deal-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,13 +30,47 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, Rows4 } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
 import { GatedButton } from "@/components/ui/gated-button";
 import { useLanguage } from "@/hooks/use-language";
 import { loadPipelineDeals } from "@/lib/pipelines/load-deals";
+import { saveDealStatus } from "@/lib/pipelines/loss-reasons";
+import {
+  readBoardDensity,
+  writeBoardDensity,
+  type BoardDensity,
+} from "@/lib/pipelines/board";
+import type { Language } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+const COPY: Record<
+  Language,
+  {
+    newDeal: string;
+    newPipeline: string;
+    compact: string;
+    selector: string;
+    emptyTitle: string;
+  }
+> = {
+  "pt-BR": {
+    newDeal: "Novo negócio",
+    newPipeline: "Novo funil",
+    compact: "Cartões compactos",
+    selector: "Trocar de funil",
+    emptyTitle: "Crie um funil para acompanhar seus negócios.",
+  },
+  "en-US": {
+    newDeal: "New deal",
+    newPipeline: "New pipeline",
+    compact: "Compact cards",
+    selector: "Switch pipeline",
+    emptyTitle: "Create a pipeline to track your deals.",
+  },
+};
 
 // Pipeline creation is admin-class (settings-tier write under
 // the new RLS); deal creation is operational and only requires
@@ -52,10 +90,31 @@ const SPEC_DEFAULT_STAGES = [
 
 export default function PipelinesPage() {
   const supabase = createClient();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const copy = COPY[language] ?? COPY["pt-BR"];
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
-  const { accountId } = useAuth();
+  const { accountId, user } = useAuth();
+  const userId = user?.id ?? null;
+
+  // Card density, per user on this device. Read after mount (localStorage
+  // in the initializer would be a hydration mismatch).
+  const [density, setDensity] = useState<BoardDensity>("comfortable");
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (userId) setDensity(readBoardDensity(userId));
+  }, [userId]);
+  const toggleDensity = useCallback(() => {
+    setDensity((d) => {
+      const next: BoardDensity = d === "compact" ? "comfortable" : "compact";
+      if (userId) writeBoardDensity(userId, next);
+      return next;
+    });
+  }, [userId]);
+
+  // Quick "lost" from a card asks for the reason first (same dialog as
+  // the drawer); "won" saves right away.
+  const [lostDeal, setLostDeal] = useState<Deal | null>(null);
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
@@ -256,6 +315,40 @@ export default function PipelinesPage() {
     [stages],
   );
 
+  const handleQuickStatus = useCallback(
+    async (deal: Deal, status: DealStatus) => {
+      if (status === "lost") {
+        setLostDeal(deal);
+        return;
+      }
+      if (!(await saveDealStatus(supabase, deal.id, status))) {
+        toast.error(t("Failed to update deal status"));
+        return;
+      }
+      toast.success(status === "won" ? t("Marked as won") : t("Deal reopened"));
+      await refreshDeals();
+    },
+    [supabase, t, refreshDeals],
+  );
+
+  const handleQuickLost = useCallback(
+    async (input: LostDealInput) => {
+      if (!lostDeal) return;
+      const ok = await saveDealStatus(supabase, lostDeal.id, "lost", {
+        reasonId: input.reasonId,
+        note: input.note,
+      });
+      if (!ok) {
+        toast.error(t("Failed to update deal status"));
+        return;
+      }
+      setLostDeal(null);
+      toast.success(t("Marked as lost"));
+      await refreshDeals();
+    },
+    [lostDeal, supabase, t, refreshDeals],
+  );
+
   const handleOpenDeal = useCallback((deal: Deal) => {
     setDrawerDealId(deal.id);
     setDrawerOpen(true);
@@ -352,14 +445,17 @@ export default function PipelinesPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5" aria-busy="true">
         <div className="flex items-center justify-between">
-          <div className="h-8 w-48 animate-pulse rounded bg-muted" />
-          <div className="h-9 w-28 animate-pulse rounded-lg bg-muted" />
+          <div className="h-8 w-48 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
+          <div className="h-8 w-32 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2.5 overflow-hidden">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-96 w-72 animate-pulse rounded-xl bg-muted/50" />
+            <div
+              key={i}
+              className="h-96 w-72 shrink-0 animate-pulse rounded-[var(--radius)] bg-muted/45 motion-reduce:animate-none"
+            />
           ))}
         </div>
       </div>
@@ -371,68 +467,90 @@ export default function PipelinesPage() {
     // <main> so the board takes the leftover height and scrolls per
     // column while header + KPIs stay visible. Otherwise the page keeps
     // its natural height and <main> scrolls as before.
-    <div className="space-y-6 board-fit:flex board-fit:h-full board-fit:flex-col">
-      {/* Header */}
+    <div className="space-y-5 board-fit:flex board-fit:h-full board-fit:flex-col">
+      {/* Header: pipeline selector, quiet utilities, one filled action. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          {/* Pipeline selector dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors data-[popup-open]:bg-muted"
-            >
-              <GitBranch className="h-4 w-4 text-primary" />
-              <span className="font-semibold">
-                {selectedPipeline?.name ?? "Select Pipeline"}
-              </span>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="w-64 border-border bg-popover text-popover-foreground"
-            >
-              {pipelines.length === 0 && (
-                <DropdownMenuItem disabled className="text-muted-foreground">
-                  No pipelines yet
-                </DropdownMenuItem>
-              )}
-              {pipelines.map((p) => (
-                <DropdownMenuItem
-                  key={p.id}
-                  onClick={() => setSelectedPipelineId(p.id)}
-                  className={
-                    p.id === selectedPipelineId
-                      ? "text-primary"
-                      : "text-popover-foreground"
-                  }
-                >
-                  <GitBranch className="mr-2 h-3.5 w-3.5" />
-                  {p.name}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator className="bg-border" />
-              {selectedPipeline && (
-                <DropdownMenuItem
-                  onClick={() => setSettingsOpen(true)}
-                  className="text-popover-foreground"
-                >
-                  <Settings className="mr-2 h-3.5 w-3.5" />
-                  Manage Pipelines
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={copy.selector}
+            className="-ml-2 inline-flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-muted"
+          >
+            <GitBranch className="size-4 shrink-0 text-primary" aria-hidden />
+            <span className="truncate text-base font-semibold">
+              {selectedPipeline?.name ?? "Select Pipeline"}
+            </span>
+            <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="w-64 border-border bg-popover text-popover-foreground"
+          >
+            {pipelines.length === 0 && (
+              <DropdownMenuItem disabled className="text-muted-foreground">
+                No pipelines yet
+              </DropdownMenuItem>
+            )}
+            {pipelines.map((p) => (
+              <DropdownMenuItem
+                key={p.id}
+                onClick={() => setSelectedPipelineId(p.id)}
+                aria-current={p.id === selectedPipelineId ? "true" : undefined}
+                className={cn(
+                  p.id === selectedPipelineId
+                    ? "bg-primary/10 font-semibold text-foreground"
+                    : "text-popover-foreground",
+                )}
+              >
+                <GitBranch
+                  className={cn(
+                    "mr-2 size-3.5",
+                    p.id === selectedPipelineId ? "text-primary" : "opacity-70",
+                  )}
+                />
+                {p.name}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator className="bg-border" />
+            {selectedPipeline && (
+              <DropdownMenuItem
+                onClick={() => setSettingsOpen(true)}
+                className="text-popover-foreground"
+              >
+                <Settings className="mr-2 size-3.5" />
+                Manage Pipelines
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          {pipelines.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleDensity}
+              aria-pressed={density === "compact"}
+              aria-label={copy.compact}
+              title={copy.compact}
+              data-testid="density-toggle"
+              className={cn(
+                "inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                density === "compact"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <Rows4 className="size-4" aria-hidden />
+            </button>
+          )}
           <GatedButton
-            variant="outline"
+            variant="ghost"
             canAct={canEditSettings}
             gateReason="create pipelines"
             onClick={() => setNewPipelineOpen(true)}
-            className="border-border bg-card text-foreground hover:bg-muted"
+            className="text-muted-foreground hover:text-foreground"
           >
-            <Plus className="mr-1 h-4 w-4" />
-            Add Pipeline
+            <Plus className="mr-1 size-4" />
+            {copy.newPipeline}
           </GatedButton>
           <GatedButton
             canAct={canCreateDeals}
@@ -441,30 +559,24 @@ export default function PipelinesPage() {
             onClick={() => handleAddDeal()}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            <Plus className="mr-1 h-4 w-4" />
-            Add Deal
+            <Plus className="mr-1 size-4" />
+            {copy.newDeal}
           </GatedButton>
         </div>
       </div>
 
       {/* Board */}
       {pipelines.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-20">
-          <GitBranch className="h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-4 text-lg font-medium text-foreground">
-            No pipelines yet
-          </h3>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Create a pipeline to start tracking deals
-          </p>
+        <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+          <p className="text-sm text-muted-foreground">{copy.emptyTitle}</p>
           <GatedButton
+            variant="outline"
             canAct={canEditSettings}
             gateReason="create pipelines"
             onClick={() => setNewPipelineOpen(true)}
-            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            <Plus className="mr-1 h-4 w-4" />
-            Create Pipeline
+            <Plus className="mr-1 size-4" />
+            {copy.newPipeline}
           </GatedButton>
         </div>
       ) : (
@@ -473,9 +585,11 @@ export default function PipelinesPage() {
           <PipelineBoard
             stages={stages}
             deals={deals}
+            compact={density === "compact"}
             onDealMoved={handleDealMoved}
-            onAddDeal={handleAddDeal}
+            onAddDeal={canCreateDeals ? handleAddDeal : undefined}
             onEditDeal={handleOpenDeal}
+            onStatus={canCreateDeals ? handleQuickStatus : undefined}
           />
         </>
       )}
@@ -545,6 +659,16 @@ export default function PipelinesPage() {
         stages={stages}
         defaultStageId={defaultStageId}
         onSaved={refreshDeals}
+      />
+
+      {/* Quick "lost" from a card */}
+      <LostDealDialog
+        open={!!lostDeal}
+        onOpenChange={(next) => {
+          if (!next) setLostDeal(null);
+        }}
+        deal={lostDeal}
+        onConfirm={handleQuickLost}
       />
 
       {/* Existing deal: read view first, edit second */}

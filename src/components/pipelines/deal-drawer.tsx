@@ -18,7 +18,7 @@ import {
   findConversationById,
 } from "@/lib/conversations/find-by-contact";
 import { movedToLabel } from "@/lib/pipelines/deal-dates";
-import { dealStatusPatch } from "@/lib/pipelines/loss-reasons";
+import { saveDealStatus } from "@/lib/pipelines/loss-reasons";
 import { DealDetails } from "./deal-details";
 import { DealFormBody } from "./deal-form";
 import { LostDealDialog, type LostDealInput } from "./lost-deal-dialog";
@@ -127,14 +127,13 @@ export function DealDrawer({
 
   async function saveStatus(status: DealStatus, lost?: LostDealInput): Promise<boolean> {
     if (!deal) return false;
-    const { error } = await supabase
-      .from("deals")
-      .update({
-        ...dealStatusPatch(status, lost ? { reasonId: lost.reasonId, note: lost.note } : undefined),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", deal.id);
-    if (error) {
+    const ok = await saveDealStatus(
+      supabase,
+      deal.id,
+      status,
+      lost ? { reasonId: lost.reasonId, note: lost.note } : undefined,
+    );
+    if (!ok) {
       toast.error(t("Failed to update deal status"));
       return false;
     }
