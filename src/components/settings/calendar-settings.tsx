@@ -1,22 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, ExternalLink, Link2, Link2Off, Loader2, RefreshCw } from 'lucide-react';
+import { ExternalLink, Link2, Link2Off, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useEntitlements } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
 import { CALENDAR_PROVIDERS, PROVIDER_LABELS } from '@/lib/calendar/sync/config';
 import type { CalendarConnectionPublic, CalendarProvider } from '@/types';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import type { Language } from '@/lib/i18n';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { ProviderIcon } from '@/components/calendar/provider-icon';
 
 import { SettingsPanelHead } from './settings-panel-head';
 import { SettingsChip, StatusDot } from './settings-chip';
+import { DANGER_TEXT_BUTTON, SettingsDangerZone, SettingsGroup } from './settings-group';
+
+const COPY: Record<Language, { dangerZone: string }> = {
+  'pt-BR': { dangerZone: 'Zona de risco' },
+  'en-US': { dangerZone: 'Danger zone' },
+};
 
 interface ConnectionsPayload {
   configured: Record<CalendarProvider, boolean>;
@@ -50,6 +55,7 @@ const OAUTH_ERRORS: Record<string, string> = {
  */
 export function CalendarSettings() {
   const { t, language } = useLanguage();
+  const copy = COPY[language] ?? COPY['pt-BR'];
   const router = useRouter();
   const searchParams = useSearchParams();
   const { ready: entitlementsReady, modules } = useEntitlements();
@@ -158,9 +164,10 @@ export function CalendarSettings() {
   }
 
   const moduleOff = entitlementsReady && !modules.calendar;
+  const disconnectable = CALENDAR_PROVIDERS.filter((p) => byProvider(p));
 
   return (
-    <section className="max-w-4xl animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title={t('Calendar')}
         description={t(
@@ -177,15 +184,14 @@ export function CalendarSettings() {
       />
 
       {moduleOff ? (
-        <Alert className="mb-4 border-border bg-card">
-          <AlertTitle className="mb-1 text-foreground">{t('Not included in your plan')}</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground">
+        <div className="mb-6">
+          <NoticeLine title={t('Not included in your plan')}>
             {t('The calendar module is not included in your plan.')}
-          </AlertDescription>
-        </Alert>
+          </NoticeLine>
+        </div>
       ) : null}
 
-      <div className="grid gap-4">
+      <div className="space-y-8">
         {CALENDAR_PROVIDERS.map((provider) => {
           const conn = byProvider(provider);
           const configured = !!data?.configured[provider];
@@ -194,138 +200,97 @@ export function CalendarSettings() {
           const connected = !!conn && conn.status !== 'revoked';
           const connectHref = `/api/integrations/${provider}/connect`;
           return (
-            <Card key={provider}>
-              <CardHeader>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <CardTitle className="flex items-center gap-2 text-foreground">
-                      <ProviderIcon provider={provider} className="h-4 w-4" />
-                      {label}
-                      {loading ? null : conn ? (
-                        conn.status === 'active' ? (
-                          <SettingsChip variant="ok">
-                            <StatusDot tone="ok" /> {t('Connected')}
-                          </SettingsChip>
-                        ) : conn.status === 'error' ? (
-                          <SettingsChip variant="warn">
-                            <AlertTriangle /> {t('Error')}
-                          </SettingsChip>
-                        ) : (
-                          <SettingsChip variant="warn">
-                            <Link2Off /> {t('Reconnect')}
-                          </SettingsChip>
-                        )
-                      ) : null}
-                    </CardTitle>
-                    <CardDescription className="mt-1 text-muted-foreground">
-                      {loading
-                        ? t('Loading…')
-                        : conn
-                          ? `${conn.email ?? '—'}${
-                              conn.last_sync_at
-                                ? ` · ${t('Last sync')} ${dateFmt.format(new Date(conn.last_sync_at))}`
-                                : ` · ${t('Not synced yet')}`
-                            }`
-                          : provider === 'google'
-                              ? t('Two-way sync with the primary calendar of your Google account.')
-                              : t('Two-way sync with the default calendar of your Microsoft account.')}
-                    </CardDescription>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {conn ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => disconnect(provider)}
-                        disabled={busy !== null || loading}
-                      >
-                        {busy === `disconnect:${provider}` ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Link2Off className="size-3.5" />
-                        )}
-                        {t('Disconnect')}
-                      </Button>
-                    ) : null}
-                    {connected ? null : !loading && configured && !moduleOff ? (
-                      // A plain anchor: the connect route answers with a
-                      // 302 to the provider's consent screen.
-                      <a
-                        href={connectHref}
-                        className={buttonVariants({
-                          size: 'sm',
-                          className: 'bg-primary text-primary-foreground hover:bg-primary/90',
-                        })}
-                      >
-                        <Link2 className="size-3.5" />
-                        {conn ? t('Reconnect') : t('Connect')}
-                      </a>
+            <SettingsGroup
+              key={provider}
+              title={
+                <>
+                  <ProviderIcon provider={provider} className="size-3.5" />
+                  {label}
+                </>
+              }
+              description={
+                <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  {loading ? null : conn ? (
+                    conn.status === 'active' ? (
+                      <SettingsChip variant="ok">{t('Connected')}</SettingsChip>
+                    ) : conn.status === 'error' ? (
+                      <SettingsChip variant="warn">{t('Error')}</SettingsChip>
                     ) : (
-                      <Button size="sm" disabled className="bg-primary text-primary-foreground">
-                        <Link2 className="size-3.5" />
-                        {conn ? t('Reconnect') : t('Connect')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-
-              {!loading && (!configured || conn?.last_error || conn) ? (
-                <CardContent className="grid gap-3">
-                  {!configured ? (
-                    <Alert className="border-border bg-card">
-                      <AlertTitle className="mb-1 text-foreground">{t('Integration not configured')}</AlertTitle>
-                      <AlertDescription className="text-sm text-muted-foreground">
-                        {provider === 'google'
-                          ? t('The Google Agenda integration has not been set up by the server administrator yet.')
-                          : t('The Outlook integration has not been set up by the server administrator yet.')}
-                      </AlertDescription>
-                    </Alert>
+                      <SettingsChip variant="warn">{t('Reconnect')}</SettingsChip>
+                    )
                   ) : null}
-
-                  {conn?.status === 'revoked' ? (
-                    <Alert className="border-amber-500/40 bg-amber-500/10">
-                      <AlertTriangle className="size-4 text-amber-500" />
-                      <AlertTitle className="mb-1 text-foreground">{t('Access revoked')}</AlertTitle>
-                      <AlertDescription className="text-sm text-muted-foreground">
-                        {t('The provider no longer accepts our access — reconnect to resume the sync.')}
-                        {conn.last_error ? <span className="mt-1 block break-words text-xs opacity-80">{conn.last_error}</span> : null}
-                      </AlertDescription>
-                    </Alert>
-                  ) : conn?.status === 'error' && conn.last_error ? (
-                    <Alert className="border-amber-500/40 bg-amber-500/10">
-                      <AlertTriangle className="size-4 text-amber-500" />
-                      <AlertTitle className="mb-1 text-foreground">{t('Last sync failed')}</AlertTitle>
-                      <AlertDescription className="text-sm text-muted-foreground">
-                        <span className="break-words">{conn.last_error}</span>
-                        <span className="mt-1 block text-xs opacity-80">{t('It will be retried automatically every 5 minutes.')}</span>
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-
-                  {conn ? (
-                    <label className="flex items-start justify-between gap-4 rounded-lg border border-border px-3 py-2.5">
-                      <span className="min-w-0">
-                        <span className="block text-sm font-medium text-foreground">
-                          {t('Mirror appointments where I am an attendee')}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {t(
-                            'Besides the appointments you own, also send the ones you were added to (when their owner has no calendar connected).',
-                          )}
-                        </span>
-                      </span>
-                      <Switch
-                        checked={conn.mirror_attending}
-                        onCheckedChange={(v) => toggleMirror(provider, !!v)}
-                        disabled={busy !== null}
-                        aria-label={t('Mirror appointments where I am an attendee')}
-                      />
-                    </label>
-                  ) : null}
-                </CardContent>
+                  <span className="min-w-0">
+                    {loading
+                      ? t('Loading…')
+                      : conn
+                        ? `${conn.email ?? '—'}${
+                            conn.last_sync_at
+                              ? ` · ${t('Last sync')} ${dateFmt.format(new Date(conn.last_sync_at))}`
+                              : ` · ${t('Not synced yet')}`
+                          }`
+                        : provider === 'google'
+                            ? t('Two-way sync with the primary calendar of your Google account.')
+                            : t('Two-way sync with the default calendar of your Microsoft account.')}
+                  </span>
+                </span>
+              }
+              action={
+                connected ? null : !loading && configured && !moduleOff ? (
+                  // A plain anchor: the connect route answers with a
+                  // 302 to the provider's consent screen.
+                  <a href={connectHref} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                    <Link2 className="size-3.5" />
+                    {conn ? t('Reconnect') : t('Connect')}
+                  </a>
+                ) : (
+                  <Button variant="outline" size="sm" disabled>
+                    <Link2 className="size-3.5" />
+                    {conn ? t('Reconnect') : t('Connect')}
+                  </Button>
+                )
+              }
+            >
+              {!loading && !configured ? (
+                <NoticeLine tone="muted" title={t('Integration not configured')}>
+                  {provider === 'google'
+                    ? t('The Google Agenda integration has not been set up by the server administrator yet.')
+                    : t('The Outlook integration has not been set up by the server administrator yet.')}
+                </NoticeLine>
               ) : null}
-            </Card>
+
+              {loading ? null : conn?.status === 'revoked' ? (
+                <NoticeLine title={t('Access revoked')}>
+                  {t('The provider no longer accepts our access — reconnect to resume the sync.')}
+                  {conn.last_error ? <span className="mt-1 block break-words text-xs">{conn.last_error}</span> : null}
+                </NoticeLine>
+              ) : conn?.status === 'error' && conn.last_error ? (
+                <NoticeLine title={t('Last sync failed')}>
+                  <span className="break-words">{conn.last_error}</span>
+                  <span className="mt-1 block text-xs">{t('It will be retried automatically every 5 minutes.')}</span>
+                </NoticeLine>
+              ) : null}
+
+              {!loading && conn ? (
+                <label className="flex items-start justify-between gap-4 py-1">
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">
+                      {t('Mirror appointments where I am an attendee')}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {t(
+                        'Besides the appointments you own, also send the ones you were added to (when their owner has no calendar connected).',
+                      )}
+                    </span>
+                  </span>
+                  <Switch
+                    checked={conn.mirror_attending}
+                    onCheckedChange={(v) => toggleMirror(provider, !!v)}
+                    disabled={busy !== null}
+                    aria-label={t('Mirror appointments where I am an attendee')}
+                  />
+                </label>
+              ) : null}
+            </SettingsGroup>
           );
         })}
 
@@ -334,6 +299,50 @@ export function CalendarSettings() {
           {t('Only the title, description, location and time of an appointment are shared with the provider. Links to contacts, deals and tasks stay here.')}
         </p>
       </div>
+
+      {disconnectable.length > 0 ? (
+        <SettingsDangerZone title={copy.dangerZone}>
+          {disconnectable.map((provider) => (
+            <div key={provider}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={DANGER_TEXT_BUTTON}
+              onClick={() => disconnect(provider)}
+              disabled={busy !== null || data === null}
+            >
+              {busy === `disconnect:${provider}` ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Link2Off className="size-3.5" />
+              )}
+              {t('Disconnect')} {PROVIDER_LABELS[provider]}
+            </Button>
+            </div>
+          ))}
+        </SettingsDangerZone>
+      ) : null}
     </section>
+  );
+}
+
+/** Plain notice line: status dot + bold lead + muted text, no box. */
+function NoticeLine({
+  title,
+  tone = 'warn',
+  children,
+}: {
+  title: ReactNode;
+  tone?: 'warn' | 'muted';
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex gap-2.5 text-sm">
+      <StatusDot tone={tone} className="mt-[7px]" />
+      <div className="min-w-0 text-muted-foreground">
+        <span className="font-medium text-foreground">{title}</span>{' '}
+        {children}
+      </div>
+    </div>
   );
 }

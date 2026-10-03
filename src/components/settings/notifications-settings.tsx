@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, BellOff, BellRing, Laptop, Loader2, Smartphone, Trash2 } from 'lucide-react';
+import { BellOff, BellRing, Laptop, Loader2, Smartphone, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { createClient } from '@/lib/supabase/client';
@@ -22,11 +22,11 @@ import {
   type NotificationPrefs,
   type PushEventKind,
 } from '@/lib/push/prefs';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 
+import { SettingsChip, StatusDot } from './settings-chip';
+import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
 
 interface SubscriptionRow {
@@ -199,7 +199,7 @@ export function NotificationsSettings() {
   );
 
   return (
-    <section className="max-w-4xl animate-in fade-in-50 duration-200">
+    <section className="max-w-2xl">
       <SettingsPanelHead
         title={t('Notifications')}
         description={t(
@@ -207,180 +207,154 @@ export function NotificationsSettings() {
         )}
       />
 
-      <div className="grid gap-4">
+      <div className="space-y-8">
         {/* This browser ------------------------------------------------ */}
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <CardTitle className="flex items-center gap-2 text-foreground">
-                  {enabledHere ? (
-                    <BellRing className="size-4 text-primary" />
-                  ) : (
-                    <Bell className="size-4 text-primary" />
-                  )}
-                  {t('This browser')}
-                </CardTitle>
-                <CardDescription className="mt-1 text-muted-foreground">
-                  {enabledHere
-                    ? t('Notifications are on in this browser.')
-                    : permission === 'denied'
-                      ? t('Notifications are blocked for this site. Allow them in the browser settings, then try again.')
-                      : permission === 'unsupported'
-                        ? t('This browser does not support push notifications.')
-                        : t('Turn on notifications here — the browser will ask for permission.')}
-                </CardDescription>
-              </div>
-              <div className="shrink-0">
-                {enabledHere ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={disableHere}
-                    disabled={busy !== null}
-                  >
-                    {busy === 'disable' ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <BellOff className="size-3.5" />
-                    )}
-                    {t('Turn off here')}
-                  </Button>
+        <SettingsGroup
+          title={t('This browser')}
+          description={
+            enabledHere
+              ? t('Notifications are on in this browser.')
+              : permission === 'denied'
+                ? t('Notifications are blocked for this site. Allow them in the browser settings, then try again.')
+                : permission === 'unsupported'
+                  ? t('This browser does not support push notifications.')
+                  : t('Turn on notifications here — the browser will ask for permission.')
+          }
+          action={
+            enabledHere ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={disableHere}
+                disabled={busy !== null}
+              >
+                {busy === 'disable' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Button
-                    size="sm"
-                    onClick={enableHere}
-                    disabled={
-                      busy !== null ||
-                      !configured ||
-                      permission === 'denied' ||
-                      permission === 'unsupported'
-                    }
-                    className="bg-primary text-primary-foreground hover:bg-primary/90"
-                  >
-                    {busy === 'enable' ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <BellRing className="size-3.5" />
-                    )}
-                    {t('Enable in this browser')}
-                  </Button>
+                  <BellOff className="size-3.5" />
                 )}
-              </div>
-            </div>
-          </CardHeader>
+                {t('Turn off here')}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={enableHere}
+                disabled={
+                  busy !== null ||
+                  !configured ||
+                  permission === 'denied' ||
+                  permission === 'unsupported'
+                }
+              >
+                {busy === 'enable' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <BellRing className="size-3.5" />
+                )}
+                {t('Enable in this browser')}
+              </Button>
+            )
+          }
+        >
           {!configured ? (
-            <CardContent>
-              <Alert className="border-border bg-card">
-                <AlertTitle className="mb-1 text-foreground">{t('Push is not configured on this server.')}</AlertTitle>
-                <AlertDescription className="text-sm text-muted-foreground">
-                  {t('Ask the administrator to set the VAPID keys (see .env.local.example).')}
-                </AlertDescription>
-              </Alert>
-            </CardContent>
+            <div className="flex gap-2.5 text-sm">
+              <StatusDot tone="warn" className="mt-[7px]" />
+              <p className="min-w-0 text-muted-foreground">
+                <span className="font-medium text-foreground">{t('Push is not configured on this server.')}</span>{' '}
+                {t('Ask the administrator to set the VAPID keys (see .env.local.example).')}
+              </p>
+            </div>
           ) : null}
-        </Card>
+        </SettingsGroup>
 
         {/* Devices ----------------------------------------------------- */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-foreground">{t('Devices')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('Every browser where you turned notifications on. Remove one to stop sending there.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {subs === null || profileLoading ? (
-              <div className="space-y-2">
-                {[1, 2].map((i) => (
-                  <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
-                ))}
-              </div>
-            ) : subs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t('No devices yet.')}</p>
-            ) : (
-              <ul className="divide-y divide-border rounded-lg border border-border">
-                {subs.map((row) => {
-                  const device = describeDevice(row.user_agent);
-                  const Icon = device.mobile ? Smartphone : Laptop;
-                  const isThis = row.endpoint === thisBrowserEndpoint;
-                  return (
-                    <li key={row.id} className="flex items-center gap-3 px-3 py-2.5">
-                      <Icon className="size-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          {t(device.label)}
-                          {isThis ? (
-                            <span className="ml-2 rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                              {t('this browser')}
-                            </span>
-                          ) : null}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {t('Added on')} {dateFmt.format(new Date(row.created_at))}
-                          {row.last_used_at
-                            ? ` · ${t('last notified')} ${dateFmt.format(new Date(row.last_used_at))}`
-                            : ''}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t('Remove device')}
-                        title={t('Remove device')}
-                        onClick={() => removeDevice(row)}
-                        disabled={busy !== null}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        {busy === row.id ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="size-4" />
-                        )}
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Event kinds -------------------------------------------------- */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-foreground">{t('What to notify')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('Applies to all your devices. You are never notified about a conversation you have open on screen.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+        <SettingsGroup
+          title={t('Devices')}
+          description={t('Every browser where you turned notifications on. Remove one to stop sending there.')}
+        >
+          {subs === null || profileLoading ? (
+            <div className="space-y-2">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-10 animate-pulse rounded-md bg-muted/60" />
+              ))}
+            </div>
+          ) : subs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t('No devices yet.')}</p>
+          ) : (
             <ul className="divide-y divide-border">
-              {visibleKinds.map((kind) => {
-                const meta = PUSH_EVENT_LABELS[kind];
+              {subs.map((row) => {
+                const device = describeDevice(row.user_agent);
+                const Icon = device.mobile ? Smartphone : Laptop;
+                const isThis = row.endpoint === thisBrowserEndpoint;
                 return (
-                  <li key={kind} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground">{t(meta.title)}</p>
-                      <p className="text-xs text-muted-foreground">{t(meta.description)}</p>
+                  <li key={row.id} className="flex items-center gap-3 py-2.5">
+                    <Icon className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+                        <span className="truncate">{t(device.label)}</span>
+                        {isThis ? (
+                          <SettingsChip variant="admin">{t('this browser')}</SettingsChip>
+                        ) : null}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {t('Added on')} {dateFmt.format(new Date(row.created_at))}
+                        {row.last_used_at
+                          ? ` · ${t('last notified')} ${dateFmt.format(new Date(row.last_used_at))}`
+                          : ''}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {savingPref === kind ? (
-                        <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-                      ) : null}
-                      <Switch
-                        checked={prefs[kind]}
-                        disabled={profileLoading || savingPref !== null}
-                        onCheckedChange={(v) => togglePref(kind, !!v)}
-                        aria-label={t(meta.title)}
-                      />
-                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Remove device')}
+                      title={t('Remove device')}
+                      onClick={() => removeDevice(row)}
+                      disabled={busy !== null}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      {busy === row.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                    </Button>
                   </li>
                 );
               })}
             </ul>
-          </CardContent>
-        </Card>
+          )}
+        </SettingsGroup>
+
+        {/* Event kinds -------------------------------------------------- */}
+        <SettingsGroup
+          title={t('What to notify')}
+          description={t('Applies to all your devices. You are never notified about a conversation you have open on screen.')}
+        >
+          <ul className="divide-y divide-border">
+            {visibleKinds.map((kind) => {
+              const meta = PUSH_EVENT_LABELS[kind];
+              return (
+                <li key={kind} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">{t(meta.title)}</p>
+                    <p className="text-xs text-muted-foreground">{t(meta.description)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {savingPref === kind ? (
+                      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                    ) : null}
+                    <Switch
+                      checked={prefs[kind]}
+                      disabled={profileLoading || savingPref !== null}
+                      onCheckedChange={(v) => togglePref(kind, !!v)}
+                      aria-label={t(meta.title)}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </SettingsGroup>
       </div>
     </section>
   );

@@ -1,16 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import {
-  AlertTriangle,
-  Check,
-  Copy,
-  Loader2,
-  ShieldCheck,
-  ShieldOff,
-  Smartphone,
-} from 'lucide-react';
+import { Check, Copy, Loader2, Smartphone } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -25,18 +17,12 @@ import {
   unverifiedTotpFactors,
   verifiedTotpFactors,
 } from '@/lib/auth/mfa';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { DANGER_TEXT_BUTTON, SettingsGroup } from './settings-group';
+import { SettingsChip, StatusDot } from './settings-chip';
 import {
   Dialog,
   DialogContent,
@@ -232,29 +218,17 @@ export function MfaCard() {
   const enabledSince = verifiedFactor?.updated_at ?? verifiedFactor?.created_at ?? null;
 
   return (
-    <Card data-testid="mfa-card">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
-          <ShieldCheck className="size-4 text-primary" />
-          {t('Two-step verification')}
-          {stage === 'on' && (
-            <Badge variant="secondary" className="ml-1">
-              <Check />
-              {t('Enabled')}
-            </Badge>
-          )}
-        </CardTitle>
-        <CardDescription className="text-muted-foreground">
-          {t(
-            'Besides your password, sign-in asks for a 6-digit code from an authenticator app (Google Authenticator, Authy, 1Password…).',
-          )}
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
+    <div data-testid="mfa-card">
+      <SettingsGroup
+        title={t('Two-step verification')}
+        description={t(
+          'Besides your password, sign-in asks for a 6-digit code from an authenticator app (Google Authenticator, Authy, 1Password…).',
+        )}
+        action={stage === 'on' ? <SettingsChip variant="ok">{t('Enabled')}</SettingsChip> : undefined}
+      >
         {stage === 'loading' && (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="size-5 animate-spin text-primary" />
+          <div className="flex items-center py-2">
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
           </div>
         )}
 
@@ -264,7 +238,7 @@ export function MfaCard() {
               {t('Not enabled. Anyone with your password can sign in.')}
             </p>
             <Button onClick={startEnrollment} disabled={busy} data-testid="mfa-enable">
-              {busy ? <Loader2 className="size-4 animate-spin" /> : <Smartphone className="size-4" />}
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Smartphone className="size-3.5" />}
               {t('Enable two-step verification')}
             </Button>
           </div>
@@ -336,17 +310,13 @@ export function MfaCard() {
                 </div>
               </div>
             </div>
-            <Alert>
-              <AlertTriangle />
-              <AlertTitle>{t('There are no recovery codes')}</AlertTitle>
-              <AlertDescription>
-                {t(
-                  'If you lose the phone with the authenticator app you will not be able to sign in. Keep the app backed up (or save the setup key somewhere safe) before continuing.',
-                )}
-              </AlertDescription>
-            </Alert>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button type="button" variant="outline" onClick={cancelEnrollment} disabled={busy}>
+            <WarnLine title={t('There are no recovery codes')}>
+              {t(
+                'If you lose the phone with the authenticator app you will not be able to sign in. Keep the app backed up (or save the setup key somewhere safe) before continuing.',
+              )}
+            </WarnLine>
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="ghost" onClick={cancelEnrollment} disabled={busy}>
                 {t('Cancel')}
               </Button>
               <Button
@@ -380,7 +350,9 @@ export function MfaCard() {
                 )}
               </div>
               <Button
-                variant="outline"
+                variant="ghost"
+                size="sm"
+                className={cn('self-start sm:self-auto', DANGER_TEXT_BUTTON)}
                 onClick={() => {
                   setPassword('');
                   setPasswordError(null);
@@ -389,22 +361,17 @@ export function MfaCard() {
                 disabled={busy}
                 data-testid="mfa-disable"
               >
-                <ShieldOff className="size-4" />
                 {t('Disable')}
               </Button>
             </div>
-            <Alert>
-              <AlertTriangle />
-              <AlertTitle>{t('There are no recovery codes')}</AlertTitle>
-              <AlertDescription>
-                {t(
-                  'Without the phone that has the authenticator app you cannot sign in. If you change phones, disable and enable two-step verification again first.',
-                )}
-              </AlertDescription>
-            </Alert>
+            <WarnLine title={t('There are no recovery codes')}>
+              {t(
+                'Without the phone that has the authenticator app you cannot sign in. If you change phones, disable and enable two-step verification again first.',
+              )}
+            </WarnLine>
           </>
         )}
-      </CardContent>
+      </SettingsGroup>
 
       <Dialog open={disableOpen} onOpenChange={(open) => !busy && setDisableOpen(open)}>
         <DialogContent>
@@ -452,7 +419,19 @@ export function MfaCard() {
           </form>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
+  );
+}
+
+/** Plain warning line: amber dot + bold lead + muted text, no box. */
+function WarnLine({ title, children }: { title: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex gap-2.5 text-sm">
+      <StatusDot tone="warn" className="mt-[7px]" />
+      <p className="min-w-0 text-muted-foreground">
+        <span className="font-medium text-foreground">{title}.</span> {children}
+      </p>
+    </div>
   );
 }
 
@@ -480,9 +459,9 @@ export function MfaRequiredNotice({ compact = false }: { compact?: boolean }) {
       <div
         role="status"
         data-testid="mfa-required-banner"
-        className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300 sm:px-6"
+        className="flex items-center gap-2.5 border-b border-border px-4 py-2 text-sm text-foreground sm:px-6"
       >
-        <AlertTriangle className="size-4 shrink-0" />
+        <StatusDot tone="warn" />
         <span className="min-w-0 flex-1">
           {t('This account requires two-step verification for administrators. Enable it to continue using the app.')}
         </span>
@@ -490,12 +469,10 @@ export function MfaRequiredNotice({ compact = false }: { compact?: boolean }) {
     );
   }
   return (
-    <Alert data-testid="mfa-required-alert" className="mb-4 border-amber-500/40">
-      <AlertTriangle className="text-amber-500" />
-      <AlertTitle>{t('Two-step verification required')}</AlertTitle>
-      <AlertDescription>
+    <div role="alert" data-testid="mfa-required-alert" className="mb-6">
+      <WarnLine title={t('Two-step verification required')}>
         {t('This account requires two-step verification for administrators. Enable it below to continue using the app.')}
-      </AlertDescription>
-    </Alert>
+      </WarnLine>
+    </div>
   );
 }
