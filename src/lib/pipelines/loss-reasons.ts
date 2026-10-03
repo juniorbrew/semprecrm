@@ -115,6 +115,20 @@ function fail(prefix: string, error: { message: string } | null): never {
   throw new Error(`${prefix}: ${error?.message ?? 'unknown error'}`);
 }
 
+/** Won / lost / reopen write shared by the deal drawer and the board's quick actions. */
+export async function saveDealStatus(
+  db: Client,
+  dealId: string,
+  status: DealStatus,
+  lost?: { reasonId: string; note?: string | null },
+): Promise<boolean> {
+  const { error } = await db
+    .from('deals')
+    .update({ ...dealStatusPatch(status, lost), updated_at: new Date().toISOString() })
+    .eq('id', dealId);
+  return !error;
+}
+
 export async function listLossReasons(
   db: Client,
   accountId: string,
