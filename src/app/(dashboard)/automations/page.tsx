@@ -1,38 +1,27 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   Zap,
   Plus,
-  MoreVertical,
-  Copy,
-  Pencil,
   Trash2,
-  FileText,
   MessageCircle,
   Clock,
   Users,
   PhoneCall,
   Loader2,
   Snowflake,
-  AlertTriangle,
+  Rows4,
 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import type { Automation } from '@/types';
 import { Button } from '@/components/ui/button';
 import { GatedButton } from '@/components/ui/gated-button';
-import { Switch } from '@/components/ui/switch';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -45,12 +34,17 @@ import {
   AUTOMATION_TEMPLATES,
   type TemplateSlug,
 } from '@/lib/automations/templates';
-import { triggerMeta, formatRelative } from '@/lib/automations/trigger-meta';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/hooks/use-language';
 import { localizeAutomationTemplate } from '@/lib/automations/templates';
 import { findDuplicateAutomations } from '@/lib/automations/duplicates';
-import { frequencyLabel } from '@/lib/automations/frequency';
+import {
+  AUTOMATIONS_COPY,
+  AutomationListRow,
+  readAutomationsDensity,
+  writeAutomationsDensity,
+  type AutomationsDensity,
+} from '@/components/automations/automation-list-row';
 
 const TEMPLATE_ORDER: TemplateSlug[] = [
   'welcome_message',
@@ -72,6 +66,8 @@ export default function AutomationsPage() {
   const router = useRouter();
   const canCreate = useCan('send-messages');
   const { language, t } = useLanguage();
+  const copy = AUTOMATIONS_COPY[language] ?? AUTOMATIONS_COPY['pt-BR'];
+  const userId = useAuth().user?.id;
   const [automations, setAutomations] = useState<Automation[] | null>(null);
   const duplicates = useMemo(
     () => findDuplicateAutomations(automations ?? []),
@@ -80,6 +76,21 @@ export default function AutomationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Row density, per user on this device. Read after mount (localStorage
+  // in the initializer would be a hydration mismatch), like the contacts list.
+  const [density, setDensity] = useState<AutomationsDensity>('comfortable');
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (userId) setDensity(readAutomationsDensity(userId));
+  }, [userId]);
+  const toggleDensity = useCallback(() => {
+    setDensity((d) => {
+      const next: AutomationsDensity = d === 'compact' ? 'comfortable' : 'compact';
+      if (userId) writeAutomationsDensity(userId, next);
+      return next;
+    });
+  }, [userId]);
 
   async function load() {
     try {
@@ -164,9 +175,11 @@ export default function AutomationsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
-        <Button variant="outline" onClick={() => window.location.reload()}>
-          {t('Try again')}
+        <p className="text-sm text-muted-foreground" role="alert">
+          {copy.loadError} <span className="text-xs">({error})</span>
+        </p>
+        <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
+          {copy.retry}
         </Button>
       </div>
     );
@@ -175,7 +188,7 @@ export default function AutomationsPage() {
   if (automations === null) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="text-primary h-6 w-6 animate-spin" />
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -184,30 +197,51 @@ export default function AutomationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-foreground text-2xl font-bold">{t('Automations')}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {t('Build automations that react to WhatsApp® events on their own.')}
-          </p>
+      {/* Header: title + count, one filled action */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">{copy.title}</h1>
+        {automations.length > 0 && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold tabular-nums text-muted-foreground">
+            {automations.length}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {automations.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleDensity}
+              aria-pressed={density === 'compact'}
+              aria-label={copy.compact}
+              title={copy.compact}
+              data-testid="automations-density-toggle"
+              className={cn(
+                'inline-flex size-7 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
+                density === 'compact'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <Rows4 className="size-3.5" />
+            </button>
+          )}
+          <GatedButton
+            size="sm"
+            canAct={canCreate}
+            gateReason={t('create automations')}
+            onClick={() => router.push('/automations/new')}
+          >
+            <Plus />
+            {copy.newAutomation}
+          </GatedButton>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason={t('create automations')}
-          onClick={() => router.push('/automations/new')}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          {t('Create Automation')}
-        </GatedButton>
       </div>
 
       {showTemplates && (
         <section>
-          <h2 className="text-muted-foreground mb-3 text-sm font-semibold">
-            {t('Quick-start templates')}
+          <h2 className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+            {copy.templates}
           </h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
             {TEMPLATE_ORDER.map((slug) => {
               const template = localizeAutomationTemplate(
                 AUTOMATION_TEMPLATES[slug],
@@ -217,18 +251,17 @@ export default function AutomationsPage() {
               return (
                 <button
                   key={slug}
+                  type="button"
                   onClick={() => startFromTemplate(slug)}
-                  className="group border-border bg-card hover:border-primary/50 hover:bg-card/80 flex flex-col items-start rounded-xl border p-4 text-left transition-colors"
+                  className="flex items-start gap-3 rounded-lg border border-border p-3 text-left transition-colors duration-150 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                 >
-                  <div className="bg-primary/10 text-primary group-hover:bg-primary/15 mb-3 flex h-9 w-9 items-center justify-center rounded-lg">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="text-foreground text-sm font-semibold">
-                    {template.name}
-                  </div>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    {template.description}
-                  </p>
+                  <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">{template.name}</span>
+                    <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+                      {template.description}
+                    </span>
+                  </span>
                 </button>
               );
             })}
@@ -237,24 +270,19 @@ export default function AutomationsPage() {
       )}
 
       {automations.length === 0 ? (
-        <div className="border-border bg-card/40 flex h-48 flex-col items-center justify-center rounded-xl border border-dashed">
-          <div className="bg-primary/10 flex h-12 w-12 items-center justify-center rounded-xl">
-            <Zap className="text-primary h-6 w-6" />
-          </div>
-          <p className="text-foreground mt-3 text-sm font-medium">
-            {t('No automations yet')}
-          </p>
-          <p className="text-muted-foreground mt-1 text-xs">
-            {t('Pick a template above or start from scratch.')}
-          </p>
+        <div className="py-10">
+          <p className="text-sm text-foreground">{copy.empty}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{copy.emptyHint}</p>
         </div>
       ) : (
-        <ul className="space-y-3">
+        <ul className="divide-y divide-border border-y border-border">
           {automations.map((a) => (
-            <AutomationCard
+            <AutomationListRow
               key={a.id}
               automation={a}
               language={language}
+              copy={copy}
+              compact={density === 'compact'}
               duplicateOf={duplicates.get(a.id) ?? []}
               onToggle={(next) => toggleActive(a, next)}
               onEdit={() => router.push(`/automations/${a.id}/edit`)}
@@ -303,134 +331,5 @@ export default function AutomationsPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function AutomationCard({
-  automation,
-  language,
-  onToggle,
-  onEdit,
-  onDuplicate,
-  onLogs,
-  onDelete,
-  duplicateOf,
-}: {
-  automation: Automation;
-  language: import('@/lib/i18n').Language;
-  /** Names of other active automations on the same trigger. */
-  duplicateOf: string[];
-  onToggle: (next: boolean) => void;
-  onEdit: () => void;
-  onDuplicate: () => void;
-  onLogs: () => void;
-  onDelete: () => void;
-}) {
-  const { t } = useLanguage();
-  const meta = triggerMeta(automation.trigger_type, language);
-  return (
-    <li className="border-border bg-card hover:border-border rounded-xl border transition-colors">
-      <div className="flex items-center gap-4 p-4">
-        <div
-          className="bg-primary/10 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg"
-          aria-hidden
-        >
-          <Zap className="text-primary h-5 w-5" />
-        </div>
-
-        <button
-          type="button"
-          onClick={onEdit}
-          className="min-w-0 flex-1 text-left"
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-foreground truncate text-sm font-semibold">
-              {automation.name}
-            </span>
-            {automation.is_active && (
-              <span className="relative flex h-2 w-2" aria-label={t('Active rule')}>
-                <span className="bg-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
-                <span className="bg-primary relative inline-flex h-2 w-2 rounded-full" />
-              </span>
-            )}
-          </div>
-          {automation.description && (
-            <p className="text-muted-foreground mt-0.5 truncate text-xs">
-              {automation.description}
-            </p>
-          )}
-          <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-2 text-xs">
-            <span
-              className={cn(
-                'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                meta.pillClass
-              )}
-            >
-              {meta.label}
-            </span>
-            <span className="border-border inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]">
-              {frequencyLabel(
-                automation.run_frequency ?? 'every_time',
-                language
-              ).replace('X', String(automation.cooldown_hours ?? 24))}
-            </span>
-            <span className="tabular-nums">
-              {automation.execution_count}{' '}
-              {t(automation.execution_count === 1 ? 'run' : 'runs')}
-            </span>
-            <span aria-hidden>·</span>
-            <span>
-              {t('last:')} {formatRelative(automation.last_executed_at, language)}
-            </span>
-          </div>
-          {duplicateOf.length > 0 && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-400">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden />
-              <span>
-                {language === 'pt-BR'
-                  ? `Mesmo gatilho que ${duplicateOf.map((n) => `"${n}"`).join(', ')} — o cliente pode receber tudo em dobro.`
-                  : `Same trigger as ${duplicateOf.map((n) => `"${n}"`).join(', ')} — customers may get every reply twice.`}
-              </span>
-            </p>
-          )}
-        </button>
-
-        <div className="flex items-center gap-3">
-          <Switch
-            checked={automation.is_active}
-            onCheckedChange={(v) => onToggle(!!v)}
-            aria-label={t(automation.is_active ? 'Deactivate' : 'Activate')}
-          />
-
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label={t('Open menu')}
-              className="text-muted-foreground hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors"
-            >
-              <MoreVertical className="h-4 w-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={onEdit}>
-                <Pencil className="h-4 w-4" />
-                {t('Edit')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onDuplicate}>
-                <Copy className="h-4 w-4" />
-                {t('Duplicate')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onLogs}>
-                <FileText className="h-4 w-4" />
-                {t('View logs')}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={onDelete}>
-                <Trash2 className="h-4 w-4" />
-                {t('Delete')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-    </li>
   );
 }

@@ -121,31 +121,24 @@ export interface BuilderInitial {
 interface StepMeta {
   label: string
   icon: typeof Zap
-  /** Tinted 1px card border per step family (the icon tile carries
-   *  the colour; the border only whispers it). */
-  border: string
-  /** Icon tile colours. */
-  tile: string
 }
 
-const ACTION_TILE = "bg-primary/10 text-primary"
-
 const STEP_META: Record<AutomationStepType, StepMeta> = {
-  send_message: { label: "Send message", icon: MessageSquare, border: "border-border", tile: ACTION_TILE },
-  send_template: { label: "Send Template", icon: FileText, border: "border-border", tile: ACTION_TILE },
-  add_tag: { label: "Add tag", icon: Tag, border: "border-border", tile: ACTION_TILE },
-  remove_tag: { label: "Remove Tag", icon: TagIcon, border: "border-border", tile: ACTION_TILE },
-  assign_conversation: { label: "Assign conversation", icon: UserCheck, border: "border-border", tile: ACTION_TILE },
-  update_contact_field: { label: "Update Contact Field", icon: PencilLine, border: "border-border", tile: ACTION_TILE },
-  create_deal: { label: "Create deal", icon: Briefcase, border: "border-border", tile: ACTION_TILE },
-  wait: { label: "Wait", icon: Hourglass, border: "border-border", tile: "bg-muted text-muted-foreground" },
-  condition: { label: "Condition (If/Else)", icon: GitBranch, border: "border-amber-500/40", tile: "bg-amber-500/10 text-amber-500" },
-  send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-border", tile: ACTION_TILE },
-  close_conversation: { label: "Resolve conversation", icon: CircleSlash, border: "border-border", tile: ACTION_TILE },
-  create_task: { label: "Create task", icon: CheckSquare, border: "border-border", tile: ACTION_TILE },
-  set_category: { label: "Set category", icon: Layers, border: "border-border", tile: ACTION_TILE },
-  set_priority: { label: "Set priority", icon: Flag, border: "border-border", tile: ACTION_TILE },
-  assign_team: { label: "Assign to team", icon: Users, border: "border-border", tile: ACTION_TILE },
+  send_message: { label: "Send message", icon: MessageSquare },
+  send_template: { label: "Send Template", icon: FileText },
+  add_tag: { label: "Add tag", icon: Tag },
+  remove_tag: { label: "Remove Tag", icon: TagIcon },
+  assign_conversation: { label: "Assign conversation", icon: UserCheck },
+  update_contact_field: { label: "Update Contact Field", icon: PencilLine },
+  create_deal: { label: "Create deal", icon: Briefcase },
+  wait: { label: "Wait", icon: Hourglass },
+  condition: { label: "Condition (If/Else)", icon: GitBranch },
+  send_webhook: { label: "Send Webhook", icon: Webhook },
+  close_conversation: { label: "Resolve conversation", icon: CircleSlash },
+  create_task: { label: "Create task", icon: CheckSquare },
+  set_category: { label: "Set category", icon: Layers },
+  set_priority: { label: "Set priority", icon: Flag },
+  assign_team: { label: "Assign to team", icon: Users },
 }
 
 /** Grouped menu for the "add action" pickers. */
@@ -1328,17 +1321,17 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       <div className="fixed inset-0 flex flex-col bg-background">
         {/* Top bar. At sub-sm widths the "Ativo" label is hidden so the
             name input gets maximum width. */}
-        <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 py-2.5 sm:gap-3 sm:px-4">
+        <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-2 sm:gap-3 sm:px-4">
           <button
             type="button"
             onClick={() => router.push("/automations")}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex size-8 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
             aria-label={t("Back to automations")}
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="size-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <div className="hidden text-[11px] uppercase tracking-wide text-muted-foreground sm:block">
+            <div className="hidden text-[10.5px] uppercase tracking-[0.07em] text-muted-foreground sm:block">
               {t("Automations")}
               <span className="mx-1 text-border">/</span>
               {isEditing ? t("Edit rule") : t("New rule")}
@@ -1367,7 +1360,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           </div>
           {isEditing && (
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setTestOpen(true)}
               disabled={dirty}
               title={
@@ -1384,11 +1377,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               <span className="hidden sm:inline">{language === "pt-BR" ? "Testar" : "Test"}</span>
             </Button>
           )}
-          <Button
-            onClick={save}
-            disabled={saving}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-          >
+          <Button onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {isEditing ? "Salvar" : t("Save Draft")}
           </Button>
@@ -1399,15 +1388,16 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           <main className="min-w-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
             <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
               {/* Details */}
-              <section className="rounded-xl border border-border bg-card p-4">
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+              <section>
+                <label htmlFor="automation-description" className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   {t("Description")}
                 </label>
                 <Textarea
+                  id="automation-description"
                   value={state.description}
                   onChange={(e) => patchTop("description", e.target.value)}
                   placeholder={t("Describe what this rule does (optional)")}
-                  className="min-h-[56px] bg-muted text-foreground"
+                  className="min-h-[56px] text-foreground"
                   rows={2}
                 />
               </section>
@@ -1440,7 +1430,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
                 title={t("Conditions")}
                 hint={t("Only continue when all conditions are true")}
                 action={
-                  <Button variant="outline" size="sm" onClick={addGateCondition}>
+                  <Button variant="ghost" size="sm" onClick={addGateCondition} className="text-muted-foreground hover:text-foreground">
                     <Plus className="h-3.5 w-3.5" />
                     {t("Add condition")}
                   </Button>
@@ -1451,7 +1441,6 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
                 selectedCid={effectiveSelection?.kind === "step" ? effectiveSelection.cid : null}
                 onSelect={(cidValue) => setSelection({ kind: "step", cid: cidValue })}
                 onRemove={removeGate}
-                onAdd={addGateCondition}
               />
 
               {/* 3 · Actions */}
@@ -1463,7 +1452,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
                   <AddStepMenu
                     onPick={(type) => addStepAt(chain.actionsLoc, chain.actions.length, type)}
                   >
-                    <Button variant="outline" size="sm">
+                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
                       <Plus className="h-3.5 w-3.5" />
                       {t("Add action")}
                     </Button>
@@ -1542,8 +1531,8 @@ function FrequencyCard({
   const messageTrigger =
     triggerType === "new_message_received" || triggerType === "keyword_match"
   return (
-    <section className="rounded-xl border border-border bg-card px-4 py-3">
-      <label htmlFor="run-frequency" className="mb-1 block text-xs font-medium text-muted-foreground">
+    <section className="-mt-2">
+      <label htmlFor="run-frequency" className="mb-1.5 block text-xs font-medium text-muted-foreground">
         {pt ? "Com que frequência pode rodar para o mesmo contato?" : "How often may it run for the same contact?"}
       </label>
       <div className="flex flex-wrap items-center gap-2">
@@ -1572,7 +1561,7 @@ function FrequencyCard({
               value={hours}
               onChange={(e) => onChange("cooldown", Number(e.target.value))}
               aria-label={pt ? "Intervalo em horas" : "Interval in hours"}
-              className="h-9 w-20 bg-muted text-foreground"
+              className="h-8 w-20 text-foreground"
             />
             {pt ? "horas" : "hours"}
           </div>
@@ -1591,6 +1580,16 @@ function FrequencyCard({
   )
 }
 
+/** Flat node card shared by trigger, conditions and steps: hairline
+ *  border, no shadow; selected = brand ring + soft brand tint. */
+const NODE_CARD =
+  "flex w-full items-center gap-3 rounded-lg border border-border bg-card text-left transition-colors duration-150 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+const NODE_SELECTED = "border-primary/60 bg-primary/10 ring-2 ring-primary/25 hover:bg-primary/10"
+const NODE_TILE = "flex size-8 flex-shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+/** Quiet "+ Add" text action replacing the old dashed drop boxes. */
+const ADD_LINK =
+  "inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-muted motion-reduce:transition-none"
+
 function SectionHeader({
   n,
   title,
@@ -1603,15 +1602,14 @@ function SectionHeader({
   action?: ReactNode
 }) {
   return (
-    <div className="-mb-3 flex items-end justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-          {n}
-        </span>
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          <p className="text-xs text-muted-foreground">{hint}</p>
-        </div>
+    <div className="-mb-2 flex items-end justify-between gap-3 border-t border-border pt-5">
+      <div className="min-w-0">
+        <h2 className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          <span className="tabular-nums">{n}</span>
+          <span> · </span>
+          {title}
+        </h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
       </div>
       {action}
     </div>
@@ -1638,16 +1636,13 @@ function TriggerCard({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-xl border border-blue-500/40 bg-card px-4 py-3 text-left shadow-sm transition-colors hover:bg-muted/40",
-        selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-      )}
+      className={cn(NODE_CARD, "px-4 py-3", selected && NODE_SELECTED)}
     >
-      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
-        <Zap className="h-4 w-4" />
+      <div className={cn(NODE_TILE, selected && "bg-primary/15 text-primary")}>
+        <Zap className="size-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] uppercase tracking-wide text-blue-500">{t("Trigger")}</div>
+        <div className="text-[10.5px] uppercase tracking-[0.07em] text-muted-foreground">{t("Trigger")}</div>
         <div className="truncate text-sm font-medium text-foreground">
           {option ? copy(option.label, language, t) : type}
         </div>
@@ -1664,69 +1659,57 @@ function ConditionsGroup({
   selectedCid,
   onSelect,
   onRemove,
-  onAdd,
 }: {
   gates: Located[]
   selectedCid: string | null
   onSelect: (cid: string) => void
   onRemove: (path: StepPath) => void
-  onAdd: () => void
 }) {
   const { t, language } = useLanguage()
   const res = useResources()
 
   if (gates.length === 0) {
     return (
-      <button
-        type="button"
-        onClick={onAdd}
-        className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border bg-card/40 px-4 py-3 text-left transition-colors hover:border-primary/50 hover:bg-primary/5"
-      >
-        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Filter className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm text-foreground">
-            {t("No conditions — actions run for every trigger event.")}
-          </div>
-          <div className="text-xs text-primary">{t("Add condition")}</div>
-        </div>
-      </button>
+      <div className="flex items-start gap-2 text-sm text-muted-foreground">
+        <Filter className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        <span>{t("No conditions — actions run for every trigger event.")}</span>
+      </div>
     )
   }
 
   return (
-    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+    <div>
       <ol className="flex flex-col">
         {gates.map((g, i) => {
           const selected = g.step.cid === selectedCid
           return (
             <li key={g.step.cid} className="flex flex-col">
               {i > 0 && (
-                <div className="flex items-center gap-2 py-1 pl-4">
-                  <span className="h-3 w-px bg-amber-500/40" aria-hidden />
-                  <span className="rounded-full border border-amber-500/40 bg-background px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                <div className="flex items-center gap-2 py-1 pl-7">
+                  <span className="h-3 w-px bg-border" aria-hidden />
+                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                     {t("AND")}
                   </span>
                 </div>
               )}
               <div
                 className={cn(
-                  "flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm",
-                  selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                  NODE_CARD,
+                  "px-3 py-2.5",
+                  selected && NODE_SELECTED,
                 )}
               >
                 <button
                   type="button"
                   onClick={() => onSelect(g.step.cid)}
                   aria-pressed={selected}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
-                    <GitBranch className="h-4 w-4" />
+                  <div className={cn(NODE_TILE, selected && "bg-primary/15 text-primary")}>
+                    <GitBranch className="size-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[11px] uppercase tracking-wide text-amber-600">
+                    <div className="text-[10.5px] uppercase tracking-[0.07em] text-muted-foreground">
                       {t("Condition")} {i + 1}
                     </div>
                     <div className="truncate text-sm text-foreground">
@@ -1772,14 +1755,8 @@ function StepList({
   if (steps.length === 0) {
     return (
       <AddStepMenu onPick={(type) => addStepAt(loc, 0, type)}>
-        <button
-          type="button"
-          className={cn(
-            "flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card/40 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary",
-            nested ? "px-3 py-3 text-xs" : "px-4 py-5",
-          )}
-        >
-          <Plus className="h-4 w-4" />
+        <button type="button" className={cn(ADD_LINK, "self-start", nested ? "text-xs" : "text-sm")}>
+          <Plus className="size-3.5" />
           {nested ? t("Add action") : t("No actions yet. Add the first one.")}
         </button>
       </AddStepMenu>
@@ -1802,7 +1779,7 @@ function StepList({
           />
           {step.step_type === "condition" && (
             <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <BranchColumn label={t("Yes")} tone="text-primary border-primary/30">
+              <BranchColumn label={t("Yes")} dot="bg-emerald-500">
                 <StepList
                   steps={step.branches?.yes ?? []}
                   loc={{ kind: "branch", condPath: { loc, index: idx }, branch: "yes" }}
@@ -1812,7 +1789,7 @@ function StepList({
                   nested
                 />
               </BranchColumn>
-              <BranchColumn label={t("No")} tone="text-rose-500 border-rose-500/30">
+              <BranchColumn label={t("No")} dot="bg-rose-500">
                 <StepList
                   steps={step.branches?.no ?? []}
                   loc={{ kind: "branch", condPath: { loc, index: idx }, branch: "no" }}
@@ -1828,14 +1805,8 @@ function StepList({
       ))}
       <InsertConnector onPick={(type) => addStepAt(loc, steps.length, type)} />
       <AddStepMenu onPick={(type) => addStepAt(loc, steps.length, type)}>
-        <button
-          type="button"
-          className={cn(
-            "flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card/40 font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary",
-            nested ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm",
-          )}
-        >
-          <Plus className="h-4 w-4" />
+        <button type="button" className={cn(ADD_LINK, "self-start", nested ? "text-xs" : "text-sm")}>
+          <Plus className="size-3.5" />
           {t("Add action")}
         </button>
       </AddStepMenu>
@@ -1845,16 +1816,20 @@ function StepList({
 
 function BranchColumn({
   label,
-  tone,
+  dot,
   children,
 }: {
   label: string
-  tone: string
+  /** Branch dot colour (status as dot + text). */
+  dot: string
   children: ReactNode
 }) {
   return (
-    <div className={cn("flex flex-col rounded-xl border border-dashed p-2", tone)}>
-      <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide">{label}</div>
+    <div className="flex flex-col border-l border-border pl-3">
+      <div className="mb-2 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+        <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
+        <span>{label}</span>
+      </div>
       {children}
     </div>
   )
@@ -1871,9 +1846,9 @@ function InsertConnector({ onPick }: { onPick: (t: AutomationStepType) => void }
           type="button"
           aria-label={t("Add step")}
           title={t("Add step")}
-          className="relative z-10 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-60 transition-all hover:border-primary hover:bg-primary/10 hover:text-primary hover:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
+          className="relative z-10 flex size-6 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-60 transition-[opacity,color,background-color,border-color] duration-150 hover:border-primary/50 hover:bg-primary/10 hover:text-primary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 data-[popup-open]:opacity-100 motion-reduce:transition-none"
         >
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="size-3.5" />
         </button>
       </AddStepMenu>
     </div>
@@ -1905,24 +1880,13 @@ function StepCard({
       onClick={onSelect}
       aria-pressed={selected}
       data-step-cid={step.cid}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-xl border bg-card text-left shadow-sm transition-colors hover:bg-muted/40",
-        meta.border,
-        nested ? "px-3 py-2" : "px-4 py-3",
-        selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-      )}
+      className={cn(NODE_CARD, nested ? "px-3 py-2" : "px-4 py-3", selected && NODE_SELECTED)}
     >
-      <div
-        className={cn(
-          "flex flex-shrink-0 items-center justify-center rounded-lg",
-          meta.tile,
-          nested ? "h-8 w-8" : "h-9 w-9",
-        )}
-      >
-        <Icon className="h-4 w-4" />
+      <div className={cn(NODE_TILE, nested && "size-7", selected && "bg-primary/15 text-primary")}>
+        <Icon className="size-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-[0.07em] text-muted-foreground">
           <span>
             {kind} {index + 1}
           </span>
@@ -2009,10 +1973,8 @@ function Inspector({
 
   if (!selection) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <MousePointerClick className="h-5 w-5" />
-        </div>
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 py-12 text-center">
+        <MousePointerClick className="size-4 text-muted-foreground" aria-hidden />
         <p className="text-sm font-medium text-foreground">{t("Nothing selected")}</p>
         <p className="text-xs text-muted-foreground">
           {t("Select the trigger, a condition or an action to edit it here.")}
@@ -2028,8 +1990,7 @@ function Inspector({
         <InspectorHeader
           eyebrow={t("Trigger")}
           title={option ? t(option.label) : state.trigger_type}
-          icon={<Zap className="h-4 w-4" />}
-          tile="bg-blue-500/10 text-blue-500"
+          icon={<Zap className="size-4" />}
           onClose={onClose}
         />
         <div className="flex flex-col gap-3 px-4 py-4">
@@ -2057,8 +2018,7 @@ function Inspector({
       <InspectorHeader
         eyebrow={isGate ? t("Condition") : `${kind} ${path.index + 1}`}
         title={t(meta.label)}
-        icon={<Icon className="h-4 w-4" />}
-        tile={meta.tile}
+        icon={<Icon className="size-4" />}
         onClose={onClose}
       />
       <div className="flex flex-col gap-3 px-4 py-4">
@@ -2114,23 +2074,21 @@ function InspectorHeader({
   eyebrow,
   title,
   icon,
-  tile,
   onClose,
 }: {
   eyebrow: string
   title: string
   icon: ReactNode
-  tile: string
   onClose: () => void
 }) {
   const { t } = useLanguage()
   return (
     <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-      <div className={cn("flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg", tile)}>
+      <div className="flex size-8 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{eyebrow}</div>
+        <div className="text-[10.5px] uppercase tracking-[0.07em] text-muted-foreground">{eyebrow}</div>
         <div className="truncate text-sm font-semibold text-foreground">{title}</div>
       </div>
       <Button variant="ghost" size="icon-sm" aria-label={t("Close")} onClick={onClose}>
