@@ -51,7 +51,7 @@ export function SettingsRail({
 
   return (
     <nav
-      aria-label={language === 'en-US' ? 'Settings sections' : 'Seções das configurações'}
+      aria-label={language === 'en-US' ? 'Settings sections' : 'SeÃ§Ãµes das configuraÃ§Ãµes'}
       className={cn(
         'flex gap-1 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         'border-b border-border',

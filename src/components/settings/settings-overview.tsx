@@ -368,7 +368,7 @@ export function SettingsOverview({
                         <span className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground tabular-nums">
                           {loading ? (
                             <>
-                              <Loader2 className="size-3 animate-spin" /> {t('Loading…')}
+                              <Loader2 className="size-3 animate-spin" /> {t('Loadingâ€¦')}
                             </>
                           ) : (
                             subtitle
