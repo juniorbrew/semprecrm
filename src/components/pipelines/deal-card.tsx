@@ -10,6 +10,7 @@ import {
   closeDateInfo,
   longDateTime,
   relativeTime,
+  type CloseDateInfo,
   type CloseDateTone,
 } from "@/lib/pipelines/deal-dates";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,19 @@ const CLOSE_TONE: Record<CloseDateTone, { text: string; dot?: string }> = {
 const QUICK_BUTTON =
   "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 
+function CloseDate({ close }: { close: CloseDateInfo }) {
+  const tone = CLOSE_TONE[close.tone];
+  return (
+    <span
+      title={close.long}
+      className={cn("inline-flex shrink-0 items-center gap-1 text-[11px]", tone.text)}
+    >
+      {tone.dot && <span aria-hidden className={cn("size-1.5 rounded-full", tone.dot)} />}
+      {close.short}
+    </span>
+  );
+}
+
 function initials(name?: string, fallback?: string) {
   const source = (name || fallback || "?").trim();
   return source ? source.charAt(0).toUpperCase() : "?";
@@ -76,6 +90,8 @@ interface DealCardProps {
   /** Quick won / lost; omitted when the viewer cannot change deals. */
   onStatus?: (deal: Deal, status: DealStatus) => void;
   isOverlay?: boolean;
+  /** This card's placeholder while its overlay is being dragged. */
+  dragging?: boolean;
   compact?: boolean;
   /** Drag handle wiring (dnd-kit listeners + attributes) for the main button. */
   handleRef?: Ref<HTMLButtonElement>;
@@ -88,11 +104,12 @@ export function DealCard({
   onEdit,
   onStatus,
   isOverlay,
+  dragging,
   compact,
   handleRef,
   handleProps,
 }: DealCardProps) {
-  const { language } = useLanguage();
+  const { t, language } = useLanguage();
   const copy = COPY[language] ?? COPY["pt-BR"];
   const status: DealStatus = deal.status ?? "open";
   const isOpen = status === "open";
@@ -110,7 +127,7 @@ export function DealCard({
   const ariaLabel = [
     deal.title,
     value,
-    stage?.name,
+    stage ? t(stage.name) : null,
     status === "won" ? copy.won : status === "lost" ? copy.lost : null,
     close?.short,
     contactLabel,
@@ -197,45 +214,39 @@ export function DealCard({
           </span>
         )}
 
+        {/* Value and owner; then the quiet line: close date (dot + text
+            when urgent) · age of the last activity. */}
         <span className={cn("flex items-center gap-2", compact ? "mt-1" : "mt-2")}>
-          <span className="text-sm font-semibold tabular-nums text-foreground">{value}</span>
-          {close && (
+          <span className="min-w-0 truncate text-sm font-semibold tabular-nums text-foreground">
+            {value}
+          </span>
+          {compact && close && CLOSE_TONE[close.tone].dot && (
+            <CloseDate close={close} />
+          )}
+          {assigneeLabel && (
             <span
-              title={close.long}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 text-[11px]",
-                CLOSE_TONE[close.tone].text,
-              )}
+              title={assigneeLabel}
+              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
             >
-              {CLOSE_TONE[close.tone].dot && (
-                <span aria-hidden className={cn("size-1.5 rounded-full", CLOSE_TONE[close.tone].dot)} />
-              )}
-              {close.short}
+              {initials(assigneeLabel)}
             </span>
           )}
-          <span className="ml-auto flex shrink-0 items-center gap-2">
-            {!compact && activityAt && (
-              <span
-                title={longDateTime(activityAt, language)}
-                className="text-[11px] text-muted-foreground"
-              >
+        </span>
+        {!compact && (close || activityAt) && (
+          <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+            {close && <CloseDate close={close} />}
+            {close && activityAt && <span aria-hidden>·</span>}
+            {activityAt && (
+              <span title={longDateTime(activityAt, language)} className="truncate">
                 {relativeTime(activityAt, language)}
               </span>
             )}
-            {assigneeLabel && (
-              <span
-                title={assigneeLabel}
-                className="flex size-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
-              >
-                {initials(assigneeLabel)}
-              </span>
-            )}
           </span>
-        </span>
+        )}
       </button>
 
       {/* Quick actions: on hover, and whenever focus is inside the card. */}
-      {!isOverlay && (
+      {!isOverlay && !dragging && (
         <div
           role="toolbar"
           aria-label={copy.toolbar(deal.title)}

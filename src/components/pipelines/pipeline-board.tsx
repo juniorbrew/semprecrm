@@ -262,36 +262,40 @@ function StageColumn({
   // The droppable ref is on the card list below — intentionally not on
   // the column, so a drag over the stage header does not tint it.
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
-  const { language } = useLanguage();
+  const { t, language } = useLanguage();
   const copy = COPY[language] ?? COPY["pt-BR"];
 
   return (
     // Mobile: each column is `w-[85vw]` so the next one peeks in, and
     // snap-start lands it cleanly when swiping. lg+: columns share the row.
     <section
-      aria-label={copy.column(stage.name, deals.length)}
+      aria-label={copy.column(t(stage.name), deals.length)}
       className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-[var(--radius)] bg-muted/45 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none dark:bg-muted/30"
     >
-      <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2.5">
-        <span
-          aria-hidden
-          className="size-2 shrink-0 rounded-full"
-          style={{ backgroundColor: stage.color || "var(--muted-foreground)" }}
-        />
-        <h3 className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-          {stage.name}
-        </h3>
-        <span className="shrink-0 rounded-full bg-background px-1.5 py-px text-[11px] font-semibold tabular-nums text-muted-foreground">
-          {deals.length}
-        </span>
-        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
-          {formatCurrency(totalValue, currency)}
-        </span>
+      <header className="flex items-start gap-2 border-b border-border/70 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className="size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: stage.color || "var(--muted-foreground)" }}
+            />
+            <h3 className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+              {stage.name}
+            </h3>
+            <span className="shrink-0 rounded-full bg-background px-1.5 py-px text-[11px] font-semibold tabular-nums text-muted-foreground">
+              {deals.length}
+            </span>
+          </div>
+          <p className="mt-0.5 pl-4 text-xs tabular-nums text-muted-foreground">
+            {formatCurrency(totalValue, currency)}
+          </p>
+        </div>
         {onAddDeal && (
           <button
             type="button"
             onClick={() => onAddDeal(stage.id)}
-            aria-label={copy.addTo(stage.name)}
+            aria-label={copy.addTo(t(stage.name))}
             title={copy.add}
             className="-mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
           >
@@ -365,6 +369,7 @@ function DraggableDealCard({
         deal={deal}
         stage={stage}
         compact={compact}
+        dragging={isDragging}
         onEdit={onEdit}
         onStatus={onStatus}
         handleRef={setActivatorNodeRef}
