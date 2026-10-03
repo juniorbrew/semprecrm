@@ -106,7 +106,7 @@ export function OverviewSection({ row, copy, language }: { row: ReportRow | unde
   const answered = percent(row.csat_answered, row.csat_sent);
   return (
     <Section title={copy.overview}>
-      <dl className="grid grid-cols-2 gap-x-4 border-y border-border sm:grid-cols-4" data-testid="reports-overview">
+      <dl className="grid grid-cols-2 gap-x-4 border-t border-border sm:grid-cols-4" data-testid="reports-overview">
         <Kpi label={m.opened}>{row.opened}</Kpi>
         <Kpi label={m.resolved}>{row.resolved}</Kpi>
         <Kpi label={m.backlog}>{row.backlog}</Kpi>
@@ -164,7 +164,7 @@ export function GroupSection({
               <th scope="col" className={`${TH} pr-0 text-right`}>{c.csat}</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border border-y border-border">
+          <tbody className="divide-y divide-border border-t border-border">
             {live.map((r) => (
               <tr key={r.group_key ?? "none"}>
                 <th scope="row" className="max-w-56 truncate py-2 pr-4 text-left font-normal text-foreground">
@@ -207,7 +207,7 @@ export function PrioritySection({ rows, copy }: { rows: ReportRow[]; copy: Repor
               <th scope="col" className={`${TH} pr-0 text-right`}>{c.sla}</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border border-y border-border">
+          <tbody className="divide-y divide-border border-t border-border">
             {live.map((r) => {
               const rate = slaRate(r.sla_met, r.sla_missed);
               return (
@@ -242,7 +242,7 @@ export function BacklogSection({ rows, copy }: { rows: BacklogRow[]; copy: Repor
   return (
     <Section title={copy.backlogByAge}>
       <table className="w-full max-w-md text-sm" data-testid="reports-backlog">
-        <tbody className="divide-y divide-border border-y border-border">
+        <tbody className="divide-y divide-border border-t border-border">
           {BACKLOG_BUCKETS.map((b) => (
             <tr key={b}>
               <th scope="row" className="py-2 pr-4 text-left font-normal text-foreground">
