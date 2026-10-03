@@ -14,21 +14,52 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import type { Deal, PipelineStage } from "@/types";
+import type { Deal, DealStatus, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
-import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import { dndAccessibility } from "@/lib/dnd-accessibility";
 import { formatCurrency } from "@/lib/currency";
+import { cn } from "@/lib/utils";
+
+const COPY: Record<
+  Language,
+  {
+    add: string;
+    addTo: (stage: string) => string;
+    empty: string;
+    dropHere: string;
+    column: (stage: string, n: number) => string;
+  }
+> = {
+  "pt-BR": {
+    add: "Novo negócio",
+    addTo: (s) => `Novo negócio em ${s}`,
+    empty: "Nenhum negócio nesta etapa.",
+    dropHere: "Solte o negócio aqui.",
+    column: (s, n) => `${s}, ${n} ${n === 1 ? "negócio" : "negócios"}`,
+  },
+  "en-US": {
+    add: "New deal",
+    addTo: (s) => `New deal in ${s}`,
+    empty: "No deals in this stage.",
+    dropHere: "Drop the deal here.",
+    column: (s, n) => `${s}, ${n} ${n === 1 ? "deal" : "deals"}`,
+  },
+};
 
 interface PipelineBoardProps {
   stages: PipelineStage[];
   deals: Deal[];
   onDealMoved: (dealId: string, newStageId: string) => void;
-  onAddDeal: (stageId: string) => void;
+  /** Omitted for viewers (no deal writes). */
+  onAddDeal?: (stageId: string) => void;
   onEditDeal: (deal: Deal) => void;
+  /** Quick won / lost from a card; omitted for viewers. */
+  onStatus?: (deal: Deal, status: DealStatus) => void;
+  compact?: boolean;
 }
 
 export function PipelineBoard({
@@ -37,6 +68,8 @@ export function PipelineBoard({
   onDealMoved,
   onAddDeal,
   onEditDeal,
+  onStatus,
+  compact = false,
 }: PipelineBoardProps) {
   const { defaultCurrency } = useAuth();
   const { language } = useLanguage();
@@ -61,8 +94,15 @@ export function PipelineBoard({
     // 5px activation distance avoids clicks being interpreted as drags.
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     // Keyboard drag support: focus a card, Space to pick up, arrows to move,
-    // Space to drop, Escape to cancel.
-    useSensor(KeyboardSensor),
+    // Space (or Enter) to drop, Escape to cancel. Enter is not a start key
+    // so it keeps opening the focused card.
+    useSensor(KeyboardSensor, {
+      keyboardCodes: {
+        start: ["Space"],
+        cancel: ["Escape"],
+        end: ["Space", "Enter"],
+      },
+    }),
   );
 
   const activeDeal = activeDealId
@@ -110,7 +150,7 @@ export function PipelineBoard({
           full-height flex column, so the board takes the remaining
           height and each column scrolls its own card list; header, KPI
           strip and stage headers stay put while a long column is read. */}
-      <div className="pipeline-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 lg:snap-none board-fit:min-h-0 board-fit:flex-1">
+      <div className="pipeline-scroll flex snap-x snap-mandatory scroll-px-4 gap-2.5 overflow-x-auto pb-3 lg:snap-none board-fit:min-h-0 board-fit:flex-1">
         {sortedStages.map((stage) => {
           const stageDeals = dealsByStage.get(stage.id) ?? [];
           const totalValue = stageDeals.reduce(
@@ -124,8 +164,10 @@ export function PipelineBoard({
               deals={stageDeals}
               totalValue={totalValue}
               currency={defaultCurrency}
+              compact={compact}
               onAddDeal={onAddDeal}
               onEditDeal={onEditDeal}
+              onStatus={onStatus}
             />
           );
         })}
@@ -138,22 +180,26 @@ export function PipelineBoard({
         }}
       >
         {activeDeal ? (
-          <div className="opacity-90">
-            <DealCard
-              deal={activeDeal}
-              stage={
-                sortedStages.find((s) => s.id === activeDeal.stage_id) ?? null
-              }
-              onEdit={() => {}}
-              isOverlay
-            />
-          </div>
+          <DealCard
+            deal={activeDeal}
+            stage={
+              sortedStages.find((s) => s.id === activeDeal.stage_id) ?? null
+            }
+            onEdit={() => {}}
+            compact={compact}
+            isOverlay
+          />
         ) : null}
       </DragOverlay>
 
       <style jsx>{`
         .pipeline-scroll {
           scroll-behavior: smooth;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .pipeline-scroll {
+            scroll-behavior: auto;
+          }
         }
         /* On touch devices the peek/snap layout already signals there's
            more to swipe, so the scrollbar is hidden for a clean look.
@@ -199,55 +245,83 @@ function StageColumn({
   deals,
   totalValue,
   currency,
+  compact,
   onAddDeal,
   onEditDeal,
+  onStatus,
 }: {
   stage: PipelineStage;
   deals: Deal[];
   totalValue: number;
   currency: string;
-  onAddDeal: (stageId: string) => void;
+  compact: boolean;
+  onAddDeal?: (stageId: string) => void;
   onEditDeal: (deal: Deal) => void;
+  onStatus?: (deal: Deal, status: DealStatus) => void;
 }) {
+  // The droppable ref is on the card list below — intentionally not on
+  // the column, so a drag over the stage header does not tint it.
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
-  const { t } = useLanguage();
+  const { language } = useLanguage();
+  const copy = COPY[language] ?? COPY["pt-BR"];
 
   return (
-    // On mobile each column is `w-[85vw]` (with a reasonable min/max)
-    // so the next column's edge peeks in — a "there's more here" hint.
-    // snap-start lands each column cleanly when swiping. On lg+ we
-    // restore the flex-1 share-the-row behavior. The droppable ref is
-    // on the inner messages region below — intentionally NOT here, so
-    // a drag over the column header doesn't highlight the whole column.
-    <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none">
-      {/* 3px colored top border — sits above the column's padding */}
-      <div
-        className="-mx-4 -mt-4 h-[3px] rounded-t-xl"
-        style={{ backgroundColor: stage.color }}
-      />
-      <div className="flex items-center justify-between pt-3">
-        <h3 className="truncate text-sm font-semibold text-foreground">
+    // Mobile: each column is `w-[85vw]` so the next one peeks in, and
+    // snap-start lands it cleanly when swiping. lg+: columns share the row.
+    <section
+      aria-label={copy.column(stage.name, deals.length)}
+      className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-[var(--radius)] bg-muted/45 board-fit:min-h-0 lg:w-auto lg:min-w-[220px] lg:max-w-none lg:flex-1 lg:basis-[220px] lg:shrink lg:snap-none dark:bg-muted/30"
+    >
+      <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2.5">
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: stage.color || "var(--muted-foreground)" }}
+        />
+        <h3 className="min-w-0 truncate text-[13px] font-semibold text-foreground">
           {stage.name}
         </h3>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+        <span className="shrink-0 rounded-full bg-background px-1.5 py-px text-[11px] font-semibold tabular-nums text-muted-foreground">
           {deals.length}
         </span>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {formatCurrency(totalValue, currency)}
-      </p>
+        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatCurrency(totalValue, currency)}
+        </span>
+        {onAddDeal && (
+          <button
+            type="button"
+            onClick={() => onAddDeal(stage.id)}
+            aria-label={copy.addTo(stage.name)}
+            title={copy.add}
+            className="-mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+          >
+            <Plus className="size-3.5" aria-hidden />
+          </button>
+        )}
+      </header>
 
       <div
         ref={setNodeRef}
-        className={`stage-scroll mt-3 flex flex-1 flex-col gap-2 rounded-lg transition-all board-fit:min-h-0 board-fit:overflow-y-auto ${
-          isOver
-            ? "bg-primary/5 outline outline-2 outline-dashed outline-primary outline-offset-2"
-            : ""
-        }`}
+        data-over={isOver || undefined}
+        className={cn(
+          "stage-scroll flex flex-1 flex-col rounded-b-[var(--radius)] p-2 transition-colors duration-150 motion-reduce:transition-none board-fit:min-h-0 board-fit:overflow-y-auto",
+          compact ? "gap-1" : "gap-1.5",
+          isOver && "bg-primary/8 ring-1 ring-inset ring-primary/35",
+        )}
       >
         {deals.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center rounded-lg border-2 border-dashed border-border py-10 text-xs text-muted-foreground">
-            {t("Drop a deal here")}
+          <div className="flex flex-1 flex-col items-start gap-1 px-1.5 py-3 text-xs text-muted-foreground">
+            <p>{isOver ? copy.dropHere : copy.empty}</p>
+            {onAddDeal && !isOver && (
+              <button
+                type="button"
+                onClick={() => onAddDeal(stage.id)}
+                className="inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Plus className="size-3" aria-hidden />
+                {copy.add}
+              </button>
+            )}
           </div>
         ) : (
           deals.map((deal) => (
@@ -255,46 +329,47 @@ function StageColumn({
               key={deal.id}
               deal={deal}
               stage={stage}
+              compact={compact}
               onEdit={onEditDeal}
+              onStatus={onStatus}
             />
           ))
         )}
       </div>
-
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => onAddDeal(stage.id)}
-        className="mt-3 w-full justify-start border border-dashed border-border bg-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
-      >
-        <Plus className="mr-1 h-3 w-3" />
-        {t("Add Deal")}
-      </Button>
-    </div>
+    </section>
   );
 }
 
 function DraggableDealCard({
   deal,
   stage,
+  compact,
   onEdit,
+  onStatus,
 }: {
   deal: Deal;
   stage: PipelineStage;
+  compact: boolean;
   onEdit: (deal: Deal) => void;
+  onStatus?: (deal: Deal, status: DealStatus) => void;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: deal.id,
-  });
+  // The card's main button is the drag handle (activator): Space picks
+  // it up, Enter / click opens it, and the quick-action buttons never
+  // start a drag.
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } =
+    useDraggable({ id: deal.id });
 
   return (
-    <div
-      ref={setNodeRef}
-      {...listeners}
-      {...attributes}
-      style={{ opacity: isDragging ? 0.3 : 1, touchAction: "none" }}
-    >
-      <DealCard deal={deal} stage={stage} onEdit={onEdit} />
+    <div ref={setNodeRef} className={cn(isDragging && "opacity-40")}>
+      <DealCard
+        deal={deal}
+        stage={stage}
+        compact={compact}
+        onEdit={onEdit}
+        onStatus={onStatus}
+        handleRef={setActivatorNodeRef}
+        handleProps={{ ...attributes, ...listeners }}
+      />
     </div>
   );
 }

@@ -1,9 +1,11 @@
 "use client";
 
-import type { Deal, PipelineStage } from "@/types";
-import { CalendarClock, Check, Clock, X } from "lucide-react";
+import type { Ref } from "react";
+import type { Deal, DealStatus, PipelineStage } from "@/types";
+import { Check, PanelRightOpen, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
 import { useLanguage } from "@/hooks/use-language";
+import type { Language } from "@/lib/i18n";
 import {
   closeDateInfo,
   longDateTime,
@@ -12,149 +14,269 @@ import {
 } from "@/lib/pipelines/deal-dates";
 import { cn } from "@/lib/utils";
 
+const COPY: Record<
+  Language,
+  {
+    open: string;
+    won: string;
+    lost: string;
+    noContact: string;
+    lossReason: string;
+    toolbar: (deal: string) => string;
+    openAria: (deal: string) => string;
+    wonAria: (deal: string) => string;
+    lostAria: (deal: string) => string;
+  }
+> = {
+  "pt-BR": {
+    open: "Abrir",
+    won: "Ganho",
+    lost: "Perdido",
+    noContact: "Sem contato",
+    lossReason: "Motivo da perda",
+    toolbar: (d) => `Ações do negócio ${d}`,
+    openAria: (d) => `Abrir negócio ${d}`,
+    wonAria: (d) => `Marcar ${d} como ganho`,
+    lostAria: (d) => `Marcar ${d} como perdido`,
+  },
+  "en-US": {
+    open: "Open",
+    won: "Won",
+    lost: "Lost",
+    noContact: "No contact",
+    lossReason: "Loss reason",
+    toolbar: (d) => `Actions for deal ${d}`,
+    openAria: (d) => `Open deal ${d}`,
+    wonAria: (d) => `Mark ${d} as won`,
+    lostAria: (d) => `Mark ${d} as lost`,
+  },
+};
+
+// Close-date urgency as dot + text: overdue red, today amber, the rest
+// quiet text so the urgent card is the one that stands out.
+const CLOSE_TONE: Record<CloseDateTone, { text: string; dot?: string }> = {
+  overdue: { text: "font-medium text-red-600 dark:text-red-400", dot: "bg-red-500" },
+  today: { text: "font-medium text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  soon: { text: "text-foreground/80" },
+  later: { text: "text-muted-foreground" },
+};
+
+const QUICK_BUTTON =
+  "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
+
+function initials(name?: string, fallback?: string) {
+  const source = (name || fallback || "?").trim();
+  return source ? source.charAt(0).toUpperCase() : "?";
+}
+
 interface DealCardProps {
   deal: Deal;
   stage: PipelineStage | null;
   onEdit: (deal: Deal) => void;
+  /** Quick won / lost; omitted when the viewer cannot change deals. */
+  onStatus?: (deal: Deal, status: DealStatus) => void;
   isOverlay?: boolean;
+  compact?: boolean;
+  /** Drag handle wiring (dnd-kit listeners + attributes) for the main button. */
+  handleRef?: Ref<HTMLButtonElement>;
+  handleProps?: Record<string, unknown>;
 }
 
-// Close-date urgency: overdue reads red, today amber, everything else
-// stays quiet so the urgent card is the one that stands out.
-const CLOSE_TONE_CLASS: Record<CloseDateTone, string> = {
-  overdue:
-    "bg-red-500/10 text-red-600 dark:text-red-400 font-semibold",
-  today: "bg-amber-500/15 text-amber-700 dark:text-amber-400 font-semibold",
-  soon: "bg-muted text-foreground",
-  later: "text-muted-foreground",
-};
-
-function initials(name?: string, fallback?: string) {
-  const source = (name || fallback || "?").trim();
-  if (!source) return "?";
-  return source.charAt(0).toUpperCase();
-}
-
-export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
-  const { t, language } = useLanguage();
-  const contactLabel =
-    deal.contact?.name || deal.contact?.phone || t("No contact");
+export function DealCard({
+  deal,
+  stage,
+  onEdit,
+  onStatus,
+  isOverlay,
+  compact,
+  handleRef,
+  handleProps,
+}: DealCardProps) {
+  const { language } = useLanguage();
+  const copy = COPY[language] ?? COPY["pt-BR"];
+  const status: DealStatus = deal.status ?? "open";
+  const isOpen = status === "open";
+  const contactLabel = deal.contact?.name || deal.contact?.phone || copy.noContact;
+  const companyLabel = deal.company?.nome_fantasia || deal.company?.razao_social || null;
   const assigneeLabel = deal.assignee?.full_name || null;
-  const isOpen = (deal.status ?? "open") === "open";
   const close =
     isOpen && deal.expected_close_date
       ? closeDateInfo(deal.expected_close_date, language)
       : null;
   const activityAt = deal.updated_at || deal.created_at;
+  const value = formatCurrency(deal.value, deal.currency);
+  const lossReason = status === "lost" ? deal.loss_reason?.name ?? null : null;
+
+  const ariaLabel = [
+    deal.title,
+    value,
+    stage?.name,
+    status === "won" ? copy.won : status === "lost" ? copy.lost : null,
+    close?.short,
+    contactLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        // `onClick` still fires after a non-drag tap because the PointerSensor
-        // requires 5px movement before it counts as a drag.
-        if (isOverlay) return;
-        e.stopPropagation();
-        onEdit(deal);
-      }}
-      className={`group relative w-full cursor-pointer rounded-xl border border-border/50 bg-muted/70 pl-4 pr-3 py-3 text-left shadow-sm transition-all ${
+    <div
+      data-testid="deal-card"
+      className={cn(
+        "group/card relative rounded-[calc(var(--radius)-2px)] border bg-card transition-[border-color,box-shadow] duration-150 motion-reduce:transition-none",
         isOverlay
-          ? "shadow-xl"
-          : "hover:-translate-y-0.5 hover:border-border hover:bg-muted hover:shadow-lg"
-      }`}
+          ? "border-primary/50 shadow-lg ring-2 ring-primary/30"
+          : "border-border hover:border-primary/30 focus-within:border-primary/40",
+      )}
     >
-      {/* 4px left accent bar using stage color */}
-      <span
-        aria-hidden
-        className="absolute left-0 top-0 h-full w-1 rounded-l-xl"
-        style={{ backgroundColor: stage?.color ?? "#94a3b8" }}
-      />
-
-      <div className="flex items-start justify-between gap-2">
-        <h4 className="flex-1 text-sm font-semibold leading-snug text-foreground break-words">
-          {deal.title}
-        </h4>
-        {deal.status === "won" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
-            <Check className="h-3 w-3" />
-            {t("Won")}
-          </span>
-        )}
-        {deal.status === "lost" && (
-          <span
-            title={
-              deal.loss_reason?.name
-                ? `${t("Loss reason")}: ${deal.loss_reason.name}`
-                : undefined
-            }
-            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400"
-          >
-            <X className="h-3 w-3" />
-            {t("Lost")}
-          </span>
-        )}
-      </div>
-
-      {/* Why it was lost — one quiet line so the board explains itself. */}
-      {deal.status === "lost" && deal.loss_reason?.name && (
-        <p className="mt-1 truncate text-[11px] text-red-500/90 dark:text-red-400/90">
-          {deal.loss_reason.name}
-          {deal.lost_note?.trim() && (
-            <span className="text-muted-foreground"> · {deal.lost_note.trim()}</span>
-          )}
-        </p>
+      {/* Thin stage accent, only when the stage has a colour. */}
+      {stage?.color && (
+        <span
+          aria-hidden
+          className="absolute inset-y-2 left-0 w-[3px] rounded-r-full"
+          style={{ backgroundColor: stage.color }}
+        />
       )}
 
-      {/* Contact row */}
-      <div className="mt-2 flex items-center gap-2">
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
-          {initials(deal.contact?.name, deal.contact?.phone)}
+      <button
+        ref={handleRef}
+        {...handleProps}
+        type="button"
+        aria-label={ariaLabel}
+        onClick={(e) => {
+          // A tap still clicks: the PointerSensor needs 5px of movement
+          // before it counts as a drag.
+          if (isOverlay) return;
+          e.stopPropagation();
+          onEdit(deal);
+        }}
+        className={cn(
+          "block w-full cursor-pointer touch-none rounded-[inherit] pl-3.5 pr-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          compact ? "py-2" : "py-2.5",
+        )}
+      >
+        <span
+          className={cn(
+            "block text-sm font-medium leading-snug text-foreground break-words",
+            compact ? "line-clamp-1" : "line-clamp-2",
+          )}
+        >
+          {deal.title}
         </span>
-        <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
-      </div>
 
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-sm font-bold text-primary">
-          {formatCurrency(deal.value, deal.currency)}
-        </span>
-        {close && (
+        {!compact && (
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {contactLabel}
+            {companyLabel && ` · ${companyLabel}`}
+          </span>
+        )}
+
+        {status !== "open" && (
           <span
-            title={close.long}
+            title={lossReason ? `${copy.lossReason}: ${lossReason}` : undefined}
             className={cn(
-              "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
-              CLOSE_TONE_CLASS[close.tone],
+              "mt-1 flex items-center gap-1.5 truncate text-[11px] font-medium",
+              status === "won"
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-red-600 dark:text-red-400",
             )}
           >
-            <CalendarClock className="h-3 w-3" />
-            {close.short}
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                status === "won" ? "bg-emerald-500" : "bg-red-500",
+              )}
+            />
+            {status === "won" ? copy.won : copy.lost}
+            {!compact && lossReason && (
+              <span className="truncate font-normal text-muted-foreground">
+                · {lossReason}
+                {deal.lost_note?.trim() && ` · ${deal.lost_note.trim()}`}
+              </span>
+            )}
           </span>
         )}
-      </div>
 
-      {/* Working signal: last activity age + owner. Reads "há 2 d" so a
-          stale card looks stale next to a fresh one. */}
-      <div className="mt-2 flex items-center justify-between gap-2">
-        {activityAt ? (
-          <span
-            title={longDateTime(activityAt, language)}
-            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
-          >
-            <Clock className="h-3 w-3" />
-            {relativeTime(activityAt, language)}
+        <span className={cn("flex items-center gap-2", compact ? "mt-1" : "mt-2")}>
+          <span className="text-sm font-semibold tabular-nums text-foreground">{value}</span>
+          {close && (
+            <span
+              title={close.long}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 text-[11px]",
+                CLOSE_TONE[close.tone].text,
+              )}
+            >
+              {CLOSE_TONE[close.tone].dot && (
+                <span aria-hidden className={cn("size-1.5 rounded-full", CLOSE_TONE[close.tone].dot)} />
+              )}
+              {close.short}
+            </span>
+          )}
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            {!compact && activityAt && (
+              <span
+                title={longDateTime(activityAt, language)}
+                className="text-[11px] text-muted-foreground"
+              >
+                {relativeTime(activityAt, language)}
+              </span>
+            )}
+            {assigneeLabel && (
+              <span
+                title={assigneeLabel}
+                className="flex size-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
+              >
+                {initials(assigneeLabel)}
+              </span>
+            )}
           </span>
-        ) : (
-          <span />
-        )}
-        {assigneeLabel && (
-          <span
-            title={assigneeLabel}
-            aria-label={assigneeLabel}
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
+        </span>
+      </button>
+
+      {/* Quick actions: on hover, and whenever focus is inside the card. */}
+      {!isOverlay && (
+        <div
+          role="toolbar"
+          aria-label={copy.toolbar(deal.title)}
+          data-testid="deal-quick-actions"
+          className="absolute right-1.5 top-1.5 hidden gap-0.5 rounded-md border border-border bg-popover p-0.5 shadow-sm group-focus-within/card:flex group-hover/card:flex"
+        >
+          <button
+            type="button"
+            onClick={() => onEdit(deal)}
+            aria-label={copy.openAria(deal.title)}
+            title={copy.open}
+            className={QUICK_BUTTON}
           >
-            {initials(assigneeLabel)}
-          </span>
-        )}
-      </div>
-    </button>
+            <PanelRightOpen className="size-3.5" aria-hidden />
+          </button>
+          {isOpen && onStatus && (
+            <>
+              <button
+                type="button"
+                onClick={() => onStatus(deal, "won")}
+                aria-label={copy.wonAria(deal.title)}
+                title={copy.won}
+                data-action="won"
+                className={cn(QUICK_BUTTON, "hover:text-emerald-600 dark:hover:text-emerald-400")}
+              >
+                <Check className="size-3.5" aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={() => onStatus(deal, "lost")}
+                aria-label={copy.lostAria(deal.title)}
+                title={copy.lost}
+                data-action="lost"
+                className={cn(QUICK_BUTTON, "hover:text-red-600 dark:hover:text-red-400")}
+              >
+                <X className="size-3.5" aria-hidden />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
