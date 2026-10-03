@@ -109,3 +109,90 @@ Lista (`src/app/(dashboard)/contacts/page.tsx`, linha em `src/components/contact
 - **Atalhos da caixa de entrada** (`src/lib/inbox/shortcuts.ts`, lista no diálogo "?"): J/K próxima/anterior (ordem das faixas), Enter/O abre, R responde, "/" abre as respostas rápidas (sem conversa aberta, foca a busca), Shift+A assume, E resolve e abre a próxima (sem próxima, limpa a seleção; com Desfazer), ? ajuda, Esc sai do campo.
 - **Nunca disparam** enquanto se digita (campo, área de texto, contenteditable), com diálogo/menu aberto, com tecla repetida ou com Ctrl/Alt/⌘ (exceto Ctrl K). Assumir e Resolver seguem as regras do cabeçalho da conversa: leitor não muda nada pelo teclado. O agente pode desligar os atalhos de uma tecla no diálogo de ajuda (WCAG 2.1.4).
 - Atalho novo: regra pura em `shortcuts.ts` com teste, linha em `SHORTCUT_HELP` e nada que exija Shift além de "?" e Shift+A.
+
+## Tarefas
+
+Lista e quadro (`src/app/(dashboard)/tasks/page.tsx`, `src/components/tasks/`).
+
+- **Cabeçalho:** título + contagem de abertas em pílula neutra e "N atrasadas" como ponto + texto vermelho; densidade como ghost, **Nova tarefa** é o único preenchido. Escopos (Minhas, Hoje, Atrasadas, Todas) em pílula (`bg-primary/15 text-primary` quando ativo, contagem em texto), selects `h-8` discretos, Lista | Quadro segmentado.
+- **Lista sem caixa:** linhas com `border-b border-border`, checkbox de concluir, título + prioridade e uma linha de metadados: situação como ponto + texto · prazo · vínculo. Prazo vencido/hoje como ponto vermelho/âmbar + texto. Prioridade só vira pílula tingida quando Alta/Urgente. O vínculo fica fora do botão que abre a tarefa.
+- **Quadro:** colunas iguais às de Funis (ponto na cor da situação, contagem em pílula neutra, "+" no cabeçalho, vazio = uma frase + "Nova tarefa"). Cartão plano com filete de 3 px na cor da situação; Abrir e Concluir no hover/foco. O botão principal do cartão é a alça: Espaço pega, Enter abre.
+- **Gaveta:** Vínculos, Agenda e Comentários separados por linha fina com título pequeno em caixa alta; Concluir/Criar é o único preenchido.
+- **Densidade:** compacta (linha única, sem descrição), por usuário neste aparelho (`sempre:tasks:density:<userId>`).
+
+## Agenda
+
+`src/components/calendar/`.
+
+- **Cabeçalho:** título + contagem em pílula neutra, densidade, **Novo compromisso** como único preenchido. Barra: Hoje, ‹ ›, período, Mês/Semana/Dia segmentado, "de quem" em select discreto.
+- **Grades:** uma borda fina com raio `--radius`; dias da semana em 10.5 px caixa alta muted (hoje em `text-primary`); hoje em círculo `bg-primary/15 text-primary`. Cores dos compromissos continuam vindo dos dados.
+- **Densidade:** compacta = 40 px por hora (56 no confortável) e 2 compromissos por dia no mês (`sempre:agenda:density:<userId>`).
+- **Gaveta:** Quando e Vínculos separados por linha fina; Cancelado como ponto + texto.
+
+## Chat interno
+
+`src/app/(dashboard)/chat/page.tsx`, `src/components/chat/`.
+
+- **Lista:** título "Chat" + densidade no topo; linha selecionada `bg-primary/10` com acento de 3 px e `aria-current`; avatar de grupo neutro; pílula de não lidas em `bg-primary` é o único elemento preenchido.
+- **Conversa:** balões iguais aos da caixa de entrada, separador de data em pílula `bg-muted`, eventos de grupo entre dois traços finos, mensagem nova entra com fade de 250 ms (nada com `prefers-reduced-motion`).
+- **Compositor:** um único campo com borda, barra embaixo (anexo à esquerda; enviar/voz à direita). Enviar é o único preenchido.
+
+## Empresas
+
+Lista (`src/app/(dashboard)/companies/page.tsx`, linha em `src/components/companies/company-list-row.tsx`) e ficha (`company-detail-sheet.tsx`). Irmã de Contatos.
+
+- **Cabeçalho:** título + contagem em pílula neutra; Nova empresa é o único preenchido. Busca compacta (`h-8`, nome ou CNPJ) e alternância de densidade.
+- **Tabela sem caixa:** cabeçalho fixo, linhas com divisória fina. Quadrado de iniciais, nome fantasia e uma linha de metadados (razão social quando difere · CNPJ; cidade/UF só no celular).
+- **Seleção e ações:** linha selecionada em `bg-primary/10` com acento de 3 px; barra de ações em massa (Limpar, Excluir selecionadas) só para agente+. Editar aparece com mouse ou foco; o menu "…" tem Ver detalhes, Editar e Excluir.
+- **Densidade:** `sempre:companies:density:<userId>`.
+- **Ficha:** identidade, Editar como único preenchido, excluir em ghost; seções Cadastro, Contatos e Negócios com linha fina e título pequeno em caixa alta; notas com filete âmbar; `?company=<id>` abre a ficha.
+
+## Disparos
+
+Lista (`broadcasts/page.tsx`, `broadcast-list-row.tsx`), detalhe (`broadcasts/[id]`) e assistente (`broadcasts/new`, `wizard-ui.tsx`).
+
+- **Lista:** título + contagem, Novo disparo único preenchido; busca por nome/modelo e pílulas de situação com contagem (filtro local, sem consulta nova). Linhas sem caixa: situação como ponto + texto (enviando em âmbar pulsando, desligado com `prefers-reduced-motion`), uma linha quieta (modelo · destinatários · data), taxas à direita e uma linha fina de progresso na base (lidas, entregues, enviadas em tons de `primary`; falhas em vermelho). Densidade `sempre:broadcasts:density:<userId>`.
+- **Detalhe:** voltar ghost, situação e meta; Excluir ghost com confirmação na linha; Retomar/Reenviar numa seção com um único preenchido; números numa faixa sem cartões; funil em linhas finas; tabela de destinatários sem caixa.
+- **Assistente:** etapas numa linha fina, a atual sublinhada com 2 px de `primary`, as concluídas com ✓. Cada etapa tem Voltar ghost e **um** botão preenchido (na última, Enviar disparo, com Salvar como rascunho em ghost). Modelos e público são linhas de opção com `bg-primary/10` + acento de 3 px; a pré-visualização é um balão `bg-primary`.
+
+## Automações, Fluxos e Agentes de IA
+
+Listas (`automations/page.tsx` + `components/automations/automation-list-row.tsx`, `flows/page.tsx` + `components/flows/flow-list-row.tsx`, `ai/agents`).
+
+- **Cabeçalho:** título + contagem em pílula neutra, densidade e **um** botão preenchido (Nova automação, Novo fluxo, Novo agente). Sem selo "Beta" na página (fica só na barra lateral).
+- **Linha:** nome, uma linha de metadados (gatilho · frequência · N execuções · última X), descrição só no modo confortável, situação como ponto + texto, alternância à direita nas automações. Ações rápidas (Editar, Execuções) no hover/foco, fora do leitor e do Tab; o menu "…" tem as mesmas ações com rótulo.
+- **Densidade:** `sempre:automations:density:<userId>`, `sempre:flows:density:<userId>`.
+- **Agentes:** busca `h-8` e filtro de situação em pílulas (`bg-primary/15 text-primary` quando ativa).
+- **Modelos:** grade de botões com borda fina e ícone neutro.
+
+Construtores (`automation-builder.tsx`, `flows/*`).
+
+- **Barra superior** na superfície do cabeçalho; Salvar é o único preenchido; Testar, Execuções, Ativar/Pausar e Excluir são ghost.
+- **Seções** separadas por linha fina, título pequeno em caixa alta muted ("1 · Gatilho").
+- **Nós/etapas:** cartão plano (borda fina, sem sombra), ícone em quadrado neutro; selecionado com anel da marca e tom leve. Ramos Sim/Não com linha guia à esquerda e ponto + texto. "Adicionar" é link de texto, sem caixa tracejada.
+- **Painel lateral (inspetor):** cabeçalho com ícone em `bg-primary/10`; formulários usam container queries (`@container`/`@xl:`) para empilhar no painel estreito.
+- **Validação:** ícone + texto, filete de 3 px vermelho/âmbar; nunca texto `-300` (ilegível no tema claro).
+- **Execuções (logs/runs):** linhas com divisória fina, situação como ponto + texto, linha aberta em `bg-primary/10` com acento de 3 px.
+- **Agentes de IA:** continua valendo "sem ícones de IA nem selos"; abas sublinhadas com `primary`.
+
+## Configurações
+
+Página `src/app/(dashboard)/settings/page.tsx`, peças em `src/components/settings/`.
+
+- **Navegação** (`settings-rail.tsx`): o mesmo visual da barra lateral. Rótulos de grupo (Conta, Espaço de trabalho) em `text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted-foreground`. Item ativo em `bg-primary/10`, `font-semibold text-foreground`, ícone `text-primary` e filete de 2 px (à esquerda no desktop, embaixo na faixa rolável do celular). Dicas em pílula neutra. `?tab=` continua sendo a fonte da verdade.
+- **Seção:** `SettingsPanelHead` (título `text-lg`, uma frase, ação opcional, linha fina embaixo) e depois `SettingsGroup`s em `space-y-8`, com `max-w-2xl` (`max-w-3xl` só para tabelas). O título do grupo é o rótulo pequeno em caixa alta e muted (`SETTINGS_HEADING`). A seção entra com fade de 200 ms (nada com `prefers-reduced-motion`).
+- **Situação:** `SettingsChip` ok/warn/bad vira ponto + texto. Papéis são pílulas suaves; contagens usam a pílula neutra.
+- **Ações destrutivas** da seção (desconectar, redefinir, restaurar padrão) ficam no fim, em `SettingsDangerZone` ("Zona de risco", depois de uma linha fina), como botão de texto discreto (`variant="ghost"` + `DANGER_TEXT_BUTTON`), mantendo a confirmação. A exclusão de cada linha fica na própria linha, em ícone muted que fica vermelho no hover.
+- **Aparência:** idioma e modo em controle segmentado; a cor de destaque é uma lista plana (amostra, nome, frase) com a selecionada em `bg-primary/10` + filete de 3 px.
+- **Visão geral:** lista agrupada (ícone muted, rótulo, uma dica, chevron), sem blocos.
+- Um botão preenchido por tela; o resto é ghost ou contorno.
+
+## Relatórios
+
+`src/components/reports/`.
+
+- **Cabeçalho:** título + uma frase; Exportar CSV como ghost com ícone.
+- **Filtros:** período em pílulas (`bg-primary/15 text-primary` quando ativo); Equipe, Categoria, Atendente e Canal são selects nativos dentro de pílulas com o rótulo, tingidas quando há valor.
+- **Visão geral:** faixa de números sem caixas (4 colunas no desktop, 2 no celular): rótulo muted, número `text-xl tabular-nums`, uma linha de detalhe.
+- **Tabelas:** cabeçalho fixo dentro da própria rolagem, rótulos em 12 px muted, linhas com `divide-y`, números `tabular-nums`, volume com barra fina `bg-primary/70` sobre `bg-muted`. Uma linha fina entre seções.
+- **Cor de situação só no SLA:** ponto + texto por `slaTone()` (verde a partir de 90%, âmbar de 75% a 89%, vermelho abaixo).
