@@ -81,7 +81,6 @@ export default function AutomationsPage() {
   // in the initializer would be a hydration mismatch), like the contacts list.
   const [density, setDensity] = useState<AutomationsDensity>('comfortable');
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (userId) setDensity(readAutomationsDensity(userId));
   }, [userId]);
   const toggleDensity = useCallback(() => {
