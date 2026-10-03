@@ -344,7 +344,9 @@ export function Step3Personalize({
                     />
                   ) : mapping.type === 'field' ? (
                     <Select
-                      value={mapping.value || undefined}
+                      // null (not undefined) keeps the Select controlled before a pick.
+                      value={mapping.value || null}
+                      items={Object.fromEntries(contactFields.map((f) => [f.value, t(f.label)]))}
                       onValueChange={(val) =>
                         updateVariable(key, { value: val || '' })
                       }
@@ -362,7 +364,8 @@ export function Step3Personalize({
                     </Select>
                   ) : (
                     <Select
-                      value={mapping.value || undefined}
+                      value={mapping.value || null}
+                      items={Object.fromEntries(customFields.map((f) => [f.id, f.field_name]))}
                       onValueChange={(val) =>
                         updateVariable(key, { value: val || '' })
                       }

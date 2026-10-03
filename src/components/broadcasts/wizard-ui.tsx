@@ -61,8 +61,8 @@ export function WizardStepper({ steps, current, label }: { steps: readonly Wizar
             key={step.key}
             aria-current={active ? 'step' : undefined}
             className={cn(
-              '-mb-px flex min-w-0 flex-1 items-center gap-2 border-b-2 pb-2.5 text-sm transition-colors duration-200 motion-reduce:transition-none',
-              active ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground',
+              '-mb-px flex min-w-0 items-center gap-2 border-b-2 pb-2.5 pr-3 text-sm transition-colors duration-200 motion-reduce:transition-none sm:flex-1',
+              active ? 'flex-1 border-primary font-medium text-foreground' : 'flex-none border-transparent text-muted-foreground',
             )}
           >
             <span
