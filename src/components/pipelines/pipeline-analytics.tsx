@@ -2,16 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Deal, PipelineStage } from "@/types";
-import {
-  DollarSign,
-  TrendingUp,
-  Target,
-  BarChart3,
-  Trophy,
-  XCircle,
-  Info,
-  ChevronDown,
-} from "lucide-react";
+import { Info, ChevronDown } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -22,6 +13,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { formatCurrency } from "@/lib/currency";
 import { aggregateLossReasons } from "@/lib/pipelines/loss-reasons";
+import { pipelineStats } from "@/lib/pipelines/board";
 import { cn } from "@/lib/utils";
 
 interface PipelineAnalyticsProps {
@@ -30,110 +22,52 @@ interface PipelineAnalyticsProps {
 }
 
 /**
- * Weighted pipeline value: value × per-stage probability.
- * First stage ≈ 10%, stages interpolate up to 90% before the final stage,
- * final stage (Won) = 100%. Lost deals excluded.
+ * The board's numbers as one flat strip under the header (no boxes):
+ * count, value and weighted value first, then average and this month's
+ * outcomes (green / red dot). Loss reasons follow under a hairline.
  */
-function computeStageProbability(
-  stage: PipelineStage,
-  sortedStages: PipelineStage[],
-): number {
-  const n = sortedStages.length;
-  if (n <= 1) return 1;
-  const index = sortedStages.findIndex((s) => s.id === stage.id);
-  if (index < 0) return 0;
-  if (index === n - 1) return 1;
-  const slots = n - 1;
-  if (slots <= 1) return 0.1;
-  const t = index / (slots - 1);
-  return 0.1 + t * (0.9 - 0.1);
-}
-
 export function PipelineAnalytics({ stages, deals }: PipelineAnalyticsProps) {
   const { defaultCurrency } = useAuth();
-  const sortedStages = useMemo(
-    () => [...stages].sort((a, b) => a.position - b.position),
-    [stages],
-  );
-
-  const stats = useMemo(() => {
-    const active = deals.filter((d) => d.status !== "lost");
-    const openDeals = active.filter((d) => d.status !== "won");
-
-    const totalCount = active.length;
-    const totalValue = active.reduce((sum, d) => sum + Number(d.value || 0), 0);
-    const avgValue = totalCount > 0 ? totalValue / totalCount : 0;
-
-    const stageById = new Map(sortedStages.map((s) => [s.id, s]));
-    const weightedValue = openDeals.reduce((sum, d) => {
-      const stage = stageById.get(d.stage_id);
-      if (!stage) return sum;
-      const prob = computeStageProbability(stage, sortedStages);
-      return sum + Number(d.value || 0) * prob;
-    }, 0);
-
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const thisMonth = (d: Deal) => {
-      const ts = d.updated_at ?? d.created_at;
-      return ts ? new Date(ts) >= monthStart : false;
-    };
-    const wonThisMonth = deals.filter(
-      (d) => d.status === "won" && thisMonth(d),
-    ).length;
-    const lostThisMonth = deals.filter(
-      (d) => d.status === "lost" && thisMonth(d),
-    ).length;
-
-    return {
-      totalCount,
-      totalValue,
-      avgValue,
-      weightedValue,
-      wonThisMonth,
-      lostThisMonth,
-    };
-  }, [deals, sortedStages]);
+  const stats = useMemo(() => pipelineStats(deals, stages), [deals, stages]);
 
   return (
     <TooltipProvider>
-      <div className="grid grid-cols-2 gap-3 rounded-xl border border-border bg-card/60 p-4 sm:grid-cols-3 xl:grid-cols-6">
-        <Metric
-          icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-          label="Total Deals"
-          value={String(stats.totalCount)}
-          tooltip="Count of every deal in this pipeline that isn't marked as Lost. Won deals are still included."
-        />
-        <Metric
-          icon={<DollarSign className="h-4 w-4 text-primary" />}
-          label="Pipeline Value"
-          value={formatCurrency(stats.totalValue, defaultCurrency)}
-          tooltip="Sum of the dollar values of all deals in this pipeline, excluding deals marked as Lost."
-        />
-        <Metric
-          icon={<Target className="h-4 w-4 text-blue-400" />}
-          label="Avg Deal Size"
-          value={formatCurrency(stats.avgValue, defaultCurrency)}
-          tooltip="Pipeline Value divided by Total Deals — the average value of a single non-lost deal."
-        />
-        <Metric
-          icon={<TrendingUp className="h-4 w-4 text-purple-400" />}
-          label="Weighted Value"
-          value={formatCurrency(stats.weightedValue, defaultCurrency)}
-          tooltip="Expected revenue: each open deal's value × its stage probability. First stage ≈ 10%, stages progress up to 90%, Won = 100%. Lost deals are excluded."
-        />
-        <Metric
-          icon={<Trophy className="h-4 w-4 text-primary" />}
-          label="Won This Month"
-          value={String(stats.wonThisMonth)}
-          tooltip="Deals marked as Won since the first day of the current month."
-        />
-        <Metric
-          icon={<XCircle className="h-4 w-4 text-red-400" />}
-          label="Lost This Month"
-          value={String(stats.lostThisMonth)}
-          tooltip="Deals marked as Lost since the first day of the current month."
-        />
+      <div>
+        <dl className="flex flex-wrap gap-x-8 gap-y-3">
+          <Metric
+            label="Total Deals"
+            value={String(stats.totalCount)}
+            tooltip="Count of every deal in this pipeline that isn't marked as Lost. Won deals are still included."
+          />
+          <Metric
+            label="Pipeline Value"
+            value={formatCurrency(stats.totalValue, defaultCurrency)}
+            tooltip="Sum of the dollar values of all deals in this pipeline, excluding deals marked as Lost."
+            emphasis
+          />
+          <Metric
+            label="Weighted Value"
+            value={formatCurrency(stats.weightedValue, defaultCurrency)}
+            tooltip="Expected revenue: each open deal's value × its stage probability. First stage ≈ 10%, stages progress up to 90%, Won = 100%. Lost deals are excluded."
+          />
+          <Metric
+            label="Avg Deal Size"
+            value={formatCurrency(stats.avgValue, defaultCurrency)}
+            tooltip="Pipeline Value divided by Total Deals — the average value of a single non-lost deal."
+          />
+          <Metric
+            dot="bg-emerald-500"
+            label="Won This Month"
+            value={String(stats.wonThisMonth)}
+            tooltip="Deals marked as Won since the first day of the current month."
+          />
+          <Metric
+            dot="bg-red-500"
+            label="Lost This Month"
+            value={String(stats.lostThisMonth)}
+            tooltip="Deals marked as Lost since the first day of the current month."
+          />
+        </dl>
         <LossReasonsBlock deals={deals} currency={defaultCurrency} />
       </div>
     </TooltipProvider>
@@ -166,15 +100,15 @@ function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string
   const max = Math.max(...buckets.map((b) => (metric === "count" ? b.count : b.value)), 0);
 
   return (
-    <div className="col-span-2 rounded-lg bg-muted/50 p-3 sm:col-span-3 xl:col-span-6">
+    <div className="mt-3 border-t border-border pt-3">
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}
           aria-expanded={!collapsed}
-          className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+          className="flex items-center gap-1.5 rounded-sm text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <XCircle className="h-4 w-4 text-red-400" />
+          <span aria-hidden className="size-1.5 rounded-full bg-red-500" />
           <span>{t("Loss reasons")}</span>
           <ChevronDown
             className={cn("h-3 w-3 transition-transform", collapsed && "-rotate-90")}
@@ -189,7 +123,7 @@ function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string
           <div
             role="radiogroup"
             aria-label={t("Bar length")}
-            className="ml-auto inline-flex rounded-md border border-border bg-card p-0.5 text-[11px]"
+            className="ml-auto inline-flex rounded-md bg-muted p-0.5 text-[11px]"
           >
             {(["count", "value"] as LossMetric[]).map((m) => (
               <button
@@ -201,7 +135,7 @@ function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string
                 className={cn(
                   "rounded px-2 py-0.5 transition-colors",
                   metric === m
-                    ? "bg-muted font-semibold text-foreground"
+                    ? "bg-background font-semibold text-foreground shadow-xs"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -223,9 +157,9 @@ function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string
                 <span className="truncate font-medium text-foreground" title={b.reason}>
                   {b.reason}
                 </span>
-                <div className="h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
                   <div
-                    className="h-full rounded-full bg-red-500/70 transition-[width] duration-300"
+                    className="h-full rounded-full bg-red-500/70 transition-[width] duration-200 motion-reduce:transition-none"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -245,20 +179,24 @@ function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string
 }
 
 function Metric({
-  icon,
   label,
   value,
   tooltip,
+  dot,
+  emphasis,
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
   tooltip: string;
+  /** Status dot (won / lost) before the label. */
+  dot?: string;
+  /** The one number in primary. */
+  emphasis?: boolean;
 }) {
   return (
-    <div className="rounded-lg bg-muted/50 p-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {icon}
+    <div className="min-w-0">
+      <dt className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        {dot && <span aria-hidden className={cn("size-1.5 rounded-full", dot)} />}
         <span>{label}</span>
         <Tooltip>
           <TooltipTrigger
@@ -266,18 +204,25 @@ function Metric({
               <button
                 type="button"
                 aria-label="How this metric is calculated"
-                className="ml-auto text-muted-foreground hover:text-foreground focus:outline-none"
+                className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             }
           >
-            <Info className="h-3 w-3" />
+            <Info className="size-3" />
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-xs text-left">
             {tooltip}
           </TooltipContent>
         </Tooltip>
-      </div>
-      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
+      </dt>
+      <dd
+        className={cn(
+          "mt-0.5 text-base font-semibold tabular-nums",
+          emphasis ? "text-primary" : "text-foreground",
+        )}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
