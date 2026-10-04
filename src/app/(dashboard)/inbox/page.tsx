@@ -795,11 +795,11 @@ export default function InboxPage() {
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, ...patch } : c))
       );
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation((prev) => (prev ? { ...prev, ...patch } : prev));
-      }
+      // Matched inside the updater: a snooze that moved the selection on
+      // must not patch the conversation that is open now.
+      setActiveConversation((prev) => (prev && prev.id === conversationId ? { ...prev, ...patch } : prev));
     },
-    [activeConversation]
+    []
   );
 
   // On mobile (<lg) we show a SINGLE pane — either the list or the

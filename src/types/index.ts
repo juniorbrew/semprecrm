@@ -343,6 +343,16 @@ export interface Conversation {
   team_id?: string | null;
   team_source?: 'auto' | 'manual' | null;
   assignment_source?: 'auto' | 'manual' | null;
+  /**
+   * Snooze (migration 079): NULL = awake. Only `snoozed_until` and
+   * `snooze_note` are written by the app; the guard trigger stamps the rest.
+   * `snooze_woke_at` = last wake (timer / customer reply), for the marker.
+   */
+  snoozed_until?: string | null;
+  snoozed_at?: string | null;
+  snoozed_by?: string | null;
+  snooze_note?: string | null;
+  snooze_woke_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
@@ -448,7 +458,13 @@ export type ConversationEventType =
   | 'team_changed'
   /** Satisfaction survey (migration 074): sent after resolving / answered by the customer. */
   | 'csat_sent'
-  | 'csat_answered';
+  | 'csat_answered'
+  /** Snooze (migration 079): written by the guard trigger only. */
+  | 'snoozed'
+  | 'unsnoozed';
+
+/** Why a snooze ended (`unsnoozed.payload.cause`). */
+export type SnoozeWakeCause = 'manual' | 'timer' | 'customer_reply' | 'resolved' | 'archived' | 'reassigned';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -496,6 +512,11 @@ export interface ConversationEventPayload {
   team_name?: string | null;
   /** `csat_answered` — the score, 1 to 5. */
   score?: number;
+  /** `snoozed` / `unsnoozed` (migration 079). */
+  until?: string;
+  previous_until?: string;
+  cause?: SnoozeWakeCause;
+  note?: string;
 }
 
 /** Row of `conversation_events` (migration 024). */

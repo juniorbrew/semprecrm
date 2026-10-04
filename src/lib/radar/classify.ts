@@ -25,7 +25,7 @@ export function isRadarKey(value: unknown): value is RadarKey {
 
 export type RadarConversation = Pick<
   Conversation,
-  'status' | 'assigned_agent_id' | 'last_customer_message_at' | 'last_agent_message_at'
+  'status' | 'assigned_agent_id' | 'last_customer_message_at' | 'last_agent_message_at' | 'snoozed_until'
 >
 
 export type RadarPreferences = Pick<AccountPreferences, 'inbox_sla_minutes' | 'cooling_hours'>
@@ -54,6 +54,8 @@ export function classifyConversation(
   const nowMs = typeof now === 'number' ? now : now.getTime()
   const customerAt = stamp(conv.last_customer_message_at)
   const agentAt = stamp(conv.last_agent_message_at)
+  // A snoozed conversation is parked (079): no Radar bucket, no Fila.
+  if (conv.snoozed_until) return { waiting: false, unassigned: false, cooling: false }
   const notClosed = conv.status !== 'closed'
 
   // Customer spoke last (an agent-less conversation counts as "-infinity").

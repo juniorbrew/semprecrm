@@ -66,6 +66,8 @@ export function RadarCard({ refreshToken = 0 }: RadarCardProps) {
         .select('status, assigned_agent_id, last_customer_message_at, last_agent_message_at')
         .eq('account_id', accountId)
         .neq('status', 'closed')
+        // Snoozed ones are parked, not live work (same as the inbox chips, 079).
+        .is('snoozed_until', null)
       if (error) throw error
       setRows((data ?? []) as RadarConversation[])
       setNow(Date.now())

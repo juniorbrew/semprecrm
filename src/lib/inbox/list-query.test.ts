@@ -55,6 +55,10 @@ const fixtures: Conversation[] = [
   conv('c2', { status: 'closed', last_message_at: iso(900), last_customer_message_at: null }),
   conv('r1', { status: 'closed', archived_at: iso(50), last_message_at: iso(2000) }),
   conv('n1', { last_message_at: undefined, last_customer_message_at: null, created_at: iso(15) }),
+  // Snoozed (079): out of Fila / Minhas / Todas, only in Adiadas (next to wake first).
+  conv('s1', { snoozed_until: new Date(NOW + 120 * 60_000).toISOString(), last_message_at: iso(40), last_customer_message_at: iso(40) }),
+  conv('s2', { snoozed_until: new Date(NOW + 30 * 60_000).toISOString(), assigned_agent_id: ME, status: 'pending', last_message_at: iso(45) }),
+  conv('s3', { snoozed_until: new Date(NOW + 30 * 60_000).toISOString(), assigned_agent_id: 'u2', last_message_at: iso(46) }),
 ]
 
 /**
@@ -66,9 +70,10 @@ function serverModel(tab: InboxTab, live: LiveFilter, rows: Conversation[]): Con
   const grp = (c: Conversation) =>
     !c.last_agent_message_at || Date.parse(c.last_agent_message_at) < Date.parse(c.last_customer_message_at ?? '') ? 0 : 1
   const liveSql = (c: Conversation) =>
-    !c.archived_at && (live === 'live' ? c.status === 'open' || c.status === 'pending' : c.status === live)
+    !c.archived_at && !c.snoozed_until && (live === 'live' ? c.status === 'open' || c.status === 'pending' : c.status === live)
   const pick = rows.filter((c) => {
-    if (tab === 'queue') return c.status === 'open' && !c.assigned_agent_id && !!c.last_customer_message_at
+    if (tab === 'queue') return c.status === 'open' && !c.assigned_agent_id && !!c.last_customer_message_at && !c.snoozed_until
+    if (tab === 'snoozed') return !c.archived_at && !!c.snoozed_until
     if (tab === 'closed') return !c.archived_at && c.status === 'closed'
     if (tab === 'archived') return !!c.archived_at
     if (tab === 'mine') return liveSql(c) && c.assigned_agent_id === ME
@@ -79,7 +84,9 @@ function serverModel(tab: InboxTab, live: LiveFilter, rows: Conversation[]): Con
       ? grp(a) - grp(b) ||
         Date.parse(a.last_customer_message_at!) - Date.parse(b.last_customer_message_at!) ||
         (a.id < b.id ? -1 : 1)
-      : recent(b) - recent(a) || (a.id < b.id ? 1 : -1),
+      : tab === 'snoozed'
+        ? Date.parse(a.snoozed_until!) - Date.parse(b.snoozed_until!) || (a.id < b.id ? -1 : 1)
+        : recent(b) - recent(a) || (a.id < b.id ? 1 : -1),
   )
 }
 
@@ -101,7 +108,7 @@ function walk(tab: InboxTab, live: LiveFilter, size: number): string[] {
 }
 
 describe('tab filtering: server model == triage.ts', () => {
-  const tabs: Exclude<InboxTab, 'queue'>[] = ['mine', 'all', 'closed', 'archived']
+  const tabs: Exclude<InboxTab, 'queue'>[] = ['mine', 'all', 'snoozed', 'closed', 'archived']
   for (const live of ['live', 'open', 'pending'] as LiveFilter[]) {
     for (const tab of tabs) {
       it(`${tab} / ${live}`, () => {
@@ -140,7 +147,7 @@ describe('tab filtering: server model == triage.ts', () => {
 })
 
 describe('keyset pagination', () => {
-  for (const tab of ['queue', 'all', 'mine', 'closed'] as InboxTab[]) {
+  for (const tab of ['queue', 'all', 'mine', 'snoozed', 'closed'] as InboxTab[]) {
     it(`walking ${tab} in pages of 2 yields every row once, in order`, () => {
       const expected = serverModel(tab, 'live', fixtures).map((c) => c.id)
       expect(walk(tab, 'live', 2)).toEqual(expected)
@@ -154,6 +161,12 @@ describe('keyset pagination', () => {
     expect(queueGroup(waiting)).toBe(0)
     expect(queueGroup(answered)).toBe(1)
     expect(cursorFor('queue', answered)).toEqual({ grp: 1, ts: iso(100), id: 'x' })
+  })
+
+  it('snoozed cursor carries snoozed_until; order = next to wake, then id', () => {
+    const c = fixtures.find((r) => r.id === 's2')!
+    expect(cursorFor('snoozed', c)).toEqual({ grp: null, ts: c.snoozed_until, id: 's2' })
+    expect(serverModel('snoozed', 'live', fixtures).map((r) => r.id)).toEqual(['s2', 's3', 's1'])
   })
 
   it('recency cursor falls back to created_at', () => {
@@ -223,14 +236,15 @@ describe('keyset pagination', () => {
 describe('counts parity', () => {
   // counts as inbox_counts computes them, written from the SQL text
   const liveOf = (live: LiveFilter) => (c: Conversation) =>
-    !c.archived_at && (live === 'live' ? c.status !== 'closed' : c.status === live)
+    !c.archived_at && !c.snoozed_until && (live === 'live' ? c.status !== 'closed' : c.status === live)
 
   for (const live of ['live', 'open', 'pending'] as LiveFilter[]) {
     it(`tab badges == tabCounts (${live})`, () => {
       const sql = {
-        queue: fixtures.filter((c) => c.status === 'open' && !c.assigned_agent_id && !!c.last_customer_message_at).length,
+        queue: fixtures.filter((c) => c.status === 'open' && !c.assigned_agent_id && !!c.last_customer_message_at && !c.snoozed_until).length,
         mine: fixtures.filter((c) => liveOf(live)(c) && c.assigned_agent_id === ME).length,
         all: fixtures.filter(liveOf(live)).length,
+        snoozed: fixtures.filter((c) => !!c.snoozed_until).length,
         closed: fixtures.filter((c) => !c.archived_at && c.status === 'closed').length,
         archived: fixtures.filter((c) => !!c.archived_at).length,
       }
@@ -252,10 +266,11 @@ describe('counts parity', () => {
   })
 
   it('parseCounts tolerates bigint strings, junk and null', () => {
-    expect(parseCounts({ queue_count: '7', mine_count: 3, all_count: 'x' }).tabs).toEqual({
+    expect(parseCounts({ queue_count: '7', mine_count: 3, all_count: 'x', snoozed_count: '2' }).tabs).toEqual({
       queue: 7,
       mine: 3,
       all: 0,
+      snoozed: 2,
       closed: 0,
       archived: 0,
     })
@@ -415,6 +430,27 @@ describe('realtime merge rules', () => {
     expect(shouldInsertUnknown(conv('n'), view({ channel: 'official' }), st, ctx)).toBe(true)
   })
 
+  it('snoozing moves a row from the live tabs to Adiadas; waking moves it back (079)', () => {
+    const snoozed = conv('z', { snoozed_until: new Date(NOW + 3_600_000).toISOString() })
+    const awake = { ...snoozed, snoozed_until: null }
+    for (const tab of ['all', 'mine', 'queue'] as InboxTab[]) {
+      expect(matchesView({ ...snoozed, assigned_agent_id: ME }, view({ tab }), ctx)).toBe(false)
+    }
+    expect(matchesView(snoozed, view({ tab: 'snoozed' }), ctx)).toBe(true)
+    expect(matchesView(awake, view({ tab: 'snoozed' }), ctx)).toBe(false)
+    expect(matchesView(awake, view({ tab: 'all' }), ctx)).toBe(true)
+    expect(shouldInsertUnknown(awake, view(), { hasMore: false, boundary: null }, ctx)).toBe(true)
+    // Adiadas ignores the live filter (open / pending both parked there).
+    expect(matchesView({ ...snoozed, status: 'pending' }, view({ tab: 'snoozed', live: 'open' }), ctx)).toBe(true)
+  })
+
+  it('Radar: snoozed rows are in no bucket, except on Adiadas (as the page RPC)', () => {
+    const waiting = conv('w', { last_customer_message_at: iso(120), snoozed_until: new Date(NOW + 3_600_000).toISOString() })
+    expect(matchesView(waiting, view({ radar: 'waiting' }), ctx)).toBe(false)
+    expect(matchesView(waiting, view({ tab: 'snoozed', radar: 'waiting' }), ctx)).toBe(true)
+    expect(countRadar([waiting], prefs, NOW)).toMatchObject({ waiting: 0, unassigned: 0, cooling: 0 })
+  })
+
   it('matchesView honours the Radar bucket', () => {
     const waiting = conv('w', { last_customer_message_at: iso(120) })
     expect(matchesView(waiting, view({ radar: 'waiting' }), ctx)).toBe(true)
@@ -430,6 +466,9 @@ describe('showOwnerBadge', () => {
     expect(showOwnerBadge('mine', [a, b])).toBe(false)
     expect(showOwnerBadge('all', [a])).toBe(true)
     expect(showOwnerBadge('all', [])).toBe(true)
+  })
+  it('always on Adiadas (the whole team, "Sem dono" included)', () => {
+    expect(showOwnerBadge('snoozed', [none])).toBe(true)
   })
   it('elsewhere only with mixed owners', () => {
     expect(showOwnerBadge('closed', [a, a, none])).toBe(false)

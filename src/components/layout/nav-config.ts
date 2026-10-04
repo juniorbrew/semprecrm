@@ -107,7 +107,7 @@ export function isNavActive(pathname: string, href: string): boolean {
 // the list) and/or a Radar bucket (?radar=). Counts come from the list's
 // own `inbox_counts` answer (useInboxNav).
 
-export type InboxShortcutId = "mine" | "team" | "unassigned" | "slaRisk";
+export type InboxShortcutId = "mine" | "team" | "unassigned" | "slaRisk" | "snoozed";
 
 export interface InboxShortcut {
   id: InboxShortcutId;
@@ -122,6 +122,8 @@ export const INBOX_SHORTCUTS: InboxShortcut[] = [
   { id: "team", href: "/inbox?tab=all", count: (c) => c.tabs.all },
   { id: "unassigned", href: "/inbox?tab=all&radar=unassigned", count: (c) => c.radar.unassigned },
   { id: "slaRisk", href: "/inbox?tab=all&radar=waiting", count: (c) => c.radar.waiting, alert: true },
+  // Adiadas (079): the whole team's snoozed conversations.
+  { id: "snoozed", href: "/inbox?tab=snoozed", count: (c) => c.tabs.snoozed },
 ];
 
 export function activeInboxShortcut(summary: InboxNavSummary | null): InboxShortcutId | null {
@@ -131,6 +133,7 @@ export function activeInboxShortcut(summary: InboxNavSummary | null): InboxShort
   if (summary.radar) return null;
   if (summary.tab === "mine") return "mine";
   if (summary.tab === "all") return "team";
+  if (summary.tab === "snoozed") return "snoozed";
   return null;
 }
 
@@ -144,11 +147,11 @@ export const NAV_COPY: Record<
   "pt-BR": {
     sections: { service: "Atendimento", sales: "Vendas", automation: "Automação", work: "Trabalho" },
     inboxViews: "Atalhos da caixa de entrada",
-    shortcuts: { mine: "Minhas", team: "Equipe", unassigned: "Sem dono", slaRisk: "SLA em risco" },
+    shortcuts: { mine: "Minhas", team: "Equipe", unassigned: "Sem dono", slaRisk: "SLA em risco", snoozed: "Adiadas" },
   },
   "en-US": {
     sections: { service: "Service", sales: "Sales", automation: "Automation", work: "Work" },
     inboxViews: "Inbox shortcuts",
-    shortcuts: { mine: "Mine", team: "Team", unassigned: "Unassigned", slaRisk: "SLA at risk" },
+    shortcuts: { mine: "Mine", team: "Team", unassigned: "Unassigned", slaRisk: "SLA at risk", snoozed: "Snoozed" },
   },
 };

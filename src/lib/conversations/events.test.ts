@@ -340,3 +340,21 @@ describe('support events (migrations 072-073)', () => {
     expect(fmt('csat_answered', { score: 1 }, {}, 'en-US')).toBe('Customer rating: 1')
   })
 })
+
+describe('snooze pills (079)', () => {
+  const fmt = (over: Partial<ConversationEventRecord>) =>
+    formatConversationEvent(eventFromRecord(record(over), names), 'pt-BR')
+  it('snoozed: who, until when, and the note', () => {
+    const text = fmt({ event_type: 'snoozed', payload: { until: '2026-10-05T12:00:00Z', note: 'boleto' } })
+    expect(text).toMatch(/^Ana adiou até .+ — boleto$/)
+    expect(fmt({ event_type: 'snoozed', actor_user_id: null, payload: { until: '2026-10-05T12:00:00Z' } })).toMatch(/^Conversa adiada até /)
+  })
+  it('unsnoozed: one sentence per cause', () => {
+    expect(fmt({ event_type: 'unsnoozed', actor_user_id: null, payload: { cause: 'timer', note: 'boleto' } })).toBe('Voltou do adiar — boleto')
+    expect(fmt({ event_type: 'unsnoozed', actor_user_id: null, payload: { cause: 'customer_reply' } })).toBe('Cliente respondeu — adiamento cancelado')
+    expect(fmt({ event_type: 'unsnoozed', payload: { cause: 'resolved' } })).toBe('Adiamento cancelado ao resolver')
+    expect(fmt({ event_type: 'unsnoozed', payload: { cause: 'reassigned' } })).toBe('Adiamento cancelado ao transferir')
+    expect(fmt({ event_type: 'unsnoozed', payload: { cause: 'manual' } })).toBe('Ana cancelou o adiamento')
+    expect(formatConversationEvent(eventFromRecord(record({ event_type: 'unsnoozed', actor_user_id: null, payload: { cause: 'timer' } })), 'en-US')).toBe('Back from snooze')
+  })
+})

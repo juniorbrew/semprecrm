@@ -18,6 +18,7 @@ import type {
   ConversationPriority,
   ConversationResolution,
   ConversationStatus,
+  SnoozeWakeCause,
 } from '@/types'
 import { supportCopy } from '@/lib/support/model'
 import { slaCopy } from '@/lib/support/sla'
@@ -77,6 +78,10 @@ export interface ConversationEvent {
   team_name?: string | null
   /** `csat_answered` */
   score?: number
+  /** `snoozed` / `unsnoozed` (migration 079): the time, why it ended, the note. */
+  until?: string
+  cause?: SnoozeWakeCause
+  note?: string
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -147,6 +152,9 @@ export function eventFromRecord(
     kind: payload.kind,
     team_name: payload.team_name,
     score: payload.score,
+    until: payload.until,
+    cause: payload.cause,
+    note: payload.note,
     reason:
       row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
@@ -463,6 +471,19 @@ export function formatConversationEvent(
       return pt ? 'Pesquisa de satisfação enviada' : 'Satisfaction survey sent'
     case 'csat_answered':
       return pt ? `Avaliação do cliente: nota ${event.score ?? '—'}` : `Customer rating: ${event.score ?? '—'}`
+    case 'snoozed': {
+      const when = event.until ? formatEventInstant(event.until, language) : ''
+      const base = actor
+        ? pt
+          ? `${actor} adiou até ${when}`
+          : `${actor} snoozed until ${when}`
+        : pt
+          ? `Conversa adiada até ${when}`
+          : `Conversation snoozed until ${when}`
+      return event.note ? `${base} — ${event.note}` : base
+    }
+    case 'unsnoozed':
+      return unsnoozedLabel(event, language)
     default:
       return ''
   }
@@ -471,4 +492,42 @@ export function formatConversationEvent(
 /** Kinds that get a pill in the thread stream. */
 export function isVisibleEvent(event: Pick<ConversationEvent, 'type'>): boolean {
   return event.type !== 'note_added'
+}
+
+/** "05/10, 09:00" — an absolute instant for history pills (they outlive "hoje"). */
+function formatEventInstant(iso: string, language: Language): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString(language, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+const UNSNOOZED_LABEL: Record<Language, Record<SnoozeWakeCause, string>> = {
+  'pt-BR': {
+    timer: 'Voltou do adiar',
+    customer_reply: 'Cliente respondeu — adiamento cancelado',
+    resolved: 'Adiamento cancelado ao resolver',
+    archived: 'Adiamento cancelado ao arquivar',
+    reassigned: 'Adiamento cancelado ao transferir',
+    manual: 'Adiamento cancelado',
+  },
+  'en-US': {
+    timer: 'Back from snooze',
+    customer_reply: 'Customer replied — snooze cancelled',
+    resolved: 'Snooze cancelled on resolve',
+    archived: 'Snooze cancelled on archive',
+    reassigned: 'Snooze cancelled on transfer',
+    manual: 'Snooze cancelled',
+  },
+}
+
+function unsnoozedLabel(event: ConversationEvent, language: Language): string {
+  const copy = UNSNOOZED_LABEL[language] ?? UNSNOOZED_LABEL['pt-BR']
+  const cause = event.cause ?? 'manual'
+  if (cause === 'manual' && event.actor_name) {
+    return language === 'pt-BR'
+      ? `${event.actor_name} cancelou o adiamento`
+      : `${event.actor_name} cancelled the snooze`
+  }
+  const base = copy[cause] ?? copy.manual
+  return cause === 'timer' && event.note ? `${base} — ${event.note}` : base
 }
