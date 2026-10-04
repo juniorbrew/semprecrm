@@ -12,7 +12,8 @@
 // Automatic AI replies (GET /api/ai/auto-reply/cron, migration 066) are
 // drained on every tick too, and so are the SLA warnings / breaches
 // (GET /api/support/sla/cron, migration 072) and the satisfaction surveys
-// (GET /api/support/csat/cron, migration 074).
+// (GET /api/support/csat/cron, migration 074) and the snoozed conversations
+// whose time is up (GET /api/inbox/snooze/cron, migration 079).
 //
 // The calendar sync (Google / Outlook, POST /api/integrations/calendar/sync)
 // rides on the same loop but on its own, slower interval
@@ -51,6 +52,7 @@ const REQUEST_TIMEOUT_MS = Math.min(INTERVAL_MS - 1_000, 55_000)
 const ENDPOINTS = [
   { path: '/api/automations/cron', method: 'GET', everyMs: null },
   { path: '/api/flows/cron', method: 'GET', everyMs: null },
+  { path: '/api/inbox/snooze/cron', method: 'GET', everyMs: null },
   { path: '/api/ai/auto-reply/cron', method: 'GET', everyMs: null },
   { path: '/api/support/sla/cron', method: 'GET', everyMs: null },
   { path: '/api/support/csat/cron', method: 'GET', everyMs: null },
@@ -83,7 +85,7 @@ function summarise(body) {
     if (i.errors) parts.push(`inactive_errors=${i.errors}`)
   }
   if (body.lead_events_purged != null) parts.push(`lead_events_purged=${body.lead_events_purged}`)
-  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped']) {
+  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped']) {
     if (k in body) parts.push(`${k}=${body[k]}`)
   }
   return parts.join(' ')

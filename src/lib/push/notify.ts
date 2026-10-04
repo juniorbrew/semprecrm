@@ -20,6 +20,8 @@
 //                                     inbox "Lembrar", migration 057
 //   (h) notifySlaBreached           — /api/support/sla/cron
 //                                     SLA target missed, migration 072
+//   (j) notifySnoozeWoke            — /api/inbox/snooze/cron
+//                                     snoozed conversation woke, migration 079
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -31,7 +33,7 @@ import { DEFAULT_LANGUAGE, translateLiteral } from '@/lib/i18n'
 
 import { isFocusedOn, isFocusedOnChatThread } from './focus'
 import { parseNotificationPrefs, type PushEventKind } from './prefs'
-import { sendPushToUsers, type SendPushResult } from './send'
+import { sendPushToUsers, truncateBody, type SendPushResult } from './send'
 
 export { notifyNewLeads } from './leads'
 
@@ -722,6 +724,69 @@ export async function notifyAccountAdmins(
     return await sendPushToUsers(admin, recipients, payload)
   } catch (err) {
     console.error('[push] notifyAccountAdmins threw:', err)
+    return { ...NOOP }
+  }
+}
+
+// ------------------------------------------------------------
+// (j) Snoozed conversation woke (cron)
+// ------------------------------------------------------------
+
+export interface SnoozeWokeNotice {
+  accountId: string
+  conversationId: string
+  contactId: string | null
+  assigneeUserId: string | null
+  /** Who snoozed it: the recipient when nobody is assigned. */
+  snoozedBy: string | null
+  snoozeNote: string | null
+}
+
+/** Free text from the DB as one plain push line: no control / bidi characters. */
+export function pushLine(text: string | null | undefined, max: number): string {
+  return truncateBody(String(text ?? '').replace(/[\p{Cc}\p{Cf}]+/gu, ' '), max)
+}
+
+/**
+ * Assigned → the assignee. Unassigned → whoever snoozed it, if still an
+ * agent+ of the account. Neither → nobody (the conversation is back in the
+ * queue). Never "every available agent": that would spam the team.
+ * The contact's phone is never shown, only its name.
+ */
+export async function notifySnoozeWoke(
+  admin: SupabaseClient,
+  notice: SnoozeWokeNotice,
+): Promise<SendPushResult> {
+  try {
+    const target = notice.assigneeUserId ?? notice.snoozedBy
+    if (!target) return { ...NOOP }
+    const profiles = (await loadProfiles(admin, notice.accountId, [target])).filter(
+      (p) => notice.assigneeUserId || (AGENT_PLUS as readonly string[]).includes(p.account_role),
+    )
+    const recipients = allowed(profiles, 'snooze_woke').filter(
+      (uid) => !isFocusedOn(uid, notice.conversationId),
+    )
+    if (recipients.length === 0) return { ...NOOP }
+
+    let who = ''
+    if (notice.contactId) {
+      const { data: contact } = await admin
+        .from('contacts')
+        .select('name')
+        .eq('id', notice.contactId)
+        .eq('account_id', notice.accountId)
+        .maybeSingle()
+      who = pushLine((contact as { name?: string | null } | null)?.name, 60)
+    }
+    const note = pushLine(notice.snoozeNote, 80)
+    return await sendPushToUsers(admin, recipients, {
+      title: `${tr('Back from snooze')}: ${who || tr('Conversation')}`,
+      body: note || tr('The snooze time is up.'),
+      url: conversationUrl(notice.conversationId),
+      tag: `conversation:${notice.conversationId}`,
+    })
+  } catch (err) {
+    console.error('[push] notifySnoozeWoke threw:', err instanceof Error ? err.message : err)
     return { ...NOOP }
   }
 }
