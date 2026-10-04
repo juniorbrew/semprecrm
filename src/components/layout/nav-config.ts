@@ -60,7 +60,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/automations", label: "Automações", icon: Zap, module: "automations", section: "automation" },
   { href: "/flows", label: "Fluxos", icon: Workflow, beta: true, module: "flows", section: "automation" },
   // AI agents (migrations 064/065) — agent+ view, admin+ edit.
-  { href: "/ai/agents", label: "Agentes de IA", icon: Bot, module: "ai", section: "automation" },
+  { href: "/ai", label: "Agentes de IA", icon: Bot, module: "ai", section: "automation" },
   { href: "/tasks", label: "Tarefas", icon: CheckSquare, module: "tasks", section: "work" },
   { href: "/agenda", label: "Agenda", icon: CalendarDays, module: "calendar", section: "work" },
   { href: "/chat", label: "Chat", icon: MessagesSquare, module: "internal_chat", section: "work" },
