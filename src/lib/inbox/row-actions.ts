@@ -18,6 +18,7 @@ import { insertConversationEvent } from '@/lib/conversations/events'
 import { findOtherActiveConversation, reopenBlockedBy } from '@/lib/conversations/find-by-contact'
 import { transferEventPayload } from '@/lib/conversations/transfer-reason'
 import type { Conversation } from '@/types'
+import { normalizeSnoozeNote, snoozeErrorFromDb, type SnoozeDbError } from './snooze'
 
 export interface RowActor {
   accountId: string
@@ -85,4 +86,39 @@ export async function claimRow(db: SupabaseClient, conv: Row, actor: RowActor): 
     },
   })
   return { status: 'ok' }
+}
+
+/** The snooze columns as the guard trigger left them (migration 079). */
+export type SnoozeFields = Pick<
+  Conversation,
+  'snoozed_until' | 'snoozed_at' | 'snoozed_by' | 'snooze_note' | 'snooze_woke_at' | 'unread_count'
+>
+
+export type SnoozeWriteResult =
+  | { status: 'ok'; row: SnoozeFields }
+  | { status: 'failed'; error: SnoozeDbError }
+
+/**
+ * Snooze until `until` (ISO), or wake (null). Always sends `snooze_note`
+ * (null included); the guard validates the time, stamps the rest and logs
+ * the `snoozed` / `unsnoozed` event, so nothing is logged here. No row
+ * back = RLS refused it (viewer / other account).
+ */
+export async function setRowSnooze(
+  db: SupabaseClient,
+  conversationId: string,
+  until: string | null,
+  note: string | null,
+): Promise<SnoozeWriteResult> {
+  const { data, error } = await db
+    .from('conversations')
+    .update({ snoozed_until: until, snooze_note: until ? normalizeSnoozeNote(note) : null })
+    .eq('id', conversationId)
+    .select('snoozed_until, snoozed_at, snoozed_by, snooze_note, snooze_woke_at, unread_count')
+    .maybeSingle()
+  if (error || !data) {
+    if (error) console.error('Failed to snooze the conversation:', error)
+    return { status: 'failed', error: snoozeErrorFromDb(error) }
+  }
+  return { status: 'ok', row: data as SnoozeFields }
 }

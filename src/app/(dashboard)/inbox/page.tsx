@@ -89,11 +89,14 @@ export default function InboxPage() {
       })
     : null;
   const canResolveActive = !!headerActions?.close.enabled && activeConversation?.status !== "closed";
+  // "h" / palette "Adiar conversa atual…": the header's snooze rule (079).
+  const canSnoozeActive = !!headerActions?.snooze.enabled;
   useInboxShortcuts(
     {
       hasActive: !!activeConversation,
       canClaim: !!headerActions?.claim.enabled,
       canResolve: canResolveActive,
+      canSnooze: canSnoozeActive,
     },
     () => setShortcutsOpen(true),
     shortcutsOn,
@@ -812,8 +815,9 @@ export default function InboxPage() {
   return (
     <div
       className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6"
-      // Read by the command palette ("Resolver conversa atual").
+      // Read by the command palette ("Resolver conversa atual", "Adiar conversa atual…").
       data-inbox-resolvable={canResolveActive || undefined}
+      data-inbox-snoozable={canSnoozeActive || undefined}
     >
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
@@ -854,6 +858,7 @@ export default function InboxPage() {
             onShowShortcuts={() => setShortcutsOpen(true)}
             onStatusChange={handleStatusChange}
             onAssignChange={handleAssignChange}
+            onConversationPatch={handleConversationPatch}
             onDeselect={handleCloseConversation}
           />
         </div>

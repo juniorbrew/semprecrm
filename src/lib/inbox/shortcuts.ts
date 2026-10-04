@@ -8,6 +8,7 @@
  *   r               focus the reply box    /            quick replies (open thread)
  *                                          /            focus the search (no thread)
  *   Shift+A         Assumir (claim)        e            Resolver + next conversation
+ *   h               Adiar (snooze popover)
  *   ?               shortcut help          Esc          leave the field
  *
  * Ctrl/Cmd+K (command palette) is app-wide: see `paletteKey`.
@@ -20,6 +21,7 @@ export type ShortcutAction =
   | 'focusComposer'
   | 'claim'
   | 'resolve'
+  | 'snooze'
   | 'focusSearch'
   | 'quickReplies'
   | 'help'
@@ -54,6 +56,8 @@ export interface ShortcutContext {
   canClaim: boolean
   /** `conversationHeaderActions(...).close.enabled` and the thread is not resolved. */
   canResolve: boolean
+  /** `conversationHeaderActions(...).snooze.enabled` for the open thread (079). */
+  canSnooze?: boolean
 }
 
 const TYPING_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
@@ -121,6 +125,8 @@ export function resolveShortcut(e: ShortcutKeyEvent, ctx: ShortcutContext): Shor
       return e.shiftKey && ctx.hasActive && ctx.canClaim ? 'claim' : null
     case 'e':
       return ctx.hasActive && ctx.canResolve ? 'resolve' : null
+    case 'h':
+      return ctx.hasActive && ctx.canSnooze ? 'snooze' : null
     default:
       return null
   }
@@ -135,6 +141,7 @@ export const SHORTCUT_HELP: { keys: string[]; label: string }[] = [
   { keys: ['/'], label: 'Quick replies' },
   { keys: ['Shift', 'A'], label: 'Take the conversation' },
   { keys: ['e'], label: 'Resolve and open the next one' },
+  { keys: ['h'], label: 'Snooze conversation' },
   { keys: ['Ctrl', 'K'], label: 'Search or run a command' },
   { keys: ['?'], label: 'Keyboard shortcuts' },
   { keys: ['Esc'], label: 'Leave the field' },
@@ -182,14 +189,14 @@ export function dispatchInboxShortcut(action: ShortcutAction): void {
 }
 
 /**
- * Shift+A / "e" / "r" / "/" act on the OPEN conversation. While the j/k cursor sits on
+ * Shift+A / "e" / "h" / "r" / "/" act on the OPEN conversation. While the j/k cursor sits on
  * a different row (`cursorPending`), the first press opens that row instead
  * (Enter semantics), so the key never hits a conversation the agent is not
  * looking at.
  */
 export function redirectForPendingCursor(action: ShortcutAction, cursorPending: boolean): ShortcutAction {
   return cursorPending &&
-    (action === 'claim' || action === 'resolve' || action === 'focusComposer' || action === 'quickReplies')
+    (action === 'claim' || action === 'resolve' || action === 'snooze' || action === 'focusComposer' || action === 'quickReplies')
     ? 'open'
     : action
 }

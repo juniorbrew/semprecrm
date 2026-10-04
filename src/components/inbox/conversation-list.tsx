@@ -75,7 +75,7 @@ import {
   type ShortcutAction,
 } from "@/lib/inbox/shortcuts";
 import { findConversationById } from "@/lib/conversations/find-by-contact";
-import { formatSnoozeWhen, showsSnoozeWokeMarker } from "@/lib/inbox/snooze";
+import { formatSnoozeWhen, INBOX_SNOOZED_EVENT, showsSnoozeWokeMarker } from "@/lib/inbox/snooze";
 import {
   Search,
   ChevronDown,
@@ -104,6 +104,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContactAvatar, avatarInitial } from "./contact-avatar";
 import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filters";
+import { ConversationSnooze } from "./conversation-snooze";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -132,6 +133,8 @@ interface ConversationListProps {
   /** Local patches after a row quick action (Resolver / Reabrir / Assumir). */
   onStatusChange?: (conversationId: string, status: ConversationStatus) => void;
   onAssignChange?: (conversationId: string, assignedAgentId: string | null) => void;
+  /** Local patch after a row snooze / its Desfazer (migration 079). */
+  onConversationPatch?: (conversationId: string, patch: Partial<Conversation>) => void;
   /** Clears the selection ("e" resolved the last row of the list). */
   onDeselect?: () => void;
 }
@@ -431,6 +434,7 @@ export function ConversationList({
   onShowShortcuts,
   onStatusChange,
   onAssignChange,
+  onConversationPatch,
   onDeselect,
 }: ConversationListProps) {
   const { user, profile, preferences, accountId, accountRole } = useAuth();
@@ -1247,6 +1251,27 @@ export function ConversationList({
     return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
   }, []);
 
+  // A conversation was snoozed (header, row, "h", palette): when it was the
+  // open one and it leaves this view, open the next row like "e" does — or
+  // clear the selection. Adiadas keeps a re-snoozed row, so nothing moves.
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  });
+  useEffect(() => {
+    const onSnoozed = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      const st = shortcutRef.current;
+      if (!id || id !== st.activeConversationId || tabRef.current === "snoozed") return;
+      const nextId = nextAfterResolve(st.ordered.map((c) => c.id), id);
+      const next = nextId ? st.ordered.find((c) => c.id === nextId) : undefined;
+      if (next) st.handleSelect(next);
+      else st.onDeselect?.();
+    };
+    window.addEventListener(INBOX_SNOOZED_EVENT, onSnoozed);
+    return () => window.removeEventListener(INBOX_SNOOZED_EVENT, onSnoozed);
+  }, []);
+
   // Team members, for the owner badge on rows (RLS scopes them to the account).
   const [owners, setOwners] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
@@ -1672,6 +1697,7 @@ export function ConversationList({
                   quick={canWrite ? copy.quick : null}
                   canClaim={!!userId && conv.assigned_agent_id !== userId}
                   onQuickAction={handleQuickAction}
+                  onPatch={onConversationPatch}
                 />
               ));
               if (!group.band) return rows;
@@ -1798,6 +1824,8 @@ export interface ConversationItemProps {
   /** "Assumir" applies (not already mine). */
   canClaim?: boolean;
   onQuickAction?: (conversation: Conversation, action: QuickAction) => Promise<void>;
+  /** Row snooze (079): local patch after the write / its Desfazer. */
+  onPatch?: (conversationId: string, patch: Partial<Conversation>) => void;
 }
 
 const QUICK_BUTTON =
@@ -1836,6 +1864,7 @@ export const ConversationItem = memo(function ConversationItem({
   quick = null,
   canClaim = false,
   onQuickAction,
+  onPatch,
 }: ConversationItemProps) {
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
@@ -1859,6 +1888,9 @@ export const ConversationItem = memo(function ConversationItem({
   }, [onSelect, conversation]);
 
   const [busy, setBusy] = useState(false);
+  // The snooze popover lives in a portal: keep the toolbar (its anchor)
+  // shown while it is open, or Radix/Base UI would re-anchor at 0,0.
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
   const run = useCallback(
     async (action: QuickAction) => {
       if (!onQuickAction) return;
@@ -2110,7 +2142,10 @@ export const ConversationItem = memo(function ConversationItem({
           aria-label={quick.toolbar(displayName)}
           data-no-translate
           data-testid="row-quick-actions"
-          className="absolute right-2.5 top-1.5 z-[1] hidden gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-sm group-focus-within/row:flex group-hover/row:flex"
+          className={cn(
+            "absolute right-2.5 top-1.5 z-[1] gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-sm group-focus-within/row:flex group-hover/row:flex",
+            snoozeOpen ? "flex" : "hidden",
+          )}
         >
           <button
             type="button"
@@ -2135,6 +2170,16 @@ export const ConversationItem = memo(function ConversationItem({
             >
               <UserPlus className="size-3.5" aria-hidden />
             </button>
+          )}
+          {!closed && !conversation.archived_at && (
+            <ConversationSnooze
+              variant="row"
+              conversation={conversation}
+              contactName={displayName}
+              disabled={busy}
+              onOpenChange={setSnoozeOpen}
+              onPatch={onPatch}
+            />
           )}
         </div>
       )}

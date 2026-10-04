@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CheckCircle2, Clock, Contrast, MessageSquare, Plus, Search, User, type LucideIcon } from "lucide-react";
+import { CheckCircle2, Clock, Contrast, Hourglass, MessageSquare, Plus, Search, User, type LucideIcon } from "lucide-react";
 
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
@@ -43,6 +43,7 @@ export const PALETTE_COPY: Record<
     groups: Record<GroupId, string>;
     newTask: string;
     resolve: string;
+    snooze: string;
     theme: string;
     inbox: string;
     searching: string;
@@ -61,6 +62,7 @@ export const PALETTE_COPY: Record<
     groups: { recent: "Recentes", actions: "Ações", nav: "Ir para", conversations: "Conversas", contacts: "Contatos" },
     newTask: "Nova tarefa",
     resolve: "Resolver conversa atual",
+    snooze: "Adiar conversa atual…",
     theme: "Alternar tema claro/escuro",
     inbox: "Caixa de entrada",
     searching: "Buscando…",
@@ -78,6 +80,7 @@ export const PALETTE_COPY: Record<
     groups: { recent: "Recent", actions: "Actions", nav: "Go to", conversations: "Conversations", contacts: "Contacts" },
     newTask: "New task",
     resolve: "Resolve current conversation",
+    snooze: "Snooze current conversation…",
     theme: "Toggle light/dark theme",
     inbox: "Inbox",
     searching: "Searching…",
@@ -273,6 +276,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     () => open && pathname === "/inbox" && typeof document !== "undefined" && !!document.querySelector("[data-inbox-resolvable]"),
     [open, pathname],
   );
+  // "Adiar conversa atual…": same mechanism, the header's snooze rule (079).
+  const canSnoozeCurrent = useMemo(
+    () => open && pathname === "/inbox" && typeof document !== "undefined" && !!document.querySelector("[data-inbox-snoozable]"),
+    [open, pathname],
+  );
   const recents = useMemo(() => (open ? readRecents(userId) : []), [open, userId]);
 
   const options = useMemo<PaletteOption[]>(() => {
@@ -286,6 +294,19 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
         icon: CheckCircle2,
         shortcut: "E",
         run: () => dispatchInboxShortcut("resolve"),
+      });
+    }
+    if (canSnoozeCurrent) {
+      actions.push({
+        key: "action:snooze",
+        group: "actions",
+        label: copy.snooze,
+        keywords: "adiar snooze soneca depois",
+        icon: Hourglass,
+        shortcut: "H",
+        // After the palette's own close settles, so its focus return does
+        // not dismiss the popover it opens.
+        run: () => window.setTimeout(() => dispatchInboxShortcut("snooze"), 0),
       });
     }
     const tasksItem = NAV_ITEMS.find((i) => i.href === "/tasks");
@@ -353,7 +374,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       });
     }
     return [...found, ...ranked];
-  }, [entitlementsReady, modules, accountRole, canResolveCurrent, canWrite, copy, navCopy, toggleMode, query, term, recents, current]);
+  }, [entitlementsReady, modules, accountRole, canResolveCurrent, canSnoozeCurrent, canWrite, copy, navCopy, toggleMode, query, term, recents, current]);
 
   const active = options.length ? Math.min(activeIndex, options.length - 1) : -1;
   const optionId = (i: number) => `${baseId}-opt-${i}`;

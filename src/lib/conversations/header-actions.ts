@@ -5,6 +5,7 @@
 //               when it already is
 //   Transferir  hand over to another member (the assignee dropdown)
 //   Lembrar     reminder task at a chosen time (Tasks module)
+//   Adiar       snooze until a chosen time (migration 079)
 //   Resolver    close — the existing split button ("Fechar")
 //   Arquivar    close + move out of the lists (migration 056)
 //
@@ -37,6 +38,8 @@ export interface HeaderActions {
   claimIsMine: boolean
   transfer: HeaderActionState
   remind: HeaderActionState
+  /** Adiar (migration 079): only a live, unarchived conversation. */
+  snooze: HeaderActionState
   close: HeaderActionState
   archive: HeaderActionState
   unarchive: HeaderActionState
@@ -64,6 +67,7 @@ export function conversationHeaderActions(params: {
     claimIsMine: !closed && mine,
     transfer: state(true),
     remind: state(tasksEnabled && !!userId),
+    snooze: state(!closed && !archived),
     close: state(true),
     archive: state(!archived),
     unarchive: state(archived),
