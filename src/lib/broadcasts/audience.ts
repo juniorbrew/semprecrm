@@ -96,27 +96,56 @@ export function buildAudience<T extends AudienceContact>(
 // ── Loaders (browser client, RLS-scoped, read-only) ──────────────
 
 /** IN-lists travel in the URL — keep each request well under 8 KB. */
-const IN_LIST_PAGE = 150;
+export const IN_LIST_PAGE = 150;
+
+/** PostgREST `max_rows` (supabase/config.toml): a read never returns more. */
+export const MAX_ROWS = 1000;
+
+type Page = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
+
+/** Every row of a query, MAX_ROWS at a time — for lists that must be complete. */
+async function fetchAllPages<R>(page: (from: number, to: number) => Page, what: string): Promise<R[]> {
+  const out: R[] = [];
+  for (let from = 0; ; from += MAX_ROWS) {
+    const { data, error } = await page(from, from + MAX_ROWS - 1);
+    if (error) throw new Error(`${what}: ${error.message}`);
+    out.push(...((data ?? []) as R[]));
+    if (!data || data.length < MAX_ROWS) return out;
+  }
+}
 
 /**
  * Contacts matched by an all / tags / custom-field audience (CSV rows
  * are not contacts yet — the caller resolves them). `[]` while the
  * audience is only partly configured.
+ *
+ * The matching query is NOT paged: a campaign has always reached at most
+ * MAX_ROWS matches, and paging would widen who is sent to. It is ordered,
+ * so the estimate and the send take the SAME first MAX_ROWS; `capped`
+ * says the cap was hit so the wizard can tell the user.
+ * ponytail: MAX_ROWS-contact ceiling per broadcast; lift it with a reviewed paging change.
  */
 export async function fetchAudienceContacts<T>(
   db: SupabaseClient,
   audience: AudienceConfig,
   columns: string,
-): Promise<T[]> {
+): Promise<{ contacts: T[]; capped: boolean }> {
   let ids: string[];
+  let capped: boolean;
   if (audience.type === 'all') {
-    const { data, error } = await db.from('contacts').select(columns);
+    const { data, error } = await db.from('contacts').select(columns).order('id');
     if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return (data ?? []) as T[];
+    return { contacts: (data ?? []) as T[], capped: (data ?? []).length >= MAX_ROWS };
   } else if (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) {
-    const { data, error } = await db.from('contact_tags').select('contact_id').in('tag_id', audience.tagIds);
+    const { data, error } = await db
+      .from('contact_tags')
+      .select('contact_id')
+      .in('tag_id', audience.tagIds)
+      .order('contact_id')
+      .order('tag_id');
     if (error) throw new Error(`Failed to fetch contact tags: ${error.message}`);
     ids = (data ?? []).map((r) => r.contact_id as string);
+    capped = ids.length >= MAX_ROWS;
   } else if (audience.type === 'custom_field' && audience.customField) {
     const { fieldId, operator, value } = audience.customField;
     // eq/neq/ilike — ilike with wildcards makes "contains" case-insensitive.
@@ -124,26 +153,44 @@ export async function fetchAudienceContacts<T>(
     if (operator === 'is') q = q.eq('value', value);
     else if (operator === 'is_not') q = q.neq('value', value);
     else q = q.ilike('value', `%${value}%`);
-    const { data, error } = await q;
+    const { data, error } = await q.order('contact_id');
     if (error) throw new Error(`Custom-field filter failed: ${error.message}`);
     ids = (data ?? []).map((r) => r.contact_id as string);
+    capped = ids.length >= MAX_ROWS;
   } else {
-    return [];
+    return { contacts: [], capped: false };
   }
 
   const unique = [...new Set(ids)];
-  if (unique.length === 0) return [];
-  const { data, error } = await db.from('contacts').select(columns).in('id', unique);
-  if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-  return (data ?? []) as T[];
+  const contacts: T[] = [];
+  for (let i = 0; i < unique.length; i += IN_LIST_PAGE) {
+    const { data, error } = await db
+      .from('contacts')
+      .select(columns)
+      .in('id', unique.slice(i, i + IN_LIST_PAGE))
+      .order('id');
+    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
+    contacts.push(...((data ?? []) as T[]));
+  }
+  return { contacts, capped };
 }
 
-/** Ids of the contacts carrying any excluded tag. */
+/**
+ * Ids of the contacts carrying any excluded tag — ALL of them, paged:
+ * a missed id here would be messaged (LGPD), so this list may not be capped.
+ */
 export async function fetchExcludedIds(db: SupabaseClient, excludeTagIds?: string[]): Promise<Set<string>> {
-  if (!excludeTagIds || excludeTagIds.length === 0) return new Set();
-  const { data, error } = await db.from('contact_tags').select('contact_id').in('tag_id', excludeTagIds);
-  if (error) throw new Error(`Failed to fetch excluded tags: ${error.message}`);
-  return new Set((data ?? []).map((r) => r.contact_id as string));
+  const out = new Set<string>();
+  for (let i = 0; i < (excludeTagIds?.length ?? 0); i += IN_LIST_PAGE) {
+    const tags = excludeTagIds!.slice(i, i + IN_LIST_PAGE);
+    const rows = await fetchAllPages<{ contact_id: string }>(
+      (from, to) =>
+        db.from('contact_tags').select('contact_id').in('tag_id', tags).order('contact_id').order('tag_id').range(from, to),
+      'Failed to fetch excluded tags',
+    );
+    for (const r of rows) out.add(r.contact_id);
+  }
+  return out;
 }
 
 const ESTIMATE_COLUMNS = 'id, phone, opted_out_at, anonymized_at';
@@ -198,6 +245,8 @@ export interface AudienceEstimate {
   breakdown: AudienceBreakdown;
   /** False when the suppression list couldn't be read: eligible is an upper bound. */
   suppressionChecked: boolean;
+  /** The audience query hit MAX_ROWS: only the first MAX_ROWS matches are included. */
+  capped: boolean;
 }
 
 /** The estimate both wizard steps show. `null` while the audience is incomplete. */
@@ -207,6 +256,7 @@ export async function estimateAudience(
   accountId: string | null,
 ): Promise<AudienceEstimate | null> {
   let candidates: AudienceContact[];
+  let capped = false;
   if (audience.type === 'csv') {
     if (!audience.csvContacts?.length || !accountId) return null;
     candidates = await csvCandidates(db, accountId, audience.csvContacts);
@@ -216,7 +266,7 @@ export async function estimateAudience(
       (audience.type === 'tags' && !!audience.tagIds?.length) ||
       (audience.type === 'custom_field' && !!audience.customField?.fieldId && !!audience.customField.value);
     if (!ready) return null;
-    candidates = await fetchAudienceContacts<AudienceContact>(db, audience, ESTIMATE_COLUMNS);
+    ({ contacts: candidates, capped } = await fetchAudienceContacts<AudienceContact>(db, audience, ESTIMATE_COLUMNS));
   }
 
   const excludedIds = await fetchExcludedIds(db, audience.excludeTagIds);
@@ -224,12 +274,12 @@ export async function estimateAudience(
   const numbers = first.recipients
     .filter((c) => isValidE164(sanitizePhoneForMeta(c.phone ?? '')))
     .map((c) => normalizeKey(c.phone ?? ''));
-  if (numbers.length === 0) return { breakdown: first.breakdown, suppressionChecked: true };
+  if (numbers.length === 0) return { breakdown: first.breakdown, suppressionChecked: true, capped };
 
   try {
     const suppressed = await fetchSuppressed(numbers);
-    return { breakdown: buildAudience(candidates, { excludedIds, suppressed }).breakdown, suppressionChecked: true };
+    return { breakdown: buildAudience(candidates, { excludedIds, suppressed }).breakdown, suppressionChecked: true, capped };
   } catch {
-    return { breakdown: first.breakdown, suppressionChecked: false };
+    return { breakdown: first.breakdown, suppressionChecked: false, capped };
   }
 }

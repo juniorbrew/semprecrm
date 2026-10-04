@@ -176,13 +176,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
    */
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
     const supabase = createClient();
+    // Exclusions first: if they can't be read, nothing is written or sent.
+    const excludedIds = await fetchExcludedIds(supabase, audience.excludeTagIds);
     const contacts =
       audience.type === 'csv'
         ? audience.csvContacts
           ? await upsertCsvContacts(supabase, audience.csvContacts)
           : []
-        : await fetchAudienceContacts<Contact>(supabase, audience, '*');
-    const excludedIds = await fetchExcludedIds(supabase, audience.excludeTagIds);
+        : (await fetchAudienceContacts<Contact>(supabase, audience, '*')).contacts;
     return buildAudience(contacts, { excludedIds }).recipients;
   }
 
@@ -314,10 +315,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 1: Resolve audience contacts ─────────────────────────
       setProgress(5);
-      const contacts = await resolveAudience(payload.audience);
+      let contacts: Contact[];
+      try {
+        contacts = await resolveAudience(payload.audience);
+      } catch (err) {
+        // The raw PostgREST detail is for the console, not the toast.
+        console.error('[broadcast] audience lookup failed:', err);
+        throw new Error(t('Could not load the audience. Nothing was sent.'));
+      }
 
       if (contacts.length === 0) {
-        throw new Error('No contacts found for this audience.');
+        throw new Error(t('No contacts found for this audience.'));
       }
 
       // ── Step 2: Create broadcast row ──────────────────────────────
