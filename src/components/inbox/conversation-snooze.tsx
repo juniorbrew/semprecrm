@@ -229,6 +229,8 @@ export function ConversationSnooze({
       onPatch?.(id, result.row);
       const undo = snoozeUndoPayload({ snoozed_until: snoozedUntil, snooze_note: snoozeNote });
       toast.success(copy.snoozed(formatSnoozeWhen(until, language)), {
+        // Long enough to reach Desfazer after the list moved on.
+        duration: 8000,
         action: {
           label: copy.undo,
           onClick: () =>

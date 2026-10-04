@@ -56,6 +56,8 @@ describe('snoozePresetTime', () => {
     expect(snoozePresetTime('laterToday', at(2026, 10, 2, 17, 0))).toBeNull()
     expect(availableSnoozePresets(at(2026, 10, 2, 17, 0)).map((p) => p.preset)).toEqual(['in1h', 'tomorrow9', 'nextMonday9'])
     expect(availableSnoozePresets(at(2026, 10, 2, 9, 0)).map((p) => p.preset)).toEqual(['in1h', 'laterToday', 'tomorrow9', 'nextMonday9'])
+    // Sunday: next Monday 9h == tomorrow 9h, offered once.
+    expect(availableSnoozePresets(at(2026, 10, 4, 9, 0)).map((p) => p.preset)).toEqual(['in1h', 'laterToday', 'tomorrow9'])
   })
   it('Daqui a 1 hora on the minute; Amanhã às 9h', () => {
     const now = at(2026, 10, 2, 10, 30) + 42_000

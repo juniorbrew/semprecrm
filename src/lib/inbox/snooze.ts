@@ -103,7 +103,8 @@ export function availableSnoozePresets(now: number = Date.now()): { preset: Snoo
   const out: { preset: SnoozePreset; when: Date }[] = []
   for (const preset of SNOOZE_PRESETS) {
     const when = snoozePresetTime(preset, now)
-    if (when) out.push({ preset, when })
+    // On a Sunday "Próxima segunda" is "Amanhã às 9h": offer it once.
+    if (when && !out.some((p) => p.when.getTime() === when.getTime())) out.push({ preset, when })
   }
   return out
 }
