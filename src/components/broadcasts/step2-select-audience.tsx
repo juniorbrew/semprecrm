@@ -128,7 +128,7 @@ export function Step2SelectAudience({
   }, [audience.type]);
 
   // Same estimate as step 4 and the same rules the send applies.
-  const { estimate, loading: loadingCount } = useAudienceEstimate(audience);
+  const { estimate, loading: loadingCount, failed: estimateFailed } = useAudienceEstimate(audience);
 
   /**
    * "Importar CSV" had no picker at all (wacrm #512): selecting it
@@ -392,6 +392,10 @@ export function Step2SelectAudience({
             </p>
             <AudienceBreakdownLine estimate={estimate} t={t} language={language} />
           </>
+        ) : estimateFailed ? (
+          <p role="alert" className="text-xs text-destructive">
+            {t('Could not calculate the reach. Try again.')}
+          </p>
         ) : (
           <p className="text-xs text-muted-foreground">{t('Select an audience type to see the estimate.')}</p>
         )}

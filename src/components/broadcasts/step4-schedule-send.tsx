@@ -47,10 +47,12 @@ export function Step4ScheduleSend({
   const { t, language } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
   // Same estimate as step 2 and the same rules the send applies.
+  // No valid estimate (loading or failed) → "—" and no send: never "send to 0".
   const { estimate, loading: loadingReach } = useAudienceEstimate(audience);
-  const reach = `${estimate && !estimate.suppressionChecked ? `${t('up to')} ` : ''}${(
-    estimate?.breakdown.eligible ?? 0
-  ).toLocaleString(language)}`;
+  const reach = estimate
+    ? `${estimate.suppressionChecked ? '' : `${t('up to')} `}${estimate.breakdown.eligible.toLocaleString(language)}`
+    : '—';
+  const canSend = !!name.trim() && !isProcessing && !!estimate;
 
   const audienceLabel =
     audience.type === 'all'
@@ -103,7 +105,15 @@ export function Step4ScheduleSend({
             </div>
           ))}
         </dl>
-        {estimate && <AudienceBreakdownLine estimate={estimate} t={t} language={language} />}
+        {estimate ? (
+          <AudienceBreakdownLine estimate={estimate} t={t} language={language} />
+        ) : (
+          !loadingReach && (
+            <p role="alert" className="text-xs text-destructive">
+              {t('Could not calculate the reach. Try again.')}
+            </p>
+          )
+        )}
       </section>
 
       {/* Send progress — a thin line, not a box */}
@@ -152,7 +162,7 @@ export function Step4ScheduleSend({
           )}
 
           <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
-            <DialogTrigger render={<Button disabled={!name.trim() || isProcessing} />}>
+            <DialogTrigger render={<Button disabled={!canSend} />}>
               <Send />
               {t('Send Broadcast')}
             </DialogTrigger>
@@ -172,6 +182,7 @@ export function Step4ScheduleSend({
                   {t('Cancel')}
                 </Button>
                 <Button
+                  disabled={!canSend}
                   onClick={() => {
                     setShowConfirm(false);
                     onSend();

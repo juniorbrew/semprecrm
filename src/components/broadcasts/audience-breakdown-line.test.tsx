@@ -17,9 +17,9 @@ const b = (over: Partial<AudienceBreakdown>): AudienceBreakdown => ({
   ...over,
 });
 
-function line(breakdown: AudienceBreakdown, suppressionChecked = true) {
+function line(breakdown: AudienceBreakdown, suppressionChecked = true, capped = false) {
   const { container } = render(
-    <AudienceBreakdownLine estimate={{ breakdown, suppressionChecked }} t={t} language="pt-BR" />,
+    <AudienceBreakdownLine estimate={{ breakdown, suppressionChecked, capped }} t={t} language="pt-BR" />,
   );
   return container.textContent;
 }
@@ -27,12 +27,20 @@ function line(breakdown: AudienceBreakdown, suppressionChecked = true) {
 afterEach(cleanup);
 
 describe('AudienceBreakdownLine', () => {
-  it('explains the gap in pt-BR, skipping empty buckets', () => {
-    expect(line(b({ selected: 9, excludedByTag: 2, optedOut: 1, eligible: 6 }))).toBe(
-      '9 selecionados · 2 excluídos por etiqueta · 1 descadastrados',
+  it('explains the gap in pt-BR, skipping empty buckets, singular and plural', () => {
+    expect(line(b({ selected: 9, excludedByTag: 2, optedOut: 3, eligible: 4 }))).toBe(
+      '9 selecionados · 2 excluídos por etiqueta · 3 descadastrados',
     );
-    expect(line(b({ selected: 5, noPhone: 1, duplicate: 1, suppressed: 1, eligible: 2 }))).toBe(
-      '5 selecionados · 1 sem telefone válido · 1 números repetidos · 1 na lista de supressão',
+    expect(line(b({ selected: 1, excludedByTag: 1 }))).toBe('1 selecionado · 1 excluído por etiqueta');
+    expect(line(b({ selected: 5, optedOut: 1, noPhone: 1, duplicate: 1, suppressed: 1, eligible: 1 }))).toBe(
+      '5 selecionados · 1 descadastrado · 1 sem telefone válido · 1 número repetido · 1 na lista de supressão',
+    );
+    expect(line(b({ selected: 6, duplicate: 2, eligible: 4 }))).toBe('6 selecionados · 2 números repetidos');
+  });
+
+  it('warns when the audience hit the 1 000-row cap', () => {
+    expect(line(b({ selected: 1000, eligible: 1000 }), true, true)).toBe(
+      'Só os primeiros 1.000 contatos deste público serão incluídos.',
     );
   });
 

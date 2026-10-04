@@ -44,7 +44,8 @@ export function StepFooter({ children }: { children: ReactNode }) {
 /**
  * Why the reach differs from the selection, as one quiet line
  * ("9 selecionados · 2 excluídos por etiqueta · 1 descadastrados").
- * Nothing when every selected contact is reached. Labels are i18n keys.
+ * Nothing when every selected contact is reached. Labels are i18n keys
+ * ([one, other]); a second line warns when the audience hit the row cap.
  */
 export function AudienceBreakdownLine({
   estimate,
@@ -56,21 +57,32 @@ export function AudienceBreakdownLine({
   language: string;
 }) {
   const b = estimate.breakdown;
-  if (b.eligible === b.selected && estimate.suppressionChecked) return null;
+  const plural = new Intl.PluralRules(language);
+  const differs = b.eligible !== b.selected || !estimate.suppressionChecked;
   const parts = (
     [
-      [b.selected, 'selected contacts'],
-      [b.excludedByTag, 'excluded by tag'],
-      [b.optedOut, 'opted out'],
-      [b.noPhone, 'without a valid phone'],
-      [b.duplicate, 'repeated numbers'],
-      [b.suppressed, 'on the suppression list'],
+      [b.selected, 'selected contact', 'selected contacts'],
+      [b.excludedByTag, 'contact excluded by tag', 'contacts excluded by tag'],
+      [b.optedOut, 'contact opted out', 'contacts opted out'],
+      [b.noPhone, 'without a valid phone', 'without a valid phone'],
+      [b.duplicate, 'repeated number', 'repeated numbers'],
+      [b.suppressed, 'on the suppression list', 'on the suppression list'],
     ] as const
   )
     .filter(([n], i) => i === 0 || n > 0)
-    .map(([n, key]) => `${n.toLocaleString(language)} ${t(key)}`);
+    .map(([n, one, other]) => `${n.toLocaleString(language)} ${t(plural.select(n) === 'one' ? one : other)}`);
   if (!estimate.suppressionChecked) parts.push(t('suppression list not checked'));
-  return <p className="text-xs tabular-nums text-muted-foreground">{parts.join(' · ')}</p>;
+  if (!differs && !estimate.capped) return null;
+  return (
+    <>
+      {differs && <p className="text-xs tabular-nums text-muted-foreground">{parts.join(' · ')}</p>}
+      {estimate.capped && (
+        <p className="text-xs text-muted-foreground">
+          {t('Only the first 1,000 contacts of this audience will be included.')}
+        </p>
+      )}
+    </>
+  );
 }
 
 export interface WizardStep {
