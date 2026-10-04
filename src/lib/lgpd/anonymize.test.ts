@@ -46,7 +46,7 @@ function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Ro
       },
     ],
     conversations: [
-      { id: 'conv1', account_id: ACC, contact_id: C1, last_message_text: 'oi, sou a Ana', subject: 'Ana quer boleto', sentiment: 'negative' },
+      { id: 'conv1', account_id: ACC, contact_id: C1, last_message_text: 'oi, sou a Ana', subject: 'Ana quer boleto', sentiment: 'negative', snooze_note: 'Ana volta amanhã' },
     ],
     messages: [
       { id: 'm1', conversation_id: 'conv1', content_text: 'meu CPF é 123', media_url: PUBLIC, error_details: null },
@@ -155,7 +155,7 @@ describe('anonymizeContact', () => {
       [REMOVED_CONTENT, null, null],
       [REMOVED_CONTENT, null, null],
     ])
-    expect(tables.conversations[0]).toMatchObject({ last_message_text: REMOVED_CONTENT, subject: null, sentiment: null })
+    expect(tables.conversations[0]).toMatchObject({ last_message_text: REMOVED_CONTENT, subject: null, sentiment: null, snooze_note: null })
     const ev = Object.fromEntries(tables.conversation_events.map((e) => [e.id, e.payload]))
     expect(ev).toEqual({
       e1: { assignee_user_id: 'u2', assignee_name: 'Bruno' },

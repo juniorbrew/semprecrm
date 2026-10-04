@@ -66,7 +66,7 @@ const STORAGE_CHUNK = 100
  */
 export const SCRUBBED_TABLES = {
   messages: 'content_text / error_details replaced, media_url nulled after the object is removed',
-  conversations: 'last_message_text replaced, subject / sentiment nulled (cascade)',
+  conversations: 'last_message_text replaced, subject / sentiment / snooze_note nulled (cascade)',
   conversation_events: 'ai_handoff / deal_stage_changed payload emptied, free-text keys dropped (cascade)',
   contact_notes: 'deleted (cascade)',
   contact_custom_values: 'deleted (cascade)',
@@ -312,9 +312,13 @@ export async function scrubContactData(
     await step('conversations', async () => {
       for (const ids of convChunks) {
         // Support triage (071): the free-text subject may name the
-        // customer; the sentiment is a judgement about a person.
+        // customer; the sentiment is a judgement about a person. The
+        // snooze note (079) is free text too.
         must(
-          await admin.from('conversations').update({ subject: null, sentiment: null }).in('id', ids),
+          await admin
+            .from('conversations')
+            .update({ subject: null, sentiment: null, snooze_note: null })
+            .in('id', ids),
           'conversations triage',
         )
         // The conversation list preview also carries the last body.
