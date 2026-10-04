@@ -144,14 +144,39 @@ INSERT INTO messages(conversation_id, sender_type, content_text) VALUES
  ('79000000-0000-4000-8000-0000000000c1', 'agent', 'vou verificar'),
  ('79000000-0000-4000-8000-0000000000c1', 'bot', 'fora do expediente');
 INSERT INTO messages(conversation_id, sender_type, content_text, origin) VALUES
- ('79000000-0000-4000-8000-0000000000c1', 'customer', '5', 'csat');
-SELECT pg_temp.assert_true((SELECT snoozed_until IS NOT NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c1'), 'agent / bot / csat messages keep the snooze');
+ ('79000000-0000-4000-8000-0000000000c1', 'customer', '5', 'csat'),
+ ('79000000-0000-4000-8000-0000000000c1', 'agent', 'eco do celular', 'phone');
+SELECT pg_temp.assert_true((SELECT snoozed_until IS NOT NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c1'), 'agent / bot / csat / phone echo keep the snooze');
+-- A LATE customer message (provider timestamp older than the last one):
+-- GREATEST() keeps last_customer_message_at, the flag still wakes.
+INSERT INTO messages(conversation_id, sender_type, content_text, created_at) VALUES
+ ('79000000-0000-4000-8000-0000000000c1', 'customer', 'mensagem atrasada', now() - interval '2 hours');
+SELECT pg_temp.assert_true((SELECT snoozed_until IS NULL AND snooze_woke_at IS NOT NULL AND snooze_note IS NULL AND status = 'open'
+  AND last_customer_message_at = now() - interval '1 hour'
+  FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c1'), 'late customer message wakes (note moved out)');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM ev WHERE conversation_id = '79000000-0000-4000-8000-0000000000c1'
+  AND event_type = 'unsnoozed' AND payload->>'cause' = 'customer_reply' AND payload->>'note' = 'ligar depois'), 1, 'customer_reply event carries the note');
+SELECT pg_temp.assert_true(COALESCE(current_setting('app.customer_reply', true), '') = '', 'customer_reply flag reset');
+-- A second customer message in the same second (same timestamp) wakes too.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '79000000-0000-4000-8000-00000000000d', true);
+UPDATE conversations SET snoozed_until = now() + interval '2 hours' WHERE id = '79000000-0000-4000-8000-0000000000c1';
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+INSERT INTO messages(conversation_id, sender_type, content_text, created_at) VALUES
+ ('79000000-0000-4000-8000-0000000000c1', 'customer', 'mesmo segundo', now() - interval '1 hour');
+SELECT pg_temp.assert_true((SELECT snoozed_until IS NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c1'), 'same-second customer message wakes');
+-- And an ordinary, newer one.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '79000000-0000-4000-8000-00000000000d', true);
+UPDATE conversations SET snoozed_until = now() + interval '2 hours' WHERE id = '79000000-0000-4000-8000-0000000000c1';
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 INSERT INTO messages(conversation_id, sender_type, content_text) VALUES
  ('79000000-0000-4000-8000-0000000000c1', 'customer', 'oi, voltei');
-SELECT pg_temp.assert_true((SELECT snoozed_until IS NULL AND snooze_woke_at IS NOT NULL AND snooze_note = 'ligar depois' AND status = 'open'
-  FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c1'), 'customer message wakes (note kept)');
+SELECT pg_temp.assert_true((SELECT snoozed_until IS NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c1'), 'newer customer message wakes');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM ev WHERE conversation_id = '79000000-0000-4000-8000-0000000000c1'
-  AND event_type = 'unsnoozed' AND payload->>'cause' = 'customer_reply'), 1, 'customer_reply event');
+  AND event_type = 'unsnoozed' AND payload->>'cause' = 'customer_reply'), 3, 'one customer_reply event per wake');
 
 -- ---- 6. resolve / archive / reassign cancel; team, priority, pending don't ----------
 -- Agent A snoozes c2, c4, c5, c6 (c2 unassigned, c4 is Agent A2's).
@@ -194,6 +219,32 @@ SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT pg_temp.assert_true((SELECT snoozed_until IS NULL AND snooze_woke_at IS NULL AND snoozed_by = (SELECT agent FROM ids) FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c3'), 'manual resume: no marker, snoozed_by kept');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM ev WHERE conversation_id = '79000000-0000-4000-8000-0000000000c3' AND event_type = 'unsnoozed'
   AND payload->>'cause' = 'manual' AND actor_user_id = (SELECT agent2 FROM ids)), 1, 'manual event by the resuming agent');
+-- A note never outlives its snooze (c4 is awake after the reassignment).
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '79000000-0000-4000-8000-00000000000d', true);
+UPDATE conversations SET snooze_note = 'nota solta' WHERE id = '79000000-0000-4000-8000-0000000000c4';
+SELECT pg_temp.assert_true((SELECT snooze_note IS NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c4'), 'no note on an awake conversation');
+UPDATE conversations SET snoozed_until = now() + interval '1 hour', snooze_note = 'n1' WHERE id = '79000000-0000-4000-8000-0000000000c4';
+UPDATE conversations SET snooze_note = 'n1 editada' WHERE id = '79000000-0000-4000-8000-0000000000c4';
+SELECT pg_temp.assert_true((SELECT snooze_note = 'n1 editada' AND snoozed_until IS NOT NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c4'), 'note editable while snoozed');
+UPDATE conversations SET snoozed_until = NULL WHERE id = '79000000-0000-4000-8000-0000000000c4';
+SELECT pg_temp.assert_true((SELECT snooze_note IS NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c4'), 'resume clears the note');
+UPDATE conversations SET snoozed_until = now() + interval '1 hour' WHERE id = '79000000-0000-4000-8000-0000000000c4';
+SELECT pg_temp.assert_true((SELECT payload->>'note' IS NULL FROM ev WHERE conversation_id = '79000000-0000-4000-8000-0000000000c4' AND event_type = 'snoozed'
+  ORDER BY created_at DESC, payload->>'until' DESC LIMIT 1), 'new snooze without a note carries no stale note');
+UPDATE conversations SET snoozed_until = NULL WHERE id = '79000000-0000-4000-8000-0000000000c4';
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_eq((SELECT count(*) FROM ev WHERE conversation_id = '79000000-0000-4000-8000-0000000000c4' AND event_type = 'unsnoozed'
+  AND payload->>'cause' = 'manual' AND payload->>'note' = 'n1 editada'), 1, 'manual resume event carries the note');
+-- service_role upsert cannot rewrite the stamped columns either.
+SET ROLE service_role;
+INSERT INTO conversations(id, user_id, account_id, contact_id, status)
+VALUES ('79000000-0000-4000-8000-0000000000c6', '79000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ids), '79000000-0000-4000-8000-0000000000d6', 'open')
+ON CONFLICT (id) DO UPDATE SET snoozed_by = '79000000-0000-4000-8000-0000000000ff', snooze_woke_at = now(), snoozed_at = '2000-01-01';
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT snoozed_by = (SELECT agent FROM ids) AND snooze_woke_at IS NULL AND snoozed_at > '2001-01-01'
+  FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c6'), 'upsert cannot spoof stamped columns');
 
 -- ---- 7. wake_due: batching, idempotency, service role only -------------------------------
 -- c3 / c7 due in 2 / 3 minutes, c6 in 1 day.
@@ -211,13 +262,18 @@ SET ROLE service_role;
 CREATE TEMP TABLE woke1 AS SELECT * FROM public.conversation_snooze_wake_due(now() + interval '5 minutes', 1);
 CREATE TEMP TABLE woke2 AS SELECT * FROM public.conversation_snooze_wake_due(now() + interval '5 minutes', 500);
 CREATE TEMP TABLE woke3 AS SELECT * FROM public.conversation_snooze_wake_due(now() + interval '5 minutes', 500);
+-- NULL / negative limits are clamped, not errors.
+SELECT pg_temp.assert_true((SELECT count(*) >= 0 FROM public.conversation_snooze_wake_due(now(), NULL)), 'p_limit NULL');
+SELECT pg_temp.assert_true((SELECT count(*) >= 0 FROM public.conversation_snooze_wake_due(now(), -5)), 'p_limit negative');
 RESET ROLE;
+-- A stale client write (re-sending the old, now past, snoozed_until) is rejected.
+SELECT pg_temp.assert_state($$UPDATE conversations SET status = 'pending', snoozed_until = now() + interval '2 minutes' - interval '10 minutes' WHERE id = '79000000-0000-4000-8000-0000000000c3'$$, '22023', 'stale snoozed_until rejected');
 SELECT pg_temp.assert_true((SELECT count(*) = 1 AND bool_and(conversation_id = '79000000-0000-4000-8000-0000000000c3') FROM woke1), 'p_limit respected, earliest first');
 SELECT pg_temp.assert_true((SELECT count(*) FILTER (WHERE conversation_id::text LIKE '79000000-%') = 1
   AND bool_and(conversation_id <> '79000000-0000-4000-8000-0000000000c7' OR (snoozed_by = (SELECT agent FROM ids) AND snooze_note = 'retorno' AND assigned_agent_id = (SELECT agent FROM ids) AND account_id = (SELECT acc_a FROM ids)))
   FROM woke2), 'second batch: the rest that is due, with push data');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM woke3 WHERE conversation_id::text LIKE '79000000-%'), 0, 'idempotent: nothing left to wake');
-SELECT pg_temp.assert_true((SELECT bool_and(snoozed_until IS NULL AND snooze_woke_at IS NOT NULL AND unread_count >= 1 AND status IN ('open', 'pending'))
+SELECT pg_temp.assert_true((SELECT bool_and(snoozed_until IS NULL AND snooze_note IS NULL AND snooze_woke_at IS NOT NULL AND unread_count >= 1 AND status IN ('open', 'pending'))
   FROM conv WHERE id IN ('79000000-0000-4000-8000-0000000000c3', '79000000-0000-4000-8000-0000000000c7')), 'woken: marker + unread');
 SELECT pg_temp.assert_true((SELECT snoozed_until IS NOT NULL FROM conv WHERE id = '79000000-0000-4000-8000-0000000000c6'), 'not yet due stays snoozed');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM ev WHERE event_type = 'unsnoozed' AND payload->>'cause' = 'timer' AND actor_user_id IS NULL
@@ -226,7 +282,8 @@ SELECT pg_temp.assert_true(COALESCE(current_setting('app.snooze_wake', true), ''
 
 -- ---- 8. privileges + one function per name ----------------------------------------------
 SELECT pg_temp.assert_true(NOT has_function_privilege('authenticated', 'public.conversations_snooze_guard()', 'EXECUTE')
-  AND NOT has_function_privilege('anon', 'public.conversations_snooze_guard()', 'EXECUTE'), 'guard closed');
+  AND NOT has_function_privilege('anon', 'public.conversations_snooze_guard()', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.conversations_track_last_message()', 'EXECUTE'), 'trigger functions closed');
 SELECT pg_temp.assert_true(has_function_privilege('service_role', 'public.conversation_snooze_wake_due(timestamptz, integer)', 'EXECUTE')
   AND NOT has_function_privilege('authenticated', 'public.conversation_snooze_wake_due(timestamptz, integer)', 'EXECUTE')
   AND NOT has_function_privilege('anon', 'public.conversation_snooze_wake_due(timestamptz, integer)', 'EXECUTE'), 'wake_due: service_role only');

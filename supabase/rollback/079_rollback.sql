@@ -20,6 +20,58 @@ DROP TRIGGER IF EXISTS conversations_snooze_guard ON public.conversations;
 DROP FUNCTION IF EXISTS public.conversations_snooze_guard();
 DROP FUNCTION IF EXISTS public.conversation_snooze_wake_due(timestamptz, integer);
 
+-- conversations_track_last_message back to 074 (drops the customer_reply flag)
+CREATE OR REPLACE FUNCTION public.conversations_track_last_message()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_last_customer TIMESTAMPTZ;
+  v_first_response TIMESTAMPTZ;
+BEGIN
+  IF NEW.origin = 'csat' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.sender_type = 'customer' THEN
+    UPDATE conversations
+    SET last_customer_message_at = GREATEST(COALESCE(last_customer_message_at, NEW.created_at), NEW.created_at)
+    WHERE id = NEW.conversation_id;
+  ELSIF NEW.sender_type IN ('agent', 'bot') THEN
+    SELECT last_customer_message_at, first_response_at
+      INTO v_last_customer, v_first_response
+    FROM conversations
+    WHERE id = NEW.conversation_id;
+
+    -- Greeting / away message from the WhatsApp Business app (059).
+    IF NEW.origin = 'phone'
+       AND NOT public.phone_echo_counts_as_reply(NEW.created_at, v_last_customer) THEN
+      RETURN NEW;
+    END IF;
+
+    UPDATE conversations
+    SET last_agent_message_at = GREATEST(COALESCE(last_agent_message_at, NEW.created_at), NEW.created_at)
+    WHERE id = NEW.conversation_id;
+
+    -- First reply: the customer has written, nobody answered yet, and
+    -- this message comes after (or at) the customer's message.
+    IF v_first_response IS NULL
+       AND v_last_customer IS NOT NULL
+       AND NEW.created_at >= v_last_customer THEN
+      UPDATE conversations
+      SET first_response_at      = NEW.created_at,
+          first_response_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NEW.created_at - v_last_customer)))::INTEGER),
+          first_response_by      = NEW.sender_id
+      WHERE id = NEW.conversation_id
+        AND first_response_at IS NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+ALTER FUNCTION public.conversations_track_last_message() OWNER TO postgres;
+
 -- 2. inbox RPCs back to 073 (inbox_counts loses snoozed_count: DROP + CREATE)
 DROP FUNCTION IF EXISTS public.inbox_counts(uuid, text, boolean, text, integer, integer, uuid[], text, uuid, text, boolean, uuid);
 

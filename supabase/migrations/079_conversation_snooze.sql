@@ -15,7 +15,9 @@
 --      outside, cancels the snooze on customer reply (the
 --      last_customer_message_at bump done by conversations_track_last_message
 --      inside the message INSERT), resolve, archive and reassignment, and
---      logs one event per transition;
+--      logs one event per transition. conversations_track_last_message
+--      (074 + one flag) tells it a customer message arrived even when
+--      GREATEST() keeps the timestamp (late / same-second messages);
 --   4. conversation_snooze_wake_due(p_now, p_limit): service-role RPC for
 --      the cron, wakes due conversations (FOR UPDATE SKIP LOCKED,
 --      idempotent) and returns them for the push;
@@ -31,6 +33,13 @@
 -- `db push` before the build): new columns are NULL, the live tabs gain a
 -- filter that is always true until someone snoozes, and the old app
 -- ignores the extra counts column. Rollback: supabase/rollback/079_rollback.sql.
+--
+-- Locks: the migration runs in ONE transaction, so NOT VALID + VALIDATE
+-- buys nothing here (the ACCESS EXCLUSIVE lock from ADD CONSTRAINT is
+-- held until COMMIT, through the VALIDATE scan). Fine at today's sizes;
+-- on a big table split VALIDATE into its own migration. `SET
+-- lock_timeout` is session-wide (not LOCAL): it also applies to whatever
+-- the same session runs after this file.
 -- ============================================================
 
 SET lock_timeout = '5s';
@@ -40,7 +49,7 @@ ALTER TABLE public.conversations
   ADD COLUMN IF NOT EXISTS snoozed_until  timestamptz,
   ADD COLUMN IF NOT EXISTS snoozed_at     timestamptz,
   ADD COLUMN IF NOT EXISTS snoozed_by     uuid,          -- no FK, like assigned_agent_id
-  ADD COLUMN IF NOT EXISTS snooze_note    text,          -- kept after waking (marker tooltip)
+  ADD COLUMN IF NOT EXISTS snooze_note    text,          -- only while snoozed; moved to the event on wake
   ADD COLUMN IF NOT EXISTS snooze_woke_at timestamptz;   -- last wake: "Voltou do adiar" marker
 
 -- BEFORE triggers run before CHECKs: resolving / archiving clears the
@@ -96,6 +105,9 @@ ALTER TABLE public.conversation_events VALIDATE CONSTRAINT conversation_events_e
 -- Every writer (UI update, automations, inbound, cron) goes through here,
 -- so there is no snooze RPC for the client: it updates snoozed_until /
 -- snooze_note under the conversations_update policy (agent+).
+-- snooze_note exists only while snoozed: every wake / cancel moves it into
+-- the 'unsnoozed' event payload and clears the column, so a stale note
+-- never leaks into the next snooze.
 CREATE OR REPLACE FUNCTION public.conversations_snooze_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -105,6 +117,10 @@ AS $$
 DECLARE
   v_actor   uuid := COALESCE(auth.uid(), NULLIF(current_setting('app.actor_user', true), '')::uuid);
   v_wake    boolean := COALESCE(current_setting('app.snooze_wake', true), '') = '1';
+  -- Set by conversations_track_last_message around its customer UPDATE:
+  -- a late (provider timestamp) or same-second message leaves
+  -- last_customer_message_at unchanged (GREATEST) but must still wake.
+  v_reply   boolean := COALESCE(current_setting('app.customer_reply', true), '') = '1';
   v_now     timestamptz := clock_timestamp();
   v_type    text;
   v_payload jsonb;
@@ -112,7 +128,7 @@ BEGIN
   -- Conversations are born awake: nobody can insert a pre-stamped snooze.
   IF TG_OP = 'INSERT' THEN
     NEW.snoozed_until := NULL; NEW.snoozed_at := NULL; NEW.snoozed_by := NULL;
-    NEW.snooze_woke_at := NULL;
+    NEW.snooze_woke_at := NULL; NEW.snooze_note := NULL;
     RETURN NEW;
   END IF;
 
@@ -120,16 +136,21 @@ BEGIN
     -- The stamped columns are not writable from outside.
     NEW.snoozed_by := OLD.snoozed_by; NEW.snoozed_at := OLD.snoozed_at;
     NEW.snooze_woke_at := OLD.snooze_woke_at;
-    IF OLD.snoozed_until IS NULL THEN RETURN NEW; END IF;
+    IF OLD.snoozed_until IS NULL THEN
+      NEW.snooze_note := NULL;   -- no note on an awake conversation
+      RETURN NEW;
+    END IF;
     -- Implicit cancellation, first matching cause wins.
     v_payload := jsonb_build_object('cause', CASE
-      WHEN NEW.last_customer_message_at IS DISTINCT FROM OLD.last_customer_message_at THEN 'customer_reply'
+      WHEN v_reply OR NEW.last_customer_message_at IS DISTINCT FROM OLD.last_customer_message_at THEN 'customer_reply'
       WHEN NEW.status = 'closed' AND OLD.status <> 'closed' THEN 'resolved'
       WHEN NEW.archived_at IS NOT NULL AND OLD.archived_at IS NULL THEN 'archived'
       WHEN NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id THEN 'reassigned'
     END);
-    IF v_payload->>'cause' IS NULL THEN RETURN NEW; END IF;   -- team, priority, our own messages…
+    IF v_payload->>'cause' IS NULL THEN RETURN NEW; END IF;   -- note edit, team, priority, our own messages…
+    v_payload := jsonb_strip_nulls(v_payload || jsonb_build_object('until', OLD.snoozed_until, 'note', OLD.snooze_note));
     NEW.snoozed_until := NULL;
+    NEW.snooze_note := NULL;
     IF v_payload->>'cause' = 'customer_reply' THEN NEW.snooze_woke_at := v_now; END IF;
     v_type := 'unsnoozed';
   ELSIF NEW.snoozed_until IS NOT NULL THEN
@@ -146,19 +167,30 @@ BEGIN
     -- Explicit resume (manual) or the cron (transaction-local flag).
     NEW.snoozed_by := OLD.snoozed_by; NEW.snoozed_at := OLD.snoozed_at;
     NEW.snooze_woke_at := OLD.snooze_woke_at;
+    NEW.snooze_note := NULL;
     IF v_wake THEN
       NEW.snooze_woke_at := v_now;
       NEW.unread_count := GREATEST(COALESCE(NEW.unread_count, 0), 1);
     END IF;
     v_type := 'unsnoozed';
-    v_payload := jsonb_build_object('cause', CASE WHEN v_wake THEN 'timer' ELSE 'manual' END,
-                                    'until', OLD.snoozed_until);
+    -- 'note' is scrubbed by the LGPD anonymisation (PII_PAYLOAD_KEYS).
+    v_payload := jsonb_strip_nulls(jsonb_build_object(
+      'cause', CASE WHEN v_wake THEN 'timer' ELSE 'manual' END,
+      'until', OLD.snoozed_until, 'note', OLD.snooze_note));
   END IF;
 
-  -- History never blocks the write (same rule as the SLA events in 072).
+  IF v_wake THEN
+    -- Cron batch: no exception block, so no subtransaction per row. A
+    -- failed insert fails the batch; the next tick retries it.
+    INSERT INTO public.conversation_events (account_id, conversation_id, actor_user_id, event_type, payload)
+    VALUES (NEW.account_id, NEW.id, NULL, v_type, v_payload);
+    RETURN NEW;
+  END IF;
+
+  -- History never blocks a user's write (same rule as the SLA events in 072).
   BEGIN
     INSERT INTO public.conversation_events (account_id, conversation_id, actor_user_id, event_type, payload)
-    VALUES (NEW.account_id, NEW.id, CASE WHEN v_wake THEN NULL ELSE v_actor END, v_type, v_payload);
+    VALUES (NEW.account_id, NEW.id, v_actor, v_type, v_payload);
   EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'conversations_snooze_guard: event skipped for %: %', NEW.id, SQLERRM;
   END;
@@ -169,22 +201,78 @@ ALTER FUNCTION public.conversations_snooze_guard() OWNER TO postgres;
 
 DROP TRIGGER IF EXISTS conversations_snooze_guard ON public.conversations;
 CREATE TRIGGER conversations_snooze_guard
-  BEFORE INSERT OR UPDATE OF snoozed_until, snoozed_by, snoozed_at, snooze_woke_at,
+  BEFORE INSERT OR UPDATE OF snoozed_until, snoozed_by, snoozed_at, snooze_woke_at, snooze_note,
                              status, assigned_agent_id, archived_at, last_customer_message_at
   ON public.conversations
   FOR EACH ROW EXECUTE FUNCTION public.conversations_snooze_guard();
 
+-- conversations_track_last_message: the 074 definition verbatim, plus the
+-- app.customer_reply flag around the customer UPDATE (read by the guard).
+CREATE OR REPLACE FUNCTION public.conversations_track_last_message()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_last_customer TIMESTAMPTZ;
+  v_first_response TIMESTAMPTZ;
+BEGIN
+  IF NEW.origin = 'csat' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.sender_type = 'customer' THEN
+    PERFORM set_config('app.customer_reply', '1', true);   -- 079
+    UPDATE conversations
+    SET last_customer_message_at = GREATEST(COALESCE(last_customer_message_at, NEW.created_at), NEW.created_at)
+    WHERE id = NEW.conversation_id;
+    PERFORM set_config('app.customer_reply', '', true);    -- 079
+  ELSIF NEW.sender_type IN ('agent', 'bot') THEN
+    SELECT last_customer_message_at, first_response_at
+      INTO v_last_customer, v_first_response
+    FROM conversations
+    WHERE id = NEW.conversation_id;
+
+    -- Greeting / away message from the WhatsApp Business app (059).
+    IF NEW.origin = 'phone'
+       AND NOT public.phone_echo_counts_as_reply(NEW.created_at, v_last_customer) THEN
+      RETURN NEW;
+    END IF;
+
+    UPDATE conversations
+    SET last_agent_message_at = GREATEST(COALESCE(last_agent_message_at, NEW.created_at), NEW.created_at)
+    WHERE id = NEW.conversation_id;
+
+    -- First reply: the customer has written, nobody answered yet, and
+    -- this message comes after (or at) the customer's message.
+    IF v_first_response IS NULL
+       AND v_last_customer IS NOT NULL
+       AND NEW.created_at >= v_last_customer THEN
+      UPDATE conversations
+      SET first_response_at      = NEW.created_at,
+          first_response_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NEW.created_at - v_last_customer)))::INTEGER),
+          first_response_by      = NEW.sender_id
+      WHERE id = NEW.conversation_id
+        AND first_response_at IS NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+ALTER FUNCTION public.conversations_track_last_message() OWNER TO postgres;
+
 -- ---- 4. wake the due ones (cron, service role only) ----------------------
+-- p_limit defaults to 50 (clamped to 1..2000).
 CREATE OR REPLACE FUNCTION public.conversation_snooze_wake_due(
   p_now   timestamptz DEFAULT clock_timestamp(),
-  p_limit integer     DEFAULT 500
+  p_limit integer     DEFAULT 50
 ) RETURNS TABLE (
   conversation_id   uuid,
   account_id        uuid,
   contact_id        uuid,
   assigned_agent_id uuid,
   snoozed_by        uuid,   -- push target when nobody is assigned
-  snooze_note       text
+  snooze_note       text    -- the note before waking (the guard clears the column)
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -194,15 +282,19 @@ AS $$
 BEGIN
   PERFORM set_config('app.snooze_wake', '1', true);
   RETURN QUERY
+  WITH due AS (
+    SELECT x.id, x.snooze_note FROM public.conversations x
+     WHERE x.snoozed_until <= p_now
+     ORDER BY x.snoozed_until
+     LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 50), 2000))
+     FOR UPDATE SKIP LOCKED
+  )
   UPDATE public.conversations c
      SET snoozed_until = NULL
-   WHERE c.id IN (SELECT x.id FROM public.conversations x
-                   WHERE x.snoozed_until <= p_now
-                   ORDER BY x.snoozed_until
-                   LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 500), 2000))
-                   FOR UPDATE SKIP LOCKED)
+    FROM due
+   WHERE c.id = due.id
      AND c.snoozed_until <= p_now   -- re-check after the lock
-  RETURNING c.id, c.account_id, c.contact_id, c.assigned_agent_id, c.snoozed_by, c.snooze_note;
+  RETURNING c.id, c.account_id, c.contact_id, c.assigned_agent_id, c.snoozed_by, due.snooze_note;
   PERFORM set_config('app.snooze_wake', '', true);
 END;
 $$;
@@ -426,6 +518,7 @@ ALTER FUNCTION public.inbox_counts(uuid, text, boolean, text, integer, integer, 
 
 -- ---- 6. grants (076: functions are born closed; be explicit) -------------
 REVOKE ALL ON FUNCTION public.conversations_snooze_guard() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.conversations_track_last_message() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.conversation_snooze_wake_due(timestamptz, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.conversation_snooze_wake_due(timestamptz, integer) TO service_role;
 REVOKE ALL ON FUNCTION public.inbox_conversation_page(uuid, text, text, boolean, text, integer, integer, text, integer, timestamptz, uuid, integer, uuid[], text, uuid, text, boolean, uuid) FROM PUBLIC, anon;
@@ -456,6 +549,7 @@ BEGIN
   END LOOP;
   FOREACH f IN ARRAY ARRAY[
     'public.conversations_snooze_guard()',
+    'public.conversations_track_last_message()',
     'public.conversation_snooze_wake_due(timestamptz, integer)'
   ] LOOP
     IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('public', f, 'EXECUTE')
