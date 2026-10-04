@@ -17,7 +17,7 @@ vi.mock('@/lib/conversations/assign', () => ({
   updateConversationAssignee: (...a: unknown[]) => updateConversationAssignee(...a),
 }))
 
-import { claimRow, setRowStatus } from './row-actions'
+import { claimRow, setRowSnooze, setRowStatus } from './row-actions'
 
 const actor = { accountId: 'acc', userId: 'me', name: 'Ana' }
 const conv = (over: Record<string, unknown> = {}) => ({
@@ -119,5 +119,50 @@ describe('claimRow', () => {
     updateConversationAssignee.mockResolvedValue({ status: 'failed', error: 'x' })
     const { db } = fakeDb()
     expect(await claimRow(db, conv(), actor)).toEqual({ status: 'failed' })
+  })
+})
+
+describe('setRowSnooze (079)', () => {
+  function snoozeDb(result: { data: unknown; error: { code?: string; message: string } | null }) {
+    const calls: { patch: unknown; id: unknown }[] = []
+    const db = {
+      from: () => ({
+        update: (patch: unknown) => ({
+          eq: (_c: string, id: unknown) => ({
+            select: () => ({
+              maybeSingle: async () => {
+                calls.push({ patch, id })
+                return result
+              },
+            }),
+          }),
+        }),
+      }),
+    } as unknown as SupabaseClient
+    return { db, calls }
+  }
+
+  it('writes snoozed_until and the trimmed note, nothing else, no event of its own', async () => {
+    const row = { snoozed_until: 'T', snoozed_at: 'N', snoozed_by: 'me', snooze_note: 'x', snooze_woke_at: null, unread_count: 0 }
+    const { db, calls } = snoozeDb({ data: row, error: null })
+    await expect(setRowSnooze(db, 'c1', 'T', '  boleto  ')).resolves.toEqual({ status: 'ok', row })
+    expect(calls).toEqual([{ patch: { snoozed_until: 'T', snooze_note: 'boleto' }, id: 'c1' }])
+    expect(insertConversationEvent).not.toHaveBeenCalled()
+  })
+
+  it('waking always sends snooze_note: null', async () => {
+    const { db, calls } = snoozeDb({ data: { snoozed_until: null }, error: null })
+    await setRowSnooze(db, 'c1', null, 'ignored')
+    expect(calls[0].patch).toEqual({ snoozed_until: null, snooze_note: null })
+  })
+
+  it('maps the guard errors and an RLS no-op', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    for (const [code, error] of [['22023', 'out_of_range'], ['23514', 'not_live'], ['42501', 'failed']] as const) {
+      const { db } = snoozeDb({ data: null, error: { code, message: 'x' } })
+      await expect(setRowSnooze(db, 'c1', 'T', null)).resolves.toEqual({ status: 'failed', error })
+    }
+    const { db } = snoozeDb({ data: null, error: null })
+    await expect(setRowSnooze(db, 'c1', 'T', null)).resolves.toEqual({ status: 'failed', error: 'failed' })
   })
 })

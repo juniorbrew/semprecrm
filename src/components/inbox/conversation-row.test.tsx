@@ -107,7 +107,29 @@ describe("ConversationItem row", () => {
     // No button nested inside the row button (invalid HTML, breaks clicks).
     const rowButton = html.slice(html.indexOf("<button"), html.indexOf("</button>"))
     expect(rowButton.match(/<button/g)).toHaveLength(1)
-    expect(html).not.toMatch(/Adiar|snooze/i)
+    // Adiar (079): same popover as the header, icon-only with its label.
+    expect(html).toContain('aria-label="Adiar conversa com Marina Souza"')
+    expect(html).toContain('data-action="snooze"')
+  })
+
+  it("Adiar only on live, unarchived rows; Adiadas rows show Volta / Sem dono", () => {
+    expect(render(conv({ status: "closed" }))).not.toContain('data-action="snooze"')
+    expect(render(conv({ archived_at: "2026-09-30T10:00:00Z" }))).not.toContain('data-action="snooze"')
+    const parked = render(conv({ snoozed_until: "2026-10-05T12:00:00Z", snooze_note: "boleto" }), {
+      age: "Volta amanhã 09:00",
+      snoozeNote: "boleto",
+      unownedLabel: "Sem dono",
+    })
+    expect(parked).toContain("Volta amanhã 09:00")
+    expect(parked).toContain('title="boleto"')
+    expect(parked).toContain("Sem dono")
+  })
+
+  it("Voltou do adiar marker with the wake note", () => {
+    const html = render(conv({ unread_count: 1 }), { wokeLabel: "Voltou do adiar", wokeNote: "ligar 15h" })
+    expect(html).toContain('data-testid="snooze-woke"')
+    expect(html).toContain('title="ligar 15h"')
+    expect(render(conv())).not.toContain("snooze-woke")
   })
 
   it("closed rows offer Reabrir and no Assumir; mine rows no Assumir; viewers nothing", () => {

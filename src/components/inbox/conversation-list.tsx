@@ -28,7 +28,6 @@ import {
   classifyConversation,
   formatWaitingAge,
   isRadarKey,
-  matchesRadar,
   RADAR_KEYS,
   type RadarKey,
 } from "@/lib/radar/classify";
@@ -56,6 +55,7 @@ import {
   EMPTY_COUNTS,
   INBOX_PAGE_SIZE,
   INBOX_RESYNC_MAX,
+  matchesRadarInTab,
   mergePage,
   pageArgs,
   parseCounts,
@@ -75,6 +75,7 @@ import {
   type ShortcutAction,
 } from "@/lib/inbox/shortcuts";
 import { findConversationById } from "@/lib/conversations/find-by-contact";
+import { formatSnoozeWhen, INBOX_SNOOZED_EVENT, showsSnoozeWokeMarker } from "@/lib/inbox/snooze";
 import {
   Search,
   ChevronDown,
@@ -91,6 +92,7 @@ import {
   RotateCcw,
   Rows4,
   UserPlus,
+  Hourglass,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -102,6 +104,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContactAvatar, avatarInitial } from "./contact-avatar";
 import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filters";
+import { ConversationSnooze } from "./conversation-snooze";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -130,6 +133,8 @@ interface ConversationListProps {
   /** Local patches after a row quick action (Resolver / Reabrir / Assumir). */
   onStatusChange?: (conversationId: string, status: ConversationStatus) => void;
   onAssignChange?: (conversationId: string, assignedAgentId: string | null) => void;
+  /** Local patch after a row snooze / its Desfazer (migration 079). */
+  onConversationPatch?: (conversationId: string, patch: Partial<Conversation>) => void;
   /** Clears the selection ("e" resolved the last row of the list). */
   onDeselect?: () => void;
 }
@@ -232,6 +237,12 @@ const STRIP_COPY: Record<
     };
     compact: string;
     noMessages: string;
+    /** Adiadas (migration 079). */
+    snoozedEmpty: string;
+    snoozedEmptyHint: string;
+    backAt: (when: string) => string;
+    noOwner: string;
+    woke: string;
   }
 > = {
   "pt-BR": {
@@ -240,6 +251,7 @@ const STRIP_COPY: Record<
       queue: "Fila",
       mine: "Minhas",
       all: "Todas",
+      snoozed: "Adiadas",
       closed: "Encerradas",
       archived: "Arquivadas",
     },
@@ -289,6 +301,11 @@ const STRIP_COPY: Record<
     },
     compact: "Lista compacta",
     noMessages: "Sem mensagens",
+    snoozedEmpty: "Nenhuma conversa adiada",
+    snoozedEmptyHint: "Use Adiar (H) para tirar uma conversa da frente até a hora certa.",
+    backAt: (when) => `Volta ${when}`,
+    noOwner: "Sem dono",
+    woke: "Voltou do adiar",
   },
   "en-US": {
     title: "Conversations",
@@ -296,6 +313,7 @@ const STRIP_COPY: Record<
       queue: "Queue",
       mine: "Mine",
       all: "All",
+      snoozed: "Snoozed",
       closed: "Closed",
       archived: "Archived",
     },
@@ -345,6 +363,11 @@ const STRIP_COPY: Record<
     },
     compact: "Compact list",
     noMessages: "No messages yet",
+    snoozedEmpty: "No snoozed conversations",
+    snoozedEmptyHint: "Use Snooze (H) to park a conversation until the right time.",
+    backAt: (when) => `Back ${when}`,
+    noOwner: "No owner",
+    woke: "Back from snooze",
   },
 };
 
@@ -411,6 +434,7 @@ export function ConversationList({
   onShowShortcuts,
   onStatusChange,
   onAssignChange,
+  onConversationPatch,
   onDeselect,
 }: ConversationListProps) {
   const { user, profile, preferences, accountId, accountRole } = useAuth();
@@ -974,7 +998,7 @@ export function ConversationList({
       // already fixes the status (never closed; "unassigned" is open
       // only), and this keeps the list in step with the chip / dashboard
       // counts when someone deep-links from the card.
-      result = result.filter((c) => matchesRadar(c, radar, preferences, now));
+      result = result.filter((c) => matchesRadarInTab(c, radar, tab, preferences, now));
     }
     if (unreadOnly) {
       result = result.filter((c) => c.unread_count > 0);
@@ -996,7 +1020,7 @@ export function ConversationList({
       result = result.filter((c) => isSlaBreached(c, now));
     }
     return result;
-  }, [conversations, unreadOnly, radar, channel, validCategoryId, priorityFilter, validTeamId, slaBreached, preferences, now]);
+  }, [conversations, unreadOnly, radar, tab, channel, validCategoryId, priorityFilter, validTeamId, slaBreached, preferences, now]);
 
   const liveFilterDisabled = !!radar || (tab !== "mine" && tab !== "all");
 
@@ -1227,6 +1251,27 @@ export function ConversationList({
     return () => window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
   }, []);
 
+  // A conversation was snoozed (header, row, "h", palette): when it was the
+  // open one and it leaves this view, open the next row like "e" does — or
+  // clear the selection. Adiadas keeps a re-snoozed row, so nothing moves.
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  });
+  useEffect(() => {
+    const onSnoozed = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      const st = shortcutRef.current;
+      if (!id || id !== st.activeConversationId || tabRef.current === "snoozed") return;
+      const nextId = nextAfterResolve(st.ordered.map((c) => c.id), id);
+      const next = nextId ? st.ordered.find((c) => c.id === nextId) : undefined;
+      if (next) st.handleSelect(next);
+      else st.onDeselect?.();
+    };
+    window.addEventListener(INBOX_SNOOZED_EVENT, onSnoozed);
+    return () => window.removeEventListener(INBOX_SNOOZED_EVENT, onSnoozed);
+  }, []);
+
   // Team members, for the owner badge on rows (RLS scopes them to the account).
   const [owners, setOwners] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
@@ -1252,6 +1297,36 @@ export function ConversationList({
     };
   }, [accountId]);
   const showOwner = useMemo(() => showOwnerBadge(tab, filtered), [tab, filtered]);
+
+  // "Voltou do adiar" tooltip: the note of each marked row's last wake
+  // (the guard moves it into the `unsnoozed` event), one query for all.
+  const wokeIdsKey = useMemo(
+    () => conversations.filter(showsSnoozeWokeMarker).map((c) => c.id).sort().join(","),
+    [conversations],
+  );
+  const [wokeNotes, setWokeNotes] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    if (!wokeIdsKey) return;
+    let cancelled = false;
+    createClient()
+      .from("conversation_events")
+      .select("conversation_id, payload")
+      .in("conversation_id", wokeIdsKey.split(","))
+      .eq("event_type", "unsnoozed")
+      .order("created_at", { ascending: false })
+      .limit(200)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        const next = new Map<string, string>();
+        for (const row of data as { conversation_id: string; payload: { note?: string } | null }[]) {
+          if (!next.has(row.conversation_id)) next.set(row.conversation_id, row.payload?.note ?? "");
+        }
+        setWokeNotes(next);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wokeIdsKey]);
 
   const anyFilter =
     unreadOnly || !!radar || validTagIds.length > 0 || !!channel || !!validCategoryId || !!priorityFilter || !!validTeamId || slaBreached;
@@ -1548,7 +1623,12 @@ export function ConversationList({
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
         ) : filtered.length === 0 ? (
-          tab === "queue" && !search.trim() ? (
+          tab === "snoozed" && !search.trim() && !anyFilter ? (
+            <div className="px-4 py-12 text-center" data-no-translate>
+              <p className="text-sm text-muted-foreground">{copy.snoozedEmpty}</p>
+              <p className="mt-1 text-xs text-muted-foreground/80">{copy.snoozedEmptyHint}</p>
+            </div>
+          ) : tab === "queue" && !search.trim() ? (
             <div className="px-4 py-12 text-center" data-no-translate>
               <p className="text-sm text-muted-foreground">{copy.queueEmpty}</p>
               <p className="mt-1 text-xs text-muted-foreground/80">{copy.queueEmptyHint}</p>
@@ -1591,8 +1671,16 @@ export function ConversationList({
                       : null
                   }
                   ownerTitle={copy.ownerTitle}
+                  unownedLabel={tab === "snoozed" && !conv.assigned_agent_id ? copy.noOwner : null}
                   onSelect={handleSelect}
-                  age={formatAge(conv.last_message_at, language, now)}
+                  age={
+                    conv.snoozed_until
+                      ? copy.backAt(formatSnoozeWhen(new Date(conv.snoozed_until), language, now))
+                      : formatAge(conv.last_message_at, language, now)
+                  }
+                  snoozeNote={conv.snoozed_until ? (conv.snooze_note ?? null) : null}
+                  wokeLabel={showsSnoozeWokeMarker(conv) ? copy.woke : null}
+                  wokeNote={wokeNotes.get(conv.id) || null}
                   tags={tagsByContact.get(conv.contact_id) ?? EMPTY_TAGS}
                   companyName={companyByContact.get(conv.contact_id) ?? null}
                   category={conv.category_id ? (categoryById.get(conv.category_id) ?? null) : null}
@@ -1609,6 +1697,7 @@ export function ConversationList({
                   quick={canWrite ? copy.quick : null}
                   canClaim={!!userId && conv.assigned_agent_id !== userId}
                   onQuickAction={handleQuickAction}
+                  onPatch={onConversationPatch}
                 />
               ));
               if (!group.band) return rows;
@@ -1701,8 +1790,16 @@ export interface ConversationItemProps {
   /** Assigned agent's name when the owner badge is shown for this row. */
   ownerName: string | null;
   ownerTitle: (name: string) => string;
+  /** Adiadas: "Sem dono" in place of the owner badge. */
+  unownedLabel?: string | null;
   onSelect: (conversation: Conversation) => void;
+  /** Last-message age, or "Volta amanhã 09:00" while snoozed. */
   age: string;
+  /** Snoozed: the note, as the "Volta…" tooltip. */
+  snoozeNote?: string | null;
+  /** "Voltou do adiar" marker (lib/inbox/snooze) and its wake note. */
+  wokeLabel?: string | null;
+  wokeNote?: string | null;
   tags: RowTag[];
   /** Primary company (nome fantasia, else razão social), if any. */
   companyName: string | null;
@@ -1727,6 +1824,8 @@ export interface ConversationItemProps {
   /** "Assumir" applies (not already mine). */
   canClaim?: boolean;
   onQuickAction?: (conversation: Conversation, action: QuickAction) => Promise<void>;
+  /** Row snooze (079): local patch after the write / its Desfazer. */
+  onPatch?: (conversationId: string, patch: Partial<Conversation>) => void;
 }
 
 const QUICK_BUTTON =
@@ -1743,8 +1842,12 @@ export const ConversationItem = memo(function ConversationItem({
   isCursor,
   ownerName,
   ownerTitle,
+  unownedLabel = null,
   onSelect,
   age,
+  snoozeNote = null,
+  wokeLabel = null,
+  wokeNote = null,
   tags,
   companyName,
   category,
@@ -1761,6 +1864,7 @@ export const ConversationItem = memo(function ConversationItem({
   quick = null,
   canClaim = false,
   onQuickAction,
+  onPatch,
 }: ConversationItemProps) {
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
@@ -1784,6 +1888,9 @@ export const ConversationItem = memo(function ConversationItem({
   }, [onSelect, conversation]);
 
   const [busy, setBusy] = useState(false);
+  // The snooze popover lives in a portal: keep the toolbar (its anchor)
+  // shown while it is open, or Radix/Base UI would re-anchor at 0,0.
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
   const run = useCallback(
     async (action: QuickAction) => {
       if (!onQuickAction) return;
@@ -1894,8 +2001,19 @@ export const ConversationItem = memo(function ConversationItem({
                 {avatarInitial(ownerName)}
               </span>
             )}
+            {unownedLabel && (
+              <span
+                data-no-translate
+                data-testid="owner-none"
+                className="shrink-0 text-[11px] leading-[18px] text-muted-foreground"
+              >
+                {unownedLabel}
+              </span>
+            )}
             <span
               data-no-translate
+              data-testid={conversation.snoozed_until ? "snooze-back-at" : undefined}
+              title={snoozeNote ?? undefined}
               className={cn(
                 "shrink-0 text-[11px] leading-[18px] tabular-nums",
                 isUnread ? "font-medium text-primary" : "text-muted-foreground"
@@ -1931,6 +2049,16 @@ export const ConversationItem = memo(function ConversationItem({
               className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[11px] leading-4 text-muted-foreground"
             >
               {sla && <SlaPill kind={sla.kind} dueAt={sla.dueAt} warnAt={sla.warnAt} />}
+              {wokeLabel && (
+                <span
+                  data-testid="snooze-woke"
+                  title={wokeNote ?? undefined}
+                  className="inline-flex shrink-0 items-center gap-1 font-medium text-foreground"
+                >
+                  <Hourglass className="h-3 w-3" aria-hidden />
+                  {wokeLabel}
+                </span>
+              )}
               {waitingLabel && !queue && (
                 <span
                   title={waitingTitle}
@@ -2014,7 +2142,10 @@ export const ConversationItem = memo(function ConversationItem({
           aria-label={quick.toolbar(displayName)}
           data-no-translate
           data-testid="row-quick-actions"
-          className="absolute right-2.5 top-1.5 z-[1] hidden gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-sm group-focus-within/row:flex group-hover/row:flex"
+          className={cn(
+            "absolute right-2.5 top-1.5 z-[1] gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-sm group-focus-within/row:flex group-hover/row:flex",
+            snoozeOpen ? "flex" : "hidden",
+          )}
         >
           <button
             type="button"
@@ -2039,6 +2170,16 @@ export const ConversationItem = memo(function ConversationItem({
             >
               <UserPlus className="size-3.5" aria-hidden />
             </button>
+          )}
+          {!closed && !conversation.archived_at && (
+            <ConversationSnooze
+              variant="row"
+              conversation={conversation}
+              contactName={displayName}
+              disabled={busy}
+              onOpenChange={setSnoozeOpen}
+              onPatch={onPatch}
+            />
           )}
         </div>
       )}

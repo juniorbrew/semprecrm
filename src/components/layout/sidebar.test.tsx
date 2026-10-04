@@ -118,6 +118,7 @@ describe("isNavActive / activeInboxShortcut", () => {
     expect(activeInboxShortcut(summary({ radar: "waiting" }))).toBe("slaRisk");
     expect(activeInboxShortcut(summary({ radar: "cooling" }))).toBeNull();
     expect(activeInboxShortcut(summary({ tab: "closed" }))).toBeNull();
+    expect(activeInboxShortcut(summary({ tab: "snoozed" }))).toBe("snoozed");
   });
 
   it("links every shortcut to an existing inbox view", () => {
@@ -126,6 +127,7 @@ describe("isNavActive / activeInboxShortcut", () => {
       "/inbox?tab=all",
       "/inbox?tab=all&radar=unassigned",
       "/inbox?tab=all&radar=waiting",
+      "/inbox?tab=snoozed",
     ]);
   });
 });

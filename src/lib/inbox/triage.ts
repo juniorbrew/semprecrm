@@ -3,14 +3,15 @@
  * conversations (open + pending); resolved ones move to Encerradas and
  * archived ones (migration 056) to Arquivadas, so a just-resolved thread
  * leaves the working lists instead of lingering behind a status chip.
+ * Snoozed ones (migration 079) live only in Adiadas until they wake.
  */
 import type { ConversationPriority, ConversationStatus, WhatsAppChannel } from '@/types'
 
-export type InboxTab = 'queue' | 'mine' | 'all' | 'closed' | 'archived'
+export type InboxTab = 'queue' | 'mine' | 'all' | 'snoozed' | 'closed' | 'archived'
 /** Narrows the live tabs (Minhas / Todas) only. */
 export type LiveFilter = 'live' | 'open' | 'pending'
 
-export const INBOX_TABS: InboxTab[] = ['queue', 'mine', 'all', 'closed', 'archived']
+export const INBOX_TABS: InboxTab[] = ['queue', 'mine', 'all', 'snoozed', 'closed', 'archived']
 export const LIVE_FILTERS: LiveFilter[] = ['live', 'open', 'pending']
 
 type Row = {
@@ -18,10 +19,23 @@ type Row = {
   archived_at?: string | null
   assigned_agent_id?: string | null
   last_message_at?: string | null
+  snoozed_until?: string | null
 }
 
+/** Live = open / pending, not archived, not snoozed (the Fila / Minhas / Todas pool). */
 export function isLive(c: Row): boolean {
-  return !c.archived_at && (c.status === 'open' || c.status === 'pending')
+  return !c.archived_at && !c.snoozed_until && (c.status === 'open' || c.status === 'pending')
+}
+
+/** Adiadas: snoozed (always live by the DB's CHECK), next to wake first. */
+export function isSnoozedTab(c: Row): boolean {
+  return !!c.snoozed_until && !c.archived_at
+}
+
+export function snoozedConversations<T extends Row>(list: T[]): T[] {
+  return list
+    .filter(isSnoozedTab)
+    .sort((a, b) => Date.parse(a.snoozed_until ?? '') - Date.parse(b.snoozed_until ?? ''))
 }
 
 export function matchesLiveFilter(c: Row, filter: LiveFilter): boolean {
@@ -52,6 +66,7 @@ export function tabConversations<T extends Row>(
   tab: Exclude<InboxTab, 'queue'>,
   opts: { live: LiveFilter; userId: string | null },
 ): T[] {
+  if (tab === 'snoozed') return snoozedConversations(list)
   if (tab === 'closed') return closedConversations(list)
   if (tab === 'archived') return list.filter(isArchivedTab)
   const live = list.filter((c) => matchesLiveFilter(c, opts.live))
@@ -67,20 +82,23 @@ export function tabCounts<T extends Row>(
   let all = 0
   let closed = 0
   let archived = 0
+  let snoozed = 0
   for (const c of list) {
+    if (isSnoozedTab(c)) snoozed += 1
     if (isArchivedTab(c)) archived += 1
     else if (isClosedTab(c)) closed += 1
     if (!matchesLiveFilter(c, opts.live)) continue
     all += 1
     if (opts.userId && c.assigned_agent_id === opts.userId) mine += 1
   }
-  return { queue: opts.queueLength, mine, all, closed, archived }
+  return { queue: opts.queueLength, mine, all, snoozed, closed, archived }
 }
 
 /** The tab a conversation lives in when it is not live (deep links). */
 export function tabForConversation(c: Row): InboxTab | null {
   if (isArchivedTab(c)) return 'archived'
   if (isClosedTab(c)) return 'closed'
+  if (isSnoozedTab(c)) return 'snoozed'
   return null
 }
 

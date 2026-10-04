@@ -33,6 +33,7 @@ export type InboxRow = Pick<
   | 'last_agent_message_at'
   | 'archived_at'
   | 'unread_count'
+  | 'snoozed_until'
 >
 
 /** What the list reports upward so realtime rows can be merged correctly. */
@@ -131,6 +132,7 @@ export function cursorFor(tab: InboxTab, last: InboxRow): ListCursor {
   if (tab === 'queue') {
     return { grp: queueGroup(last), ts: last.last_customer_message_at ?? '', id: last.id }
   }
+  if (tab === 'snoozed') return { grp: null, ts: last.snoozed_until ?? '', id: last.id }
   return { grp: null, ts: last.last_message_at ?? last.created_at, id: last.id }
 }
 
@@ -187,7 +189,7 @@ export interface InboxCounts {
 }
 
 export const EMPTY_COUNTS: InboxCounts = {
-  tabs: { queue: 0, mine: 0, all: 0, closed: 0, archived: 0 },
+  tabs: { queue: 0, mine: 0, all: 0, snoozed: 0, closed: 0, archived: 0 },
   radar: { waiting: 0, unassigned: 0, cooling: 0 },
   slaBreached: 0,
 }
@@ -204,6 +206,7 @@ export function parseCounts(row: Record<string, unknown> | null | undefined): In
       queue: n('queue_count'),
       mine: n('mine_count'),
       all: n('all_count'),
+      snoozed: n('snoozed_count'),
       closed: n('closed_count'),
       archived: n('archived_count'),
     },
@@ -223,6 +226,14 @@ export function compareForTab(tab: InboxTab): (a: InboxRow, b: InboxRow) => numb
       const g = queueGroup(a) - queueGroup(b)
       if (g !== 0) return g
       const t = ms(a.last_customer_message_at) - ms(b.last_customer_message_at)
+      if (t !== 0) return t
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    }
+  }
+  if (tab === 'snoozed') {
+    // Next to wake first; ties on id (the RPC's ORDER BY snoozed_until, id).
+    return (a, b) => {
+      const t = ms(a.snoozed_until) - ms(b.snoozed_until)
       if (t !== 0) return t
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
     }
@@ -249,6 +260,21 @@ export function mergePage<T extends { id: string }>(current: readonly T[], page:
   return out
 }
 
+/**
+ * Radar bucket as the page RPC applies it: snoozed rows are in no bucket
+ * (live tabs, chips), except on Adiadas, where `inbox_radar_match` judges
+ * them by their messages like any other row.
+ */
+export function matchesRadarInTab(
+  c: Conversation,
+  radar: RadarKey,
+  tab: InboxTab,
+  prefs: RadarPreferences,
+  now: number,
+): boolean {
+  return matchesRadar(tab === 'snoozed' ? { ...c, snoozed_until: null } : c, radar, prefs, now)
+}
+
 interface MatchCtx {
   userId: string | null
   prefs: RadarPreferences
@@ -262,7 +288,7 @@ export function matchesView(c: Conversation, view: InboxView, ctx: MatchCtx): bo
   if (view.priority && (c.priority ?? 'normal') !== view.priority) return false
   if (view.teamId && (c.team_id ?? null) !== view.teamId) return false
   if (view.slaBreached && !isSlaBreached(c, ctx.now)) return false
-  if (view.radar && !matchesRadar(c, view.radar, ctx.prefs, ctx.now)) return false
+  if (view.radar && !matchesRadarInTab(c, view.radar, view.tab, ctx.prefs, ctx.now)) return false
   if (view.unread && !(c.unread_count > 0)) return false
   if (view.tab === 'queue') return isInQueue(c, ctx.prefs, ctx.now)
   return tabConversations([c], view.tab, { live: view.live, userId: ctx.userId }).length === 1
@@ -293,14 +319,15 @@ export function shouldInsertUnknown(
 
 /**
  * Owner badge on list rows: hidden on Minhas (everything is mine), always
- * on Todas, and elsewhere only when the rows really have different owners.
+ * on Todas and Adiadas (the whole team's snoozed ones), and elsewhere only
+ * when the rows really have different owners.
  */
 export function showOwnerBadge(
   tab: InboxTab,
   rows: readonly { assigned_agent_id?: string | null }[],
 ): boolean {
   if (tab === 'mine') return false
-  if (tab === 'all') return true
+  if (tab === 'all' || tab === 'snoozed') return true
   const owners = new Set<string>()
   for (const r of rows) {
     if (r.assigned_agent_id) owners.add(r.assigned_agent_id)

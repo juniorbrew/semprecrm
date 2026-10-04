@@ -141,6 +141,7 @@ export const DICT_INBOX: Record<string, string> = {
   'Search conversations': 'Buscar conversas',
   'Leave the field': 'Sair do campo',
   'Resolve and open the next one': 'Resolver e abrir a próxima',
+  'Snooze conversation': 'Adiar conversa',
   'Search or run a command': 'Buscar ou executar um comando',
   'Shortcuts pause while you type in a field or a dialog is open.':
     'Os atalhos ficam pausados enquanto você digita em um campo ou há uma janela aberta.',

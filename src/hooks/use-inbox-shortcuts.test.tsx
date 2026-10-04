@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { INBOX_SHORTCUT_EVENT } from "@/lib/inbox/shortcuts";
 import { useInboxShortcuts } from "./use-inbox-shortcuts";
 
-function Inbox({ canResolve = true, canClaim = true, quickDisabled = false }) {
-  useInboxShortcuts({ hasActive: true, canClaim, canResolve }, () => {});
+function Inbox({ canResolve = true, canClaim = true, quickDisabled = false, canSnooze = false }) {
+  useInboxShortcuts({ hasActive: true, canClaim, canResolve, canSnooze }, () => {});
   return (
     <div>
       <input data-inbox-search aria-label="busca" />
@@ -32,6 +32,21 @@ afterEach(() => {
 });
 
 describe("useInboxShortcuts", () => {
+  it("h dispatches snooze for agents only, never from the composer", () => {
+    render(<Inbox canSnooze />);
+    const d = dispatched();
+    fireEvent.keyDown(document.body, { key: "h" });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "resposta" }), { key: "h" });
+    d.stop();
+    expect(d.seen).toEqual(["snooze"]);
+    cleanup();
+    render(<Inbox />);
+    const v = dispatched();
+    fireEvent.keyDown(document.body, { key: "h" });
+    v.stop();
+    expect(v.seen).toEqual([]);
+  });
+
   it("e resolves, Shift+A claims, j / k move — from the page body", () => {
     render(<Inbox />);
     const d = dispatched();

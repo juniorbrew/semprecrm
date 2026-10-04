@@ -12,6 +12,7 @@ import {
   Clock,
   DollarSign,
   Flag,
+  Hourglass,
   Send,
   Star,
   Timer,
@@ -63,6 +64,9 @@ function EventIcon({ event }: { event: ConversationEvent }) {
       return <Send className={cls} />;
     case "csat_answered":
       return <Star className={cls} />;
+    case "snoozed":
+    case "unsnoozed":
+      return <Hourglass className={cls} />;
     case "contact_opted_out":
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":

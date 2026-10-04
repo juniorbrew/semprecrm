@@ -88,6 +88,7 @@ import {
   reopenBlockedBy,
 } from "@/lib/conversations/find-by-contact";
 import { ConversationReminder } from "./conversation-reminder";
+import { ConversationSnooze } from "./conversation-snooze";
 import { MessageBubble } from "./message-bubble";
 import { senderLabelFor } from "./sender-label";
 import { MessageActions } from "./message-actions";
@@ -2102,6 +2103,18 @@ export function MessageThread({
               contactId={contact.id}
               contactName={displayName}
               disabled={!actions.remind.enabled}
+            />
+          )}
+
+          {/* Adiar — snooze until a chosen time (migration 079); "h". */}
+          {actions.snooze.visible && (
+            <ConversationSnooze
+              key={`snooze-${conversation.id}`}
+              conversation={conversation}
+              contactName={displayName}
+              disabled={!actions.snooze.enabled}
+              listenShortcut
+              onPatch={onConversationPatch}
             />
           )}
 

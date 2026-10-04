@@ -14,6 +14,7 @@ type Conv = {
   archived_at?: string | null
   assigned_agent_id?: string
   last_message_at?: string
+  snoozed_until?: string | null
 }
 
 const conv = (id: string, over: Partial<Conv> = {}): Conv => ({
@@ -81,6 +82,22 @@ describe('tabForConversation', () => {
     expect(tabForConversation(conv('x', { status: 'closed' }))).toBe('closed')
     expect(tabForConversation(conv('x', { status: 'closed', archived_at: 'x' }))).toBe('archived')
     expect(tabForConversation(conv('x', { status: 'pending' }))).toBeNull()
+    expect(tabForConversation(conv('x', { status: 'pending', snoozed_until: '2026-10-05T09:00:00Z' }))).toBe('snoozed')
+  })
+})
+
+describe('snoozed (079)', () => {
+  const later = conv('later', { assigned_agent_id: 'u1', snoozed_until: '2026-10-06T09:00:00Z' })
+  const sooner = conv('sooner', { status: 'pending', snoozed_until: '2026-10-05T09:00:00Z' })
+  const rows = [...list, later, sooner]
+  it('leave Minhas / Todas and live only in Adiadas, next to wake first', () => {
+    expect(ids(tabConversations(rows, 'all', { live: 'live', userId: 'u1' }))).not.toContain('later')
+    expect(ids(tabConversations(rows, 'mine', { live: 'live', userId: 'u1' }))).not.toContain('later')
+    expect(ids(tabConversations(rows, 'snoozed', { live: 'open', userId: 'u1' }))).toEqual(['sooner', 'later'])
+    expect(tabCounts(rows, { live: 'live', userId: 'u1', queueLength: 0 }).snoozed).toBe(2)
+  })
+  it('the persisted tab survives a reload', () => {
+    expect(migrateTriage({ tab: 'snoozed', live: 'live' }).tab).toBe('snoozed')
   })
 })
 
