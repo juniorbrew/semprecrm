@@ -51,6 +51,7 @@ beforeEach(() => {
   result = { data: null, error: null };
 });
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
 });
@@ -66,6 +67,9 @@ describe("ConversationSnooze", () => {
     const moved: string[] = [];
     const onMoved = (e: Event) => moved.push((e as CustomEvent<string>).detail);
     window.addEventListener(INBOX_SNOOZED_EVENT, onMoved);
+    // A Wednesday 10:00 (local): every preset is offered.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 7, 10, 0));
     render(<ConversationSnooze conversation={conv()} contactName="Ana" disabled={false} onPatch={onPatch} />);
     await openPopover();
     expect(screen.getByText("Daqui a 1 hora")).toBeTruthy();
@@ -79,6 +83,7 @@ describe("ConversationSnooze", () => {
     fireEvent.click(screen.getByText("Amanhã às 9h"));
     await waitFor(() => expect(onPatch).toHaveBeenCalledWith("c1", snoozedRow("T")));
     window.removeEventListener(INBOX_SNOOZED_EVENT, onMoved);
+    vi.useRealTimers();
 
     const patch = updates[0] as { snoozed_until: string; snooze_note: string };
     expect(patch.snooze_note).toBe("boleto");
