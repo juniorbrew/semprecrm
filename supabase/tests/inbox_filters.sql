@@ -5,6 +5,9 @@
 -- transaction (067 must already be applied):
 --   (echo "BEGIN;"; cat supabase/migrations/068_inbox_filters.sql supabase/tests/inbox_filters.sql) \
 --     | docker exec -i supabase_db_semprecrm psql -v ON_ERROR_STOP=1 -U postgres -d postgres
+-- Base version matters: on a newer DB, run the test file alone (no `cat`
+-- of old migrations) — re-applying them creates inbox_counts /
+-- inbox_conversation_page overloads (PGRST203 "function is not unique").
 -- ============================================================
 \set ON_ERROR_STOP on
 CREATE FUNCTION pg_temp.assert_eq(actual bigint, expected bigint, label text) RETURNS void LANGUAGE plpgsql AS $$
