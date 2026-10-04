@@ -38,6 +38,7 @@ function chain(result: unknown) {
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc, from }) }));
 
 import { CommandPalette } from "./command-palette";
+import { INBOX_SHORTCUT_EVENT } from "@/lib/inbox/shortcuts";
 
 function Harness() {
   const [open, setOpen] = useState(false);
@@ -108,6 +109,26 @@ describe("CommandPalette", () => {
     expect(labels).not.toContain("Relatórios"); // owner / admin only
     // Not on /inbox with a resolvable conversation: no "Resolver".
     expect(labels.some((l) => l?.startsWith("Resolver"))).toBe(false);
+    expect(labels.some((l) => l?.startsWith("Adiar"))).toBe(false);
+  });
+
+  it("Adiar conversa atual… only on /inbox with a snoozable conversation; runs the h shortcut", async () => {
+    const seen: string[] = [];
+    const onShortcut = (e: Event) => seen.push((e as CustomEvent<string>).detail);
+    window.addEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+    pathname = "/inbox";
+    const marker = document.createElement("div");
+    marker.setAttribute("data-inbox-snoozable", "true");
+    document.body.appendChild(marker);
+    render(<Harness />);
+    act(() => void ctrlK());
+    await waitFor(() => expect(input()).toBeTruthy());
+    const option = screen.getAllByRole("option").find((o) => o.textContent?.startsWith("Adiar conversa atual"));
+    expect(option?.textContent).toContain("H");
+    fireEvent.click(option!);
+    await waitFor(() => expect(seen).toEqual(["snooze"]));
+    window.removeEventListener(INBOX_SHORTCUT_EVENT, onShortcut);
+    marker.remove();
   });
 
   it("viewers get no Nova tarefa; owners see Relatórios", async () => {

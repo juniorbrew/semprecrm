@@ -63,3 +63,15 @@ describe('conversationHeaderActions — visibility', () => {
     expect(a.remind).toEqual({ visible: false, enabled: false })
   })
 })
+
+describe('conversationHeaderActions — Adiar (079)', () => {
+  it('live, unarchived threads only; viewers disabled', () => {
+    const agent = (conversation: Parameters<typeof conversationHeaderActions>[0]['conversation']) =>
+      conversationHeaderActions({ role: 'agent', userId: 'u1', conversation, tasksEnabled: false }).snooze
+    expect(agent(open)).toEqual({ visible: true, enabled: true })
+    expect(agent({ ...open, status: 'pending' })).toEqual({ visible: true, enabled: true })
+    expect(agent({ ...open, status: 'closed' }).visible).toBe(false)
+    expect(agent({ ...open, archived_at: '2026-10-01T00:00:00Z' }).visible).toBe(false)
+    expect(conversationHeaderActions({ role: 'viewer', userId: 'u1', conversation: open, tasksEnabled: false }).snooze).toEqual({ visible: true, enabled: false })
+  })
+})

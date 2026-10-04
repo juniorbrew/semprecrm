@@ -247,7 +247,7 @@ export function ConversationSnooze({
     ? copy.readOnly
     : variant === "row"
       ? copy.rowAria(contactName)
-      : (activeLabel ?? copy.snooze);
+      : (activeLabel ?? copy.title);
   const presets = open ? availableSnoozePresets(openedAt) : [];
   const sla = activeSlaTarget(conversation);
   const errorId = `${ids}-error`;

@@ -1,8 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { classifyTarget, nextAfterResolve, paletteKey, readShortcutsEnabled, redirectForPendingCursor, resolveShortcut, stepIndex, writeShortcutsEnabled, SHORTCUTS_ENABLED_KEY, type ShortcutContext, type ShortcutKeyEvent } from './shortcuts'
+import { classifyTarget, nextAfterResolve, paletteKey, readShortcutsEnabled, redirectForPendingCursor, resolveShortcut, stepIndex, writeShortcutsEnabled, SHORTCUTS_ENABLED_KEY, SHORTCUT_HELP, type ShortcutContext, type ShortcutKeyEvent } from './shortcuts'
 
 const ctx: ShortcutContext = { overlayOpen: false, hasActive: true, canClaim: true, canResolve: true }
 const key = (k: string, over: Partial<ShortcutKeyEvent> = {}): ShortcutKeyEvent => ({ key: k, target: 'other', ...over })
+
+describe('resolveShortcut — h (Adiar, 079)', () => {
+  const can = { ...ctx, canSnooze: true }
+  it('bare h opens the snooze popover when the header allows it', () => {
+    expect(resolveShortcut(key('h'), can)).toBe('snooze')
+    expect(resolveShortcut(key('h'), ctx)).toBeNull() // viewer / resolved: canSnooze false
+    expect(resolveShortcut(key('h'), { ...can, hasActive: false })).toBeNull()
+  })
+  it('never with Shift / modifiers, while typing, over an overlay or on repeat', () => {
+    expect(resolveShortcut(key('H', { shiftKey: true }), can)).toBeNull()
+    expect(resolveShortcut(key('h', { ctrlKey: true }), can)).toBeNull()
+    expect(resolveShortcut(key('h', { altKey: true }), can)).toBeNull()
+    expect(resolveShortcut(key('h', { target: 'typing' }), can)).toBeNull()
+    expect(resolveShortcut(key('h'), { ...can, overlayOpen: true })).toBeNull()
+    expect(resolveShortcut(key('h', { repeat: true }), can)).toBeNull()
+  })
+  it('opens the highlighted row first when the cursor is elsewhere; listed in the help', () => {
+    expect(redirectForPendingCursor('snooze', true)).toBe('open')
+    expect(redirectForPendingCursor('snooze', false)).toBe('snooze')
+    expect(SHORTCUT_HELP.some((r) => r.keys.join() === 'h' && r.label === 'Snooze conversation')).toBe(true)
+  })
+})
 
 describe('resolveShortcut', () => {
   it('maps the documented keys', () => {
