@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useState } from 'react';
 import { MessageTemplate } from '@/types';
+import type { AudienceConfig } from '@/lib/broadcasts/audience';
+import { useAudienceEstimate } from '@/hooks/use-audience-estimate';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -18,13 +19,7 @@ import { ArrowLeft, Send, Loader2, Save } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { useLanguage } from '@/hooks/use-language';
 import { templateLanguageLabel } from './template-language-label';
-import { SECTION_TITLE, StepFooter, StepHeader } from './wizard-ui';
-
-interface AudienceConfig {
-  type: string;
-  tagIds?: string[];
-  csvContacts?: { phone: string; name?: string }[];
-}
+import { AudienceBreakdownLine, SECTION_TITLE, StepFooter, StepHeader } from './wizard-ui';
 
 interface Step4Props {
   name: string;
@@ -51,40 +46,11 @@ export function Step4ScheduleSend({
 }: Step4Props) {
   const { t, language } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
-  const [estimatedReach, setEstimatedReach] = useState<number>(0);
-  const [loadingReach, setLoadingReach] = useState(true);
-
-  useEffect(() => {
-    async function calculateReach() {
-      setLoadingReach(true);
-      try {
-        const supabase = createClient();
-
-        if (audience.type === 'all') {
-          const { count } = await supabase
-            .from('contacts')
-            .select('*', { count: 'exact', head: true });
-          setEstimatedReach(count ?? 0);
-        } else if (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) {
-          const { data: contactTags } = await supabase
-            .from('contact_tags')
-            .select('contact_id')
-            .in('tag_id', audience.tagIds);
-
-          const uniqueIds = new Set((contactTags ?? []).map((ct) => ct.contact_id));
-          setEstimatedReach(uniqueIds.size);
-        } else if (audience.type === 'csv' && audience.csvContacts) {
-          setEstimatedReach(audience.csvContacts.length);
-        } else {
-          setEstimatedReach(0);
-        }
-      } finally {
-        setLoadingReach(false);
-      }
-    }
-
-    calculateReach();
-  }, [audience]);
+  // Same estimate as step 2 and the same rules the send applies.
+  const { estimate, loading: loadingReach } = useAudienceEstimate(audience);
+  const reach = `${estimate && !estimate.suppressionChecked ? `${t('up to')} ` : ''}${(
+    estimate?.breakdown.eligible ?? 0
+  ).toLocaleString(language)}`;
 
   const audienceLabel =
     audience.type === 'all'
@@ -103,7 +69,7 @@ export function Step4ScheduleSend({
       value: loadingReach ? (
         <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label={t('Calculating…')} />
       ) : (
-        <span className="font-semibold tabular-nums">{estimatedReach.toLocaleString(language)}</span>
+        <span className="font-semibold tabular-nums">{reach}</span>
       ),
     },
     { label: t('Language'), value: templateLanguageLabel(template.language, language), noTranslate: true },
@@ -137,6 +103,7 @@ export function Step4ScheduleSend({
             </div>
           ))}
         </dl>
+        {estimate && <AudienceBreakdownLine estimate={estimate} t={t} language={language} />}
       </section>
 
       {/* Send progress — a thin line, not a box */}
@@ -194,9 +161,7 @@ export function Step4ScheduleSend({
                 <DialogTitle className="text-popover-foreground">{t('Confirm broadcast')}</DialogTitle>
                 <DialogDescription className="text-muted-foreground">
                   {t('You are about to send this broadcast to')}{' '}
-                  <span className="font-medium text-popover-foreground">
-                    {estimatedReach.toLocaleString(language)}
-                  </span>{' '}
+                  <span className="font-medium text-popover-foreground">{reach}</span>{' '}
                   {t('contacts using the template')}{' '}
                   <span className="font-medium text-popover-foreground">{template.name}</span>.{' '}
                   {t('This action cannot be undone.')}

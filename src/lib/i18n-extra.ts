@@ -1649,8 +1649,15 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Opted-out contacts': 'Descadastrados',
   'Asked to stop receiving messages': 'Pediu para não receber mensagens',
   'No opted-out contacts.': 'Nenhum contato descadastrado.',
-  'opted-out contact excluded': 'contato descadastrado excluído',
-  'opted-out contacts excluded': 'contatos descadastrados excluídos',
+  // Broadcast wizard — audience breakdown (AudienceBreakdownLine)
+  'selected contacts': 'selecionados',
+  'excluded by tag': 'excluídos por etiqueta',
+  'opted out': 'descadastrados',
+  'without a valid phone': 'sem telefone válido',
+  'repeated numbers': 'números repetidos',
+  'on the suppression list': 'na lista de supressão',
+  'suppression list not checked': 'lista de supressão não verificada',
+  'up to': 'até',
   // Round 2 §1 — Team metrics (dashboard "Equipe")
   Team: 'Equipe',
   'Per-member activity in the period': 'Atividade por membro no período',
