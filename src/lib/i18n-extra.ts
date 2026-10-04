@@ -1649,8 +1649,25 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Opted-out contacts': 'Descadastrados',
   'Asked to stop receiving messages': 'Pediu para não receber mensagens',
   'No opted-out contacts.': 'Nenhum contato descadastrado.',
-  'opted-out contact excluded': 'contato descadastrado excluído',
-  'opted-out contacts excluded': 'contatos descadastrados excluídos',
+  // Broadcast wizard — audience breakdown (AudienceBreakdownLine)
+  'selected contact': 'selecionado',
+  'selected contacts': 'selecionados',
+  'contact excluded by tag': 'excluído por etiqueta',
+  'contacts excluded by tag': 'excluídos por etiqueta',
+  'contact opted out': 'descadastrado',
+  'contacts opted out': 'descadastrados',
+  'without a valid phone': 'sem telefone válido',
+  'repeated number': 'número repetido',
+  'repeated numbers': 'números repetidos',
+  'on the suppression list': 'na lista de supressão',
+  'suppression list not checked': 'lista de supressão não verificada',
+  'up to': 'até',
+  'Only the first 1,000 contacts of this audience will be included.':
+    'Só os primeiros 1.000 contatos deste público serão incluídos.',
+  'Could not calculate the reach. Try again.':
+    'Não foi possível calcular o alcance. Tente de novo.',
+  'Could not load the audience. Nothing was sent.':
+    'Não foi possível carregar o público. Nada foi enviado.',
   // Round 2 §1 — Team metrics (dashboard "Equipe")
   Team: 'Equipe',
   'Per-member activity in the period': 'Atividade por membro no período',

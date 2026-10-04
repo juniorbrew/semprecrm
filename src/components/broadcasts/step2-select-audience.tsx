@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { parseBroadcastCsv } from '@/lib/broadcast-csv';
+import type { AudienceConfig, CustomFieldFilter, CustomFieldOperator } from '@/lib/broadcasts/audience';
+import { useAudienceEstimate } from '@/hooks/use-audience-estimate';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -18,24 +20,9 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import { cn } from '@/lib/utils';
-import { SECTION_TITLE, StepFooter, StepHeader, optionRowClass, pillClass } from './wizard-ui';
+import { AudienceBreakdownLine, SECTION_TITLE, StepFooter, StepHeader, optionRowClass, pillClass } from './wizard-ui';
 
-type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
-type CustomFieldOperator = 'is' | 'is_not' | 'contains';
-
-interface CustomFieldFilter {
-  fieldId: string;
-  operator: CustomFieldOperator;
-  value: string;
-}
-
-interface AudienceConfig {
-  type: AudienceType;
-  tagIds?: string[];
-  customField?: CustomFieldFilter;
-  csvContacts?: { phone: string; name?: string }[];
-  excludeTagIds?: string[];
-}
+type AudienceType = AudienceConfig['type'];
 
 interface Step2Props {
   audience: AudienceConfig;
@@ -94,10 +81,6 @@ export function Step2SelectAudience({
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
   const [loadingFields, setLoadingFields] = useState(false);
-  const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
-  const [loadingCount, setLoadingCount] = useState(false);
-  /** Contacts dropped from the estimate because they opted out (migration 030). */
-  const [excludedOptedOut, setExcludedOptedOut] = useState(0);
   // The picked file's name, shown back to the user. The parsed rows
   // themselves live on `audience.csvContacts` (owned by the wizard) so
   // they survive stepping forward and back.
@@ -144,105 +127,8 @@ export function Step2SelectAudience({
     fetchFields();
   }, [audience.type]);
 
-  const fetchEstimatedCount = useCallback(async () => {
-    setLoadingCount(true);
-    try {
-      const supabase = createClient();
-
-      // Base query — produces the superset before exclude is applied.
-      let baseIds: Set<string> | null = null; // null means "all contacts"
-      setExcludedOptedOut(0);
-
-      if (audience.type === 'all') {
-        // Handled below — full-table count adjusted by excludes.
-      } else if (
-        audience.type === 'tags' &&
-        audience.tagIds &&
-        audience.tagIds.length > 0
-      ) {
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.tagIds);
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
-      } else if (
-        audience.type === 'custom_field' &&
-        audience.customField?.fieldId &&
-        audience.customField.value
-      ) {
-        const { fieldId, operator, value } = audience.customField;
-        let q = supabase
-          .from('contact_custom_values')
-          .select('contact_id')
-          .eq('custom_field_id', fieldId);
-        if (operator === 'is') q = q.eq('value', value);
-        else if (operator === 'is_not') q = q.neq('value', value);
-        else q = q.ilike('value', `%${value}%`);
-        const { data } = await q;
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
-      } else if (
-        audience.type === 'csv' &&
-        audience.csvContacts &&
-        audience.csvContacts.length > 0
-      ) {
-        setEstimatedCount(audience.csvContacts.length);
-        return;
-      } else {
-        // Partially-configured audience — wait for the user to finish.
-        setEstimatedCount(null);
-        return;
-      }
-
-      // Apply exclude tags
-      let excludeSet: Set<string> | null = null;
-      if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-        const { data: excludeRows } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.excludeTagIds);
-        excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
-      }
-
-      // Opted-out contacts never receive broadcasts (migration 030) —
-      // drop them from the estimate and tell the user how many.
-      const { data: optedOutRows } = await supabase
-        .from('contacts')
-        .select('id')
-        .not('opted_out_at', 'is', null);
-      const optedOutIds = new Set((optedOutRows ?? []).map((r) => r.id as string));
-
-      if (baseIds) {
-        const afterTags = [...baseIds].filter((id) => !excludeSet?.has(id));
-        const effective = afterTags.filter((id) => !optedOutIds.has(id));
-        setExcludedOptedOut(afterTags.length - effective.length);
-        setEstimatedCount(effective.length);
-      } else {
-        // "All contacts" — fetch the total, then subtract exclude set if any.
-        const { count } = await supabase
-          .from('contacts')
-          .select('*', { count: 'exact', head: true });
-        const total = count ?? 0;
-        // Opted-out contacts that are also tag-excluded must not be
-        // subtracted twice.
-        const optedOutNotTagExcluded = [...optedOutIds].filter((id) => !excludeSet?.has(id)).length;
-        setExcludedOptedOut(optedOutNotTagExcluded);
-        const afterTags = excludeSet ? Math.max(0, total - excludeSet.size) : total;
-        setEstimatedCount(Math.max(0, afterTags - optedOutNotTagExcluded));
-      }
-    } finally {
-      setLoadingCount(false);
-    }
-  }, [
-    audience.type,
-    audience.tagIds,
-    audience.customField,
-    audience.csvContacts,
-    audience.excludeTagIds,
-  ]);
-
-  useEffect(() => {
-    fetchEstimatedCount();
-  }, [fetchEstimatedCount]);
+  // Same estimate as step 4 and the same rules the send applies.
+  const { estimate, loading: loadingCount, failed: estimateFailed } = useAudienceEstimate(audience);
 
   /**
    * "Importar CSV" had no picker at all (wacrm #512): selecting it
@@ -495,19 +381,20 @@ export function Step2SelectAudience({
             <Loader2 className="size-3.5 animate-spin" aria-hidden />
             {t('Calculating…')}
           </p>
-        ) : estimatedCount !== null ? (
-          <p className="text-sm text-muted-foreground">
-            <span className="text-base font-semibold tabular-nums text-foreground">
-              {estimatedCount.toLocaleString(language)}
-            </span>{' '}
-            {t('estimated recipients')}
-            {excludedOptedOut > 0 && (
-              <span className="text-xs">
-                {' '}
-                · {excludedOptedOut}{' '}
-                {t(excludedOptedOut === 1 ? 'opted-out contact excluded' : 'opted-out contacts excluded')}
-              </span>
-            )}
+        ) : estimate ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {!estimate.suppressionChecked && `${t('up to')} `}
+              <span className="text-base font-semibold tabular-nums text-foreground">
+                {estimate.breakdown.eligible.toLocaleString(language)}
+              </span>{' '}
+              {t('estimated recipients')}
+            </p>
+            <AudienceBreakdownLine estimate={estimate} t={t} language={language} />
+          </>
+        ) : estimateFailed ? (
+          <p role="alert" className="text-xs text-destructive">
+            {t('Could not calculate the reach. Try again.')}
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">{t('Select an audience type to see the estimate.')}</p>

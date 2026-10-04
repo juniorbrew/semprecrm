@@ -11,26 +11,17 @@ import { headerMediaMessageParams } from '@/lib/broadcast-header-media';
 import { releaseDeliveryLock } from '@/lib/broadcast-delivery-lock';
 import { abandonUnstartedBroadcast } from '@/lib/broadcast-abandon';
 import { normalizeKey } from '@/lib/contacts/dedupe';
+import {
+  buildAudience,
+  fetchAudienceContacts,
+  fetchExcludedIds,
+  type AudienceConfig,
+} from '@/lib/broadcasts/audience';
 import { toast } from 'sonner';
 import { useLanguage } from '@/hooks/use-language';
 import { Contact, MessageTemplate } from '@/types';
 
-export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
-
-export interface CustomFieldFilter {
-  fieldId: string;
-  operator: CustomFieldOperator;
-  value: string;
-}
-
-export interface AudienceConfig {
-  type: 'all' | 'tags' | 'custom_field' | 'csv';
-  tagIds?: string[];
-  customField?: CustomFieldFilter;
-  csvContacts?: { phone: string; name?: string }[];
-  /** Contacts carrying any of these tags are subtracted from the result. */
-  excludeTagIds?: string[];
-}
+export type { AudienceConfig, CustomFieldFilter, CustomFieldOperator } from '@/lib/broadcasts/audience';
 
 /**
  * Variable mapping — each template placeholder (by key, usually "1",
@@ -176,62 +167,24 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  /**
+   * The recipients of `buildAudience` — the same definition the wizard's
+   * estimate uses: excluded tags (also for CSV contacts that already
+   * exist) and opted-out / anonymised contacts (migration 030) never get
+   * a broadcast_recipients row. The send route re-checks opt-out and the
+   * suppression list by number as a second line of defence.
+   */
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
     const supabase = createClient();
-
-    let contacts: Contact[] = [];
-
-    if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
-      if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-      contacts = data ?? [];
-    } else if (
-      audience.type === 'tags' &&
-      audience.tagIds &&
-      audience.tagIds.length > 0
-    ) {
-      const { data: contactTags, error: tagError } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.tagIds);
-
-      if (tagError)
-        throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
-
-      if (contactTags && contactTags.length > 0) {
-        const uniqueContactIds = [
-          ...new Set(contactTags.map((ct) => ct.contact_id)),
-        ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .in('id', uniqueContactIds);
-        if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
-      }
-    } else if (audience.type === 'custom_field' && audience.customField) {
-      contacts = await resolveCustomFieldAudience(supabase, audience.customField);
-    } else if (audience.type === 'csv' && audience.csvContacts) {
-      contacts = await upsertCsvContacts(supabase, audience.csvContacts);
-    }
-
-    // Apply exclude tags (works across all contact-derived audience
-    // types). CSV contacts are synthetic so exclusion doesn't apply.
-    if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const { data: excludeRows } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.excludeTagIds);
-      const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
-      contacts = contacts.filter((c) => !excludedIds.has(c.id));
-    }
-
-    // Opt-out (migration 030): contacts who asked to stop never make it
-    // into broadcast_recipients. The API route re-checks by phone as a
-    // second line of defence.
-    contacts = contacts.filter((c) => !c.opted_out_at);
-
-    return contacts;
+    // Exclusions first: if they can't be read, nothing is written or sent.
+    const excludedIds = await fetchExcludedIds(supabase, audience.excludeTagIds);
+    const contacts =
+      audience.type === 'csv'
+        ? audience.csvContacts
+          ? await upsertCsvContacts(supabase, audience.csvContacts)
+          : []
+        : (await fetchAudienceContacts<Contact>(supabase, audience, '*')).contacts;
+    return buildAudience(contacts, { excludedIds }).recipients;
   }
 
   /**
@@ -332,39 +285,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       .filter((c): c is Contact => Boolean(c));
   }
 
-  async function resolveCustomFieldAudience(
-    supabase: ReturnType<typeof createClient>,
-    filter: CustomFieldFilter,
-  ): Promise<Contact[]> {
-    const { fieldId, operator, value } = filter;
-
-    // Build the WHERE clause for the operator. PostgREST supports
-    // eq/neq/ilike via the query builder — use ilike with wildcards
-    // for "contains" so the match is case-insensitive.
-    let query = supabase
-      .from('contact_custom_values')
-      .select('contact_id')
-      .eq('custom_field_id', fieldId);
-
-    if (operator === 'is') query = query.eq('value', value);
-    else if (operator === 'is_not') query = query.neq('value', value);
-    else if (operator === 'contains') query = query.ilike('value', `%${value}%`);
-
-    const { data: matches, error: matchErr } = await query;
-    if (matchErr)
-      throw new Error(`Custom-field filter failed: ${matchErr.message}`);
-
-    const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
-    if (contactIds.length === 0) return [];
-
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
-  }
-
   async function createAndSendBroadcast(payload: BroadcastPayload): Promise<string> {
     setIsProcessing(true);
     setProgress(0);
@@ -395,10 +315,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 1: Resolve audience contacts ─────────────────────────
       setProgress(5);
-      const contacts = await resolveAudience(payload.audience);
+      let contacts: Contact[];
+      try {
+        contacts = await resolveAudience(payload.audience);
+      } catch (err) {
+        // The raw PostgREST detail is for the console, not the toast.
+        console.error('[broadcast] audience lookup failed:', err);
+        throw new Error(t('Could not load the audience. Nothing was sent.'));
+      }
 
       if (contacts.length === 0) {
-        throw new Error('No contacts found for this audience.');
+        throw new Error(t('No contacts found for this audience.'));
       }
 
       // ── Step 2: Create broadcast row ──────────────────────────────

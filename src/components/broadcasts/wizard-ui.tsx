@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { AudienceEstimate } from '@/lib/broadcasts/audience';
 
 /** Small muted uppercase section title — same as the inbox contact panel. */
 export const SECTION_TITLE = 'text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground';
@@ -38,6 +39,50 @@ export function StepHeader({ title, description }: { title: string; description?
 /** Footer on a hairline: secondary actions left/middle, the one filled action last. */
 export function StepFooter({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">{children}</div>;
+}
+
+/**
+ * Why the reach differs from the selection, as one quiet line
+ * ("9 selecionados · 2 excluídos por etiqueta · 1 descadastrados").
+ * Nothing when every selected contact is reached. Labels are i18n keys
+ * ([one, other]); a second line warns when the audience hit the row cap.
+ */
+export function AudienceBreakdownLine({
+  estimate,
+  t,
+  language,
+}: {
+  estimate: AudienceEstimate;
+  t: (key: string) => string;
+  language: string;
+}) {
+  const b = estimate.breakdown;
+  const plural = new Intl.PluralRules(language);
+  const differs = b.eligible !== b.selected || !estimate.suppressionChecked;
+  const parts = (
+    [
+      [b.selected, 'selected contact', 'selected contacts'],
+      [b.excludedByTag, 'contact excluded by tag', 'contacts excluded by tag'],
+      [b.optedOut, 'contact opted out', 'contacts opted out'],
+      [b.noPhone, 'without a valid phone', 'without a valid phone'],
+      [b.duplicate, 'repeated number', 'repeated numbers'],
+      [b.suppressed, 'on the suppression list', 'on the suppression list'],
+    ] as const
+  )
+    .filter(([n], i) => i === 0 || n > 0)
+    .map(([n, one, other]) => `${n.toLocaleString(language)} ${t(plural.select(n) === 'one' ? one : other)}`);
+  if (!estimate.suppressionChecked) parts.push(t('suppression list not checked'));
+  if (!differs && !estimate.capped) return null;
+  return (
+    <>
+      {differs && <p className="text-xs tabular-nums text-muted-foreground">{parts.join(' · ')}</p>}
+      {estimate.capped && (
+        <p className="text-xs text-muted-foreground">
+          {t('Only the first 1,000 contacts of this audience will be included.')}
+        </p>
+      )}
+    </>
+  );
 }
 
 export interface WizardStep {
