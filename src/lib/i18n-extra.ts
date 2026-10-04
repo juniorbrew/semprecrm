@@ -2125,6 +2125,12 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
     'Quando uma conversa atribuída a você estoura o prazo (administradores também recebem as sem responsável).',
   'first response': 'primeira resposta',
   'resolution': 'resolução',
+  // Snooze wake push (migration 079, /api/inbox/snooze/cron)
+  'Snoozed conversation is back': 'Conversa adiada voltou',
+  'When a snoozed conversation assigned to you comes back (or one you snoozed, if nobody is assigned).':
+    'Quando uma conversa adiada atribuída a você volta (ou uma que você adiou, se não houver responsável).',
+  'Back from snooze': 'Voltou do adiar',
+  'The snooze time is up.': 'O tempo de adiar terminou.',
   'Appointment in': 'Compromisso em',
   'Appointment starting now': 'Compromisso começando agora',
   'Appointment today': 'Compromisso hoje',

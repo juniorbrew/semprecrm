@@ -17,6 +17,7 @@ export const PUSH_EVENT_KINDS = [
   'chat_message',
   'calendar_reminder',
   'sla_breached',
+  'snooze_woke',
 ] as const;
 export type PushEventKind = (typeof PUSH_EVENT_KINDS)[number];
 
@@ -30,6 +31,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   chat_message: true,
   calendar_reminder: true,
   sla_breached: true,
+  snooze_woke: true,
 };
 
 /** English labels — go through `t()` in the UI. */
@@ -61,6 +63,10 @@ export const PUSH_EVENT_LABELS: Record<PushEventKind, { title: string; descripti
   sla_breached: {
     title: 'Deadline missed',
     description: 'When a conversation assigned to you misses its deadline (admins also get the unassigned ones).',
+  },
+  snooze_woke: {
+    title: 'Snoozed conversation is back',
+    description: 'When a snoozed conversation assigned to you comes back (or one you snoozed, if nobody is assigned).',
   },
 };
 

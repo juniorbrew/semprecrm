@@ -10,7 +10,8 @@ const sendSpy = vi.hoisted(() => vi.fn(async () => ({ users: 0, sent: 0, failed:
 vi.mock('./send', async (importOriginal) => ({ ...(await importOriginal<typeof import('./send')>()), sendPushToUsers: sendSpy }))
 
 import { makeFakeDb } from '@/lib/ai/fake-db.test-helper'
-import { assignedPushBody, chatPushBody, inboundPushBody, notifyAccountAdmins } from './notify'
+import { _resetFocusForTests, setConversationFocus } from './focus'
+import { assignedPushBody, chatPushBody, inboundPushBody, notifyAccountAdmins, notifySnoozeWoke, pushLine } from './notify'
 
 describe('notifyAccountAdmins (security / spend notices)', () => {
   it('pushes to every owner and admin of the account, whatever their notification prefs', async () => {
@@ -72,5 +73,72 @@ describe('assignedPushBody (transfer push)', () => {
     expect(assignedPushBody('Maria', 'Ana')).toBe('Maria · por Ana')
     expect(assignedPushBody('Maria', 'Ana', '   ')).toBe('Maria · por Ana')
     expect(assignedPushBody('M', null, 'x'.repeat(500))).toBe('M — ' + 'x'.repeat(200))
+  })
+})
+
+describe('notifySnoozeWoke (snooze wake push)', () => {
+  const profiles = () => [
+    { user_id: 'ag', account_id: 'acc', account_role: 'agent', notification_prefs: {} },
+    { user_id: 'sn', account_id: 'acc', account_role: 'agent', notification_prefs: {} },
+    { user_id: 'vw', account_id: 'acc', account_role: 'viewer', notification_prefs: {} },
+    { user_id: 'off', account_id: 'acc', account_role: 'agent', notification_prefs: { snooze_woke: false } },
+    { user_id: 'x', account_id: 'other', account_role: 'owner', notification_prefs: {} },
+  ]
+  const db = () =>
+    makeFakeDb({
+      profiles: profiles(),
+      contacts: [{ id: 'ct', account_id: 'acc', name: 'Maria‮\u0007 Silva', phone: '+5511999990000' }],
+    })
+  const base = { accountId: 'acc', conversationId: 'cv', contactId: 'ct', snoozeNote: null }
+
+  it('goes to the assignee only, with the contact name (no phone), deep link and per-conversation tag', async () => {
+    _resetFocusForTests()
+    const d = db()
+    await notifySnoozeWoke(d as never, { ...base, assigneeUserId: 'ag', snoozedBy: 'sn', snoozeNote: 'ligar\n de novo' })
+    expect(sendSpy).toHaveBeenCalledTimes(1)
+    expect(sendSpy).toHaveBeenCalledWith(d, ['ag'], {
+      title: 'Voltou do adiar: Maria Silva',
+      body: 'ligar de novo',
+      url: '/inbox?c=cv',
+      tag: 'conversation:cv',
+    })
+    expect(JSON.stringify(sendSpy.mock.calls)).not.toContain('99999')
+  })
+
+  it('unassigned → whoever snoozed it (if still agent+); neither → nobody', async () => {
+    _resetFocusForTests()
+    await notifySnoozeWoke(db() as never, { ...base, assigneeUserId: null, snoozedBy: 'sn' })
+    expect((sendSpy.mock.calls[0] as unknown[])[1]).toEqual(['sn'])
+    expect((sendSpy.mock.calls[0] as unknown[])[2]).toMatchObject({ body: 'O tempo de adiar terminou.' })
+    sendSpy.mockClear()
+    await notifySnoozeWoke(db() as never, { ...base, assigneeUserId: null, snoozedBy: 'vw' })
+    await notifySnoozeWoke(db() as never, { ...base, assigneeUserId: null, snoozedBy: null })
+    await notifySnoozeWoke(db() as never, { ...base, assigneeUserId: null, snoozedBy: 'x' })
+    expect(sendSpy).not.toHaveBeenCalled()
+  })
+
+  it('honours the snooze_woke opt-out and skips a user focused on the conversation', async () => {
+    _resetFocusForTests()
+    await notifySnoozeWoke(db() as never, { ...base, assigneeUserId: 'off', snoozedBy: null })
+    setConversationFocus('ag', 'cv')
+    await notifySnoozeWoke(db() as never, { ...base, assigneeUserId: 'ag', snoozedBy: null })
+    expect(sendSpy).not.toHaveBeenCalled()
+    _resetFocusForTests()
+  })
+
+  it('falls back to "Conversa" without a contact name and never throws', async () => {
+    _resetFocusForTests()
+    await notifySnoozeWoke(db() as never, { ...base, contactId: null, assigneeUserId: 'ag', snoozedBy: null })
+    expect((sendSpy.mock.calls[0] as unknown[])[2]).toMatchObject({ title: 'Voltou do adiar: Conversa' })
+    const broken = { from: () => { throw new Error('db down') } }
+    await expect(
+      notifySnoozeWoke(broken as never, { ...base, assigneeUserId: 'ag', snoozedBy: null }),
+    ).resolves.toMatchObject({ sent: 0 })
+  })
+
+  it('pushLine strips control / bidi characters and clamps', () => {
+    expect(pushLine('a\u0000b‏ c', 80)).toBe('a b c')
+    expect(pushLine('x'.repeat(200), 80)).toBe('x'.repeat(79) + '…')
+    expect(pushLine(null, 80)).toBe('')
   })
 })
