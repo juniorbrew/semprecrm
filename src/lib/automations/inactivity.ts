@@ -153,6 +153,8 @@ async function scanOne(
       .eq('account_id', automation.account_id)
       .in('status', cfg.statuses)
       .not('last_message_at', 'is', null)
+      // A snoozed conversation was parked on purpose: no follow-up nudge (079).
+      .is('snoozed_until', null)
       .lte('last_message_at', cutoff)
       .order('last_message_at', { ascending: true })
       .range(from, from + INACTIVITY_BATCH_SIZE - 1)

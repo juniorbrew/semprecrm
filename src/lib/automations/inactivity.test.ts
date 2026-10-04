@@ -75,6 +75,10 @@ function makeDb() {
         if (op === 'is' && v === null) filters.push((r) => r[k] !== null && r[k] !== undefined)
         return b
       },
+      is: (k: string, v: unknown) => {
+        if (v === null) filters.push((r) => r[k] === null || r[k] === undefined)
+        return b
+      },
       lte: (k: string, v: string) => (filters.push((r) => String(r[k]) <= v), b),
       order: (k: string) => ((orderKey = k), b),
       range: (from: number, to: number) => ((range = [from, to]), b),
@@ -105,6 +109,7 @@ function conv(
     last_message_at: string | null
     last_customer_message_at: string | null
     last_agent_message_at: string | null
+    snoozed_until: string | null
   }> = {},
 ) {
   return {
@@ -190,6 +195,7 @@ describe('scanInactiveConversations', () => {
         last_agent_message_at: null,
       }),
       conv('pending-ok', { status: 'pending' }),
+      conv('snoozed', { snoozed_until: '2026-09-14T09:00:00Z' }),
     ]
 
     const res = await scanInactiveConversations(makeDb(), NOW)
