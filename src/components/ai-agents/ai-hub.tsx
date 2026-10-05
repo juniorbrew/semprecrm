@@ -63,7 +63,7 @@ export const AI_HUB_GROUPS: HubGroup[] = [
       { title: "Aviso no WhatsApp", description: "Receber no WhatsApp quando o assistente abrir um caso.", icon: Send },
       { title: "Propostas", description: "Melhorias que a IA sugere, esperando a sua decisão.", icon: Lightbulb },
       { title: "Execuções", description: "O que a IA fez e, quando falhou, o que aconteceu.", icon: ListChecks },
-      { title: "Uso e orçamento", description: "Quanto a IA consumiu e qual é o teto de gasto do mês.", icon: Gauge },
+      { title: "Uso e orçamento", description: "Quanto a IA consumiu e qual é o teto de gasto do mês.", icon: Gauge, href: "/ai/uso" },
     ],
   },
 ];
