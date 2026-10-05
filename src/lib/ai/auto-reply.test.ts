@@ -167,12 +167,14 @@ describe('parseAutoReplyOutput', () => {
       handoff: false,
       reason: '',
       customerWants: null,
+      rawActions: [],
     });
     expect(parseAutoReplyOutput('```json\n{"reply":null,"handoff":true,"reason":"sem info","customer_wants":"preço"}\n```')).toEqual({
       reply: null,
       handoff: true,
       reason: 'sem info',
       customerWants: 'preço',
+      rawActions: [],
     });
     expect(parseAutoReplyOutput('Claro: {"reply":"a","handoff":false}')?.reply).toBe('a');
   });

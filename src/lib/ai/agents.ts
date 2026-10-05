@@ -18,6 +18,7 @@
 // ============================================================
 
 import { isValidModelId } from './providers';
+import { parseSkills, type SkillId } from './skills';
 import { promptName } from './suggest-reply';
 
 export const AGENT_CHANNELS = ['official', 'qr'] as const;
@@ -72,6 +73,7 @@ export const AGENT_DEFAULTS = {
   handoff_enabled: true,
   max_messages_per_turn: 3,
   max_auto_replies_per_day: 20,
+  skills: [] as SkillId[],
 };
 
 export interface AiAgent {
@@ -97,13 +99,14 @@ export interface AiAgent {
   handoff_message: string | null;
   max_messages_per_turn: number;
   max_auto_replies_per_day: number;
+  skills: SkillId[];
   created_at: string;
   updated_at?: string;
 }
 
 // One literal (not a concatenation) so supabase-js can type the select.
 export const AGENT_COLUMNS =
-  'id, name, description, instructions, tone, model, knowledge_enabled, is_default, enabled, channels, tag_ids, mode, paused_at, business_hours, ignore_groups, split_messages, max_chars_per_message, handoff_enabled, handoff_keywords, handoff_message, max_messages_per_turn, max_auto_replies_per_day, created_at, updated_at';
+  'id, name, description, instructions, tone, model, knowledge_enabled, is_default, enabled, channels, tag_ids, mode, paused_at, business_hours, ignore_groups, split_messages, max_chars_per_message, handoff_enabled, handoff_keywords, handoff_message, max_messages_per_turn, max_auto_replies_per_day, skills, created_at, updated_at';
 
 export const AGENT_ERRORS = {
   body: 'Body must be a JSON object',
@@ -126,6 +129,7 @@ export const AGENT_ERRORS = {
   maxReplies: 'The automatic replies per conversation per day must be between 1 and 200.',
   handoffKeywords: 'Up to 20 hand-over words, each up to 60 characters.',
   handoffMessage: 'The hand-over message must be at most 500 characters.',
+  skills: 'The skills must be a list of known skills.',
 } as const;
 
 const FLAGS = ['knowledge_enabled', 'is_default', 'enabled', 'ignore_groups', 'split_messages', 'handoff_enabled'] as const;
@@ -149,6 +153,7 @@ export type AgentWrite = Partial<
     | 'handoff_message'
     | 'max_messages_per_turn'
     | 'max_auto_replies_per_day'
+    | 'skills'
   >
 >;
 
@@ -299,6 +304,11 @@ export function parseAgentInput(
     const v = optionalText(b.handoff_message, AGENT_LIMITS.handoffMessageMaxChars);
     if (!v.ok) return { ok: false, error: AGENT_ERRORS.handoffMessage };
     w.handoff_message = v.value;
+  }
+  if ('skills' in b) {
+    const v = parseSkills(b.skills);
+    if (!v) return { ok: false, error: AGENT_ERRORS.skills };
+    w.skills = v;
   }
   return { ok: true, write: w };
 }

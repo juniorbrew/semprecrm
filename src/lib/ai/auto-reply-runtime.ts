@@ -39,6 +39,9 @@ import { paceAutomatedQrSend } from '@/lib/automations/qr-pacing';
 import { startOfLocalDay } from '@/lib/business-hours';
 import { accountHasModule } from '@/lib/plans-server';
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send';
+import { parseActions } from './skills';
+import { executeActions } from './skills-exec';
+import { loadSkillContext, supabaseSkillGateway } from './skills-gateway';
 import { AGENT_COLUMNS, DEFAULT_HANDOFF_MESSAGE, resolveAgent, splitReply, suggestionInstructions, type AiAgent } from './agents';
 import {
   AUTO_REPLY,
@@ -481,6 +484,17 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   ]);
   const instructions = suggestionInstructions((settings as { instructions?: string | null } | null)?.instructions ?? null, agentCfg);
   const knowledge = agentCfg.knowledge_enabled ? await loadKnowledge(db, job.account_id, pending) : [];
+  const skills = agentCfg.skills ?? [];
+  const skillCtx =
+    skills.length > 0
+      ? await loadSkillContext(db, { accountId: job.account_id, contactId: contact.id }, {
+          tags: skills.includes('add_tag'),
+          stages: skills.includes('move_deal_stage'),
+        }).catch((err) => {
+          console.error('[ai/auto-reply] skill context failed:', errText(err));
+          return { tags: [] as string[], stages: [] as string[] };
+        })
+      : null;
   const { system, prompt } = buildAutoReplyPrompt({
     accountName: (account as { name?: string } | null)?.name ?? '',
     contactName: contact.name ?? null,
@@ -491,6 +505,7 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     memory,
     maxMessages: agentCfg.max_messages_per_turn,
     maxCharsPerMessage: agentCfg.max_chars_per_message,
+    skills: skillCtx ? { enabled: skills, ...skillCtx } : undefined,
   });
 
   let text: string;
@@ -544,6 +559,23 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   const unverified = unverifiedCommercialTerms(out.reply, ground, customerTexts);
   if (unverified.length > 0) {
     return fail(`A IA ia citar condição comercial ou contato que não está na base (${unverified.slice(0, 3).join(', ')})`);
+  }
+
+  // Skills: only after every guard passed, before the reply goes out. A failure
+  // is recorded per action (ai_actions) and never blocks the reply.
+  const actions = parseActions(out.rawActions, skills);
+  if (actions.length > 0) {
+    await executeActions(
+      actions,
+      supabaseSkillGateway(db, {
+        accountId: job.account_id,
+        contactId: contact.id,
+        conversationId: conv.id,
+        agentId: agentCfg.id,
+        jobId: job.id,
+        ownerUserId: (conv.user_id as string | null) ?? null,
+      }),
+    ).catch((err) => console.error('[ai/auto-reply] skills failed:', errText(err)));
   }
 
   await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0, reply_message_ids: job.inbound_message_ids });
