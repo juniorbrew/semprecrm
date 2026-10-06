@@ -4,6 +4,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { Loader2, Search, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useLanguage } from '@/hooks/use-language';
 import {
   LEAD_STATUSES,
   type LeadList,
@@ -70,6 +71,7 @@ export function PlatformLeadsTable({
   initialData: LeadList | null;
 }) {
   const [data, setData] = useState(initialData);
+  const { t } = useLanguage();
   const [draft, setDraft] = useState(emptyFilters);
   const [filters, setFilters] = useState(emptyFilters);
   const [offset, setOffset] = useState(0);
@@ -219,9 +221,10 @@ export function PlatformLeadsTable({
         <div>
           <label
             htmlFor="lead-status"
+            data-no-translate
             className="text-muted-foreground mb-1.5 block text-xs font-medium"
           >
-            Status
+            {t('Status')}
           </label>
           <select
             id="lead-status"
@@ -311,8 +314,12 @@ export function PlatformLeadsTable({
                 <tr>
                   {['Tipo', 'Nome', 'E-mail', 'Empresa', 'Status', 'Data'].map(
                     (label) => (
-                      <th key={label} className="px-3 py-3">
-                        {label}
+                      <th
+                        key={label}
+                        className="px-3 py-3"
+                        data-no-translate={label === 'Status' || undefined}
+                      >
+                        {label === 'Status' ? t(label) : label}
                       </th>
                     )
                   )}

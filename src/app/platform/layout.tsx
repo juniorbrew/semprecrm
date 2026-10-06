@@ -4,10 +4,9 @@ import { PlatformHeader } from '@/components/platform/platform-header';
 import { PlatformNavigation } from '@/components/platform/platform-navigation';
 import { getPlatformAdmin } from '@/lib/platform/server';
 
-// Platform (master) admin area. Lives outside the (dashboard) group
-// on purpose: no sidebar, no account-scoped shell — just a slim bar
-// with a way back to the app. Access is enforced per page. The gate login
-// page must render before the second factor is open.
+// The platform shell is separate from the customer's CRM. The second
+// login renders without the admin navigation; each protected page also
+// checks requirePlatformAdmin before loading company data.
 export const metadata: Metadata = {
   title: 'Plataforma',
   robots: { index: false, follow: false, nocache: true },
@@ -28,15 +27,15 @@ export default async function PlatformLayout({
   return (
     <div className="bg-background flex min-h-screen flex-col">
       <PlatformHeader />
-      <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">
-        {ctx?.gateOpen ? (
-          <PlatformNavigation initialNewCount={error ? null : (count ?? 0)}>
-            {children}
-          </PlatformNavigation>
-        ) : (
-          children
-        )}
-      </main>
+      {ctx?.gateOpen ? (
+        <PlatformNavigation initialNewCount={error ? null : (count ?? 0)}>
+          {children}
+        </PlatformNavigation>
+      ) : (
+        <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">
+          {children}
+        </main>
+      )}
     </div>
   );
 }

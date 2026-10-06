@@ -17,6 +17,7 @@ import { DICT_FLOWS } from './flows';
 import { DICT_INBOX } from './inbox';
 import { DICT_MISC } from './misc';
 import { DICT_SETTINGS } from './settings';
+import { DICT_PLATFORM } from './platform';
 
 export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_AI,
@@ -29,4 +30,5 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_INBOX,
   ...DICT_MISC,
   ...DICT_SETTINGS,
+  ...DICT_PLATFORM,
 };
