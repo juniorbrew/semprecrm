@@ -212,7 +212,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <Link
-            href="/platform"
+            href="/platform/accounts"
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="size-3.5" aria-hidden="true" />
@@ -512,7 +512,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
             <Button
               variant="outline"
               nativeButton={false}
-              render={<Link href="/platform" />}
+              render={<Link href="/platform/accounts" />}
             >
               {t("Cancel")}
             </Button>
