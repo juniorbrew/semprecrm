@@ -658,3 +658,57 @@ describe('enqueueAutoReplyIfEligible', () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe('skills (migration 080)', () => {
+  const withActions = () =>
+    JSON.stringify({
+      reply: 'Olá! Abrimos às 8h.',
+      handoff: false,
+      reason: '',
+      actions: [
+        { skill: 'internal_note', text: 'Cliente quer saber o horário' },
+        { skill: 'add_tag', tag: 'interessado' },
+      ],
+    });
+
+  beforeEach(() => {
+    db.seed('tags', [{ id: 'tg1', account_id: 'acc', name: 'Interessado' }]);
+    modelText = withActions();
+  });
+
+  it('runs the actions of an agent that has the skills on, and still replies', async () => {
+    agentRow().skills = ['internal_note', 'add_tag'];
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+    expect(sent).toEqual(['Olá! Abrimos às 8h.']);
+    expect(db.table('contact_notes')).toMatchObject([
+      { account_id: 'acc', contact_id: 'ct', user_id: 'owner', note_text: '[IA] Cliente quer saber o horário' },
+    ]);
+    expect(db.table('contact_tags')).toMatchObject([{ contact_id: 'ct', tag_id: 'tg1' }]);
+    expect(db.table('ai_actions').map((a) => [a.seq, a.skill, a.status])).toEqual([
+      [0, 'internal_note', 'ok'],
+      [1, 'add_tag', 'ok'],
+    ]);
+  });
+
+  it('ignores actions for skills that are off (the model cannot grant itself powers)', async () => {
+    agentRow().skills = ['internal_note'];
+    await runAutoReplyJob(job(), deps());
+    expect(db.table('contact_notes')).toHaveLength(1);
+    expect(db.table('contact_tags') ?? []).toHaveLength(0);
+    expect(db.table('ai_actions').map((a) => a.skill)).toEqual(['internal_note']);
+  });
+
+  it('does nothing at all for an agent without skills', async () => {
+    await runAutoReplyJob(job(), deps());
+    expect(sent).toEqual(['Olá! Abrimos às 8h.']);
+    expect(db.table('contact_notes') ?? []).toHaveLength(0);
+    expect(db.table('ai_actions') ?? []).toHaveLength(0);
+  });
+
+  it('does not run actions when the reply is handed over', async () => {
+    agentRow().skills = ['internal_note'];
+    modelText = JSON.stringify({ reply: null, handoff: true, reason: 'sem info', actions: [{ skill: 'internal_note', text: 'x' }] });
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
+    expect(db.table('contact_notes') ?? []).toHaveLength(0);
+  });
+});
