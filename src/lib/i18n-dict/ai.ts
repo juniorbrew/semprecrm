@@ -289,6 +289,7 @@ export const DICT_AI: Record<string, string> = {
     'As respostas automáticas por conversa por dia devem ficar entre 1 e 200.',
   'Up to 20 hand-over words, each up to 60 characters.': 'Até 20 palavras de transferência, cada uma com até 60 caracteres.',
   'The hand-over message must be at most 500 characters.': 'A mensagem de transferência deve ter no máximo 500 caracteres.',
+  'The skills must be a list of known skills.': 'As skills devem ser uma lista de skills conhecidas.',
   'Something went wrong. Try again.': 'Algo deu errado. Tente de novo.',
   'Assistants that suggest or send replies on WhatsApp, each with its own instructions, channels and limits.':
     'Assistentes que sugerem ou enviam respostas no WhatsApp, cada um com suas instruções, canais e limites.',
