@@ -16,5 +16,7 @@ export default async function PlatformAccountPage({
   const supabase = await requirePlatformAdmin();
   const row = await getPlatformAccount(supabase, accountId);
   if (!row) notFound();
-  return <PlatformAccountForm row={row} />;
+  return (
+    <PlatformAccountForm row={row} snapshotAt={new Date().toISOString()} />
+  );
 }
