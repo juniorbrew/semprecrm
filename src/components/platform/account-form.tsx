@@ -36,6 +36,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { PlatformAccountSummary } from "./account-summary";
+import { PlatformAccountActivity } from "./account-activity";
 import { PlanStatusChip, planStatusLabelKey } from "./plan-status-chip";
 
 // ------------------------------------------------------------
@@ -273,6 +274,7 @@ export function PlatformAccountForm({
       </div>
 
       <PlatformAccountSummary row={row} snapshotAt={snapshotAt} />
+      <PlatformAccountActivity key={snapshotAt} accountId={row.id} />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
         <div className="space-y-5">

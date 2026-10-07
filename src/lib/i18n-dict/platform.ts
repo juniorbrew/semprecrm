@@ -1,4 +1,27 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  Users: 'Usuários',
+  'Company activity': 'Dados e histórico da empresa',
+  'Registered users': 'Usuários cadastrados',
+  'Change history': 'Histórico de alterações',
+  'Refresh list': 'Atualizar lista',
+  'records loaded': 'registros carregados',
+  'Loading company activity': 'Carregando dados da empresa…',
+  'Could not load this list. Try again.':
+    'Não foi possível carregar esta lista. Tente novamente.',
+  'No users registered for this company.':
+    'Nenhum usuário cadastrado nesta empresa.',
+  'No pending invitations.': 'Nenhum convite pendente.',
+  'Invitation without a label': 'Convite sem identificação',
+  'Saved channel data. Connection status is not checked in real time.':
+    'Último estado registrado dos canais. Atualize a lista para consultar os dados salvos mais recentes.',
+  'No channels configured for this company.':
+    'Nenhum canal configurado nesta empresa.',
+  'Phone number ID': 'Identificador do número na Meta',
+  'Updated at': 'Atualizado em',
+  'No changes recorded for this company.':
+    'Nenhuma alteração registrada nesta empresa.',
+  'Changed by': 'Responsável pela alteração',
+  'Waiting for QR scan': 'Aguardando leitura do QR',
   'Company summary': 'Resumo da empresa',
   'Saved settings. Changes appear here after saving.':
     'Dados salvos. As alterações aparecem aqui depois de salvar.',

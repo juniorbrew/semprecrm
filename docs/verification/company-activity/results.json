@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "CRM-only admin remains locked, without sidebar or company data before the second login",
+    "Overview, companies and detail restricted to platform admins",
+    "Overview displays expiration/capacity alerts and refreshes",
+    "Trial/expired filters, search empty state and tablet/mobile layout",
+    "Saved company summary, expiry/access alerts, capacity overrides, draft separation, responsive layout and accessibility",
+    "Company members/invitations/channels/history isolation, secret projection, keyset pagination, draft preservation, refresh/retry, empty states and responsive accessibility",
+    "Lead status labels translate without pre-hydration DOM mutation",
+    "Company editor and existing leads page remain accessible",
+    "Light/dark accessibility audits without violations and no failed network requests",
+    "Overview on mobile without horizontal overflow or browser errors",
+    "Lock panel returns to second login while preserving CRM session"
+  ],
+  "verifiedAt": "2026-10-07T17:47:54.401Z"
+}
