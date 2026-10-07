@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { PlatformAccountSummary } from "./account-summary";
 import { PlanStatusChip, planStatusLabelKey } from "./plan-status-chip";
 
 // ------------------------------------------------------------
@@ -93,7 +94,13 @@ function initialLimits(row: PlatformAccountRow): Record<LimitKey, LimitState> {
   return out;
 }
 
-export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
+export function PlatformAccountForm({
+  row,
+  snapshotAt,
+}: {
+  row: PlatformAccountRow;
+  snapshotAt: string;
+}) {
   const router = useRouter();
   const { t, language } = useLanguage();
 
@@ -224,14 +231,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
           >
             {row.name}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground" data-no-translate>
-            {row.owner_name ? `${row.owner_name} · ` : ""}
-            {row.owner_email ?? "—"} · {Number(row.members_count)}{" "}
-            {Number(row.members_count) === 1 ? t("member") : t("members")} ·{" "}
-            {Number(row.channels_count)}{" "}
-            {Number(row.channels_count) === 1 ? t("channel") : t("channels")}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground" data-no-translate>
+          <p className="mt-1 break-all text-xs text-muted-foreground" data-no-translate>
             {t("Created")}{" "}
             {new Date(row.created_at).toLocaleDateString(language, {
               day: "2-digit",
@@ -242,7 +242,10 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <PlanStatusChip status={row.plan_status} blocked={!!resolveEntitlements(row).blocked} />
+          <PlanStatusChip
+            status={row.plan_status}
+            blocked={!!resolveEntitlements(row, new Date(snapshotAt)).blocked}
+          />
           {row.plan_status === "suspended" || isBlockedStatus ? (
             <Button
               variant="outline"
@@ -257,7 +260,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
               {t("Reactivate")}
             </Button>
           ) : (
-            <Button variant="destructive" onClick={handleSuspend} disabled={busy}>
+            <Button variant="destructive" className="text-red-700 [[data-mode=dark]_&]:text-red-300" onClick={handleSuspend} disabled={busy}>
               {quick === "suspend" ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
@@ -268,6 +271,8 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
           )}
         </div>
       </div>
+
+      <PlatformAccountSummary row={row} snapshotAt={snapshotAt} />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
         <div className="space-y-5">
@@ -325,7 +330,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
                 <div className="flex flex-wrap gap-1">
                   <button
                     type="button"
-                    className="text-xs text-primary hover:underline"
+                    className="text-xs text-primary [[data-mode=dark]_&]:text-violet-300 hover:underline"
                     onClick={() => setExpires(addDaysLocalInput(14))}
                     disabled={busy}
                   >
@@ -334,7 +339,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
                   <span className="text-xs text-muted-foreground">·</span>
                   <button
                     type="button"
-                    className="text-xs text-primary hover:underline"
+                    className="text-xs text-primary [[data-mode=dark]_&]:text-violet-300 hover:underline"
                     onClick={() => setExpires(addDaysLocalInput(30))}
                     disabled={busy}
                   >
@@ -343,7 +348,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
                   <span className="text-xs text-muted-foreground">·</span>
                   <button
                     type="button"
-                    className="text-xs text-primary hover:underline"
+                    className="text-xs text-primary [[data-mode=dark]_&]:text-violet-300 hover:underline"
                     onClick={() => setExpires("")}
                     disabled={busy}
                   >
@@ -393,7 +398,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
                         className={cn(
                           "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider",
                           effective
-                            ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                            ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 [[data-mode=dark]_&]:text-emerald-300"
                             : "border-border bg-muted text-muted-foreground",
                         )}
                       >
@@ -545,9 +550,9 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">{t("Access")}</span>
               {preview.entitlements.blocked ? (
-                <span className="font-medium text-destructive">{t("Blocked")}</span>
+                <span className="font-medium text-red-700 [[data-mode=dark]_&]:text-red-300">{t("Blocked")}</span>
               ) : (
-                <span className="font-medium text-emerald-600 dark:text-emerald-300">
+                <span className="font-medium text-emerald-700 [[data-mode=dark]_&]:text-emerald-300">
                   {t("Allowed")}
                 </span>
               )}
@@ -561,7 +566,7 @@ export function PlatformAccountForm({ row }: { row: PlatformAccountRow }) {
                     className={cn(
                       "rounded-full border px-2 py-0.5 text-xs",
                       preview.entitlements.modules[m]
-                        ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                        ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 [[data-mode=dark]_&]:text-emerald-300"
                         : "border-border bg-muted text-muted-foreground line-through",
                     )}
                   >

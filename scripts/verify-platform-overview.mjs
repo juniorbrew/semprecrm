@@ -25,7 +25,9 @@ assert.ok(
   'Set AGENT_BROWSER_BIN to the installed agent-browser executable'
 );
 const session = 'semprecrm-platform-validation';
-const out = 'docs/verification/platform-overview';
+const out =
+  process.env.PLATFORM_VERIFICATION_DIR ||
+  'docs/verification/platform-overview';
 mkdirSync(out, { recursive: true });
 const admin = createClient(
   env.SUPABASE_INTERNAL_URL,
@@ -234,7 +236,7 @@ try {
     plan: 'trial',
     plan_expires_at: new Date(Date.now() - 86_400_000).toISOString(),
   });
-  await identity('Limite', false, {
+  const limited = await identity('Limite', false, {
     plan_status: 'active',
     plan: 'pro',
     plan_expires_at: null,
@@ -313,6 +315,49 @@ try {
   browser('open', `${base}/platform/${expired.account.id}`);
   browser('wait', '--text', 'Verificação Vencida');
   assert.match(snapshot(), /\/platform\/accounts|Voltar|Contas/);
+  browser('wait', '--text', 'Resumo da empresa');
+  const summarySelector = 'section[aria-labelledby="company-summary-title"]';
+  const expiredSummary = browser('get', 'text', summarySelector);
+  assert.match(expiredSummary, /Plano vencido/);
+  assert.match(expiredSummary, /O acesso da empresa está bloqueado/);
+  browser('select', '#plan', 'pro');
+  assert.equal(
+    browser('get', 'text', summarySelector),
+    expiredSummary,
+    'Unsaved edits must not change saved summary'
+  );
+  browser('open', `${base}/platform/${limited.account.id}`);
+  browser('wait', '--text', 'Resumo da empresa');
+  const limitedSummary = browser('get', 'text', summarySelector);
+  assert.match(limitedSummary, /1 \/ 1/);
+  assert.match(limitedSummary, /Limite de usuários atingido/);
+  assert.match(limitedSummary, /Sem data de vencimento/);
+  for (const width of [1440, 768, 375]) {
+    browser('set', 'viewport', String(width), '1000');
+    assert.ok(noOverflow(), `Company detail overflow at ${width}px`);
+    if (width !== 768)
+      browser('screenshot', join(out, `company-summary-${width}.png`));
+  }
+  browser('set', 'viewport', '1440', '1000');
+  const summaryAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'company-summary-a11y.json'),
+    JSON.stringify(summaryAudit, null, 2)
+  );
+  assert.equal(summaryAudit.data.counts.violations, 0);
+  browser('click', refFor('Mudar para o modo claro'));
+  browser('screenshot', join(out, 'company-summary-light.png'));
+  const summaryLightAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'company-summary-a11y-light.json'),
+    JSON.stringify(summaryLightAudit, null, 2)
+  );
+  assert.equal(summaryLightAudit.data.counts.violations, 0);
+  browser('click', refFor('Mudar para o modo escuro'));
+  browser('set', 'viewport', '375', '900');
+  pass(
+    'Saved company summary, expiry/access alerts, capacity overrides, draft separation, responsive layout and accessibility'
+  );
   checkBrowserErrors('company detail');
   browser('open', `${base}/platform/leads`);
   browser('wait', '--text', 'Acompanhe contatos e novas contas trial.');

@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "data": {
+    "axeVersion": "4.12.1",
+    "counts": {
+      "inapplicable": 47,
+      "incomplete": 0,
+      "passes": 42,
+      "violations": 0
+    },
+    "incomplete": [],
+    "lifecycle": {
+      "effectiveLaunch": {
+        "browserLaunched": true,
+        "engine": "chrome",
+        "launchHash": 11677035664275012000
+      },
+      "launched": false,
+      "relaunchedBrowser": false,
+      "restartedBackground": false,
+      "restoreStatus": "not_configured",
+      "reused": true,
+      "saveStatus": "not_attempted"
+    },
+    "url": "http://localhost:3107/platform/f5c540ab-767f-4c1c-9a4b-f00f9c8f3e23",
+    "violations": []
+  },
+  "error": null
+}

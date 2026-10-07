@@ -1,4 +1,14 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Company summary': 'Resumo da empresa',
+  'Saved settings. Changes appear here after saving.':
+    'Dados salvos. As alterações aparecem aqui depois de salvar.',
+  'Company owner': 'Responsável pela empresa',
+  'Not available': 'Não informado',
+  'No expiration date': 'Sem data de vencimento',
+  'User capacity': 'Uso de usuários',
+  'Channel capacity': 'Uso de canais',
+  'pending invitations': 'convites pendentes',
+  'Company access is blocked.': 'O acesso da empresa está bloqueado.',
   'Platform administration': 'Administração da plataforma',
   'Platform navigation': 'Navegação da plataforma',
   Companies: 'Empresas',
