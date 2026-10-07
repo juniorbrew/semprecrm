@@ -35,6 +35,22 @@ export interface PlatformHistory {
   action: string;
   actor_name: string | null;
   created_at: string;
+  changes: HistoryChange[];
+}
+export type HistoryValue =
+  | string
+  | number
+  | null
+  | Record<string, boolean | number | null>;
+export interface HistoryChange {
+  field:
+    | 'plan'
+    | 'plan_status'
+    | 'plan_expires_at'
+    | 'module_overrides'
+    | 'limit_overrides';
+  from: HistoryValue;
+  to: HistoryValue;
 }
 export type ActivityItem =
   | PlatformMember

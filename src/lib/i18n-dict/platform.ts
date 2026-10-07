@@ -1,4 +1,19 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Start date': 'Data inicial',
+  'End date': 'Data final',
+  'Type of change': 'Tipo de alteração',
+  'All changes': 'Todas as alterações',
+  'Search administrator name': 'Buscar nome do administrador',
+  'Dates include the full day in Bahia time (UTC−3).':
+    'As datas incluem o dia inteiro no horário da Bahia (UTC−3).',
+  'The end date must be on or after the start date.':
+    'A data final deve ser igual ou posterior à data inicial.',
+  'Apply filters': 'Aplicar filtros',
+  'No changes match these filters.':
+    'Nenhuma alteração encontrada com estes filtros.',
+  'Inherit from plan': 'Herdar do plano',
+  Before: 'Antes',
+  After: 'Depois',
   'Filter by plan': 'Filtrar por plano',
   'All plans': 'Todos os planos',
   'Filter by expiration': 'Filtrar por vencimento',

@@ -143,6 +143,19 @@ function noOverflow() {
     ).trim() === 'true'
   );
 }
+// The CLI's text fill clears Chromium native date fields. Set their native
+// value and emit the same input/change events used by the date picker.
+function fillDate(selector, value) {
+  browser(
+    'eval',
+    `(() => {
+    const input = document.querySelector(${JSON.stringify(selector)});
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)});
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+  })()`
+  );
+}
 function snapshot() {
   return browser('snapshot', '-i');
 }
@@ -640,6 +653,173 @@ try {
   browser('wait', '--text', 'Nenhuma alteração registrada nesta empresa.');
   pass(
     'Company members/invitations/channels/history isolation, secret projection, keyset pagination, draft preservation, refresh/retry, empty states and responsive accessibility'
+  );
+  const historyFixture = (created_at, actor_name, action = 'plan.changed') => ({
+    account_id: limited.account.id,
+    created_at,
+    actor_name,
+    action,
+    entity_type: 'plan',
+    metadata: {
+      secret: hidden,
+      changes: {
+        plan: { from: 'trial', to: 'pro' },
+        plan_status: { from: 'trial', to: 'active' },
+        module_overrides: { from: {}, to: { tasks: false, password: hidden } },
+        limit_overrides: { from: {}, to: { max_users: null, token: hidden } },
+        plan_expires_at: { from: '2026-10-01T03:00:00Z', to: null },
+      },
+    },
+  });
+  unwrap(
+    await admin
+      .from('audit_log')
+      .insert([
+        historyFixture('2026-10-01T02:59:59.999999Z', 'Antes do período'),
+        historyFixture('2026-10-01T03:00:00Z', 'Maria do início'),
+        historyFixture('2026-10-03T02:59:59.999999Z', 'Maria do fim'),
+        historyFixture('2026-10-03T03:00:00Z', 'Depois do período'),
+        historyFixture(
+          '2026-10-02T12:00:00Z',
+          'Maria outra ação',
+          'account.renamed'
+        ),
+        historyFixture('2026-10-02T12:00:00Z', 'Administrador A_%'),
+      ])
+  );
+  const historyQuery = new URLSearchParams({
+    section: 'history',
+    startDate: '2026-10-01',
+    endDate: '2026-10-02',
+    action: 'plan.changed',
+    actor: 'Maria',
+  });
+  const filteredHistory = await (
+    await request(`${activityPath}?${historyQuery}`, operator)
+  ).json();
+  assert.deepEqual(
+    filteredHistory.items.map((row) => row.actor_name),
+    ['Maria do fim', 'Maria do início']
+  );
+  assert.equal(filteredHistory.items[0].changes.length, 5);
+  assert.ok(!JSON.stringify(filteredHistory).includes(hidden));
+  historyQuery.set('actor', 'A_%');
+  const literalHistory = await (
+    await request(`${activityPath}?${historyQuery}`, operator)
+  ).json();
+  assert.equal(literalHistory.items.length, 1);
+  assert.equal(literalHistory.items[0].actor_name, 'Administrador A_%');
+  const pagingFilters = new URLSearchParams({
+    section: 'history',
+    action: 'plan.changed',
+    actor: 'Administrador de verificação',
+  });
+  const firstFiltered = await (
+    await request(`${activityPath}?${pagingFilters}`, operator)
+  ).json();
+  assert.equal(firstFiltered.items.length, 25);
+  assert.ok(firstFiltered.nextCursor);
+  pagingFilters.set('cursor', firstFiltered.nextCursor);
+  const nextFiltered = await (
+    await request(`${activityPath}?${pagingFilters}`, operator)
+  ).json();
+  assert.equal(nextFiltered.items.length, 1);
+  assert.equal(nextFiltered.nextCursor, null);
+  assert.equal(
+    new Set(
+      [...firstFiltered.items, ...nextFiltered.items].map((row) => row.id)
+    ).size,
+    26
+  );
+  browser('open', `${base}/platform/${limited.account.id}`);
+  browser('wait', '--text', 'Convite de verificação');
+  browser('select', '#plan', 'empresa');
+  browser('click', refFor('Histórico de alterações'));
+  browser('wait', '--text', '25 registros carregados');
+  fillDate('#history-start-date', '2026-10-01');
+  fillDate('#history-end-date', '2026-10-02');
+  assert.equal(
+    browser('get', 'value', '#history-start-date').trim(),
+    '2026-10-01',
+    'Native start date fill'
+  );
+  assert.equal(
+    browser('get', 'value', '#history-end-date').trim(),
+    '2026-10-02',
+    'Native end date fill'
+  );
+  browser('select', '#history-action', 'plan.changed');
+  browser('fill', '#history-actor', 'Maria');
+  browser('click', refFor('Aplicar filtros'));
+  browser('wait', '--text', '2 registros carregados');
+  browser('click', refFor('Canais'));
+  browser('wait', '--text', 'Canal de verificação');
+  browser('click', refFor('Histórico de alterações'));
+  browser('wait', '--text', '2 registros carregados');
+  assert.equal(browser('get', 'value', '#history-actor').trim(), 'Maria');
+  const historyText = browser('get', 'text', activitySelector);
+  assert.ok(
+    historyText.includes('Maria do início') &&
+      historyText.includes('Maria do fim')
+  );
+  assert.ok(historyText.includes('Antes:') && historyText.includes('Depois:'));
+  assert.ok(
+    historyText.includes('Herdar do plano') && historyText.includes('Ilimitado')
+  );
+  assert.ok(
+    !historyText.includes('Antes do período') && !historyText.includes(hidden)
+  );
+  for (const width of [1440, 768, 375]) {
+    browser('set', 'viewport', String(width), '1000');
+    browser('scrollintoview', '#company-activity-title');
+    assert.ok(noOverflow());
+    if (width !== 768)
+      browser('screenshot', join(out, `company-history-${width}.png`));
+  }
+  const historyAudit = JSON.parse(browser('a11y', '--json'));
+  assert.equal(historyAudit.data.counts.violations, 0);
+  writeFileSync(
+    join(out, 'company-history-a11y.json'),
+    JSON.stringify(historyAudit, null, 2)
+  );
+  browser('set', 'viewport', '1440', '1000');
+  browser('click', refFor('Mudar para o modo claro'));
+  browser('wait', '--fn', 'document.getAnimations().length === 0');
+  browser('screenshot', join(out, 'company-history-light.png'));
+  const historyLightAudit = JSON.parse(browser('a11y', '--json'));
+  assert.equal(historyLightAudit.data.counts.violations, 0);
+  writeFileSync(
+    join(out, 'company-history-a11y-light.json'),
+    JSON.stringify(historyLightAudit, null, 2)
+  );
+  browser('click', refFor('Mudar para o modo escuro'));
+  fillDate('#history-start-date', '2026-10-03');
+  assert.equal(
+    browser('get', 'value', '#history-start-date').trim(),
+    '2026-10-03',
+    'Inverted native date fill'
+  );
+  browser('click', refFor('Aplicar filtros'));
+  browser(
+    'wait',
+    '--text',
+    'A data final deve ser igual ou posterior à data inicial.'
+  );
+  assert.match(
+    browser('get', 'text', activitySelector),
+    /2 registros carregados/
+  );
+  fillDate('#history-start-date', '2026-10-01');
+  browser('fill', '#history-actor', 'Nome inexistente');
+  browser('click', refFor('Aplicar filtros'));
+  browser('wait', '--text', 'Nenhuma alteração encontrada com estes filtros.');
+  browser('click', refFor('Limpar filtros'));
+  browser('wait', '--text', '25 registros carregados');
+  assert.equal(browser('get', 'value', '#history-start-date').trim(), '');
+  assert.equal(browser('get', 'value', '#plan').trim(), 'empresa');
+  checkBrowserErrors('filtered administrative history');
+  pass(
+    'Company history inclusive Bahia dates, combined action/actor filters, literal search, safe before/after details, invalid/empty/clear states and responsive light/dark accessibility'
   );
   browser('open', `${base}/platform/leads`);
   browser('wait', '--text', 'Acompanhe contatos e novas contas trial.');
