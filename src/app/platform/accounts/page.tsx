@@ -3,8 +3,7 @@ import {
   listPlatformAccounts,
   requirePlatformAdmin,
 } from '@/lib/platform/server';
-import { isPlanStatus } from '@/lib/plans';
-import type { AttentionFilter } from '@/lib/platform/overview';
+import { parseCompanyFilters } from '@/lib/platform/account-filters';
 
 export default async function PlatformAccountsPage({
   searchParams,
@@ -16,19 +15,12 @@ export default async function PlatformAccountsPage({
     listPlatformAccounts(supabase),
     searchParams,
   ]);
-  const status = isPlanStatus(filters.status) ? filters.status : 'all';
-  const attention: AttentionFilter =
-    filters.attention === 'expired' ||
-    filters.attention === 'expiring' ||
-    filters.attention === 'limits'
-      ? filters.attention
-      : 'all';
+  const initialFilters = parseCompanyFilters(filters);
   return (
     <PlatformAccountsTable
-      key={`${status}:${attention}`}
+      key={JSON.stringify(initialFilters)}
       rows={rows}
-      initialStatus={status}
-      initialAttention={attention}
+      initialFilters={initialFilters}
       snapshotAt={new Date().toISOString()}
     />
   );

@@ -64,7 +64,11 @@ const browser = (...args) => {
   return readFileSync(browserOutput, 'utf8');
 };
 async function identity(label, platform = false, fields = {}) {
-  const email = `overview-${label}-${randomUUID()}@example.test`;
+  const emailLabel = label
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-zA-Z0-9-]/g, '-');
+  const email = `overview-${emailLabel}-${randomUUID()}@example.test`;
   const password = randomUUID();
   const { user } = unwrap(
     await admin.auth.admin.createUser({
@@ -242,6 +246,12 @@ try {
     plan_expires_at: null,
     limit_overrides: { max_users: 1 },
   });
+  await identity('São José', false, {
+    plan_status: 'active',
+    plan: 'basico',
+    plan_expires_at: new Date(Date.now() + 20 * 86_400_000).toISOString(),
+    limit_overrides: { max_users: 1 },
+  });
   for (const path of [
     '/platform',
     '/platform/accounts',
@@ -298,6 +308,10 @@ try {
   assert.ok(!table.includes('Verificação Vencida'));
   browser('open', `${base}/platform/accounts?attention=expired`);
   browser('wait', '--text', 'Empresas cadastradas');
+  assert.equal(
+    browser('get', 'value', '#company-expiry-filter').trim(),
+    'expired'
+  );
   table = browser('get', 'text', 'tbody');
   assert.match(table, /Verificação Vencida/);
   assert.ok(!table.includes('Verificação Ativa'));
@@ -312,6 +326,68 @@ try {
   assert.match(browser('get', 'text', 'tbody'), /Nenhuma conta/);
   pass('Trial/expired filters, search empty state and tablet/mobile layout');
   checkBrowserErrors('companies');
+  browser(
+    'open',
+    `${base}/platform/accounts?plan=basico&status=active&expiry=30days&attention=limits&q=sao%20jose`
+  );
+  browser('wait', '--text', 'Empresas cadastradas');
+  table = browser('get', 'text', 'tbody');
+  assert.match(table, /Verificação São José/);
+  assert.ok(!table.includes('Verificação Limite'));
+  assert.equal(
+    browser('get', 'value', '#company-plan-filter').trim(),
+    'basico'
+  );
+  assert.equal(
+    browser('get', 'value', '#company-expiry-filter').trim(),
+    '30days'
+  );
+  browser('select', '#company-expiry-filter', '7days');
+  browser('wait', '--text', 'Nenhuma conta');
+  browser('click', refFor('Limpar filtros'));
+  assert.match(browser('get', 'text', 'tbody'), /Verificação Limite/);
+  assert.equal(browser('get', 'value', '#company-plan-filter').trim(), 'all');
+  assert.equal(browser('get', 'value', '#company-expiry-filter').trim(), 'all');
+  browser('select', '#company-plan-filter', 'pro');
+  browser('select', '#company-expiry-filter', 'none');
+  table = browser('get', 'text', 'tbody');
+  assert.match(table, /Verificação Limite/);
+  assert.ok(
+    !table.includes('Verificação São José') &&
+      !table.includes('Verificação Teste') &&
+      !table.includes('Verificação Vencida')
+  );
+  browser('click', refFor('Limpar filtros'));
+  browser('select', '#company-plan-filter', 'basico');
+  browser('select', '#company-expiry-filter', '30days');
+  browser('fill', refFor('Pesquisar contas'), 'sao jose');
+  for (const width of [1440, 768, 375]) {
+    browser('set', 'viewport', String(width), '1000');
+    assert.ok(noOverflow(), `Plan/expiry filters overflow at ${width}px`);
+    if (width !== 768)
+      browser('screenshot', join(out, `company-filters-${width}.png`));
+  }
+  const filtersAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'company-filters-a11y.json'),
+    JSON.stringify(filtersAudit, null, 2)
+  );
+  assert.equal(filtersAudit.data.counts.violations, 0);
+  browser('set', 'viewport', '1440', '1000');
+  browser('click', refFor('Mudar para o modo claro'));
+  browser('wait', '--fn', 'document.getAnimations().length === 0');
+  browser('screenshot', join(out, 'company-filters-light.png'));
+  const filtersLightAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'company-filters-a11y-light.json'),
+    JSON.stringify(filtersLightAudit, null, 2)
+  );
+  assert.equal(filtersLightAudit.data.counts.violations, 0);
+  browser('click', refFor('Mudar para o modo escuro'));
+  pass(
+    'Plan/expiry/capacity/status combined filters, accent-insensitive search, clear filters, URL defaults and responsive light/dark accessibility'
+  );
+  checkBrowserErrors('combined company filters');
   browser('open', `${base}/platform/${expired.account.id}`);
   browser('wait', '--text', 'Verificação Vencida');
   assert.match(snapshot(), /\/platform\/accounts|Voltar|Contas/);
