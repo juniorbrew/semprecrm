@@ -7,20 +7,20 @@ import { Search } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import {
   PLAN_LABELS,
+  PLANS,
   PLAN_STATUSES,
   resolveEntitlements,
-  type PlanStatus,
 } from '@/lib/plans';
 import type { PlatformAccountRow } from '@/types';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PlanStatusChip, planStatusLabelKey } from './plan-status-chip';
 import {
-  matchesAccountFilter,
-  type AttentionFilter,
-} from '@/lib/platform/overview';
-
-type StatusFilter = 'all' | PlanStatus;
+  DEFAULT_COMPANY_FILTERS,
+  matchesCompanyFilters,
+  type CompanyFilters,
+} from '@/lib/platform/account-filters';
 
 function fmtDate(iso: string | null, locale: string): string {
   if (!iso) return '—';
@@ -38,42 +38,39 @@ function fmtLimit(value: number | null): string {
 
 export function PlatformAccountsTable({
   rows,
-  initialStatus = 'all',
-  initialAttention = 'all',
+  initialFilters = DEFAULT_COMPANY_FILTERS,
   snapshotAt,
 }: {
   rows: PlatformAccountRow[];
-  initialStatus?: StatusFilter;
-  initialAttention?: AttentionFilter;
+  initialFilters?: CompanyFilters;
   snapshotAt: string;
 }) {
   const { t, language } = useLanguage();
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<StatusFilter>(initialStatus);
-  const [attention, setAttention] = useState<AttentionFilter>(initialAttention);
+  const [filters, setFilters] = useState<CompanyFilters>(initialFilters);
+  const updateFilter = <K extends keyof CompanyFilters>(
+    key: K,
+    value: CompanyFilters[K]
+  ) => setFilters((previous) => ({ ...previous, [key]: value }));
+  const hasFilters =
+    filters.query !== '' ||
+    filters.plan !== 'all' ||
+    filters.status !== 'all' ||
+    filters.attention !== 'all' ||
+    filters.expiry !== 'all';
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (!matchesAccountFilter(r, status, attention, new Date(snapshotAt)))
-        return false;
-      if (!q) return true;
-      return (
-        r.name.toLowerCase().includes(q) ||
-        (r.owner_email ?? '').toLowerCase().includes(q) ||
-        (r.owner_name ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [rows, query, status, attention, snapshotAt]);
+    const now = new Date(snapshotAt);
+    return rows.filter((row) => matchesCompanyFilters(row, filters, now));
+  }, [rows, filters, snapshotAt]);
 
   return (
-    <section>
+    <section data-no-translate>
       <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-foreground text-2xl font-bold tracking-tight">
             {t('Registered companies')}
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <p className="text-muted-foreground mt-1 text-sm" aria-live="polite">
             {rows.length} {rows.length === 1 ? t('account') : t('accounts')}
             {filtered.length !== rows.length ? (
               <span data-no-translate>
@@ -90,16 +87,34 @@ export function PlatformAccountsTable({
               aria-hidden="true"
             />
             <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              value={filters.query}
+              onChange={(e) => updateFilter('query', e.target.value)}
               placeholder={t('Search by name or e-mail')}
               className="h-9 w-full pl-8 sm:w-64"
               aria-label={t('Search accounts')}
             />
           </div>
           <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value as StatusFilter)}
+            id="company-plan-filter"
+            value={filters.plan}
+            onChange={(e) =>
+              updateFilter('plan', e.target.value as CompanyFilters['plan'])
+            }
+            aria-label={t('Filter by plan')}
+            className="border-border bg-muted text-foreground focus:border-primary focus:ring-primary h-9 rounded-lg border px-2.5 text-sm outline-none focus:ring-1"
+          >
+            <option value="all">{t('All plans')}</option>
+            {PLANS.map((plan) => (
+              <option key={plan} value={plan}>
+                {t(PLAN_LABELS[plan])}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filters.status}
+            onChange={(e) =>
+              updateFilter('status', e.target.value as CompanyFilters['status'])
+            }
             aria-label={t('Filter by status')}
             className="border-border bg-muted text-foreground focus:border-primary focus:ring-primary h-9 rounded-lg border px-2.5 text-sm outline-none focus:ring-1"
           >
@@ -111,16 +126,43 @@ export function PlatformAccountsTable({
             ))}
           </select>
           <select
-            value={attention}
-            onChange={(e) => setAttention(e.target.value as AttentionFilter)}
+            id="company-expiry-filter"
+            value={filters.expiry}
+            onChange={(e) =>
+              updateFilter('expiry', e.target.value as CompanyFilters['expiry'])
+            }
+            aria-label={t('Filter by expiration')}
+            className="border-border bg-muted text-foreground focus:border-primary focus:ring-primary h-9 rounded-lg border px-2.5 text-sm outline-none focus:ring-1"
+          >
+            <option value="all">{t('Any expiration')}</option>
+            <option value="expired">{t('Expired plan')}</option>
+            <option value="7days">{t('Expiring within 7 days')}</option>
+            <option value="30days">{t('Expiring within 30 days')}</option>
+            <option value="none">{t('No expiration date')}</option>
+          </select>
+          <select
+            value={filters.attention}
+            onChange={(e) =>
+              updateFilter(
+                'attention',
+                e.target.value as CompanyFilters['attention']
+              )
+            }
             aria-label={t('Filter by attention')}
             className="border-border bg-muted text-foreground focus:border-primary focus:ring-primary h-9 rounded-lg border px-2.5 text-sm outline-none focus:ring-1"
           >
             <option value="all">{t('No attention filter')}</option>
-            <option value="expiring">{t('Expiring within 7 days')}</option>
-            <option value="expired">{t('Expired plan')}</option>
             <option value="limits">{t('At capacity')}</option>
           </select>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9"
+            disabled={!hasFilters}
+            onClick={() => setFilters({ ...DEFAULT_COMPANY_FILTERS })}
+          >
+            {t('Clear filters')}
+          </Button>
         </div>
       </div>
 

@@ -1,4 +1,9 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Filter by plan': 'Filtrar por plano',
+  'All plans': 'Todos os planos',
+  'Filter by expiration': 'Filtrar por vencimento',
+  'Any expiration': 'Todos os vencimentos',
+  'Expiring within 30 days': 'Vencem em até 30 dias',
   Users: 'Usuários',
   'Company activity': 'Dados e histórico da empresa',
   'Registered users': 'Usuários cadastrados',
