@@ -14,7 +14,18 @@ import {
   auditActionLabel,
   auditActorLabel,
   AUDIT_ROLE_LABELS,
+  AUDIT_ACTION_LIST,
 } from '@/lib/audit';
+import {
+  isPlan,
+  isPlanStatus,
+  PLAN_LABELS,
+  PLAN_STATUS_LABELS,
+  OPTIONAL_MODULES,
+  MODULE_LABELS,
+  LIMIT_KEYS,
+  LIMIT_LABELS,
+} from '@/lib/plans';
 import type {
   ActivityPage,
   ActivitySection,
@@ -29,7 +40,8 @@ type ActivityItem = { id: string } | { user_id: string };
 function useActivitySection<T extends ActivityItem>(
   accountId: string,
   section: ActivitySection,
-  enabled: boolean
+  enabled: boolean,
+  historyQuery = ''
 ) {
   const [items, setItems] = useState<T[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -52,7 +64,8 @@ function useActivitySection<T extends ActivityItem>(
       setLoading(true);
       setError(false);
       try {
-        const query = new URLSearchParams({ section });
+        const query = new URLSearchParams(historyQuery);
+        query.set('section', section);
         if (cursor) query.set('cursor', cursor);
         const response = await fetch(
           `/api/platform/accounts/${encodeURIComponent(accountId)}/activity?${query}`,
@@ -79,7 +92,7 @@ function useActivitySection<T extends ActivityItem>(
         if (!request.signal.aborted) setLoading(false);
       }
     },
-    [accountId, section]
+    [accountId, section, historyQuery]
   );
 
   useEffect(() => {
@@ -189,6 +202,7 @@ export function PlatformAccountActivity({ accountId }: { accountId: string }) {
 function AccountActivity({ accountId }: { accountId: string }) {
   const { t, language } = useLanguage();
   const [tab, setTab] = useState('members');
+  const [historyOpened, setHistoryOpened] = useState(false);
   const members = useActivitySection<PlatformMember>(
     accountId,
     'members',
@@ -204,11 +218,7 @@ function AccountActivity({ accountId }: { accountId: string }) {
     'channels',
     tab === 'channels'
   );
-  const history = useActivitySection<PlatformHistory>(
-    accountId,
-    'history',
-    tab === 'history'
-  );
+  const [historyVersion, setHistoryVersion] = useState(0);
   const role = (value: string) =>
     AUDIT_ROLE_LABELS[language][value] ?? t('Not available');
   const date = (value: string | null) => {
@@ -247,24 +257,26 @@ function AccountActivity({ accountId }: { accountId: string }) {
         <Button
           type="button"
           variant="outline"
-          disabled={
-            members.loading ||
-            invitations.loading ||
-            channels.loading ||
-            history.loading
-          }
+          disabled={members.loading || invitations.loading || channels.loading}
           onClick={() => {
             if (tab === 'members') {
               members.refresh();
               invitations.refresh();
             } else if (tab === 'channels') channels.refresh();
-            else history.refresh();
+            else setHistoryVersion((version) => version + 1);
           }}
         >
           {t('Refresh list')}
         </Button>
       </div>
-      <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          const next = String(value);
+          if (next === 'history') setHistoryOpened(true);
+          setTab(next);
+        }}
+      >
         <TabsList
           aria-label={t('Company activity')}
           className="grid w-full grid-cols-3 group-data-horizontal/tabs:h-auto"
@@ -396,37 +408,313 @@ function AccountActivity({ accountId }: { accountId: string }) {
             </ul>
           </ActivityList>
         </TabsContent>
-        <TabsContent value="history" className="mt-4">
-          <ActivityList
-            state={history}
-            empty="No changes recorded for this company."
-          >
-            <ol className="divide-border divide-y">
-              {history.items.map((event) => (
-                <li
-                  key={event.id}
-                  className="flex flex-col justify-between gap-2 py-3 sm:flex-row"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium break-words">
-                      {auditActionLabel(event.action, language)}
-                    </p>
-                    <p className="text-muted-foreground mt-1 text-xs break-words">
-                      {t('Changed by')}:{' '}
-                      {event.actor_name
-                        ? auditActorLabel(event.actor_name, language)
-                        : t('Not available')}
-                    </p>
-                  </div>
-                  <p className="text-muted-foreground text-xs">
-                    {date(event.created_at)}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          </ActivityList>
+        <TabsContent value="history" className="mt-4" keepMounted>
+          {historyOpened && (
+            <HistorySection accountId={accountId} version={historyVersion} />
+          )}
         </TabsContent>
       </Tabs>
     </section>
+  );
+}
+
+type HistoryFilters = {
+  startDate: string;
+  endDate: string;
+  action: string;
+  actor: string;
+};
+const EMPTY_HISTORY_FILTERS: HistoryFilters = {
+  startDate: '',
+  endDate: '',
+  action: '',
+  actor: '',
+};
+const HISTORY_CONTROL_CLASS =
+  'border-input bg-background h-10 w-full min-w-0 rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+function HistorySection({
+  accountId,
+  version,
+}: {
+  accountId: string;
+  version: number;
+}) {
+  const { t, language } = useLanguage();
+  const [draft, setDraft] = useState<HistoryFilters>(EMPTY_HISTORY_FILTERS);
+  const [query, setQuery] = useState('');
+  const [dateError, setDateError] = useState(false);
+  const update = (field: keyof HistoryFilters, value: string) => {
+    setDraft((previous) => ({ ...previous, [field]: value }));
+    if (field === 'startDate' || field === 'endDate') setDateError(false);
+  };
+  const apply = () => {
+    if (draft.startDate && draft.endDate && draft.startDate > draft.endDate) {
+      setDateError(true);
+      return;
+    }
+    const params = new URLSearchParams();
+    for (const [field, value] of Object.entries(draft)) {
+      if (value.trim()) params.set(field, value.trim());
+    }
+    setDateError(false);
+    setQuery(params.toString());
+  };
+  const clear = () => {
+    setDraft({ ...EMPTY_HISTORY_FILTERS });
+    setDateError(false);
+    setQuery('');
+  };
+  return (
+    <div className="space-y-5">
+      <div className="space-y-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="min-w-0 space-y-1.5">
+            <label htmlFor="history-start-date" className="text-sm font-medium">
+              {t('Start date')}
+            </label>
+            <input
+              id="history-start-date"
+              type="date"
+              className={HISTORY_CONTROL_CLASS}
+              value={draft.startDate}
+              onChange={(event) => update('startDate', event.target.value)}
+              aria-invalid={dateError}
+              aria-describedby={
+                dateError
+                  ? 'history-date-error history-timezone'
+                  : 'history-timezone'
+              }
+            />
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <label htmlFor="history-end-date" className="text-sm font-medium">
+              {t('End date')}
+            </label>
+            <input
+              id="history-end-date"
+              type="date"
+              className={HISTORY_CONTROL_CLASS}
+              value={draft.endDate}
+              onChange={(event) => update('endDate', event.target.value)}
+              aria-invalid={dateError}
+              aria-describedby={
+                dateError
+                  ? 'history-date-error history-timezone'
+                  : 'history-timezone'
+              }
+            />
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <label htmlFor="history-action" className="text-sm font-medium">
+              {t('Type of change')}
+            </label>
+            <select
+              id="history-action"
+              className={HISTORY_CONTROL_CLASS}
+              value={draft.action}
+              onChange={(event) => update('action', event.target.value)}
+            >
+              <option value="">{t('All changes')}</option>
+              {AUDIT_ACTION_LIST.map((action) => (
+                <option key={action} value={action}>
+                  {auditActionLabel(action, language)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <label htmlFor="history-actor" className="text-sm font-medium">
+              {t('Changed by')}
+            </label>
+            <input
+              id="history-actor"
+              type="search"
+              maxLength={120}
+              className={HISTORY_CONTROL_CLASS}
+              placeholder={t('Search administrator name')}
+              value={draft.actor}
+              onChange={(event) => update('actor', event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  apply();
+                }
+              }}
+            />
+          </div>
+        </div>
+        <p id="history-timezone" className="text-muted-foreground text-xs">
+          {t('Dates include the full day in Bahia time (UTC−3).')}
+        </p>
+        {dateError && (
+          <p
+            id="history-date-error"
+            role="alert"
+            className="text-destructive text-sm"
+          >
+            {t('The end date must be on or after the start date.')}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={apply}>
+            {t('Apply filters')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={clear}
+            disabled={
+              !query && !Object.values(draft).some(Boolean) && !dateError
+            }
+          >
+            {t('Clear filters')}
+          </Button>
+        </div>
+      </div>
+      <HistoryResults
+        key={query + ':' + version}
+        accountId={accountId}
+        query={query}
+      />
+    </div>
+  );
+}
+
+function HistoryResults({
+  accountId,
+  query,
+}: {
+  accountId: string;
+  query: string;
+}) {
+  const { t, language } = useLanguage();
+  const history = useActivitySection<PlatformHistory>(
+    accountId,
+    'history',
+    true,
+    query
+  );
+  const date = (value: string) => (
+    <time dateTime={value}>
+      {new Date(value).toLocaleString(language, {
+        dateStyle: 'short',
+        timeStyle: 'short',
+        timeZone: 'America/Bahia',
+      })}
+    </time>
+  );
+  return (
+    <ActivityList
+      state={history}
+      empty={
+        query
+          ? 'No changes match these filters.'
+          : 'No changes recorded for this company.'
+      }
+    >
+      <ol className="divide-border divide-y">
+        {history.items.map((event) => (
+          <li key={event.id} className="space-y-3 py-4">
+            <div className="flex flex-col justify-between gap-2 sm:flex-row">
+              <div className="min-w-0">
+                <p className="font-medium break-words">
+                  {auditActionLabel(event.action, language)}
+                </p>
+                <p className="text-muted-foreground mt-1 text-xs break-words">
+                  {t('Changed by')}:{' '}
+                  {event.actor_name
+                    ? auditActorLabel(event.actor_name, language)
+                    : t('Not available')}
+                </p>
+              </div>
+              <p className="text-muted-foreground shrink-0 text-xs">
+                {date(event.created_at)}
+              </p>
+            </div>
+            <HistoryChanges event={event} />
+          </li>
+        ))}
+      </ol>
+    </ActivityList>
+  );
+}
+
+function HistoryChanges({ event }: { event: PlatformHistory }) {
+  const { t, language } = useLanguage();
+  const rows: Array<{ label: string; from: string; to: string }> = [];
+  for (const change of event.changes) {
+    if (
+      change.field === 'module_overrides' ||
+      change.field === 'limit_overrides'
+    ) {
+      const before =
+        change.from && typeof change.from === 'object' ? change.from : {};
+      const after = change.to && typeof change.to === 'object' ? change.to : {};
+      const moduleChange = change.field === 'module_overrides';
+      const keys = moduleChange ? OPTIONAL_MODULES : LIMIT_KEYS;
+      for (const key of keys) {
+        const from = Object.hasOwn(before, key) ? before[key] : undefined;
+        const to = Object.hasOwn(after, key) ? after[key] : undefined;
+        const value = (item: boolean | number | null | undefined) => {
+          if (item === undefined || (moduleChange && item === null))
+            return t('Inherit from plan');
+          if (item === null) return t('Unlimited');
+          if (typeof item === 'boolean')
+            return t(item ? 'Enabled' : 'Disabled');
+          return String(item);
+        };
+        if (value(from) === value(to)) continue;
+        const labels: Record<string, string> = moduleChange
+          ? MODULE_LABELS
+          : LIMIT_LABELS;
+        rows.push({ label: t(labels[key]), from: value(from), to: value(to) });
+      }
+    } else {
+      const value = (item: typeof change.from) => {
+        if (change.field === 'plan')
+          return isPlan(item) ? t(PLAN_LABELS[item]) : t('Not available');
+        if (change.field === 'plan_status')
+          return isPlanStatus(item)
+            ? t(PLAN_STATUS_LABELS[item])
+            : t('Not available');
+        if (item === null) return t('No expiration date');
+        if (typeof item !== 'string' || Number.isNaN(new Date(item).getTime()))
+          return t('Not available');
+        return new Date(item).toLocaleString(language, {
+          dateStyle: 'short',
+          timeStyle: 'short',
+          timeZone: 'America/Bahia',
+        });
+      };
+      const labels = {
+        plan: 'Plan',
+        plan_status: 'Status',
+        plan_expires_at: 'Valid until',
+      };
+      rows.push({
+        label: t(labels[change.field]),
+        from: value(change.from),
+        to: value(change.to),
+      });
+    }
+  }
+  if (!rows.length) return null;
+  return (
+    <dl className="border-border grid min-w-0 gap-3 border-t pt-3 text-sm sm:grid-cols-2">
+      {rows.map((row) => (
+        <div key={row.label} className="min-w-0">
+          <dt className="font-medium break-words">{row.label}</dt>
+          <dd className="text-muted-foreground mt-1 space-y-1 break-words">
+            <p>
+              {t('Before')}: {row.from}
+            </p>
+            <p>
+              {t('After')}: <span className="text-foreground">{row.to}</span>
+            </p>
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }

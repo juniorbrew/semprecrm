@@ -2,6 +2,10 @@ import { authorizePlatformApi, platformJson } from '@/lib/platform/api';
 import { getPlatformAccount } from '@/lib/platform/server';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import {
+  parseHistoryFilters,
+  projectHistoryChanges,
+} from '@/lib/platform/history';
+import {
   ACTIVITY_PAGE_SIZE,
   type ActivitySection,
   type PlatformChannel,
@@ -52,10 +56,12 @@ export async function GET(
     const search = new URL(request.url).searchParams;
     const section = search.get('section') as ActivitySection;
     let cursor: Cursor | null;
+    let historyFilters: ReturnType<typeof parseHistoryFilters> | null = null;
     try {
       if (!SECTIONS.includes(section)) throw new Error('Invalid section');
       cursor = parseCursor(search.get('cursor'));
       if (section === 'channels' && cursor) throw new Error('Invalid cursor');
+      if (section === 'history') historyFilters = parseHistoryFilters(search);
     } catch {
       return platformJson({ error: 'Consulta ou paginação inválida.' }, 400);
     }
@@ -118,7 +124,7 @@ export async function GET(
         ? 'user_id, full_name, email, account_role, created_at'
         : section === 'invitations'
           ? 'id, label, role, created_at, expires_at'
-          : 'id, action, actor_name, created_at';
+          : 'id, action, actor_name, created_at, metadata';
     const idField = section === 'members' ? 'user_id' : 'id';
     let query = admin
       .from(table)
@@ -131,6 +137,16 @@ export async function GET(
       query = query
         .is('accepted_at', null)
         .gt('expires_at', new Date().toISOString());
+    if (historyFilters) {
+      if (historyFilters.start)
+        query = query.gte('created_at', historyFilters.start);
+      if (historyFilters.end)
+        query = query.lt('created_at', historyFilters.end);
+      if (historyFilters.action)
+        query = query.eq('action', historyFilters.action);
+      if (historyFilters.actor)
+        query = query.ilike('actor_name', historyFilters.actor);
+    }
     if (cursor)
       query = query.or(
         `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},${idField}.lt.${cursor.id})`
@@ -140,7 +156,7 @@ export async function GET(
     const rows = (data ?? []) as unknown as Record<string, unknown>[];
     const page = rows.slice(0, ACTIVITY_PAGE_SIZE);
     // Explicit projection is defense in depth: even an unexpected DB result
-    // cannot serialize credentials, invitation hashes or audit metadata.
+    // cannot serialize credentials, invitation hashes or raw audit metadata.
     const items = page.map((row) =>
       section === 'members'
         ? {
@@ -163,6 +179,7 @@ export async function GET(
               action: text(row.action),
               actor_name: nullable(row.actor_name),
               created_at: text(row.created_at),
+              changes: projectHistoryChanges(row.action, row.metadata),
             }
     );
     const last = page.at(-1);

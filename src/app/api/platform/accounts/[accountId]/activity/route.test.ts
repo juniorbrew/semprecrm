@@ -42,7 +42,18 @@ beforeEach(() => {
   loadGateCredentials.mockResolvedValue({ userId: id });
   hasGateSession.mockResolvedValue(true);
   const q: Record<string, unknown> = {};
-  for (const method of ['select', 'eq', 'is', 'gt', 'order', 'or', 'limit'])
+  for (const method of [
+    'select',
+    'eq',
+    'is',
+    'gt',
+    'gte',
+    'lt',
+    'ilike',
+    'order',
+    'or',
+    'limit',
+  ])
     q[method] = (...args: unknown[]) => {
       calls.push([method, ...args]);
       return q;
@@ -56,6 +67,64 @@ beforeEach(() => {
   adminFactory.mockReturnValue({ from });
 });
 describe('platform account activity API', () => {
+  it('combines history dates, action and literal actor before paging', async () => {
+    await GET(
+      req(
+        'section=history&startDate=2026-10-01&endDate=2026-10-07&action=plan.changed&actor=Maria'
+      ),
+      ctx()
+    );
+    expect(calls).toContainEqual([
+      'gte',
+      'created_at',
+      '2026-10-01T03:00:00.000Z',
+    ]);
+    expect(calls).toContainEqual([
+      'lt',
+      'created_at',
+      '2026-10-08T03:00:00.000Z',
+    ]);
+    expect(calls).toContainEqual(['eq', 'action', 'plan.changed']);
+    expect(calls).toContainEqual(['ilike', 'actor_name', '%Maria%']);
+    expect(calls).toContainEqual(['eq', 'account_id', id]);
+  });
+  it.each([
+    'startDate=2026-02-30',
+    'startDate=2026-10-08&endDate=2026-10-07',
+    'action=unknown',
+  ])(
+    'rejects invalid history filters before privileged queries %s',
+    async (query) => {
+      expect((await GET(req('section=history&' + query), ctx())).status).toBe(
+        400
+      );
+      expect(adminFactory).not.toHaveBeenCalled();
+    }
+  );
+  it('only serializes the safe plan change projection', async () => {
+    result.data = [
+      {
+        id,
+        action: 'plan.changed',
+        actor_name: 'Admin',
+        created_at: '2026-10-07T12:00:00Z',
+        metadata: {
+          secret: 'SECRET',
+          changes: {
+            plan: { from: 'trial', to: 'pro' },
+            token: { from: 'SECRET', to: 'SECRET' },
+          },
+        },
+      },
+    ];
+    const response = await GET(req('section=history'), ctx());
+    const body = await response.json();
+    expect(body.items[0].changes).toEqual([
+      { field: 'plan', from: 'trial', to: 'pro' },
+    ]);
+    expect(JSON.stringify(body)).not.toContain('SECRET');
+    expect(JSON.stringify(body)).not.toContain('metadata');
+  });
   it('denies anonymous access before privileged queries', async () => {
     getUser.mockResolvedValue({ data: { user: null }, error: null });
     expect((await GET(req(), ctx())).status).toBe(401);
