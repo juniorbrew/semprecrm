@@ -359,6 +359,212 @@ try {
     'Saved company summary, expiry/access alerts, capacity overrides, draft separation, responsive layout and accessibility'
   );
   checkBrowserErrors('company detail');
+  // Read-only company activity: seed only this run's isolated fixtures.
+  const hidden = `synthetic-hidden-${randomUUID()}`;
+  const [owner] = unwrap(
+    await admin
+      .from('profiles')
+      .select('user_id')
+      .eq('account_id', limited.account.id)
+  );
+  unwrap(
+    await admin.from('account_invitations').insert([
+      {
+        account_id: limited.account.id,
+        token_hash: `${hidden}-pending`,
+        role: 'agent',
+        label: 'Convite de verificação',
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+      {
+        account_id: limited.account.id,
+        token_hash: `${hidden}-expired`,
+        role: 'agent',
+        label: 'Convite expirado oculto',
+        expires_at: new Date(Date.now() - 86_400_000).toISOString(),
+      },
+      {
+        account_id: limited.account.id,
+        token_hash: `${hidden}-accepted`,
+        role: 'agent',
+        label: 'Convite aceito oculto',
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        accepted_at: new Date().toISOString(),
+      },
+    ])
+  );
+  unwrap(
+    await admin.from('whatsapp_config').insert({
+      account_id: limited.account.id,
+      user_id: owner.user_id,
+      phone_number_id: 'synthetic-phone-id',
+      access_token: hidden,
+      verify_token: hidden,
+      status: 'connected',
+    })
+  );
+  unwrap(
+    await admin.from('wa_qr_sessions').insert({
+      account_id: limited.account.id,
+      status: 'connected',
+      phone_number: '5511999999999',
+      display_name: 'Canal de verificação ' + 'NomeSemEspacos'.repeat(12),
+      last_error: hidden,
+    })
+  );
+  const historyTime = new Date(Date.now() - 1000).toISOString();
+  unwrap(
+    await admin.from('audit_log').insert([
+      ...Array.from({ length: 26 }, () => ({
+        account_id: limited.account.id,
+        actor_name: 'Administrador de verificação (platform)',
+        action: 'plan.changed',
+        entity_type: 'plan',
+        created_at: historyTime,
+        metadata: { secret: hidden },
+      })),
+      {
+        account_id: tenant.account.id,
+        actor_name: 'Outra empresa oculta',
+        action: 'plan.changed',
+        entity_type: 'plan',
+        created_at: historyTime,
+        metadata: { secret: hidden },
+      },
+    ])
+  );
+  const activityPath = `/api/platform/accounts/${limited.account.id}/activity`;
+  for (const [identity, status] of [
+    [undefined, 401],
+    [tenant, 403],
+    [crmOnly, 401],
+  ]) {
+    assert.equal(
+      (await request(`${activityPath}?section=members`, identity)).status,
+      status
+    );
+  }
+  for (const section of ['members', 'invitations', 'channels', 'history']) {
+    const response = await request(
+      `${activityPath}?section=${section}`,
+      operator
+    );
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.ok(!text.includes(hidden) && !text.includes('Outra empresa oculta'));
+    if (section === 'invitations') {
+      const page = JSON.parse(text);
+      assert.equal(page.items.length, 1);
+      assert.equal(page.items[0].label, 'Convite de verificação');
+    }
+    if (section === 'members')
+      assert.equal(JSON.parse(text).items[0].user_id, owner.user_id);
+    if (section === 'channels') assert.equal(JSON.parse(text).items.length, 2);
+    if (section === 'history') {
+      const page = JSON.parse(text);
+      assert.equal(page.items.length, 25);
+      const next = await request(
+        `${activityPath}?section=history&cursor=${encodeURIComponent(page.nextCursor)}`,
+        operator
+      );
+      const second = await next.json();
+      assert.equal(second.items.length, 1);
+      assert.equal(second.nextCursor, null);
+      assert.equal(
+        new Set([...page.items, ...second.items].map((row) => row.id)).size,
+        26
+      );
+    }
+  }
+  browser('open', `${base}/platform/${limited.account.id}`);
+  browser('wait', '--text', 'Convite de verificação');
+  const activitySelector = 'section[aria-labelledby="company-activity-title"]';
+  assert.match(browser('get', 'text', activitySelector), /Usuários/);
+  browser('set', 'viewport', '1440', '1000');
+  browser('scrollintoview', '#company-activity-title');
+  browser('screenshot', join(out, 'company-users-1440.png'));
+  browser('set', 'viewport', '375', '1000');
+  browser('scrollintoview', '#company-activity-title');
+  assert.ok(noOverflow());
+  browser('screenshot', join(out, 'company-users-375.png'));
+  assert.ok(
+    !browser('get', 'text', activitySelector).includes(
+      'Convite expirado oculto'
+    )
+  );
+  browser('select', '#plan', 'empresa');
+  browser('click', refFor('Canais'));
+  browser('wait', '--text', 'Canal de verificação');
+  assert.match(browser('get', 'text', activitySelector), /synthetic-phone-id/);
+  browser('click', refFor('Histórico de alterações'));
+  browser('wait', '--text', '25 registros carregados');
+  browser('click', refFor('Carregar mais'));
+  browser('wait', '--text', '26 registros carregados');
+  assert.equal(
+    browser('get', 'value', '#plan').trim(),
+    'empresa',
+    'Tabs preserve unsaved form changes'
+  );
+  browser('click', refFor('Atualizar lista'));
+  browser('wait', '--text', '25 registros carregados');
+  assert.equal(browser('get', 'value', '#plan').trim(), 'empresa');
+  browser('scrollintoview', '#company-activity-title');
+  for (const width of [1440, 768, 375]) {
+    browser('set', 'viewport', String(width), '1000');
+    browser('click', refFor('Canais'));
+    assert.ok(noOverflow(), `Long channel name overflow at ${width}px`);
+    browser('scrollintoview', '#company-activity-title');
+    if (width === 375)
+      browser('screenshot', join(out, 'company-channels-375.png'));
+    browser('click', refFor('Histórico de alterações'));
+    browser('scrollintoview', '#company-activity-title');
+    assert.ok(noOverflow(), `Activity overflow at ${width}px`);
+    if (width !== 768)
+      browser('screenshot', join(out, `company-activity-${width}.png`));
+  }
+  const activityAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'company-activity-a11y.json'),
+    JSON.stringify(activityAudit, null, 2)
+  );
+  assert.equal(activityAudit.data.counts.violations, 0);
+  browser('set', 'viewport', '1440', '1000');
+  browser('click', refFor('Mudar para o modo claro'));
+  browser('wait', '--fn', 'document.getAnimations().length === 0');
+  browser('scrollintoview', '#company-activity-title');
+  browser('screenshot', join(out, 'company-activity-light.png'));
+  const activityLightAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'company-activity-a11y-light.json'),
+    JSON.stringify(activityLightAudit, null, 2)
+  );
+  assert.equal(activityLightAudit.data.counts.violations, 0);
+  browser('click', refFor('Mudar para o modo escuro'));
+  browser('click', refFor('Canais'));
+  browser('network', 'route', '**/activity?section=channels', '--body', '{}');
+  browser('click', refFor('Atualizar lista'));
+  browser(
+    'wait',
+    '--text',
+    'Não foi possível carregar esta lista. Tente novamente.'
+  );
+  browser('network', 'unroute', '**/activity?section=channels');
+  browser('click', refFor('Tentar novamente'));
+  browser(
+    'wait',
+    '--fn',
+    "!document.querySelector('section[aria-labelledby=company-activity-title] [role=alert]')"
+  );
+  checkBrowserErrors('company activity');
+  browser('open', `${base}/platform/${expired.account.id}`);
+  browser('wait', '--text', 'Nenhum convite pendente.');
+  browser('click', refFor('Canais'));
+  browser('wait', '--text', 'Nenhum canal configurado nesta empresa.');
+  browser('click', refFor('Histórico de alterações'));
+  browser('wait', '--text', 'Nenhuma alteração registrada nesta empresa.');
+  pass(
+    'Company members/invitations/channels/history isolation, secret projection, keyset pagination, draft preservation, refresh/retry, empty states and responsive accessibility'
+  );
   browser('open', `${base}/platform/leads`);
   browser('wait', '--text', 'Acompanhe contatos e novas contas trial.');
   assert.equal(
