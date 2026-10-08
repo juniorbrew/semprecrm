@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/automations/admin-client';
 import {
   parseHistoryFilters,
   projectHistoryChanges,
+  projectPlanVersionChange,
 } from '@/lib/platform/history';
 import {
   ACTIVITY_PAGE_SIZE,
@@ -180,6 +181,10 @@ export async function GET(
               actor_name: nullable(row.actor_name),
               created_at: text(row.created_at),
               changes: projectHistoryChanges(row.action, row.metadata),
+              plan_version_change: projectPlanVersionChange(
+                row.action,
+                row.metadata
+              ),
             }
     );
     const last = page.at(-1);

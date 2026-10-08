@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   UserRoundPlus,
   ShieldCheck,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import { cn } from '@/lib/utils';
@@ -43,7 +44,7 @@ export function PlatformNavigation({
           </div>
           <nav
             aria-label={t('Platform navigation')}
-            className="flex gap-1 p-3 lg:sticky lg:top-4 lg:flex-col"
+            className="flex flex-wrap gap-1 p-3 lg:sticky lg:top-4 lg:flex-col"
           >
             {[
               { href: '/platform', label: 'Overview', icon: LayoutDashboard },
@@ -53,6 +54,11 @@ export function PlatformNavigation({
                 icon: Building2,
               },
               { href: '/platform/leads', label: 'Leads', icon: UserRoundPlus },
+              {
+                href: '/platform/plans',
+                label: 'Plans',
+                icon: SlidersHorizontal,
+              },
             ].map(({ href, label, icon: Icon }) => {
               const active =
                 href === '/platform'
@@ -61,7 +67,8 @@ export function PlatformNavigation({
                     ? pathname !== '/platform' &&
                       pathname !== '/platform/acesso' &&
                       pathname !== '/platform/login' &&
-                      !pathname.startsWith('/platform/leads')
+                      !pathname.startsWith('/platform/leads') &&
+                      !pathname.startsWith('/platform/plans')
                     : pathname.startsWith(href);
               return (
                 <Link

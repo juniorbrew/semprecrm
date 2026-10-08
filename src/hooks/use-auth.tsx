@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   createContext,
@@ -8,27 +8,28 @@ import {
   useCallback,
   useMemo,
   type ReactNode,
-} from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { Factor, User } from "@supabase/supabase-js";
-import { DEFAULT_CURRENCY } from "@/lib/currency";
+} from 'react';
+import { createClient } from '@/lib/supabase/client';
+import type { Factor, User } from '@supabase/supabase-js';
+import { DEFAULT_CURRENCY } from '@/lib/currency';
 import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
   canSendMessages as canSendMessagesFor,
   isAccountRole,
   type AccountRole,
-} from "@/lib/auth/roles";
+} from '@/lib/auth/roles';
 import {
   resolveEntitlements,
   type Entitlements,
   type PlanAccountFields,
-} from "@/lib/plans";
-import { parseAccountPreferences } from "@/lib/account-preferences";
-import type { PersonType } from "@/lib/br/documents";
-import { parseBranding, type Branding } from "@/lib/branding";
-import { hasVerifiedTotp } from "@/lib/auth/mfa";
-import type { AccountPreferences, Availability } from "@/types";
+} from '@/lib/plans';
+import { parseAccountPreferences } from '@/lib/account-preferences';
+import { normalizeAssignedPlan } from '@/lib/plan-catalog';
+import type { PersonType } from '@/lib/br/documents';
+import { parseBranding, type Branding } from '@/lib/branding';
+import { hasVerifiedTotp } from '@/lib/auth/mfa';
+import type { AccountPreferences, Availability } from '@/types';
 
 interface Profile {
   id: string;
@@ -57,8 +58,7 @@ interface AccountSummary extends PlanAccountFields {
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
   /** Plan fields (migration 025). Optional so forks on a pre-025
-   *  schema still resolve — `resolveEntitlements` treats missing
-   *  values as an unexpired trial. */
+   *  schema fails closed with a recoverable unavailable state. */
   plan?: string | null;
   plan_status?: string | null;
   plan_expires_at?: string | null;
@@ -83,7 +83,7 @@ interface AccountSummary extends PlanAccountFields {
 
 /** Columns the auth provider selects off `accounts`. */
 const ACCOUNT_SELECT =
-  "id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name, phone, email, address";
+  'id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name, phone, email, address, plan_version_id, plan_version:platform_plan_versions!accounts_plan_version_fk(id,plan,definition)';
 
 interface AuthContextValue {
   user: User | null;
@@ -215,13 +215,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase.auth.mfa.listFactors();
       if (error) {
-        console.error("[AuthProvider] listFactors error:", error.message);
+        console.error('[AuthProvider] listFactors error:', error.message);
         setMfaFactors([]);
         return;
       }
       setMfaFactors(data?.all ?? []);
     } catch (err) {
-      console.error("[AuthProvider] listFactors threw:", err);
+      console.error('[AuthProvider] listFactors threw:', err);
       setMfaFactors([]);
     }
   }, []);
@@ -234,16 +234,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfileLoading(true);
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from('profiles')
         .select(
           // `account:accounts!inner(id, name)` — explicit join on the
           // single FK profiles.account_id → accounts.id. `!inner` so a
           // missing account collapses to null rather than a half-
           // populated row (shouldn't happen post-017 NOT NULL, but
           // belt-and-braces against forks running older schemas).
-          `id, full_name, email, avatar_url, role, beta_features, account_id, account_role, availability, notification_prefs, account:accounts!inner(${ACCOUNT_SELECT})`,
+          `id, full_name, email, avatar_url, role, beta_features, account_id, account_role, availability, notification_prefs, account:accounts!inner(${ACCOUNT_SELECT})`
         )
-        .eq("user_id", userId)
+        .eq('user_id', userId)
         .maybeSingle();
 
       // Platform-admin flag. `platform_admins` is RLS-restricted to
@@ -251,17 +251,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // A failure (e.g. a fork without migration 025) reads as
       // "not an admin".
       const adminProbe = supabase
-        .from("platform_admins")
-        .select("user_id")
-        .eq("user_id", userId)
+        .from('platform_admins')
+        .select('user_id')
+        .eq('user_id', userId)
         .maybeSingle()
         .then(
           ({ data: adminRow }) => !!adminRow,
-          () => false,
+          () => false
         );
 
       if (error) {
-        console.error("[AuthProvider] fetchProfile error:", {
+        console.error('[AuthProvider] fetchProfile error:', {
           message: error.message,
           details: error.details,
           hint: error.hint,
@@ -276,7 +276,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // the schema's inferred cardinality — normalise to the object
         // form before reading.
         const accountRaw = Array.isArray(data.account)
-          ? data.account[0] ?? null
+          ? (data.account[0] ?? null)
           : (data.account as
               | (Partial<AccountSummary> & {
                   id: string;
@@ -289,6 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // as the safe USD fallback rather than crashing the picker.
         const accountRow: AccountSummary | null = accountRaw
           ? {
+              ...normalizeAssignedPlan(accountRaw),
               id: accountRaw.id,
               name: accountRaw.name,
               default_currency: accountRaw.default_currency ?? DEFAULT_CURRENCY,
@@ -331,14 +332,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           account_id: data.account_id ?? null,
           account_role: accountRole,
           // Migration 033 — older schemas have no column; read as available.
-          availability: data.availability === "away" ? "away" : "available",
+          availability: data.availability === 'away' ? 'away' : 'available',
           notification_prefs: data.notification_prefs ?? null,
         });
         setAccount(accountRow);
       }
       setIsPlatformAdmin(await adminProbe);
     } catch (err) {
-      console.error("[AuthProvider] fetchProfile threw:", err);
+      console.error('[AuthProvider] fetchProfile threw:', err);
     } finally {
       setProfileLoading(false);
     }
@@ -350,7 +351,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const safetyTimer = setTimeout(() => {
       if (mounted) {
-        console.warn("[AuthProvider] getSession() timed out after 3s");
+        console.warn('[AuthProvider] getSession() timed out after 3s');
         setLoading(false);
         setProfileLoading(false);
       }
@@ -363,7 +364,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error,
         } = await supabase.auth.getSession();
 
-        if (error) console.error("[AuthProvider] getSession error:", error.message);
+        if (error)
+          console.error('[AuthProvider] getSession error:', error.message);
 
         if (!mounted) return;
         const currentUser = session?.user ?? null;
@@ -383,7 +385,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfileLoading(false);
         }
       } catch (err) {
-        console.error("[AuthProvider] init threw:", err);
+        console.error('[AuthProvider] init threw:', err);
       } finally {
         if (mounted) setLoading(false);
         clearTimeout(safetyTimer);
@@ -403,7 +405,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         fetchProfile(currentUser.id);
         // Only the events that can change the factor list re-read it
         // (TOKEN_REFRESHED fires hourly and would be wasted calls).
-        if (event === "SIGNED_IN" || event === "MFA_CHALLENGE_VERIFIED" || event === "USER_UPDATED") {
+        if (
+          event === 'SIGNED_IN' ||
+          event === 'MFA_CHALLENGE_VERIFIED' ||
+          event === 'USER_UPDATED'
+        ) {
           fetchMfaFactors();
         }
       } else {
@@ -431,7 +437,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
     setAccount(null);
     setIsPlatformAdmin(false);
-    window.location.href = "/login";
+    window.location.href = '/login';
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -448,10 +454,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return {
       accountRole: role,
       accountId: profile?.account_id ?? null,
-      isOwner: role === "owner",
-      isAdmin: role === "admin",
-      isAgent: role === "agent",
-      isViewer: role === "viewer",
+      isOwner: role === 'owner',
+      isAdmin: role === 'admin',
+      isAgent: role === 'agent',
+      isViewer: role === 'viewer',
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
@@ -467,7 +473,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the radar / opt-out consumers get a stable object.
   const preferences = useMemo(
     () => parseAccountPreferences(account?.preferences),
-    [account],
+    [account]
   );
 
   // Cheaper than refreshProfile when only the account row changed
@@ -476,16 +482,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!account?.id) return;
     const supabase = createClient();
     const { data, error } = await supabase
-      .from("accounts")
+      .from('accounts')
       .select(ACCOUNT_SELECT)
-      .eq("id", account.id)
+      .eq('id', account.id)
       .maybeSingle();
     if (error || !data) return;
-    const row = data as unknown as Partial<AccountSummary> & { id: string; name: string };
+    const row = data as unknown as Partial<AccountSummary> & {
+      id: string;
+      name: string;
+    };
     setAccount((prev) =>
       prev
         ? {
             ...prev,
+            ...normalizeAssignedPlan(row),
             name: row.name ?? prev.name,
             default_currency: row.default_currency ?? prev.default_currency,
             plan: row.plan ?? prev.plan,
@@ -502,7 +512,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: row.email ?? null,
             address: row.address ?? null,
           }
-        : prev,
+        : prev
     );
   }, [account?.id]);
 
@@ -555,7 +565,7 @@ export function useAuth(): AuthContextValue {
       loading: false,
       profileLoading: false,
       signOut: async () => {
-        window.location.href = "/login";
+        window.location.href = '/login';
       },
       refreshProfile: async () => {},
       account: null,
@@ -589,10 +599,10 @@ export function useAuth(): AuthContextValue {
  * row the AuthProvider already loaded; no extra round trip.
  *
  * `ready` is false until the profile fetch settles. Gate any
- * hide/redirect on it — before that the value is the permissive
- * trial default and would otherwise flash the wrong UI.
+ * hide/redirect on it. A settled failed account read is ready to show
+ * the recoverable unavailable screen, without optional permissions.
  */
 export function useEntitlements(): Entitlements & { ready: boolean } {
-  const { entitlements, profileLoading, account } = useAuth();
-  return { ...entitlements, ready: !profileLoading && account !== null };
+  const { entitlements, profileLoading, user } = useAuth();
+  return { ...entitlements, ready: !profileLoading && user !== null };
 }

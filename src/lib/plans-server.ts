@@ -12,6 +12,7 @@
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { normalizeAssignedPlan } from './plan-catalog';
 
 import {
   resolveEntitlements,
@@ -22,18 +23,18 @@ import {
 
 /** Columns the resolver needs — keep in sync with `PlanAccountFields`. */
 export const PLAN_COLUMNS =
-  'plan, plan_status, plan_expires_at, module_overrides, limit_overrides';
+  'plan, plan_status, plan_expires_at, module_overrides, limit_overrides, plan_version_id, plan_version:platform_plan_versions!accounts_plan_version_fk(id,plan,definition)';
 
 /**
  * Load and resolve the entitlements for one account.
  *
  * Returns `null` when the row can't be read (missing account or DB
  * error). Callers decide what that means — the engines treat it as
- * "don't run" (fail closed), the settings UI as "show trial".
+ * "don't run" (fail closed), the settings UI as "plan unavailable".
  */
 export async function loadAccountEntitlements(
   db: SupabaseClient,
-  accountId: string,
+  accountId: string
 ): Promise<Entitlements | null> {
   const { data, error } = await db
     .from('accounts')
@@ -42,11 +43,15 @@ export async function loadAccountEntitlements(
     .maybeSingle();
 
   if (error) {
-    console.error('[plans] failed to load account plan:', accountId, error.message);
+    console.error(
+      '[plans] failed to load account plan:',
+      accountId,
+      error.message
+    );
     return null;
   }
   if (!data) return null;
-  return resolveEntitlements(data as PlanAccountFields);
+  return resolveEntitlements(normalizeAssignedPlan(data as PlanAccountFields));
 }
 
 /**
@@ -60,7 +65,7 @@ export async function loadAccountEntitlements(
 export async function accountHasModule(
   db: SupabaseClient,
   accountId: string,
-  module: Module,
+  module: Module
 ): Promise<boolean> {
   const ent = await loadAccountEntitlements(db, accountId);
   if (!ent) return false;
@@ -78,7 +83,7 @@ export async function accountHasModule(
  */
 export async function countConnectedChannels(
   db: SupabaseClient,
-  accountId: string,
+  accountId: string
 ): Promise<number> {
   const [official, qr] = await Promise.all([
     db

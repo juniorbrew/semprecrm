@@ -1,6 +1,12 @@
-import type { Company } from "@/lib/companies/types";
-import type { AccountRole } from "@/lib/auth/roles";
-import type { LimitKey, OptionalModule, Plan, PlanStatus } from "@/lib/plans";
+import type { Company } from '@/lib/companies/types';
+import type { AccountRole } from '@/lib/auth/roles';
+import type {
+  LimitKey,
+  OptionalModule,
+  Plan,
+  PlanStatus,
+  PlanDefinition,
+} from '@/lib/plans';
 
 export interface Profile {
   id: string;
@@ -140,6 +146,8 @@ export type Availability = 'available' | 'away';
  * owner's identity and the counts the /platform table shows.
  */
 export interface PlatformAccountRow extends Account {
+  plan_version_id: string;
+  plan_definition: PlanDefinition | null;
   owner_email: string | null;
   owner_name: string | null;
   members_count: number;
@@ -181,7 +189,7 @@ export interface AccountInvitation {
   id: string;
   account_id: string;
   /** Roles offered via invite — owner is never offered. */
-  role: Exclude<AccountRole, "owner">;
+  role: Exclude<AccountRole, 'owner'>;
   created_by_user_id: string | null;
   label: string | null;
   created_at: string;
@@ -365,7 +373,13 @@ export type SenderType = 'customer' | 'agent' | 'bot';
  * 059). `phone` = sent from the connected phone / WhatsApp Web (QR echo,
  * sender_type 'agent', no sender_id). NULL/absent = inbox send or legacy.
  */
-export type MessageOrigin = 'phone' | 'automation' | 'flow' | 'system' | 'ai' | 'csat';
+export type MessageOrigin =
+  | 'phone'
+  | 'automation'
+  | 'flow'
+  | 'system'
+  | 'ai'
+  | 'csat';
 export type ContentType =
   | 'text'
   | 'image'
@@ -376,7 +390,12 @@ export type ContentType =
   | 'template'
   /** Customer tapped a reply button or list row on a message we sent. */
   | 'interactive';
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageStatus =
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed';
 
 export interface Message {
   id: string;
@@ -464,7 +483,13 @@ export type ConversationEventType =
   | 'unsnoozed';
 
 /** Why a snooze ended (`unsnoozed.payload.cause`). */
-export type SnoozeWakeCause = 'manual' | 'timer' | 'customer_reply' | 'resolved' | 'archived' | 'reassigned';
+export type SnoozeWakeCause =
+  | 'manual'
+  | 'timer'
+  | 'customer_reply'
+  | 'resolved'
+  | 'archived'
+  | 'reassigned';
 
 /**
  * Type-specific details stored in `conversation_events.payload`.
@@ -551,7 +576,11 @@ export interface WhatsAppConfig {
   last_registration_error?: string;
 }
 
-export type WaQrSessionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected';
+export type WaQrSessionStatus =
+  | 'disconnected'
+  | 'qr'
+  | 'connecting'
+  | 'connected';
 
 /** One row per account — mirrors the gateway's session state (migration 026). */
 export interface WaQrSession {
@@ -673,13 +702,21 @@ export interface Deal {
   created_at: string;
   updated_at?: string;
   contact?: Contact;
-  company?: Pick<Company, 'id' | 'razao_social' | 'nome_fantasia' | 'cnpj' | 'cidade' | 'uf'> | null;
+  company?: Pick<
+    Company,
+    'id' | 'razao_social' | 'nome_fantasia' | 'cnpj' | 'cidade' | 'uf'
+  > | null;
   stage?: PipelineStage;
   assignee?: Profile;
   loss_reason?: Pick<DealLossReason, 'id' | 'name'> | null;
 }
 
-export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
+export type BroadcastStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'sending'
+  | 'sent'
+  | 'failed';
 /**
  * 'sending'   — claimed by a delivery pass (migration 051); never resent.
  * 'uncertain' — Meta may or may not have it (network/timeout/5xx, or the

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { PlatformAccountRow } from '@/types';
+import { PLAN_CATALOG } from '@/lib/plans';
 import { PlatformAccountSummary } from './account-summary';
 
 const snapshotAt = '2026-10-07T12:00:00Z';
@@ -9,6 +10,8 @@ const row: PlatformAccountRow = {
   owner_user_id: 'owner',
   name: 'Empresa',
   plan: 'pro',
+  plan_version_id: '39000000-0000-4000-8000-000000000001',
+  plan_definition: PLAN_CATALOG.pro,
   plan_status: 'active',
   plan_expires_at: null,
   module_overrides: {},

@@ -49,6 +49,26 @@ const fields = [
   'module_overrides',
   'limit_overrides',
 ] as const;
+
+export function projectPlanVersionChange(action: unknown, metadata: unknown) {
+  if (
+    action !== 'plan.changed' ||
+    !record(metadata) ||
+    !record(metadata.plan_version_change)
+  )
+    return null;
+  const { from_revision, to_revision } = metadata.plan_version_change;
+  if (
+    typeof from_revision !== 'number' ||
+    typeof to_revision !== 'number' ||
+    !Number.isSafeInteger(from_revision) ||
+    !Number.isSafeInteger(to_revision) ||
+    from_revision < 1 ||
+    to_revision < 1
+  )
+    return null;
+  return { from_revision, to_revision };
+}
 function safeValue(
   field: HistoryChange['field'],
   value: unknown

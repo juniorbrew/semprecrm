@@ -1,16 +1,26 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { assignedPlanFixture } from '@/test/plan-fixtures';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Shared mock state for the service-role client. Lives in a hoisted block
 // so the vi.mock factory below can close over it.
 const h = vi.hoisted(() => ({
   state: {
     owned: null as { id: string } | null,
-    account: { plan: "trial", plan_status: "trial", plan_expires_at: null, module_overrides: {}, limit_overrides: {} } as Record<string, unknown> | null,
+    account: {
+      plan: 'trial',
+      plan_status: 'trial',
+      plan_expires_at: null,
+      module_overrides: {},
+      limit_overrides: {},
+    } as Record<string, unknown> | null,
     ownedCustomField: null as { id: string } | null,
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
     fromCalls: [] as string[],
-    updateCalls: [] as { table: string; filters: [string, string, unknown][] }[],
+    updateCalls: [] as {
+      table: string;
+      filters: [string, string, unknown][];
+    }[],
     upsertCalls: [] as { table: string; payload: unknown }[],
     // create_task: the account's task_statuses, the member lookup for
     // the assignee, and every row inserted into `tasks`.
@@ -25,7 +35,7 @@ const h = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./admin-client", () => {
+vi.mock('./admin-client', () => {
   const { state } = h;
 
   function resolve(ops: {
@@ -37,56 +47,61 @@ vi.mock("./admin-client", () => {
     cols?: string;
   }) {
     const { table, type } = ops;
-    if (table === "conversations" && type === "select") {
+    if (table === 'conversations' && type === 'select') {
       const rows = state.conversations.filter((r) =>
-        ops.filters.every(([op, k, v]) => op !== "eq" || r[k] === v),
+        ops.filters.every(([op, k, v]) => op !== 'eq' || r[k] === v)
       );
       return { data: ops.single ? (rows[0] ?? null) : rows, error: null };
     }
-    if (table === "contacts") {
-      if (type === "update") {
+    if (table === 'contacts') {
+      if (type === 'update') {
         state.updateCalls.push({ table, filters: ops.filters });
         return { data: null, error: null };
       }
-      if (ops.cols?.includes("opted_out_at") && state.optOutError) {
+      if (ops.cols?.includes('opted_out_at') && state.optOutError) {
         return { data: null, error: state.optOutError };
       }
       // ownership guard / condition read
       return { data: state.owned, error: null };
     }
-    if (table === "custom_fields") {
+    if (table === 'custom_fields') {
       // account-scoped ownership lookup for a custom field definition
       return { data: state.ownedCustomField, error: null };
     }
-    if (table === "contact_custom_values") {
-      if (type === "upsert") {
+    if (table === 'contact_custom_values') {
+      if (type === 'upsert') {
         state.upsertCalls.push({ table, payload: ops.payload });
         return { data: null, error: null };
       }
       return { data: null, error: null };
     }
-    if (table === "accounts") {
+    if (table === 'accounts') {
       // Plan gate (migration 025) — default to an unexpired trial so
       // every existing scenario keeps running; a test can flip
       // `state.account` to exercise the "module off" path.
-      return { data: state.account, error: null };
+      return {
+        data: state.account ? assignedPlanFixture(state.account) : null,
+        error: null,
+      };
     }
-    if (table === "automations") return { data: state.automations, error: null };
-    if (table === "automation_logs") {
-      if (type === "insert") return { data: { id: "log1" }, error: null };
-      if (type === "update") {
+    if (table === 'automations')
+      return { data: state.automations, error: null };
+    if (table === 'automation_logs') {
+      if (type === 'insert') return { data: { id: 'log1' }, error: null };
+      if (type === 'update') {
         const p = ops.payload as { steps_executed?: unknown[] } | undefined;
         if (p?.steps_executed) state.logResults = p.steps_executed;
         return { data: null, error: null };
       }
-      return { data: { steps_executed: [], status: "success" }, error: null };
+      return { data: { steps_executed: [], status: 'success' }, error: null };
     }
-    if (table === "automation_steps") return { data: state.steps, error: null };
-    if (table === "task_statuses") return { data: state.taskStatuses, error: null };
-    if (table === "profiles") return { data: state.member, error: null };
-    if (table === "tasks" && type === "insert") {
+    if (table === 'automation_steps') return { data: state.steps, error: null };
+    if (table === 'task_statuses')
+      return { data: state.taskStatuses, error: null };
+    if (table === 'profiles') return { data: state.member, error: null };
+    if (table === 'tasks' && type === 'insert') {
       state.insertCalls.push({ table, payload: ops.payload });
-      return { data: { id: "task1", ...(ops.payload as object) }, error: null };
+      return { data: { id: 'task1', ...(ops.payload as object) }, error: null };
     }
     return { data: null, error: null };
   }
@@ -94,7 +109,7 @@ vi.mock("./admin-client", () => {
   function builder(table: string) {
     const ops = {
       table,
-      type: "select",
+      type: 'select',
       payload: undefined as unknown,
       filters: [] as [string, string, unknown][],
       single: false,
@@ -102,11 +117,11 @@ vi.mock("./admin-client", () => {
     };
     const b: Record<string, unknown> = {
       select: (c?: string) => ((ops.cols = c), b),
-      insert: (p: unknown) => ((ops.type = "insert"), (ops.payload = p), b),
-      update: (p: unknown) => ((ops.type = "update"), (ops.payload = p), b),
-      delete: () => ((ops.type = "delete"), b),
-      upsert: (p: unknown) => ((ops.type = "upsert"), (ops.payload = p), b),
-      eq: (k: string, v: unknown) => (ops.filters.push(["eq", k, v]), b),
+      insert: (p: unknown) => ((ops.type = 'insert'), (ops.payload = p), b),
+      update: (p: unknown) => ((ops.type = 'update'), (ops.payload = p), b),
+      delete: () => ((ops.type = 'delete'), b),
+      upsert: (p: unknown) => ((ops.type = 'upsert'), (ops.payload = p), b),
+      eq: (k: string, v: unknown) => (ops.filters.push(['eq', k, v]), b),
       neq: () => b,
       gte: () => b,
       is: () => b,
@@ -132,25 +147,25 @@ vi.mock("./admin-client", () => {
 });
 
 // fetchSeguro stays real (SSRF tests) unless a test overrides it once.
-vi.mock("@/lib/webhooks/ssrf", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/webhooks/ssrf")>();
+vi.mock('@/lib/webhooks/ssrf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/webhooks/ssrf')>();
   return { ...actual, fetchSeguro: vi.fn(actual.fetchSeguro) };
 });
 
-vi.mock("./meta-send", () => ({
-  engineSendText: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
-  engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
+vi.mock('./meta-send', () => ({
+  engineSendText: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
+  engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
 }));
 
-import { runAutomationsForTrigger, webhookBody } from "./engine";
+import { runAutomationsForTrigger, webhookBody } from './engine';
 
-const ACCOUNT = "acct-1";
+const ACCOUNT = 'acct-1';
 
 beforeEach(() => {
   h.state.owned = null;
   h.state.account = {
-    plan: "trial",
-    plan_status: "trial",
+    plan: 'trial',
+    plan_status: 'trial',
     plan_expires_at: null,
     module_overrides: {},
     limit_overrides: {},
@@ -167,13 +182,13 @@ beforeEach(() => {
   h.state.logResults = [];
   h.state.optOutError = null;
   h.state.conversations = [
-    { id: "conv1", account_id: ACCOUNT, contact_id: "c1", status: "open" },
-    { id: "conv-1", account_id: ACCOUNT, contact_id: "c1", status: "open" },
+    { id: 'conv1', account_id: ACCOUNT, contact_id: 'c1', status: 'open' },
+    { id: 'conv-1', account_id: ACCOUNT, contact_id: 'c1', status: 'open' },
   ];
 });
 
-describe("runAutomationsForTrigger — tenant isolation", () => {
-  it("refuses to dispatch when the contact is not in the account (GHSA-63cv-2c49-m5v3)", async () => {
+describe('runAutomationsForTrigger — tenant isolation', () => {
+  it('refuses to dispatch when the contact is not in the account (GHSA-63cv-2c49-m5v3)', async () => {
     // Ownership lookup returns nothing — the contact belongs to another tenant.
     h.state.owned = null;
     // If the guard failed, this automation would run an update_contact_field step.
@@ -182,91 +197,91 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "victim-contact-uuid",
-      context: { message_text: "manual trigger" },
+      triggerType: 'new_message_received',
+      contactId: 'victim-contact-uuid',
+      context: { message_text: 'manual trigger' },
     });
 
     // Bailed at the guard: never fetched automations, never wrote a contact.
-    expect(h.state.fromCalls).toContain("contacts");
-    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.fromCalls).toContain('contacts');
+    expect(h.state.fromCalls).not.toContain('automations');
     expect(h.state.updateCalls).toHaveLength(0);
   });
 
-  it("proceeds past the guard when the contact belongs to the account", async () => {
-    h.state.owned = { id: "c1" };
+  it('proceeds past the guard when the contact belongs to the account', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.automations = []; // no matching automations; just prove we got past the guard
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
-    expect(h.state.fromCalls).toContain("automations");
+    expect(h.state.fromCalls).toContain('automations');
   });
 
   it("scopes the update_contact_field write to the automation's account", async () => {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     expect(h.state.updateCalls).toHaveLength(1);
     const filters = h.state.updateCalls[0].filters;
-    expect(filters).toContainEqual(["eq", "id", "c1"]);
-    expect(filters).toContainEqual(["eq", "account_id", ACCOUNT]);
+    expect(filters).toContainEqual(['eq', 'id', 'c1']);
+    expect(filters).toContainEqual(['eq', 'account_id', ACCOUNT]);
   });
 });
 
-describe("runAutomationsForTrigger — plan gate (migration 025)", () => {
+describe('runAutomationsForTrigger — plan gate (migration 025)', () => {
   it("runs nothing when the account's plan lacks the automations module", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.account = { plan: "basico", plan_status: "active" };
+    h.state.owned = { id: 'c1' };
+    h.state.account = { plan: 'basico', plan_status: 'active' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
-    expect(h.state.fromCalls).toContain("accounts");
-    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.fromCalls).toContain('accounts');
+    expect(h.state.fromCalls).not.toContain('automations');
     expect(h.state.updateCalls).toHaveLength(0);
   });
 
-  it("runs nothing when the account is suspended, even with the module on", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.account = { plan: "empresa", plan_status: "suspended" };
+  it('runs nothing when the account is suspended, even with the module on', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.account = { plan: 'empresa', plan_status: 'suspended' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
-    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.fromCalls).not.toContain('automations');
     expect(h.state.updateCalls).toHaveLength(0);
   });
 
-  it("runs when a per-account override switches the module on", async () => {
-    h.state.owned = { id: "c1" };
+  it('runs when a per-account override switches the module on', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.account = {
-      plan: "basico",
-      plan_status: "active",
+      plan: 'basico',
+      plan_status: 'active',
       module_overrides: { automations: true },
     };
     h.state.automations = [automationWithUpdateStep()];
@@ -274,8 +289,8 @@ describe("runAutomationsForTrigger — plan gate (migration 025)", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
@@ -283,17 +298,17 @@ describe("runAutomationsForTrigger — plan gate (migration 025)", () => {
   });
 });
 
-describe("update_contact_field — custom fields", () => {
-  it("upserts contact_custom_values when the field is account-owned", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.ownedCustomField = { id: "cf1" };
+describe('update_contact_field — custom fields', () => {
+  it('upserts contact_custom_values when the field is account-owned', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.ownedCustomField = { id: 'cf1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:cf1", "Premium")];
+    h.state.steps = [customStep('custom:cf1', 'Premium')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
@@ -301,41 +316,41 @@ describe("update_contact_field — custom fields", () => {
     expect(h.state.updateCalls).toHaveLength(0);
     expect(h.state.upsertCalls).toHaveLength(1);
     expect(h.state.upsertCalls[0].payload).toEqual({
-      contact_id: "c1",
-      custom_field_id: "cf1",
-      value: "Premium",
+      contact_id: 'c1',
+      custom_field_id: 'cf1',
+      value: 'Premium',
     });
   });
 
-  it("interpolates {{ vars.* }} into the custom value", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.ownedCustomField = { id: "cf1" };
+  it('interpolates {{ vars.* }} into the custom value', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.ownedCustomField = { id: 'cf1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:cf1", "{{ vars.source }}")];
+    h.state.steps = [customStep('custom:cf1', '{{ vars.source }}')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { vars: { source: "WhatsApp Ad" } },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { vars: { source: 'WhatsApp Ad' } },
     });
 
     expect(h.state.upsertCalls).toHaveLength(1);
-    expect(
-      (h.state.upsertCalls[0].payload as { value: string }).value,
-    ).toBe("WhatsApp Ad");
+    expect((h.state.upsertCalls[0].payload as { value: string }).value).toBe(
+      'WhatsApp Ad'
+    );
   });
 
-  it("refuses to write a custom field from another account", async () => {
-    h.state.owned = { id: "c1" };
+  it('refuses to write a custom field from another account', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.ownedCustomField = null; // account-scoped lookup finds nothing
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:foreign-cf", "x")];
+    h.state.steps = [customStep('custom:foreign-cf', 'x')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
@@ -344,22 +359,49 @@ describe("update_contact_field — custom fields", () => {
   });
 });
 
-describe("create_task step", () => {
+describe('create_task step', () => {
   const STATUSES = [
-    { id: "st-open", account_id: ACCOUNT, name: "A fazer", kind: "open", is_default: true, position: 0 },
-    { id: "st-doing", account_id: ACCOUNT, name: "Em andamento", kind: "in_progress", is_default: false, position: 1 },
-    { id: "st-done", account_id: ACCOUNT, name: "Concluída", kind: "done", is_default: false, position: 2 },
+    {
+      id: 'st-open',
+      account_id: ACCOUNT,
+      name: 'A fazer',
+      kind: 'open',
+      is_default: true,
+      position: 0,
+    },
+    {
+      id: 'st-doing',
+      account_id: ACCOUNT,
+      name: 'Em andamento',
+      kind: 'in_progress',
+      is_default: false,
+      position: 1,
+    },
+    {
+      id: 'st-done',
+      account_id: ACCOUNT,
+      name: 'Concluída',
+      kind: 'done',
+      is_default: false,
+      position: 2,
+    },
   ];
 
   it("inserts a task on the default open status, linked to the trigger's contact + conversation", async () => {
-    h.state.owned = { id: "c1", name: "Maria Silva", phone: "+5511999", email: null, company: null } as never;
+    h.state.owned = {
+      id: 'c1',
+      name: 'Maria Silva',
+      phone: '+5511999',
+      email: null,
+      company: null,
+    } as never;
     h.state.taskStatuses = STATUSES;
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [
       createTaskStep({
-        title: "Atendimento: {{ contact.name }}",
-        description: "Última mensagem: {{ message.text }}",
-        priority: "high",
+        title: 'Atendimento: {{ contact.name }}',
+        description: 'Última mensagem: {{ message.text }}',
+        priority: 'high',
         due_in_hours: 24,
       }),
     ];
@@ -367,9 +409,9 @@ describe("create_task step", () => {
     const before = Date.now();
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { message_text: "quero um orçamento", conversation_id: "conv1" },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { message_text: 'quero um orçamento', conversation_id: 'conv1' },
     });
 
     expect(h.state.insertCalls).toHaveLength(1);
@@ -377,13 +419,13 @@ describe("create_task step", () => {
     expect(row).toMatchObject({
       account_id: ACCOUNT,
       created_by: null,
-      status_id: "st-open",
-      title: "Atendimento: Maria Silva",
-      description: "Última mensagem: quero um orçamento",
-      priority: "high",
+      status_id: 'st-open',
+      title: 'Atendimento: Maria Silva',
+      description: 'Última mensagem: quero um orçamento',
+      priority: 'high',
       assignee_user_id: null,
-      contact_id: "c1",
-      conversation_id: "conv1",
+      contact_id: 'c1',
+      conversation_id: 'conv1',
       deal_id: null,
     });
     const due = new Date(row.due_at as string).getTime();
@@ -391,134 +433,167 @@ describe("create_task step", () => {
     expect(due).toBeLessThanOrEqual(Date.now() + 24 * 3_600_000 + 1_000);
 
     expect(h.state.logResults).toEqual([
-      expect.objectContaining({ step_type: "create_task", status: "success", detail: "task created (task1)" }),
+      expect.objectContaining({
+        step_type: 'create_task',
+        status: 'success',
+        detail: 'task created (task1)',
+      }),
     ]);
   });
 
-  it("defaults priority to normal, leaves due_at empty and keeps only account members as assignee", async () => {
-    h.state.owned = { id: "c1" };
+  it('defaults priority to normal, leaves due_at empty and keeps only account members as assignee', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.taskStatuses = STATUSES;
     h.state.member = null; // assignee lookup finds no member of this account
     h.state.conversations = []; // contact has no conversation to link
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [
-      createTaskStep({ title: "Ligar de volta", priority: "asap", assignee_user_id: "stranger", due_in_hours: "" }),
+      createTaskStep({
+        title: 'Ligar de volta',
+        priority: 'asap',
+        assignee_user_id: 'stranger',
+        due_in_hours: '',
+      }),
     ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     expect(h.state.insertCalls).toHaveLength(1);
     expect(h.state.insertCalls[0].payload).toMatchObject({
-      title: "Ligar de volta",
-      priority: "normal",
+      title: 'Ligar de volta',
+      priority: 'normal',
       assignee_user_id: null,
       due_at: null,
       conversation_id: null,
     });
   });
 
-  it("assigns to a verified account member", async () => {
-    h.state.owned = { id: "c1" };
+  it('assigns to a verified account member', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.taskStatuses = STATUSES;
-    h.state.member = { user_id: "u-agent" };
+    h.state.member = { user_id: 'u-agent' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [createTaskStep({ title: "x", assignee_user_id: "u-agent" })];
+    h.state.steps = [
+      createTaskStep({ title: 'x', assignee_user_id: 'u-agent' }),
+    ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
-    expect(h.state.insertCalls[0].payload).toMatchObject({ assignee_user_id: "u-agent" });
+    expect(h.state.insertCalls[0].payload).toMatchObject({
+      assignee_user_id: 'u-agent',
+    });
   });
 
-  it("fails the step (no insert) when the account has no task statuses or no title", async () => {
-    h.state.owned = { id: "c1" };
+  it('fails the step (no insert) when the account has no task statuses or no title', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.taskStatuses = [];
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [createTaskStep({ title: "x" })];
+    h.state.steps = [createTaskStep({ title: 'x' })];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
     expect(h.state.insertCalls).toHaveLength(0);
     expect(h.state.logResults).toEqual([
-      expect.objectContaining({ step_type: "create_task", status: "failed", detail: "account has no task statuses" }),
+      expect.objectContaining({
+        step_type: 'create_task',
+        status: 'failed',
+        detail: 'account has no task statuses',
+      }),
     ]);
 
     h.state.logResults = [];
     h.state.taskStatuses = STATUSES;
-    h.state.steps = [createTaskStep({ title: "  " })];
+    h.state.steps = [createTaskStep({ title: '  ' })];
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
     expect(h.state.insertCalls).toHaveLength(0);
-    expect(h.state.logResults[0]).toMatchObject({ status: "failed", detail: "create_task needs a title" });
+    expect(h.state.logResults[0]).toMatchObject({
+      status: 'failed',
+      detail: 'create_task needs a title',
+    });
   });
 
   it("refuses when the account's plan lacks the tasks module", async () => {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.taskStatuses = STATUSES;
     h.state.account = {
-      plan: "trial",
-      plan_status: "trial",
+      plan: 'trial',
+      plan_status: 'trial',
       plan_expires_at: null,
       module_overrides: { tasks: false },
       limit_overrides: {},
     };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [createTaskStep({ title: "x" })];
+    h.state.steps = [createTaskStep({ title: 'x' })];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
     expect(h.state.insertCalls).toHaveLength(0);
     expect(h.state.logResults[0]).toMatchObject({
-      status: "failed",
-      detail: "tasks module is not enabled for this account",
+      status: 'failed',
+      detail: 'tasks module is not enabled for this account',
     });
   });
 });
 
-describe("interpolation — {{ contact.* }}", () => {
-  it("resolves contact name / email in update_contact_field values", async () => {
-    h.state.owned = { id: "c1", name: "João", phone: "+55 11 9", email: "j@x.io", company: null } as never;
-    h.state.ownedCustomField = { id: "cf1" };
+describe('interpolation — {{ contact.* }}', () => {
+  it('resolves contact name / email in update_contact_field values', async () => {
+    h.state.owned = {
+      id: 'c1',
+      name: 'João',
+      phone: '+55 11 9',
+      email: 'j@x.io',
+      company: null,
+    } as never;
+    h.state.ownedCustomField = { id: 'cf1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:cf1", "{{ contact.name }} <{{ contact.email }}> {{ contact.company }}")];
+    h.state.steps = [
+      customStep(
+        'custom:cf1',
+        '{{ contact.name }} <{{ contact.email }}> {{ contact.company }}'
+      ),
+    ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
-    expect((h.state.upsertCalls[0].payload as { value: string }).value).toBe("João <j@x.io> ");
+    expect((h.state.upsertCalls[0].payload as { value: string }).value).toBe(
+      'João <j@x.io> '
+    );
   });
 });
 
 function createTaskStep(step_config: Record<string, unknown>) {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "create_task",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'create_task',
     position: 0,
     parent_step_id: null,
     step_config,
@@ -527,10 +602,10 @@ function createTaskStep(step_config: Record<string, unknown>) {
 
 function automationWithUpdateStep() {
   return {
-    id: "a1",
+    id: 'a1',
     account_id: ACCOUNT,
-    user_id: "u1",
-    trigger_type: "new_message_received",
+    user_id: 'u1',
+    trigger_type: 'new_message_received',
     trigger_config: {},
     is_active: true,
   };
@@ -538,20 +613,20 @@ function automationWithUpdateStep() {
 
 function updateStep() {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "update_contact_field",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'update_contact_field',
     position: 0,
     parent_step_id: null,
-    step_config: { field: "company", value: "pwned-by-automation" },
+    step_config: { field: 'company', value: 'pwned-by-automation' },
   };
 }
 
 function customStep(field: string, value: string) {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "update_contact_field",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'update_contact_field',
     position: 0,
     parent_step_id: null,
     step_config: { field, value },
@@ -561,13 +636,13 @@ function customStep(field: string, value: string) {
 // ------------------------------------------------------------
 // lead_captured trigger (migration 029) — optional per-source filter.
 // ------------------------------------------------------------
-describe("lead_captured trigger — source filter", () => {
-  const SOURCE = "0b7f2a6e-4b1c-4d2e-9f3a-8c1d2e3f4a5b";
+describe('lead_captured trigger — source filter', () => {
+  const SOURCE = '0b7f2a6e-4b1c-4d2e-9f3a-8c1d2e3f4a5b';
 
   function leadAutomation(source_id?: string) {
     return {
       ...automationWithUpdateStep(),
-      trigger_type: "lead_captured",
+      trigger_type: 'lead_captured',
       trigger_config: source_id ? { source_id } : {},
     };
   }
@@ -575,137 +650,157 @@ describe("lead_captured trigger — source filter", () => {
   async function fire(sourceId: string) {
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "lead_captured",
-      contactId: "c1",
-      context: { vars: { source_id: sourceId, source_name: "Landing" } },
+      triggerType: 'lead_captured',
+      contactId: 'c1',
+      context: { vars: { source_id: sourceId, source_name: 'Landing' } },
     });
   }
 
   beforeEach(() => {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.steps = [updateStep()];
   });
 
-  it("runs for any source when the config has no source_id", async () => {
+  it('runs for any source when the config has no source_id', async () => {
     h.state.automations = [leadAutomation()];
-    await fire("some-other-source");
+    await fire('some-other-source');
     expect(h.state.updateCalls).toHaveLength(1);
   });
 
-  it("runs only when the context names the configured source", async () => {
+  it('runs only when the context names the configured source', async () => {
     h.state.automations = [leadAutomation(SOURCE)];
-    await fire("some-other-source");
+    await fire('some-other-source');
     expect(h.state.updateCalls).toHaveLength(0);
     await fire(SOURCE);
     expect(h.state.updateCalls).toHaveLength(1);
   });
 });
 
-describe("opt-out (migration 030) — send steps are skipped", () => {
+describe('opt-out (migration 030) — send steps are skipped', () => {
   const sendStep = (id: string, position: number) => ({
     id,
-    automation_id: "a1",
-    step_type: "send_message",
+    automation_id: 'a1',
+    step_type: 'send_message',
     position,
     parent_step_id: null,
-    step_config: { text: "Oi {{contact.name}}" },
+    step_config: { text: 'Oi {{contact.name}}' },
   });
   const templateStep = (id: string, position: number) => ({
     id,
-    automation_id: "a1",
-    step_type: "send_template",
+    automation_id: 'a1',
+    step_type: 'send_template',
     position,
     parent_step_id: null,
-    step_config: { template_name: "hello" },
+    step_config: { template_name: 'hello' },
   });
 
-  it("skips send_message / send_template when the contact row is opted out, but still runs other steps", async () => {
-    const { engineSendText, engineSendTemplate } = await import("./meta-send");
+  it('skips send_message / send_template when the contact row is opted out, but still runs other steps', async () => {
+    const { engineSendText, engineSendTemplate } = await import('./meta-send');
     (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
     (engineSendTemplate as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    h.state.owned = { id: "c1", opted_out_at: "2026-09-13T10:00:00.000Z" } as { id: string };
+    h.state.owned = { id: 'c1', opted_out_at: '2026-09-13T10:00:00.000Z' } as {
+      id: string;
+    };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [sendStep("s1", 0), templateStep("s2", 1), { ...updateStep(), id: "s3", position: 2 }];
+    h.state.steps = [
+      sendStep('s1', 0),
+      templateStep('s2', 1),
+      { ...updateStep(), id: 's3', position: 2 },
+    ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { conversation_id: "conv-1" },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv-1' },
     });
 
     expect(engineSendText).not.toHaveBeenCalled();
     expect(engineSendTemplate).not.toHaveBeenCalled();
     expect(h.state.logResults).toEqual([
-      expect.objectContaining({ step_id: "s1", status: "skipped", detail: "contato descadastrado" }),
-      expect.objectContaining({ step_id: "s2", status: "skipped", detail: "contato descadastrado" }),
-      expect.objectContaining({ step_id: "s3", status: "success" }),
+      expect.objectContaining({
+        step_id: 's1',
+        status: 'skipped',
+        detail: 'contato descadastrado',
+      }),
+      expect.objectContaining({
+        step_id: 's2',
+        status: 'skipped',
+        detail: 'contato descadastrado',
+      }),
+      expect.objectContaining({ step_id: 's3', status: 'success' }),
     ]);
     // The non-send step still wrote to the contact.
     expect(h.state.updateCalls).toHaveLength(1);
   });
 
-  it("honours context.vars.opted_out from the inbound pipeline without a contact read", async () => {
-    const { engineSendText } = await import("./meta-send");
+  it('honours context.vars.opted_out from the inbound pipeline without a contact read', async () => {
+    const { engineSendText } = await import('./meta-send');
     (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [sendStep("s1", 0)];
+    h.state.steps = [sendStep('s1', 0)];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { conversation_id: "conv-1", vars: { opted_out: true } },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv-1', vars: { opted_out: true } },
     });
 
     expect(engineSendText).not.toHaveBeenCalled();
-    expect(h.state.logResults[0]).toMatchObject({ status: "skipped", detail: "contato descadastrado" });
+    expect(h.state.logResults[0]).toMatchObject({
+      status: 'skipped',
+      detail: 'contato descadastrado',
+    });
   });
 
-  it("sends normally when the contact is not opted out", async () => {
-    const { engineSendText } = await import("./meta-send");
+  it('sends normally when the contact is not opted out', async () => {
+    const { engineSendText } = await import('./meta-send');
     (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [sendStep("s1", 0)];
+    h.state.steps = [sendStep('s1', 0)];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { conversation_id: "conv-1" },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv-1' },
     });
 
     expect(engineSendText).toHaveBeenCalledTimes(1);
-    expect(h.state.logResults[0]).toMatchObject({ step_id: "s1", status: "success" });
+    expect(h.state.logResults[0]).toMatchObject({
+      step_id: 's1',
+      status: 'success',
+    });
   });
 });
 
 // Portado do wacrm (GHSA-8jqh-598v-rfxc, #352).
-describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
-  it("refuses a private / link-local destination and never calls fetch", async () => {
+describe('send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)', () => {
+  it('refuses a private / link-local destination and never calls fetch', async () => {
     const fetchSpy = vi.fn(async () => ({ ok: true, status: 200 }));
-    vi.stubGlobal("fetch", fetchSpy);
+    vi.stubGlobal('fetch', fetchSpy);
 
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     // Aimed at the cloud metadata endpoint — the classic SSRF target.
-    h.state.steps = [webhookStep("http://169.254.169.254/latest/meta-data/")];
+    h.state.steps = [webhookStep('http://169.254.169.254/latest/meta-data/')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     // The automation matched and its steps were loaded (so we genuinely
     // reached the send_webhook case)...
-    expect(h.state.fromCalls).toContain("automation_steps");
+    expect(h.state.fromCalls).toContain('automation_steps');
     // ...yet the guard blocked it before any outbound request left the box.
     expect(fetchSpy).not.toHaveBeenCalled();
 
@@ -715,184 +810,276 @@ describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
 
 function webhookStep(url: string) {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "send_webhook",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'send_webhook',
     position: 0,
     parent_step_id: null,
-    step_config: { url, headers: { "Metadata-Flavor": "Google" }, body_template: "{}" },
+    step_config: {
+      url,
+      headers: { 'Metadata-Flavor': 'Google' },
+      body_template: '{}',
+    },
   };
 }
 
-describe("LGPD — opt-out / anonymised contacts and send_webhook", () => {
+describe('LGPD — opt-out / anonymised contacts and send_webhook', () => {
   const plainWebhook = (url: string) => ({
-    id: "w1",
-    automation_id: "a1",
-    step_type: "send_webhook",
+    id: 'w1',
+    automation_id: 'a1',
+    step_type: 'send_webhook',
     position: 0,
     parent_step_id: null,
     step_config: { url },
   });
 
-  it("fails CLOSED: a failed opt-out read skips the send", async () => {
-    const { engineSendText } = await import("./meta-send");
+  it('fails CLOSED: a failed opt-out read skips the send', async () => {
+    const { engineSendText } = await import('./meta-send');
     (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
-    h.state.owned = { id: "c1" };
-    h.state.optOutError = { message: "connection reset" };
+    h.state.owned = { id: 'c1' };
+    h.state.optOutError = { message: 'connection reset' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [{ id: "s1", automation_id: "a1", step_type: "send_message", position: 0, parent_step_id: null, step_config: { text: "oi" } }];
-
-    await runAutomationsForTrigger({ accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: { conversation_id: "conv-1" } });
-
-    expect(engineSendText).not.toHaveBeenCalled();
-    expect(h.state.logResults[0]).toMatchObject({ status: "skipped", detail: "contato descadastrado" });
-  });
-
-  it("skips sends and webhooks for an anonymised contact", async () => {
-    const { fetchSeguro } = await import("@/lib/webhooks/ssrf");
-    const spy = vi.mocked(fetchSeguro);
-    spy.mockClear();
-    h.state.owned = { id: "c1", anonymized_at: "2026-09-13T10:00:00.000Z" } as { id: string };
-    h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [plainWebhook("https://hooks.example.com/x")];
-
-    await runAutomationsForTrigger({ accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: { message_text: "meu cpf é 123" } });
-
-    expect(spy).not.toHaveBeenCalled();
-    expect(h.state.logResults[0]).toMatchObject({ step_type: "send_webhook", status: "skipped", detail: "contato anonimizado" });
-  });
-
-  it("the webhook still runs on the opt-out message itself (only anonymised contacts block it)", async () => {
-    const { fetchSeguro } = await import("@/lib/webhooks/ssrf");
-    const spy = vi.mocked(fetchSeguro);
-    spy.mockClear();
-    spy.mockImplementationOnce(async () => new Response("ok", { status: 200 }));
-    h.state.owned = { id: "c1", opted_out_at: "2026-09-13T10:00:00.000Z" } as { id: string };
-    h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [plainWebhook("https://hooks.example.com/x")];
+    h.state.steps = [
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 0,
+        parent_step_id: null,
+        step_config: { text: 'oi' },
+      },
+    ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { conversation_id: "conv-1", vars: { opted_out: true } },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv-1' },
+    });
+
+    expect(engineSendText).not.toHaveBeenCalled();
+    expect(h.state.logResults[0]).toMatchObject({
+      status: 'skipped',
+      detail: 'contato descadastrado',
+    });
+  });
+
+  it('skips sends and webhooks for an anonymised contact', async () => {
+    const { fetchSeguro } = await import('@/lib/webhooks/ssrf');
+    const spy = vi.mocked(fetchSeguro);
+    spy.mockClear();
+    h.state.owned = { id: 'c1', anonymized_at: '2026-09-13T10:00:00.000Z' } as {
+      id: string;
+    };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [plainWebhook('https://hooks.example.com/x')];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { message_text: 'meu cpf é 123' },
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(h.state.logResults[0]).toMatchObject({
+      step_type: 'send_webhook',
+      status: 'skipped',
+      detail: 'contato anonimizado',
+    });
+  });
+
+  it('the webhook still runs on the opt-out message itself (only anonymised contacts block it)', async () => {
+    const { fetchSeguro } = await import('@/lib/webhooks/ssrf');
+    const spy = vi.mocked(fetchSeguro);
+    spy.mockClear();
+    spy.mockImplementationOnce(async () => new Response('ok', { status: 200 }));
+    h.state.owned = { id: 'c1', opted_out_at: '2026-09-13T10:00:00.000Z' } as {
+      id: string;
+    };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [plainWebhook('https://hooks.example.com/x')];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv-1', vars: { opted_out: true } },
     });
 
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(h.state.logResults[0]).toMatchObject({ step_type: "send_webhook", status: "success" });
+    expect(h.state.logResults[0]).toMatchObject({
+      step_type: 'send_webhook',
+      status: 'success',
+    });
   });
 
-  it("without a body template, the webhook posts identifiers only — never the message text or vars", async () => {
-    const { fetchSeguro } = await import("@/lib/webhooks/ssrf");
+  it('without a body template, the webhook posts identifiers only — never the message text or vars', async () => {
+    const { fetchSeguro } = await import('@/lib/webhooks/ssrf');
     const spy = vi.mocked(fetchSeguro);
     spy.mockClear();
-    spy.mockImplementationOnce(async () => new Response("ok", { status: 200 }));
-    h.state.owned = { id: "c1" };
+    spy.mockImplementationOnce(async () => new Response('ok', { status: 200 }));
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [plainWebhook("https://hooks.example.com/x")];
+    h.state.steps = [plainWebhook('https://hooks.example.com/x')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { message_text: "meu cpf é 123", conversation_id: "conv-1", vars: { cpf: "123" } },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: {
+        message_text: 'meu cpf é 123',
+        conversation_id: 'conv-1',
+        vars: { cpf: '123' },
+      },
     });
 
     expect(spy).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body));
-    expect(body).toMatchObject({ contact_id: "c1", conversation_id: "conv-1" });
+    expect(body).toMatchObject({ contact_id: 'c1', conversation_id: 'conv-1' });
     expect(JSON.stringify(body)).not.toMatch(/cpf|123/);
   });
 });
 
-describe("context.conversation_id — tenant isolation", () => {
+describe('context.conversation_id — tenant isolation', () => {
   const STATUSES = [
-    { id: "st-open", account_id: ACCOUNT, name: "A fazer", kind: "open", is_default: true, position: 0 },
+    {
+      id: 'st-open',
+      account_id: ACCOUNT,
+      name: 'A fazer',
+      kind: 'open',
+      is_default: true,
+      position: 0,
+    },
   ];
   const run = (conversation_id: string) =>
     runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: { conversation_id },
     });
 
   it.each([
-    ["another account", { id: "foreign", account_id: "acct-2", contact_id: "c9", status: "open" }],
-    ["another contact of the same account", { id: "foreign", account_id: ACCOUNT, contact_id: "c2", status: "open" }],
-  ])("drops a forged id from %s and falls back to the contact's own conversation", async (_l, foreign) => {
-    h.state.owned = { id: "c1" };
-    h.state.taskStatuses = STATUSES;
-    h.state.conversations = [foreign, { id: "mine", account_id: ACCOUNT, contact_id: "c1", status: "open" }];
-    h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [createTaskStep({ title: "x" })];
+    [
+      'another account',
+      { id: 'foreign', account_id: 'acct-2', contact_id: 'c9', status: 'open' },
+    ],
+    [
+      'another contact of the same account',
+      { id: 'foreign', account_id: ACCOUNT, contact_id: 'c2', status: 'open' },
+    ],
+  ])(
+    "drops a forged id from %s and falls back to the contact's own conversation",
+    async (_l, foreign) => {
+      h.state.owned = { id: 'c1' };
+      h.state.taskStatuses = STATUSES;
+      h.state.conversations = [
+        foreign,
+        { id: 'mine', account_id: ACCOUNT, contact_id: 'c1', status: 'open' },
+      ];
+      h.state.automations = [automationWithUpdateStep()];
+      h.state.steps = [createTaskStep({ title: 'x' })];
 
-    await run("foreign");
+      await run('foreign');
 
-    expect(h.state.insertCalls[0].payload).toMatchObject({ conversation_id: "mine" });
-  });
+      expect(h.state.insertCalls[0].payload).toMatchObject({
+        conversation_id: 'mine',
+      });
+    }
+  );
 
-  it("send steps never receive a forged conversation id", async () => {
-    const { engineSendText } = await import("./meta-send");
+  it('send steps never receive a forged conversation id', async () => {
+    const { engineSendText } = await import('./meta-send');
     (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.conversations = [
-      { id: "foreign", account_id: "acct-2", contact_id: "c9", status: "open" },
-      { id: "mine", account_id: ACCOUNT, contact_id: "c1", status: "open" },
+      { id: 'foreign', account_id: 'acct-2', contact_id: 'c9', status: 'open' },
+      { id: 'mine', account_id: ACCOUNT, contact_id: 'c1', status: 'open' },
     ];
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [
-      { id: "s1", automation_id: "a1", step_type: "send_message", step_config: { text: "oi" }, position: 0, parent_step_id: null, branch: null },
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        step_config: { text: 'oi' },
+        position: 0,
+        parent_step_id: null,
+        branch: null,
+      },
     ];
 
-    await run("foreign");
+    await run('foreign');
 
-    expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "mine" }));
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'mine' })
+    );
   });
 });
 
-describe("send_webhook body — JSON injection", () => {
+describe('send_webhook body — JSON injection', () => {
   const args = (message_text: string) =>
-    ({ automation: { account_id: ACCOUNT }, contactId: null, context: { message_text } }) as never;
+    ({
+      automation: { account_id: ACCOUNT },
+      contactId: null,
+      context: { message_text },
+    }) as never;
   const evil = '", "status":"paid","x":"';
 
-  it("JSON-escapes values in a JSON template so customer text cannot add keys", async () => {
-    const body = await webhookBody('{"text":"{{ message.text }}","status":"new"}', args(evil));
+  it('JSON-escapes values in a JSON template so customer text cannot add keys', async () => {
+    const body = await webhookBody(
+      '{"text":"{{ message.text }}","status":"new"}',
+      args(evil)
+    );
     const parsed = JSON.parse(body);
-    expect(parsed).toEqual({ text: evil, status: "new" });
-    expect(Object.keys(parsed)).toEqual(["text", "status"]);
+    expect(parsed).toEqual({ text: evil, status: 'new' });
+    expect(Object.keys(parsed)).toEqual(['text', 'status']);
   });
 
-  it("escapes newlines and backslashes too", async () => {
+  it('escapes newlines and backslashes too', async () => {
     const tricky = 'a\\b\n"c';
     const body = await webhookBody('[ "{{ message.text }}" ]', args(tricky));
     expect(JSON.parse(body)).toEqual([tricky]);
   });
 
-  it("leaves a plain-text template unchanged", async () => {
-    expect(await webhookBody("msg: {{ message.text }}", args(evil))).toBe(`msg: ${evil}`);
+  it('leaves a plain-text template unchanged', async () => {
+    expect(await webhookBody('msg: {{ message.text }}', args(evil))).toBe(
+      `msg: ${evil}`
+    );
   });
 });
 
-describe("opt-out check fails closed", () => {
-  it("skips send steps when the opt-out read errors", async () => {
-    const { engineSendText } = await import("./meta-send");
+describe('opt-out check fails closed', () => {
+  it('skips send steps when the opt-out read errors', async () => {
+    const { engineSendText } = await import('./meta-send');
     (engineSendText as unknown as ReturnType<typeof vi.fn>).mockClear();
-    h.state.owned = { id: "c1" };
-    h.state.optOutError = { message: "boom" };
+    h.state.owned = { id: 'c1' };
+    h.state.optOutError = { message: 'boom' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [
-      { id: "s1", automation_id: "a1", step_type: "send_message", step_config: { text: "oi" }, position: 0, parent_step_id: null, branch: null },
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        step_config: { text: 'oi' },
+        position: 0,
+        parent_step_id: null,
+        branch: null,
+      },
     ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { conversation_id: "conv1" },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv1' },
     });
 
     expect(engineSendText).not.toHaveBeenCalled();
-    expect(h.state.logResults[0]).toMatchObject({ step_id: "s1", status: "skipped" });
+    expect(h.state.logResults[0]).toMatchObject({
+      step_id: 's1',
+      status: 'skipped',
+    });
   });
 });

@@ -1,4 +1,60 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Current usage exceeds the proposed limits. New additions will be blocked until capacity is available.':
+    'O uso atual excede os limites propostos. Novas inclusões serão bloqueadas até haver capacidade disponível.',
+  'Reload the company to confirm the saved conditions.':
+    'Recarregue a empresa para confirmar as condições salvas.',
+  'Reload company and discard draft': 'Recarregar empresa e descartar rascunho',
+  'A newer version is available. This company keeps its granted conditions until you explicitly update them.':
+    'Há uma versão mais recente. Esta empresa mantém as condições concedidas até você atualizá-las explicitamente.',
+  'Keep granted conditions': 'Manter condições concedidas',
+  'Update plan conditions': 'Atualizar condições do plano',
+  'Changes after saving': 'Alterações após salvar',
+  'Individual overrides are preserved. Existing users and channels will not be removed.':
+    'As condições individuais são preservadas. Usuários e canais existentes não serão removidos.',
+  'Effective modules and limits remain the same.':
+    'Os módulos e limites efetivos permanecem iguais.',
+  Plans: 'Planos',
+  Version: 'Versão',
+  'Current version': 'Versão atual',
+  'Catalog changes apply to new contracts. Existing companies keep their granted conditions.':
+    'As alterações do catálogo valem para novas contratações. As empresas existentes mantêm as condições concedidas.',
+  'optional modules': 'módulos opcionais',
+  'Optional modules': 'Módulos opcionais',
+  users: 'usuários',
+  channels: 'canais',
+  'Edit conditions': 'Editar condições',
+  'Version history': 'Histórico de versões',
+  'View version history': 'Ver histórico de versões',
+  'Initial conditions': 'Condições iniciais',
+  'No optional modules': 'Nenhum módulo opcional',
+  'No versions found.': 'Nenhuma versão encontrada.',
+  'Could not load version history. Try again.':
+    'Não foi possível carregar o histórico. Tente novamente.',
+  'Conditions saved. Existing companies keep their versions.':
+    'Condições salvas. As empresas existentes mantêm suas versões.',
+  'Reload the plan to confirm the saved conditions.':
+    'Recarregue o plano para confirmar as condições salvas.',
+  'Could not reload the plan. Try again.':
+    'Não foi possível recarregar o plano. Tente novamente.',
+  'Advertised monthly price': 'Preço mensal anunciado',
+  'Free trial for 14 days': 'Teste gratuito por 14 dias',
+  'Personalized pricing': 'Preço personalizado',
+  'Monthly price in BRL': 'Preço mensal em reais',
+  'Enter a price such as 59,90, with at most two decimal places.':
+    'Informe um preço como 59,90, com até duas casas decimais.',
+  'Capacity limits': 'Limites de capacidade',
+  'Limits must be whole numbers, zero or unlimited.':
+    'Os limites devem ser números inteiros, zero ou ilimitados.',
+  'Inbox and Contacts are always included.':
+    'Caixa de entrada e Contatos estão sempre incluídos.',
+  'Preview of new contracts': 'Prévia das novas contratações',
+  'Calculated before saving.': 'Calculada antes de salvar.',
+  'Check the fields': 'Revise os campos',
+  'This advertised price does not change existing contracted prices.':
+    'Este preço anunciado não altera preços já contratados.',
+  'Save conditions': 'Salvar condições',
+  'Reload current conditions and discard draft':
+    'Recarregar condições atuais e descartar rascunho',
   'Start date': 'Data inicial',
   'End date': 'Data final',
   'Type of change': 'Tipo de alteração',

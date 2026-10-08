@@ -15,9 +15,14 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { verificationEnv, workdir } from './platform-leads-runtime.mjs';
+import { verifyPlanCatalog } from './verify-plan-catalog.mjs';
 
 const env = verificationEnv();
-assert.equal(env.SUPABASE_INTERNAL_URL, 'http://127.0.0.1:57021');
+assert.ok(
+  ['http://127.0.0.1:57021', 'http://127.0.0.1:58021'].includes(
+    env.SUPABASE_INTERNAL_URL
+  )
+);
 const base = 'http://localhost:3107';
 const browserBin = process.env.AGENT_BROWSER_BIN;
 assert.ok(
@@ -83,6 +88,13 @@ async function identity(label, platform = false, fields = {}) {
     await admin.from('accounts').select('id').eq('owner_user_id', user.id)
   );
   accountIds.push(account.id);
+  if (fields.plan) {
+    const catalog = unwrap(await admin.rpc('public_plan_catalog'));
+    fields = {
+      ...fields,
+      plan_version_id: catalog.find((v) => v.plan === fields.plan).id,
+    };
+  }
   unwrap(
     await admin
       .from('accounts')
@@ -305,6 +317,10 @@ try {
     );
   browser('open', `${base}/platform`);
   browser('wait', '--text', 'Uma visão consolidada das empresas no SempreCRM.');
+  assert.ok(
+    snapshot().includes('Planos'),
+    'Platform catalog navigation exists'
+  );
   checkBrowserErrors('overview');
   assert.match(browser('get', 'text', 'body'), /Plano vencido/);
   assert.match(browser('get', 'text', 'body'), /Limite de usuários atingido/);
@@ -887,6 +903,25 @@ try {
     'Light/dark accessibility audits without violations and no failed network requests'
   );
   pass('Overview on mobile without horizontal overflow or browser errors');
+  await verifyPlanCatalog({
+    admin,
+    operator,
+    tenant,
+    limited,
+    identity,
+    request,
+    browser,
+    refFor,
+    snapshot,
+    noOverflow,
+    pass,
+    unwrap,
+    base,
+    out,
+  });
+  checkBrowserErrors('plan catalog');
+  browser('open', `${base}/platform`);
+  browser('wait', '--text', 'Uma visão consolidada das empresas no SempreCRM.');
   browser('click', refFor('Bloquear painel'));
   browser('wait', '--url', '**/platform/login');
   assert.ok(!snapshot().includes('Navegação da plataforma'));

@@ -1,19 +1,18 @@
-"use client";
+'use client';
 
-import { useMemo, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { ArrowLeft, Ban, CheckCircle2, Loader2, Save } from "lucide-react";
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { ArrowLeft, Ban, CheckCircle2, Loader2, Save } from 'lucide-react';
 
-import { useLanguage } from "@/hooks/use-language";
+import { useLanguage } from '@/hooks/use-language';
 import {
   LIMIT_KEYS,
   LIMIT_LABELS,
   MODULE_LABELS,
   OPTIONAL_MODULES,
   PLANS,
-  PLAN_CATALOG,
   PLAN_LABELS,
   PLAN_STATUSES,
   resolveEntitlements,
@@ -21,33 +20,38 @@ import {
   type OptionalModule,
   type Plan,
   type PlanStatus,
-} from "@/lib/plans";
-import type { PlatformAccountRow } from "@/types";
-import { Button } from "@/components/ui/button";
+} from '@/lib/plans';
+import type { PlatformAccountRow } from '@/types';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import { PlatformAccountSummary } from "./account-summary";
-import { PlatformAccountActivity } from "./account-activity";
-import { PlanStatusChip, planStatusLabelKey } from "./plan-status-chip";
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import { PlatformAccountSummary } from './account-summary';
+import { PlatformAccountActivity } from './account-activity';
+import { PlanStatusChip, planStatusLabelKey } from './plan-status-chip';
+import {
+  companyPlanPreview,
+  getCapacityExcess,
+} from '@/lib/company-plan-preview';
+import { parsePlanDefinition, type PlanVersion } from '@/lib/plan-catalog';
 
 // ------------------------------------------------------------
 // Local <-> ISO helpers for the datetime-local input.
 // ------------------------------------------------------------
 
 function isoToLocalInput(iso: string | null): string {
-  if (!iso) return "";
+  if (!iso) return '';
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
@@ -63,8 +67,8 @@ function addDaysLocalInput(days: number): string {
   return isoToLocalInput(d.toISOString());
 }
 
-type ModuleChoice = "inherit" | "on" | "off";
-type LimitChoice = "inherit" | "unlimited" | "custom";
+type ModuleChoice = 'inherit' | 'on' | 'off';
+type LimitChoice = 'inherit' | 'unlimited' | 'custom';
 
 interface LimitState {
   choice: LimitChoice;
@@ -72,13 +76,15 @@ interface LimitState {
 }
 
 const selectClass =
-  "h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
+  'h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60';
 
-function initialModules(row: PlatformAccountRow): Record<OptionalModule, ModuleChoice> {
+function initialModules(
+  row: PlatformAccountRow
+): Record<OptionalModule, ModuleChoice> {
   const out = {} as Record<OptionalModule, ModuleChoice>;
   for (const m of OPTIONAL_MODULES) {
     const v = row.module_overrides?.[m];
-    out[m] = v === true ? "on" : v === false ? "off" : "inherit";
+    out[m] = v === true ? 'on' : v === false ? 'off' : 'inherit';
   }
   return out;
 }
@@ -86,63 +92,81 @@ function initialModules(row: PlatformAccountRow): Record<OptionalModule, ModuleC
 function initialLimits(row: PlatformAccountRow): Record<LimitKey, LimitState> {
   const out = {} as Record<LimitKey, LimitState>;
   for (const k of LIMIT_KEYS) {
-    const has = row.limit_overrides && Object.prototype.hasOwnProperty.call(row.limit_overrides, k);
+    const has =
+      row.limit_overrides &&
+      Object.prototype.hasOwnProperty.call(row.limit_overrides, k);
     const v = has ? row.limit_overrides[k] : undefined;
-    if (!has) out[k] = { choice: "inherit", custom: "" };
-    else if (v === null) out[k] = { choice: "unlimited", custom: "" };
-    else out[k] = { choice: "custom", custom: String(v) };
+    if (!has) out[k] = { choice: 'inherit', custom: '' };
+    else if (v === null) out[k] = { choice: 'unlimited', custom: '' };
+    else out[k] = { choice: 'custom', custom: String(v) };
   }
   return out;
 }
 
 export function PlatformAccountForm({
-  row,
+  row: initialRow,
+  catalog,
   snapshotAt,
 }: {
   row: PlatformAccountRow;
+  catalog: PlanVersion[];
   snapshotAt: string;
 }) {
   const router = useRouter();
   const { t, language } = useLanguage();
+  const [row, setRow] = useState(initialRow);
+  const [adopt, setAdopt] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const [plan, setPlan] = useState<Plan>(row.plan);
   const [status, setStatus] = useState<PlanStatus>(row.plan_status);
   const [expires, setExpires] = useState(isoToLocalInput(row.plan_expires_at));
   const [modules, setModules] = useState(() => initialModules(row));
   const [limits, setLimits] = useState(() => initialLimits(row));
-  const [notes, setNotes] = useState(row.platform_notes ?? "");
+  const [notes, setNotes] = useState(row.platform_notes ?? '');
   const [saving, setSaving] = useState(false);
-  const [quick, setQuick] = useState<"suspend" | "reactivate" | null>(null);
+  const [quick, setQuick] = useState<'suspend' | 'reactivate' | null>(null);
 
-  const planDef = PLAN_CATALOG[plan];
+  const selected = useMemo(
+    () => companyPlanPreview(row, plan, adopt, catalog),
+    [row, plan, adopt, catalog]
+  );
+  const planDef = selected.plan_definition;
 
   // Live preview of what the customer will get with the current
   // (unsaved) form values — same resolver the app uses.
   const preview = useMemo(() => {
     const module_overrides: Record<string, boolean> = {};
     for (const m of OPTIONAL_MODULES) {
-      if (modules[m] === "on") module_overrides[m] = true;
-      if (modules[m] === "off") module_overrides[m] = false;
+      if (modules[m] === 'on') module_overrides[m] = true;
+      if (modules[m] === 'off') module_overrides[m] = false;
     }
     const limit_overrides: Record<string, number | null> = {};
     for (const k of LIMIT_KEYS) {
       const l = limits[k];
-      if (l.choice === "unlimited") limit_overrides[k] = null;
-      if (l.choice === "custom" && l.custom.trim() !== "") {
+      if (l.choice === 'unlimited') limit_overrides[k] = null;
+      if (l.choice === 'custom' && l.custom.trim() !== '') {
         const n = Number(l.custom);
-        if (Number.isFinite(n) && n >= 0) limit_overrides[k] = Math.floor(n);
+        if (Number.isSafeInteger(n) && n >= 0) limit_overrides[k] = n;
       }
     }
     return {
       patch: {
+        ...(selected.expected_plan_version_id
+          ? {
+              expected_plan_version_id: selected.expected_plan_version_id,
+              adopt_current_plan: adopt,
+            }
+          : {}),
         plan,
         plan_status: status,
         plan_expires_at: localInputToIso(expires),
         module_overrides,
         limit_overrides,
-        platform_notes: notes.trim() === "" ? null : notes.trim(),
+        platform_notes: notes.trim() === '' ? null : notes.trim(),
       },
       entitlements: resolveEntitlements({
+        ...selected,
         plan,
         plan_status: status,
         plan_expires_at: localInputToIso(expires),
@@ -150,27 +174,47 @@ export function PlatformAccountForm({
         limit_overrides,
       }),
     };
-  }, [plan, status, expires, modules, limits, notes]);
+  }, [plan, status, expires, modules, limits, notes, selected, adopt]);
 
-  async function applyPatch(patch: Record<string, unknown>, successMessage: string) {
+  async function applyPatch(
+    patch: Record<string, unknown>,
+    successMessage: string
+  ) {
+    setSaveError('');
     // Server route wraps the `platform_update_account` RPC so the change
     // is written to the account's audit log (`plan.changed`).
     let errorMessage: string | null = null;
     try {
       const res = await fetch(`/api/platform/accounts/${row.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (res.ok) {
+        const body = await res.json();
+        const saved = body?.account as PlatformAccountRow | undefined;
+        if (
+          !saved ||
+          saved.id !== row.id ||
+          !parsePlanDefinition(saved.plan_definition)
+        )
+          throw new Error(
+            t('Reload the company to confirm the saved conditions.')
+          );
+        setRow(saved);
+        if ('plan' in patch) setAdopt(false);
+      } else {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
         errorMessage = body?.error ?? `HTTP ${res.status}`;
       }
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
     if (errorMessage) {
-      toast.error(`${t("Failed to save")}: ${errorMessage}`);
+      setSaveError(errorMessage);
+      toast.error(`${t('Failed to save')}: ${errorMessage}`);
       return false;
     }
     toast.success(successMessage);
@@ -181,39 +225,61 @@ export function PlatformAccountForm({
   async function handleSave() {
     for (const k of LIMIT_KEYS) {
       const l = limits[k];
-      if (l.choice === "custom") {
+      if (l.choice === 'custom') {
         const n = Number(l.custom);
-        if (l.custom.trim() === "" || !Number.isFinite(n) || n < 0) {
-          toast.error(t("Custom limits must be a number of 0 or more."));
+        if (l.custom.trim() === '' || !Number.isSafeInteger(n) || n < 0) {
+          toast.error(t('Custom limits must be a number of 0 or more.'));
           return;
         }
       }
     }
     setSaving(true);
-    await applyPatch(preview.patch, t("Account updated"));
+    await applyPatch(preview.patch, t('Account updated'));
     setSaving(false);
   }
 
   async function handleSuspend() {
-    setQuick("suspend");
-    const ok = await applyPatch({ plan_status: "suspended" }, t("Account suspended"));
-    if (ok) setStatus("suspended");
+    setQuick('suspend');
+    const ok = await applyPatch(
+      { plan_status: 'suspended' },
+      t('Account suspended')
+    );
+    if (ok) setStatus('suspended');
     setQuick(null);
   }
 
   async function handleReactivate() {
-    setQuick("reactivate");
-    const next: PlanStatus = plan === "trial" ? "trial" : "active";
-    const ok = await applyPatch({ plan_status: next }, t("Account reactivated"));
+    setQuick('reactivate');
+    const next: PlanStatus = row.plan === 'trial' ? 'trial' : 'active';
+    const ok = await applyPatch(
+      { plan_status: next },
+      t('Account reactivated')
+    );
     if (ok) setStatus(next);
     setQuick(null);
   }
 
   const isBlockedStatus =
-    row.plan_status === "suspended" ||
-    row.plan_status === "past_due" ||
-    row.plan_status === "canceled";
+    row.plan_status === 'suspended' ||
+    row.plan_status === 'past_due' ||
+    row.plan_status === 'canceled';
   const busy = saving || quick !== null;
+  const granted = resolveEntitlements(row);
+  const differences = [
+    ...LIMIT_KEYS.filter(
+      (k) => granted.limits[k] !== preview.entitlements.limits[k]
+    ).map(
+      (k) =>
+        `${t(LIMIT_LABELS[k])}: ${granted.limits[k] ?? t('Unlimited')} → ${preview.entitlements.limits[k] ?? t('Unlimited')}`
+    ),
+    ...OPTIONAL_MODULES.filter(
+      (m) => granted.modules[m] !== preview.entitlements.modules[m]
+    ).map(
+      (m) =>
+        `${t(MODULE_LABELS[m])}: ${t(granted.modules[m] ? 'On' : 'Off')} → ${t(preview.entitlements.modules[m] ? 'On' : 'Off')}`
+    ),
+  ];
+  const capacityExcess = getCapacityExcess(row, preview.entitlements.limits);
 
   return (
     <section className="space-y-5">
@@ -221,24 +287,27 @@ export function PlatformAccountForm({
         <div className="min-w-0">
           <Link
             href="/platform/accounts"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
           >
             <ArrowLeft className="size-3.5" aria-hidden="true" />
-            {t("All accounts")}
+            {t('All accounts')}
           </Link>
           <h1
-            className="mt-1 truncate text-2xl font-bold tracking-tight text-foreground"
+            className="text-foreground mt-1 truncate text-2xl font-bold tracking-tight"
             data-no-translate
           >
             {row.name}
           </h1>
-          <p className="mt-1 break-all text-xs text-muted-foreground" data-no-translate>
-            {t("Created")}{" "}
+          <p
+            className="text-muted-foreground mt-1 text-xs break-all"
+            data-no-translate
+          >
+            {t('Created')}{' '}
             {new Date(row.created_at).toLocaleDateString(language, {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })}{" "}
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })}{' '}
             · id {row.id}
           </p>
         </div>
@@ -247,33 +316,100 @@ export function PlatformAccountForm({
             status={row.plan_status}
             blocked={!!resolveEntitlements(row, new Date(snapshotAt)).blocked}
           />
-          {row.plan_status === "suspended" || isBlockedStatus ? (
+          {row.plan_status === 'suspended' || isBlockedStatus ? (
             <Button
               variant="outline"
               onClick={handleReactivate}
               disabled={busy}
             >
-              {quick === "reactivate" ? (
+              {quick === 'reactivate' ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <CheckCircle2 className="size-4" />
               )}
-              {t("Reactivate")}
+              {t('Reactivate')}
             </Button>
           ) : (
-            <Button variant="destructive" className="text-red-700 [[data-mode=dark]_&]:text-red-300" onClick={handleSuspend} disabled={busy}>
-              {quick === "suspend" ? (
+            <Button
+              variant="destructive"
+              className="text-red-700 [[data-mode=dark]_&]:text-red-300"
+              onClick={handleSuspend}
+              disabled={busy}
+            >
+              {quick === 'suspend' ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Ban className="size-4" />
               )}
-              {t("Suspend")}
+              {t('Suspend')}
             </Button>
           )}
         </div>
       </div>
 
       <PlatformAccountSummary row={row} snapshotAt={snapshotAt} />
+      {saveError && (
+        <div role="alert" className="space-y-2 rounded-lg border p-4">
+          <p className="text-destructive text-sm">{saveError}</p>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            {t('Reload company and discard draft')}
+          </Button>
+        </div>
+      )}
+      {plan === row.plan &&
+        catalog.some(
+          (v) => v.plan === plan && v.id !== row.plan_version_id
+        ) && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
+            <p className="text-muted-foreground max-w-2xl text-sm">
+              {t(
+                'A newer version is available. This company keeps its granted conditions until you explicitly update them.'
+              )}
+            </p>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => setAdopt((value) => !value)}
+            >
+              {t(adopt ? 'Keep granted conditions' : 'Update plan conditions')}
+            </Button>
+          </div>
+        )}
+      {(adopt || plan !== row.plan) && (
+        <div className="bg-muted space-y-2 rounded-lg p-4">
+          <h2 className="font-semibold">{t('Changes after saving')}</h2>
+          {capacityExcess.length > 0 && (
+            <div role="status" className="space-y-1 text-sm">
+              <p className="font-medium">
+                {t(
+                  'Current usage exceeds the proposed limits. New additions will be blocked until capacity is available.'
+                )}
+              </p>
+              {capacityExcess.map((item) => (
+                <p key={item.key}>
+                  {t(LIMIT_LABELS[item.key])}: {item.used} / {item.limit}
+                </p>
+              ))}
+            </div>
+          )}
+          <p className="text-muted-foreground text-sm">
+            {t(
+              'Individual overrides are preserved. Existing users and channels will not be removed.'
+            )}
+          </p>
+          {differences.length ? (
+            <ul className="list-inside list-disc text-sm">
+              {differences.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm">
+              {t('Effective modules and limits remain the same.')}
+            </p>
+          )}
+        </div>
+      )}
       <PlatformAccountActivity key={snapshotAt} accountId={row.id} />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
@@ -281,18 +417,23 @@ export function PlatformAccountForm({
           {/* Plan / status / expiry */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-foreground">{t("Plan")}</CardTitle>
+              <CardTitle className="text-foreground">{t('Plan')}</CardTitle>
               <CardDescription className="text-muted-foreground">
-                {t("The plan sets the default modules and limits; overrides below win over it.")}
+                {t(
+                  'The plan sets the default modules and limits; overrides below win over it.'
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-3">
               <div className="grid gap-2">
-                <Label htmlFor="plan">{t("Plan")}</Label>
+                <Label htmlFor="plan">{t('Plan')}</Label>
                 <select
                   id="plan"
                   value={plan}
-                  onChange={(e) => setPlan(e.target.value as Plan)}
+                  onChange={(e) => {
+                    setPlan(e.target.value as Plan);
+                    setAdopt(false);
+                  }}
                   className={selectClass}
                   disabled={busy}
                 >
@@ -304,7 +445,7 @@ export function PlatformAccountForm({
                 </select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="plan_status">{t("Status")}</Label>
+                <Label htmlFor="plan_status">{t('Status')}</Label>
                 <select
                   id="plan_status"
                   value={status}
@@ -320,7 +461,7 @@ export function PlatformAccountForm({
                 </select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="plan_expires_at">{t("Valid until")}</Label>
+                <Label htmlFor="plan_expires_at">{t('Valid until')}</Label>
                 <Input
                   id="plan_expires_at"
                   type="datetime-local"
@@ -332,34 +473,36 @@ export function PlatformAccountForm({
                 <div className="flex flex-wrap gap-1">
                   <button
                     type="button"
-                    className="text-xs text-primary [[data-mode=dark]_&]:text-violet-300 hover:underline"
+                    className="text-primary text-xs hover:underline [[data-mode=dark]_&]:text-violet-300"
                     onClick={() => setExpires(addDaysLocalInput(14))}
                     disabled={busy}
                   >
-                    +14 {t("days")}
+                    +14 {t('days')}
                   </button>
-                  <span className="text-xs text-muted-foreground">·</span>
+                  <span className="text-muted-foreground text-xs">·</span>
                   <button
                     type="button"
-                    className="text-xs text-primary [[data-mode=dark]_&]:text-violet-300 hover:underline"
+                    className="text-primary text-xs hover:underline [[data-mode=dark]_&]:text-violet-300"
                     onClick={() => setExpires(addDaysLocalInput(30))}
                     disabled={busy}
                   >
-                    +30 {t("days")}
+                    +30 {t('days')}
                   </button>
-                  <span className="text-xs text-muted-foreground">·</span>
+                  <span className="text-muted-foreground text-xs">·</span>
                   <button
                     type="button"
-                    className="text-xs text-primary [[data-mode=dark]_&]:text-violet-300 hover:underline"
-                    onClick={() => setExpires("")}
+                    className="text-primary text-xs hover:underline [[data-mode=dark]_&]:text-violet-300"
+                    onClick={() => setExpires('')}
                     disabled={busy}
                   >
-                    {t("No expiry")}
+                    {t('No expiry')}
                   </button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground sm:col-span-3">
-                {t("Only a trial is blocked by the expiry date. Paid plans are blocked by status (past due, canceled, suspended).")}
+              <p className="text-muted-foreground text-xs sm:col-span-3">
+                {t(
+                  'Only a trial is blocked by the expiry date. Paid plans are blocked by status (past due, canceled, suspended).'
+                )}
               </p>
             </CardContent>
           </Card>
@@ -367,14 +510,16 @@ export function PlatformAccountForm({
           {/* Module overrides */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-foreground">{t("Modules")}</CardTitle>
+              <CardTitle className="text-foreground">{t('Modules')}</CardTitle>
               <CardDescription className="text-muted-foreground">
-                {t("Inbox and Contacts are always on. For the rest, \"Inherit\" follows the plan.")}
+                {t(
+                  'Inbox and Contacts are always on. For the rest, "Inherit" follows the plan.'
+                )}
               </CardDescription>
             </CardHeader>
-            <CardContent className="divide-y divide-border">
+            <CardContent className="divide-border divide-y">
               {OPTIONAL_MODULES.map((m) => {
-                const fromPlan = planDef.modules.includes(m);
+                const fromPlan = planDef?.modules.includes(m) ?? false;
                 const effective = preview.entitlements.modules[m];
                 const choice = modules[m];
                 return (
@@ -383,14 +528,16 @@ export function PlatformAccountForm({
                     className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-foreground">
+                      <div className="text-foreground text-sm font-medium">
                         {t(MODULE_LABELS[m])}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {t("Plan")}: {fromPlan ? t("On") : t("Off")}
-                        {choice !== "inherit" ? (
+                      <div className="text-muted-foreground text-xs">
+                        {t('Plan')}: {fromPlan ? t('On') : t('Off')}
+                        {choice !== 'inherit' ? (
                           <>
-                            {" "}· {t("Override")}: {choice === "on" ? t("On") : t("Off")}
+                            {' '}
+                            · {t('Override')}:{' '}
+                            {choice === 'on' ? t('On') : t('Off')}
                           </>
                         ) : null}
                       </div>
@@ -398,16 +545,16 @@ export function PlatformAccountForm({
                     <div className="flex items-center gap-3">
                       <span
                         className={cn(
-                          "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider",
+                          'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase',
                           effective
-                            ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 [[data-mode=dark]_&]:text-emerald-300"
-                            : "border-border bg-muted text-muted-foreground",
+                            ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 [[data-mode=dark]_&]:text-emerald-300'
+                            : 'border-border bg-muted text-muted-foreground'
                         )}
                       >
-                        {effective ? t("On") : t("Off")}
+                        {effective ? t('On') : t('Off')}
                       </span>
                       <select
-                        aria-label={`${t(MODULE_LABELS[m])} — ${t("override")}`}
+                        aria-label={`${t(MODULE_LABELS[m])} — ${t('override')}`}
                         value={choice}
                         onChange={(e) =>
                           setModules((prev) => ({
@@ -415,14 +562,14 @@ export function PlatformAccountForm({
                             [m]: e.target.value as ModuleChoice,
                           }))
                         }
-                        className={cn(selectClass, "w-44")}
+                        className={cn(selectClass, 'w-44')}
                         disabled={busy}
                       >
                         <option value="inherit">
-                          {t("Inherit")} ({fromPlan ? t("On") : t("Off")})
+                          {t('Inherit')} ({fromPlan ? t('On') : t('Off')})
                         </option>
-                        <option value="on">{t("Force on")}</option>
-                        <option value="off">{t("Force off")}</option>
+                        <option value="on">{t('Force on')}</option>
+                        <option value="off">{t('Force off')}</option>
                       </select>
                     </div>
                   </div>
@@ -434,14 +581,16 @@ export function PlatformAccountForm({
           {/* Limit overrides */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-foreground">{t("Limits")}</CardTitle>
+              <CardTitle className="text-foreground">{t('Limits')}</CardTitle>
               <CardDescription className="text-muted-foreground">
-                {t("Seats count active members plus pending invites. Channels are connected WhatsApp numbers.")}
+                {t(
+                  'Seats count active members plus pending invites. Channels are connected WhatsApp numbers.'
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               {LIMIT_KEYS.map((k) => {
-                const fromPlan = planDef.limits[k];
+                const fromPlan = planDef ? planDef.limits[k] : 0;
                 const l = limits[k];
                 const effective = preview.entitlements.limits[k];
                 return (
@@ -454,19 +603,23 @@ export function PlatformAccountForm({
                         onChange={(e) =>
                           setLimits((prev) => ({
                             ...prev,
-                            [k]: { ...prev[k], choice: e.target.value as LimitChoice },
+                            [k]: {
+                              ...prev[k],
+                              choice: e.target.value as LimitChoice,
+                            },
                           }))
                         }
                         className={selectClass}
                         disabled={busy}
                       >
                         <option value="inherit">
-                          {t("Inherit")} ({fromPlan === null ? t("Unlimited") : fromPlan})
+                          {t('Inherit')} (
+                          {fromPlan === null ? t('Unlimited') : fromPlan})
                         </option>
-                        <option value="unlimited">{t("Unlimited")}</option>
-                        <option value="custom">{t("Custom")}</option>
+                        <option value="unlimited">{t('Unlimited')}</option>
+                        <option value="custom">{t('Custom')}</option>
                       </select>
-                      {l.choice === "custom" ? (
+                      {l.choice === 'custom' ? (
                         <Input
                           type="number"
                           min={0}
@@ -479,15 +632,15 @@ export function PlatformAccountForm({
                             }))
                           }
                           className="h-9 w-24"
-                          aria-label={`${t(LIMIT_LABELS[k])} — ${t("custom value")}`}
+                          aria-label={`${t(LIMIT_LABELS[k])} — ${t('custom value')}`}
                           disabled={busy}
                         />
                       ) : null}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t("Effective")}:{" "}
-                      <span className="font-medium text-foreground">
-                        {effective === null ? t("Unlimited") : effective}
+                    <p className="text-muted-foreground text-xs">
+                      {t('Effective')}:{' '}
+                      <span className="text-foreground font-medium">
+                        {effective === null ? t('Unlimited') : effective}
                       </span>
                     </p>
                   </div>
@@ -499,9 +652,11 @@ export function PlatformAccountForm({
           {/* Notes */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-foreground">{t("Platform notes")}</CardTitle>
+              <CardTitle className="text-foreground">
+                {t('Platform notes')}
+              </CardTitle>
               <CardDescription className="text-muted-foreground">
-                {t("Internal only — the customer never sees this.")}
+                {t('Internal only — the customer never sees this.')}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -509,7 +664,9 @@ export function PlatformAccountForm({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={4}
-                placeholder={t("Payment references, contact history, special deals…")}
+                placeholder={t(
+                  'Payment references, contact history, special deals…'
+                )}
                 disabled={busy}
               />
             </CardContent>
@@ -521,15 +678,15 @@ export function PlatformAccountForm({
               nativeButton={false}
               render={<Link href="/platform/accounts" />}
             >
-              {t("Cancel")}
+              {t('Cancel')}
             </Button>
-            <Button onClick={handleSave} disabled={busy}>
+            <Button onClick={handleSave} disabled={busy || !planDef}>
               {saving ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Save className="size-4" />
               )}
-              {t("Save changes")}
+              {t('Save changes')}
             </Button>
           </div>
         </div>
@@ -537,39 +694,43 @@ export function PlatformAccountForm({
         {/* Live preview */}
         <Card className="lg:sticky lg:top-6">
           <CardHeader>
-            <CardTitle className="text-foreground">{t("Customer will see")}</CardTitle>
+            <CardTitle className="text-foreground">
+              {t('Customer will see')}
+            </CardTitle>
             <CardDescription className="text-muted-foreground">
-              {t("Resolved from the form above, before saving.")}
+              {t('Resolved from the form above, before saving.')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">{t("Plan")}</span>
-              <span className="font-medium text-foreground">
+              <span className="text-muted-foreground">{t('Plan')}</span>
+              <span className="text-foreground font-medium">
                 {t(PLAN_LABELS[preview.entitlements.plan])}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">{t("Access")}</span>
+              <span className="text-muted-foreground">{t('Access')}</span>
               {preview.entitlements.blocked ? (
-                <span className="font-medium text-red-700 [[data-mode=dark]_&]:text-red-300">{t("Blocked")}</span>
+                <span className="font-medium text-red-700 [[data-mode=dark]_&]:text-red-300">
+                  {t('Blocked')}
+                </span>
               ) : (
                 <span className="font-medium text-emerald-700 [[data-mode=dark]_&]:text-emerald-300">
-                  {t("Allowed")}
+                  {t('Allowed')}
                 </span>
               )}
             </div>
             <div>
-              <div className="mb-1.5 text-muted-foreground">{t("Modules")}</div>
+              <div className="text-muted-foreground mb-1.5">{t('Modules')}</div>
               <ul className="flex flex-wrap gap-1.5">
                 {OPTIONAL_MODULES.map((m) => (
                   <li
                     key={m}
                     className={cn(
-                      "rounded-full border px-2 py-0.5 text-xs",
+                      'rounded-full border px-2 py-0.5 text-xs',
                       preview.entitlements.modules[m]
-                        ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 [[data-mode=dark]_&]:text-emerald-300"
-                        : "border-border bg-muted text-muted-foreground line-through",
+                        ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 [[data-mode=dark]_&]:text-emerald-300'
+                        : 'border-border bg-muted text-muted-foreground line-through'
                     )}
                   >
                     {t(MODULE_LABELS[m])}
@@ -580,10 +741,12 @@ export function PlatformAccountForm({
             <div className="grid grid-cols-2 gap-3">
               {LIMIT_KEYS.map((k) => (
                 <div key={k}>
-                  <div className="text-xs text-muted-foreground">{t(LIMIT_LABELS[k])}</div>
-                  <div className="font-semibold text-foreground">
+                  <div className="text-muted-foreground text-xs">
+                    {t(LIMIT_LABELS[k])}
+                  </div>
+                  <div className="text-foreground font-semibold">
                     {preview.entitlements.limits[k] === null
-                      ? t("Unlimited")
+                      ? t('Unlimited')
                       : preview.entitlements.limits[k]}
                   </div>
                 </div>
