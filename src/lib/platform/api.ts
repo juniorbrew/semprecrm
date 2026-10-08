@@ -39,7 +39,7 @@ export async function authorizePlatformApi() {
         401
       ),
     };
-  return { supabase };
+  return { supabase, user };
 }
 
 export function leadRpcError(error: { code: string }) {

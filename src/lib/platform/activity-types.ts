@@ -36,6 +36,7 @@ export interface PlatformHistory {
   actor_name: string | null;
   created_at: string;
   changes: HistoryChange[];
+  plan_version_change: { from_revision: number; to_revision: number } | null;
 }
 export type HistoryValue =
   | string

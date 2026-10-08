@@ -643,6 +643,12 @@ function HistoryResults({
 function HistoryChanges({ event }: { event: PlatformHistory }) {
   const { t, language } = useLanguage();
   const rows: Array<{ label: string; from: string; to: string }> = [];
+  if (event.plan_version_change)
+    rows.push({
+      label: 'Versão do plano',
+      from: String(event.plan_version_change.from_revision),
+      to: String(event.plan_version_change.to_revision),
+    });
   for (const change of event.changes) {
     if (
       change.field === 'module_overrides' ||
