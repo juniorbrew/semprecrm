@@ -1,7 +1,7 @@
 // ============================================================
 // Plans, modules and entitlement resolution — pure, no I/O.
 //
-// Each account uses its immutable granted definition (migration 079).
+// Each account uses its immutable granted definition (migration 081).
 // The static catalogue below is only the initial seed/reference.
 //
 // `resolveEntitlements` is the single place that turns an account

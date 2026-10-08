@@ -40,7 +40,7 @@
 
 ### Task 1: Immutable versions, assignments and database access
 
-**Files:** create `supabase/migrations/079_versioned_plan_catalog.sql`, `supabase/tests/plan_catalog.sql`; reference migrations 043 (signup), 058 (account RPC), 026 (list RPC) and 076 (grants/guard).
+**Files:** create `supabase/migrations/081_versioned_plan_catalog.sql`, `supabase/tests/plan_catalog.sql`; reference migrations 043 (signup), 058 (account RPC), 026 (list RPC) and 076 (grants/guard).
 
 - [ ] Write failing SQL tests: initial Pro definition has `max_users=10`, `max_channels=2`, all optional modules except flows; seed prices are `0`, `5990`, `8990`, `null`. Seed other definitions from current `PLAN_CATALOG`, not older design docs. Existing account fields/overrides remain byte-for-byte unchanged after assignment. Public reads omit authors/history; tenants cannot read another company's non-current granted version or change pointers/versions.
 - [ ] Run the SQL tests against the isolated stack; verify failures concern missing catalog/assignments, not connection errors.
@@ -63,7 +63,7 @@
 
 ### Task 3: Authorized, atomic mutations and safe history
 
-**Files:** create `src/app/api/platform/plans/[plan]/route.ts`, `route.test.ts`, `src/app/api/platform/plans/[plan]/history/route.ts`, `route.test.ts`, `supabase/migrations/080_plan_catalog_write_cutover.sql`; modify account PATCH route and create its `route.test.ts`, migration 079, `src/lib/platform/history.ts`, `history.test.ts`, `src/lib/platform/activity-types.ts`, `src/lib/audit.ts`.
+**Files:** create `src/app/api/platform/plans/[plan]/route.ts`, `route.test.ts`, `src/app/api/platform/plans/[plan]/history/route.ts`, `route.test.ts`, `supabase/migrations/082_plan_catalog_write_cutover.sql`; modify account PATCH route and create its `route.test.ts`, migration 081, `src/lib/platform/history.ts`, `history.test.ts`, `src/lib/platform/activity-types.ts`, `src/lib/audit.ts`.
 
 - [ ] Write failing route/SQL tests: anonymous, ordinary tenant and gate-locked requests perform no privileged writes; stale expected ID returns 409; invalid module, price/fraction, unknown plan and actor impersonation are rejected. Expected version A plus current B fails without inserting version/audit rows. A historical actor label survives profile changes.
 - [ ] Implement GET current plan and PATCH save using `authorizePlatformApi`, parsers and service-only version RPC. Return only validated safe DTOs; map conflict/validation/unavailability to 409/400/500. Revalidate `/precos` only after successful committed change using this Next version's documented API.
@@ -101,7 +101,7 @@
 - [ ] Verify concurrent saves, lost responses/retry, assigned-definition outage, filtered/paginated safe history, Brazilian prices, personalized price, UI drafts, and public pricing refresh. Capture desktop/mobile and light/dark together; inspect in bounded passes.
 - [ ] Run SQL tests, relevant Vitest suites, changed-file ESLint, TypeScript, Prettier, whitespace check and `node scripts/platform-leads-runtime.mjs build` with existing isolated-runtime variables. Then start that runtime and run the expanded agent-browser harness. Record commands/results and limitations; do not claim passing unexecuted checks.
 - [ ] Obtain an independent security/architecture/code review, address actionable findings and rerun affected checks. All requirements must have evidence before claiming completion.
-- [ ] Prepare deployment instructions with database backup, applied-migration inventory and a verified rollback strategy. Because new privileges/RPC calls and app code are coupled, test the deployment sequence locally: migration 079/schema/backfill first, app cutover, migration 080/legacy-write revocation last. Pause administrative account edits during cutover since the old tier-change RPC does not supply the new assignment; public/tenant reads retain their initial conditions. Preserve assigned data on rollback; do not blindly restore permissive grants or delete versions.
+- [ ] Prepare deployment instructions with database backup, applied-migration inventory and a verified rollback strategy. Because new privileges/RPC calls and app code are coupled, test the deployment sequence locally: migration 081/schema/backfill first, app cutover, migration 082/legacy-write revocation last. Pause administrative account edits during cutover since the old tier-change RPC does not supply the new assignment; public/tenant reads retain their initial conditions. Preserve assigned data on rollback; do not blindly restore permissive grants or delete versions.
 - [ ] Present tested deliverable and ask publication authorization. After approval: create/attach PR, await CI, merge actual tested head, apply reviewed migration sequence and deploy. Verify public pricing, protected access, exact release and server health; document authenticated checks if access is available, otherwise state their local-only coverage.
 
 ## Self-review and execution recommendation

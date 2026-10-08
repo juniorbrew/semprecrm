@@ -1,4 +1,4 @@
--- Install before the application cutover; revoke the legacy writer with 080 last.
+-- Install before the application cutover; revoke the legacy writer with 082 last.
 BEGIN;
 
 CREATE FUNCTION public.valid_plan_definition(value jsonb) RETURNS boolean
