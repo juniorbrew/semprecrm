@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlatformAccountRow } from '@/types';
+import { PLAN_CATALOG } from '@/lib/plans';
 import {
   getAccountHealth,
   summarizeAccounts,
@@ -15,6 +16,8 @@ function account(
     owner_user_id: 'owner',
     name: 'Empresa',
     plan: 'pro',
+    plan_version_id: '39000000-0000-4000-8000-000000000001',
+    plan_definition: PLAN_CATALOG[overrides.plan ?? 'pro'],
     plan_status: 'active',
     plan_expires_at: null,
     module_overrides: {},

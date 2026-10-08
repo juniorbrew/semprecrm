@@ -161,5 +161,72 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.platform_save_plan_version(text,uuid,jsonb,bigint,uuid) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.platform_save_plan_version(text,uuid,jsonb,bigint,uuid) TO service_role;
+DROP FUNCTION public.platform_list_accounts();
+CREATE FUNCTION public.platform_list_accounts()
+RETURNS TABLE (
+  id                    UUID,
+  name                  TEXT,
+  owner_user_id         UUID,
+  owner_email           TEXT,
+  owner_name            TEXT,
+  plan                  TEXT,
+  plan_status           TEXT,
+  plan_expires_at       TIMESTAMPTZ,
+  module_overrides      JSONB,
+  limit_overrides       JSONB,
+  platform_notes        TEXT,
+  created_at            TIMESTAMPTZ,
+  updated_at            TIMESTAMPTZ,
+  members_count         BIGINT,
+  channels_count        BIGINT,
+  pending_invites_count BIGINT
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT is_platform_admin() THEN
+    RAISE EXCEPTION 'Platform admin only' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    a.id,
+    a.name,
+    a.owner_user_id,
+    op.email                      AS owner_email,
+    op.full_name                  AS owner_name,
+    a.plan,
+    a.plan_version_id,
+    v.definition,
+    a.plan_status,
+    a.plan_expires_at,
+    a.module_overrides,
+    a.limit_overrides,
+    a.platform_notes,
+    a.created_at,
+    a.updated_at,
+    (SELECT COUNT(*) FROM profiles p WHERE p.account_id = a.id)            AS members_count,
+    (SELECT COUNT(*) FROM whatsapp_config w WHERE w.account_id = a.id)
+      + (SELECT COUNT(*) FROM wa_qr_sessions q
+           WHERE q.account_id = a.id
+             AND q.status <> 'disconnected')                               AS channels_count,
+    (SELECT COUNT(*) FROM account_invitations i
+       WHERE i.account_id = a.id
+         AND i.accepted_at IS NULL
+         AND i.expires_at > NOW())                                         AS pending_invites_count
+  FROM accounts a
+  JOIN platform_plan_versions v ON v.id=a.plan_version_id AND v.plan=a.plan
+  LEFT JOIN profiles op ON op.user_id = a.owner_user_id
+  ORDER BY a.created_at DESC;
+END;
+$$;
+
+ALTER FUNCTION public.platform_list_accounts() OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.platform_list_accounts() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.platform_list_accounts() TO authenticated, service_role;
+
 NOTIFY pgrst,'reload schema';
 COMMIT;

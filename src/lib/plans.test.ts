@@ -6,12 +6,31 @@ import {
   canAddChannel,
   canAddUser,
   daysUntil,
-  resolveEntitlements,
+  resolveEntitlements as resolveAssigned,
+  isPlan,
+  type PlanAccountFields,
 } from './plans';
 
 const NOW = new Date('2026-09-12T12:00:00.000Z');
 const FUTURE = '2026-09-20T12:00:00.000Z';
 const PAST = '2026-09-01T12:00:00.000Z';
+
+// Existing behavior cases use the granted initial version as their fixture.
+function resolveEntitlements(
+  account: PlanAccountFields | null | undefined,
+  now?: Date
+) {
+  return resolveAssigned(
+    account && isPlan(account.plan)
+      ? {
+          plan_version_id: '39000000-0000-4000-8000-000000000001',
+          plan_definition: PLAN_CATALOG[account.plan],
+          ...account,
+        }
+      : account,
+    now
+  );
+}
 
 function onModules(e: ReturnType<typeof resolveEntitlements>) {
   return MODULES.filter((m) => e.modules[m]);
@@ -20,7 +39,10 @@ function onModules(e: ReturnType<typeof resolveEntitlements>) {
 describe('PLAN_CATALOG', () => {
   it('matches the spec table', () => {
     expect(PLAN_CATALOG.trial.modules).toEqual(OPTIONAL_MODULES);
-    expect(PLAN_CATALOG.trial.limits).toEqual({ max_users: 2, max_channels: 1 });
+    expect(PLAN_CATALOG.trial.limits).toEqual({
+      max_users: 2,
+      max_channels: 1,
+    });
 
     expect(PLAN_CATALOG.basico.modules).toEqual([
       'dashboard',
@@ -28,15 +50,21 @@ describe('PLAN_CATALOG', () => {
       'tasks',
       'channel_qr',
     ]);
-    expect(PLAN_CATALOG.basico.limits).toEqual({ max_users: 3, max_channels: 1 });
+    expect(PLAN_CATALOG.basico.limits).toEqual({
+      max_users: 3,
+      max_channels: 1,
+    });
 
     expect(PLAN_CATALOG.pro.modules).toEqual(
-      OPTIONAL_MODULES.filter((m) => m !== 'flows'),
+      OPTIONAL_MODULES.filter((m) => m !== 'flows')
     );
     expect(PLAN_CATALOG.pro.limits).toEqual({ max_users: 10, max_channels: 2 });
 
     expect(PLAN_CATALOG.empresa.modules).toEqual(OPTIONAL_MODULES);
-    expect(PLAN_CATALOG.empresa.limits).toEqual({ max_users: null, max_channels: 5 });
+    expect(PLAN_CATALOG.empresa.limits).toEqual({
+      max_users: null,
+      max_channels: 5,
+    });
   });
 });
 
@@ -44,7 +72,7 @@ describe('resolveEntitlements — each plan', () => {
   it('trial: every module, 2 users, 1 channel, not blocked while unexpired', () => {
     const e = resolveEntitlements(
       { plan: 'trial', plan_status: 'trial', plan_expires_at: FUTURE },
-      NOW,
+      NOW
     );
     expect(e.plan).toBe('trial');
     expect(onModules(e)).toEqual([...MODULES]);
@@ -54,7 +82,10 @@ describe('resolveEntitlements — each plan', () => {
   });
 
   it('basico: inbox, contacts, dashboard, pipelines, tasks, channel_qr only', () => {
-    const e = resolveEntitlements({ plan: 'basico', plan_status: 'active' }, NOW);
+    const e = resolveEntitlements(
+      { plan: 'basico', plan_status: 'active' },
+      NOW
+    );
     expect(onModules(e)).toEqual([
       'inbox',
       'contacts',
@@ -89,25 +120,34 @@ describe('resolveEntitlements — each plan', () => {
   });
 
   it('empresa: everything, unlimited users, 5 channels', () => {
-    const e = resolveEntitlements({ plan: 'empresa', plan_status: 'active' }, NOW);
+    const e = resolveEntitlements(
+      { plan: 'empresa', plan_status: 'active' },
+      NOW
+    );
     expect(onModules(e)).toEqual([...MODULES]);
     expect(e.limits).toEqual({ max_users: null, max_channels: 5 });
   });
 
-  it('unknown / missing plan and status fall back to trial', () => {
+  it('unknown / missing plan and status fail closed', () => {
     const e = resolveEntitlements({ plan: 'gold', plan_status: 'weird' }, NOW);
     expect(e.plan).toBe('trial');
     expect(e.status).toBe('trial');
     expect(resolveEntitlements(null, NOW).plan).toBe('trial');
-    expect(resolveEntitlements(undefined, NOW).blocked).toBe(false);
+    expect(resolveEntitlements(undefined, NOW).blocked).toEqual({
+      reason: 'plan_unavailable',
+    });
   });
 });
 
 describe('resolveEntitlements — overrides', () => {
   it('module overrides can enable a module the plan lacks', () => {
     const e = resolveEntitlements(
-      { plan: 'basico', plan_status: 'active', module_overrides: { flows: true } },
-      NOW,
+      {
+        plan: 'basico',
+        plan_status: 'active',
+        module_overrides: { flows: true },
+      },
+      NOW
     );
     expect(e.modules.flows).toBe(true);
     // Untouched modules keep the plan value.
@@ -117,8 +157,12 @@ describe('resolveEntitlements — overrides', () => {
 
   it('module overrides can disable a module the plan grants', () => {
     const e = resolveEntitlements(
-      { plan: 'empresa', plan_status: 'active', module_overrides: { pipelines: false } },
-      NOW,
+      {
+        plan: 'empresa',
+        plan_status: 'active',
+        module_overrides: { pipelines: false },
+      },
+      NOW
     );
     expect(e.modules.pipelines).toBe(false);
     expect(e.modules.dashboard).toBe(true);
@@ -131,7 +175,7 @@ describe('resolveEntitlements — overrides', () => {
         plan_status: 'active',
         module_overrides: { bogus: true, flows: 'yes', broadcasts: 1 },
       },
-      NOW,
+      NOW
     );
     expect(e.modules.flows).toBe(false);
     expect(e.modules.broadcasts).toBe(false);
@@ -145,7 +189,7 @@ describe('resolveEntitlements — overrides', () => {
         plan_status: 'trial',
         limit_overrides: { max_users: 5, max_channels: null },
       },
-      NOW,
+      NOW
     );
     expect(e.limits).toEqual({ max_users: 5, max_channels: null });
   });
@@ -155,17 +199,25 @@ describe('resolveEntitlements — overrides', () => {
       {
         plan: 'trial',
         plan_status: 'trial',
-        limit_overrides: { max_users: -1, max_channels: '9', max_contacts: 100 },
+        limit_overrides: {
+          max_users: -1,
+          max_channels: '9',
+          max_contacts: 100,
+        },
       },
-      NOW,
+      NOW
     );
     expect(e.limits).toEqual({ max_users: 2, max_channels: 1 });
   });
 
   it('floors fractional limits', () => {
     const e = resolveEntitlements(
-      { plan: 'trial', plan_status: 'trial', limit_overrides: { max_users: 4.7 } },
-      NOW,
+      {
+        plan: 'trial',
+        plan_status: 'trial',
+        limit_overrides: { max_users: 4.7 },
+      },
+      NOW
     );
     expect(e.limits.max_users).toBe(4);
   });
@@ -179,7 +231,7 @@ describe('resolveEntitlements — inbox and contacts are always on', () => {
         plan_status: 'active',
         module_overrides: { inbox: false, contacts: false },
       },
-      NOW,
+      NOW
     );
     expect(e.modules.inbox).toBe(true);
     expect(e.modules.contacts).toBe(true);
@@ -202,13 +254,13 @@ describe('resolveEntitlements — blocking', () => {
       expect(e.blocked).toEqual({ reason: status });
       // Modules still resolve so /settings can show what the plan had.
       expect(e.modules.pipelines).toBe(true);
-    },
+    }
   );
 
   it('does not block an active plan even if plan_expires_at is in the past', () => {
     const e = resolveEntitlements(
       { plan: 'pro', plan_status: 'active', plan_expires_at: PAST },
-      NOW,
+      NOW
     );
     expect(e.blocked).toBe(false);
   });
@@ -216,15 +268,19 @@ describe('resolveEntitlements — blocking', () => {
   it('blocks an expired trial', () => {
     const e = resolveEntitlements(
       { plan: 'trial', plan_status: 'trial', plan_expires_at: PAST },
-      NOW,
+      NOW
     );
     expect(e.blocked).toEqual({ reason: 'trial_expired' });
   });
 
   it('blocks a trial exactly at the expiry instant', () => {
     const e = resolveEntitlements(
-      { plan: 'trial', plan_status: 'trial', plan_expires_at: NOW.toISOString() },
-      NOW,
+      {
+        plan: 'trial',
+        plan_status: 'trial',
+        plan_expires_at: NOW.toISOString(),
+      },
+      NOW
     );
     expect(e.blocked).toEqual({ reason: 'trial_expired' });
   });
@@ -233,21 +289,21 @@ describe('resolveEntitlements — blocking', () => {
     expect(
       resolveEntitlements(
         { plan: 'trial', plan_status: 'trial', plan_expires_at: FUTURE },
-        NOW,
-      ).blocked,
+        NOW
+      ).blocked
     ).toBe(false);
     expect(
       resolveEntitlements(
         { plan: 'trial', plan_status: 'trial', plan_expires_at: null },
-        NOW,
-      ).blocked,
+        NOW
+      ).blocked
     ).toBe(false);
   });
 
   it('accepts Date objects for plan_expires_at', () => {
     const e = resolveEntitlements(
       { plan: 'trial', plan_status: 'trial', plan_expires_at: new Date(PAST) },
-      NOW,
+      NOW
     );
     expect(e.blocked).toEqual({ reason: 'trial_expired' });
     expect(e.expiresAt).toBe(PAST);
@@ -256,7 +312,7 @@ describe('resolveEntitlements — blocking', () => {
   it('treats an unparseable expiry as no expiry', () => {
     const e = resolveEntitlements(
       { plan: 'trial', plan_status: 'trial', plan_expires_at: 'not-a-date' },
-      NOW,
+      NOW
     );
     expect(e.expiresAt).toBeNull();
     expect(e.blocked).toBe(false);

@@ -13,6 +13,8 @@
 // sidebar and the API.
 // ============================================================
 
+import { isVersionId, parsePlanDefinition } from './plan-catalog';
+
 export const PLANS = ['trial', 'basico', 'pro', 'empresa'] as const;
 export type Plan = (typeof PLANS)[number];
 
@@ -68,7 +70,10 @@ export const OPTIONAL_MODULES = [
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
 /** Modules that are always on regardless of plan or overrides. */
-export const ALWAYS_ON_MODULES = ['inbox', 'contacts'] as const satisfies readonly Module[];
+export const ALWAYS_ON_MODULES = [
+  'inbox',
+  'contacts',
+] as const satisfies readonly Module[];
 
 export const LIMIT_KEYS = ['max_users', 'max_channels'] as const;
 export type LimitKey = (typeof LIMIT_KEYS)[number];
@@ -162,7 +167,9 @@ export const LIMIT_LABELS: Record<LimitKey, string> = {
 // ------------------------------------------------------------
 
 export function isPlan(value: unknown): value is Plan {
-  return typeof value === 'string' && (PLANS as readonly string[]).includes(value);
+  return (
+    typeof value === 'string' && (PLANS as readonly string[]).includes(value)
+  );
 }
 
 export function isPlanStatus(value: unknown): value is PlanStatus {
@@ -173,7 +180,9 @@ export function isPlanStatus(value: unknown): value is PlanStatus {
 }
 
 export function isModule(value: unknown): value is Module {
-  return typeof value === 'string' && (MODULES as readonly string[]).includes(value);
+  return (
+    typeof value === 'string' && (MODULES as readonly string[]).includes(value)
+  );
 }
 
 export function isOptionalModule(value: unknown): value is OptionalModule {
@@ -184,7 +193,10 @@ export function isOptionalModule(value: unknown): value is OptionalModule {
 }
 
 export function isLimitKey(value: unknown): value is LimitKey {
-  return typeof value === 'string' && (LIMIT_KEYS as readonly string[]).includes(value);
+  return (
+    typeof value === 'string' &&
+    (LIMIT_KEYS as readonly string[]).includes(value)
+  );
 }
 
 // ------------------------------------------------------------
@@ -198,6 +210,8 @@ export function isLimitKey(value: unknown): value is LimitKey {
  * crashing.
  */
 export interface PlanAccountFields {
+  plan_version_id?: string | null;
+  plan_definition?: PlanDefinition | null;
   plan?: string | null;
   plan_status?: string | null;
   plan_expires_at?: string | Date | null;
@@ -206,6 +220,7 @@ export interface PlanAccountFields {
 }
 
 export type BlockReason =
+  | 'plan_unavailable'
   | 'past_due'
   | 'canceled'
   | 'suspended'
@@ -246,24 +261,34 @@ function toIso(value: string | Date | null | undefined): string | null {
  */
 export function resolveEntitlements(
   account: PlanAccountFields | null | undefined,
-  now: Date = new Date(),
+  now: Date = new Date()
 ): Entitlements {
   const plan: Plan = isPlan(account?.plan) ? account.plan : 'trial';
   const status: PlanStatus = isPlanStatus(account?.plan_status)
     ? account.plan_status
     : 'trial';
-  const def = PLAN_CATALOG[plan];
+  const assigned = parsePlanDefinition(account?.plan_definition);
+  const available =
+    isPlan(account?.plan) &&
+    isPlanStatus(account?.plan_status) &&
+    isVersionId(account?.plan_version_id) &&
+    assigned !== null;
+  const def =
+    available && assigned
+      ? assigned
+      : { modules: [], limits: { max_users: 0, max_channels: 0 } };
 
   // 1. Plan baseline.
-  const modules = Object.fromEntries(
-    MODULES.map((m) => [m, false]),
-  ) as Record<Module, boolean>;
+  const modules = Object.fromEntries(MODULES.map((m) => [m, false])) as Record<
+    Module,
+    boolean
+  >;
   for (const m of def.modules) modules[m] = true;
   const limits: Limits = { ...def.limits };
 
   // 2. Overrides (only known keys, only well-typed values).
   const mo = account?.module_overrides;
-  if (mo && typeof mo === 'object') {
+  if (available && mo && typeof mo === 'object') {
     for (const [key, value] of Object.entries(mo)) {
       if (isOptionalModule(key) && typeof value === 'boolean') {
         modules[key] = value;
@@ -271,12 +296,16 @@ export function resolveEntitlements(
     }
   }
   const lo = account?.limit_overrides;
-  if (lo && typeof lo === 'object') {
+  if (available && lo && typeof lo === 'object') {
     for (const [key, value] of Object.entries(lo)) {
       if (!isLimitKey(key)) continue;
       if (value === null) {
         limits[key] = null;
-      } else if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      } else if (
+        typeof value === 'number' &&
+        Number.isFinite(value) &&
+        value >= 0
+      ) {
         limits[key] = Math.floor(value);
       }
     }
@@ -288,7 +317,11 @@ export function resolveEntitlements(
   // 4. Blocking.
   const expiresAt = toIso(account?.plan_expires_at);
   let blocked: Entitlements['blocked'] = false;
-  if (status === 'past_due' || status === 'canceled' || status === 'suspended') {
+  if (
+    status === 'past_due' ||
+    status === 'canceled' ||
+    status === 'suspended'
+  ) {
     blocked = { reason: status };
   } else if (
     status === 'trial' &&
@@ -298,6 +331,7 @@ export function resolveEntitlements(
     blocked = { reason: 'trial_expired' };
   }
 
+  if (!available) blocked = { reason: 'plan_unavailable' };
   return { plan, status, expiresAt, modules, limits, blocked };
 }
 
@@ -313,7 +347,7 @@ export function resolveEntitlements(
 export function canAddUser(
   activeMembers: number,
   pendingInvites: number,
-  maxUsers: number | null,
+  maxUsers: number | null
 ): boolean {
   if (maxUsers === null) return true;
   return activeMembers + pendingInvites < maxUsers;
@@ -322,7 +356,7 @@ export function canAddUser(
 /** Whether one more connected channel fits under `max_channels`. */
 export function canAddChannel(
   channels: number,
-  maxChannels: number | null,
+  maxChannels: number | null
 ): boolean {
   if (maxChannels === null) return true;
   return channels < maxChannels;
@@ -332,7 +366,10 @@ export function canAddChannel(
  * Days left on the trial (ceil), or null when there's no expiry.
  * Negative when already expired.
  */
-export function daysUntil(expiresAt: string | null, now: Date = new Date()): number | null {
+export function daysUntil(
+  expiresAt: string | null,
+  now: Date = new Date()
+): number | null {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - now.getTime();
   return Math.ceil(ms / 86_400_000);

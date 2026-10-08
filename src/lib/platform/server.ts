@@ -7,6 +7,7 @@
 import { notFound, redirect } from 'next/navigation';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { cache } from 'react';
+import { parsePlanDefinition } from '@/lib/plan-catalog';
 
 import { createClient } from '@/lib/supabase/server';
 import type { PlatformAccountRow } from '@/types';
@@ -79,7 +80,10 @@ export async function listPlatformAccounts(
     console.error('[platform] platform_list_accounts failed:', error.message);
     throw new Error('Failed to load accounts');
   }
-  return (data ?? []) as PlatformAccountRow[];
+  return ((data ?? []) as PlatformAccountRow[]).map((row) => ({
+    ...row,
+    plan_definition: parsePlanDefinition(row.plan_definition),
+  }));
 }
 
 /** One account by id (via the same RPC so the counts come along). */
