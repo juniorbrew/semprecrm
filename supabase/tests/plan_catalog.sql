@@ -11,6 +11,8 @@ INSERT INTO auth.users(id,email,raw_user_meta_data) VALUES
  ('39000000-0000-4000-8000-000000000001','admin@plan.test','{"full_name":"Catalog admin"}'),
  ('39000000-0000-4000-8000-000000000002','tenant@plan.test','{"full_name":"Catalog tenant"}');
 INSERT INTO public.platform_admins(user_id) VALUES ('39000000-0000-4000-8000-000000000001');
+SELECT set_config('request.jwt.claim.sub','39000000-0000-4000-8000-000000000001',true);
+SELECT pg_temp.check_plan((SELECT count(*) >= 2 FROM public.platform_list_accounts() WHERE plan_definition IS NOT NULL AND plan_version_id IS NOT NULL), 'platform list returns assigned definition and usage');
 SELECT pg_temp.check_plan((SELECT v.plan='trial' AND v.price_monthly_cents=0 FROM public.accounts a JOIN public.platform_plan_versions v ON v.id=a.plan_version_id WHERE a.owner_user_id='39000000-0000-4000-8000-000000000002'), 'signup granted current free trial');
 SET LOCAL ROLE anon;
 SELECT pg_temp.check_plan((SELECT count(*)=4 FROM public.public_plan_catalog()), 'anonymous current catalog');

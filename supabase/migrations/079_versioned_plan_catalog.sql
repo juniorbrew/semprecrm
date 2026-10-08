@@ -170,6 +170,8 @@ RETURNS TABLE (
   owner_email           TEXT,
   owner_name            TEXT,
   plan                  TEXT,
+  plan_version_id       UUID,
+  plan_definition       JSONB,
   plan_status           TEXT,
   plan_expires_at       TIMESTAMPTZ,
   module_overrides      JSONB,

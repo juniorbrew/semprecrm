@@ -35,7 +35,15 @@ export function PlatformHeader() {
           <span className="truncate">{t('Platform administration')}</span>
         </Link>
         <span className="text-muted-foreground hidden text-xs sm:inline">
-          {t('Companies')}
+          {t(
+            pathname.startsWith('/platform/plans')
+              ? 'Plans'
+              : pathname.startsWith('/platform/leads')
+                ? 'Leads'
+                : pathname === '/platform'
+                  ? 'Overview'
+                  : 'Companies'
+          )}
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-2">
