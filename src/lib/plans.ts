@@ -1,10 +1,8 @@
 // ============================================================
 // Plans, modules and entitlement resolution — pure, no I/O.
 //
-// The DB (migration 025) stores only the plan name, its status,
-// an optional expiry and two per-account override objects. What
-// each plan actually grants lives here so a catalogue change is a
-// code change (reviewable, testable) rather than a data migration.
+// Each account uses its immutable granted definition (migration 079).
+// The static catalogue below is only the initial seed/reference.
 //
 // `resolveEntitlements` is the single place that turns an account
 // row into "which modules are on, which limits apply, is the app
@@ -204,10 +202,8 @@ export function isLimitKey(value: unknown): value is LimitKey {
 // ------------------------------------------------------------
 
 /**
- * The subset of an `accounts` row the resolver reads. Every field
- * is tolerant of `undefined` / `null` so a row from a fork running
- * a pre-025 schema resolves to the trial defaults instead of
- * crashing.
+ * The subset of an account and its assigned version used by the resolver.
+ * Missing or corrupt assignments fail closed with a recoverable reason.
  */
 export interface PlanAccountFields {
   plan_version_id?: string | null;
@@ -252,10 +248,7 @@ function toIso(value: string | Date | null | undefined): string | null {
  * and `limit_overrides`, force `inbox` + `contacts` on, then derive
  * `blocked` from `plan_status` and `plan_expires_at`.
  *
- * Unknown plan / status values fall back to `trial` (the most
- * permissive-but-limited tier) so a bad row degrades to "trial
- * behaviour" rather than locking a customer out or granting
- * everything.
+ * Unknown plan/status or invalid assigned definitions block optional access.
  *
  * `now` is injectable for tests.
  */

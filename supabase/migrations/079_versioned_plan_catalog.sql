@@ -66,7 +66,10 @@ UNION ALL SELECT 'empresa',1,jsonb_build_object('modules',modules,'limits',jsonb
 INSERT INTO public.platform_plan_catalog SELECT plan,id FROM public.platform_plan_versions WHERE revision=1;
 
 ALTER TABLE public.accounts ADD COLUMN plan_version_id uuid;
+-- Assignment is bookkeeping, not a customer edit. Keep original timestamps.
+ALTER TABLE public.accounts DISABLE TRIGGER set_updated_at;
 UPDATE public.accounts a SET plan_version_id=c.current_version_id FROM public.platform_plan_catalog c WHERE c.plan=a.plan;
+ALTER TABLE public.accounts ENABLE TRIGGER set_updated_at;
 ALTER TABLE public.accounts ALTER COLUMN plan_version_id SET NOT NULL;
 ALTER TABLE public.accounts ADD CONSTRAINT accounts_plan_version_fk
   FOREIGN KEY (plan,plan_version_id) REFERENCES public.platform_plan_versions(plan,id);

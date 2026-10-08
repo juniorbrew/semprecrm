@@ -1,5 +1,5 @@
+import { assignedPlanFixture } from '@/test/plan-fixtures';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PLAN_CATALOG, isPlan } from '@/lib/plans';
 
 // Shared mock state for the service-role client. Lives in a hoisted block
 // so the vi.mock factory below can close over it.
@@ -79,17 +79,8 @@ vi.mock('./admin-client', () => {
       // Plan gate (migration 025) — default to an unexpired trial so
       // every existing scenario keeps running; a test can flip
       // `state.account` to exercise the "module off" path.
-      const plan = state.account?.plan;
-      const id = '39000000-0000-4000-8000-000000000001';
       return {
-        data:
-          state.account && isPlan(plan)
-            ? {
-                ...state.account,
-                plan_version_id: id,
-                plan_version: { id, plan, definition: PLAN_CATALOG[plan] },
-              }
-            : state.account,
+        data: state.account ? assignedPlanFixture(state.account) : null,
         error: null,
       };
     }

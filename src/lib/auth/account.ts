@@ -25,14 +25,18 @@
 //   }
 // ============================================================
 
-import { NextResponse } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { createClient } from "@/lib/supabase/server";
-import { loadAccountEntitlements } from "@/lib/plans-server";
-import { resolveEntitlements, type Entitlements, type Module } from "@/lib/plans";
-import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
-import { isPersonType, type PersonType } from "@/lib/br/documents";
+import { createClient } from '@/lib/supabase/server';
+import { loadAccountEntitlements } from '@/lib/plans-server';
+import {
+  resolveEntitlements,
+  type Entitlements,
+  type Module,
+} from '@/lib/plans';
+import { hasMinRole, isAccountRole, type AccountRole } from './roles';
+import { isPersonType, type PersonType } from '@/lib/br/documents';
 
 // ------------------------------------------------------------
 // Errors
@@ -43,9 +47,9 @@ import { isPersonType, type PersonType } from "@/lib/br/documents";
 
 export class UnauthorizedError extends Error {
   readonly status = 401 as const;
-  constructor(message = "Unauthorized") {
+  constructor(message = 'Unauthorized') {
     super(message);
-    this.name = "UnauthorizedError";
+    this.name = 'UnauthorizedError';
   }
 }
 
@@ -54,9 +58,9 @@ export class ForbiddenError extends Error {
   /** Optional machine-readable reason, surfaced as `code` in the
    *  JSON body so clients can branch without parsing the message. */
   readonly code?: string;
-  constructor(message = "Forbidden", code?: string) {
+  constructor(message = 'Forbidden', code?: string) {
     super(message);
-    this.name = "ForbiddenError";
+    this.name = 'ForbiddenError';
     this.code = code;
   }
 }
@@ -68,8 +72,11 @@ export class ForbiddenError extends Error {
 export class ModuleNotIncludedError extends ForbiddenError {
   readonly module: Module;
   constructor(module: Module) {
-    super(`Module '${module}' is not included in your plan`, "module_not_included");
-    this.name = "ModuleNotIncludedError";
+    super(
+      `Module '${module}' is not included in your plan`,
+      'module_not_included'
+    );
+    this.name = 'ModuleNotIncludedError';
     this.module = module;
   }
 }
@@ -80,8 +87,8 @@ export class ModuleNotIncludedError extends ForbiddenError {
  */
 export class PlanLimitError extends ForbiddenError {
   constructor(message: string) {
-    super(message, "plan_limit_reached");
-    this.name = "PlanLimitError";
+    super(message, 'plan_limit_reached');
+    this.name = 'PlanLimitError';
   }
 }
 
@@ -103,12 +110,14 @@ export function toErrorResponse(err: unknown): NextResponse {
   }
   if (err instanceof ForbiddenError) {
     return NextResponse.json(
-      err.code ? { error: err.message, code: err.code } : { error: err.message },
-      { status: err.status },
+      err.code
+        ? { error: err.message, code: err.code }
+        : { error: err.message },
+      { status: err.status }
     );
   }
-  console.error("[toErrorResponse] uncategorized error:", err);
-  return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  console.error('[toErrorResponse] uncategorized error:', err);
+  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
 }
 
 // ------------------------------------------------------------
@@ -168,20 +177,22 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   // shouldn't exist) yields no row and trips the guard below
   // rather than silently returning a half-populated profile.
   const { data, error } = await supabase
-    .from("profiles")
-    .select("account_id, account_role, account:accounts!inner(id, name, person_type, tax_id, legal_name, phone, email, address)")
-    .eq("user_id", user.id)
+    .from('profiles')
+    .select(
+      'account_id, account_role, account:accounts!inner(id, name, person_type, tax_id, legal_name, phone, email, address)'
+    )
+    .eq('user_id', user.id)
     .maybeSingle();
 
   if (error) {
-    console.error("[getCurrentAccount] profile fetch error:", error);
-    throw new ForbiddenError("Could not load account context");
+    console.error('[getCurrentAccount] profile fetch error:', error);
+    throw new ForbiddenError('Could not load account context');
   }
   if (!data || !data.account_id || !data.account_role || !data.account) {
     // Pre-migration profile, or a manual insert that skipped the
     // signup trigger. The user is authenticated but the app has
     // no way to scope their queries — treat as forbidden.
-    throw new ForbiddenError("Profile is not linked to an account");
+    throw new ForbiddenError('Profile is not linked to an account');
   }
   if (!isAccountRole(data.account_role)) {
     // The DB enum should make this impossible, but a future
@@ -192,7 +203,9 @@ export async function getCurrentAccount(): Promise<AccountContext> {
 
   // Supabase's typed client returns related rows as an array even
   // for `!inner` single-record joins; normalise to a single object.
-  const accountRow = Array.isArray(data.account) ? data.account[0] : data.account;
+  const accountRow = Array.isArray(data.account)
+    ? data.account[0]
+    : data.account;
 
   return {
     supabase,
@@ -202,7 +215,9 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     account: {
       id: accountRow.id,
       name: accountRow.name,
-      person_type: isPersonType(accountRow.person_type) ? accountRow.person_type : "pf",
+      person_type: isPersonType(accountRow.person_type)
+        ? accountRow.person_type
+        : 'pf',
       tax_id: accountRow.tax_id ?? null,
       legal_name: accountRow.legal_name ?? null,
       phone: accountRow.phone ?? null,
@@ -223,7 +238,7 @@ export async function requireRole(min: AccountRole): Promise<AccountContext> {
   const ctx = await getCurrentAccount();
   if (!hasMinRole(ctx.role, min)) {
     throw new ForbiddenError(
-      `This action requires the '${min}' role or higher`,
+      `This action requires the '${min}' role or higher`
     );
   }
   return ctx;
@@ -236,15 +251,14 @@ export async function requireRole(min: AccountRole): Promise<AccountContext> {
 /**
  * Resolve the caller's account entitlements. Reads the plan columns
  * through the RLS-scoped client (members can SELECT their own
- * account). A missing row resolves to the trial defaults rather
- * than throwing, mirroring the client-side hook.
+ * account). Missing rows return unavailable, with no optional permissions.
  */
-export async function getEntitlements(ctx: AccountContext): Promise<Entitlements> {
+export async function getEntitlements(
+  ctx: AccountContext
+): Promise<Entitlements> {
   const ent = await loadAccountEntitlements(ctx.supabase, ctx.accountId);
   if (ent) return ent;
-  // Fall back to the permissive default only for *reads*; callers
-  // that must fail closed use `requireModule` (below), which treats
-  // a missing row as blocked.
+  // Missing reads fail closed, matching the client-side unavailable screen.
   return resolveEntitlements(null);
 }
 
@@ -257,7 +271,7 @@ export async function getEntitlements(ctx: AccountContext): Promise<Entitlements
  */
 export async function requireModule(
   ctx: AccountContext,
-  module: Module,
+  module: Module
 ): Promise<Entitlements> {
   const ent = await loadAccountEntitlements(ctx.supabase, ctx.accountId);
   if (!ent || ent.blocked || !ent.modules[module]) {

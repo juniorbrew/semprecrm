@@ -58,8 +58,7 @@ interface AccountSummary extends PlanAccountFields {
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
   /** Plan fields (migration 025). Optional so forks on a pre-025
-   *  schema still resolve — `resolveEntitlements` treats missing
-   *  values as an unexpired trial. */
+   *  schema fails closed with a recoverable unavailable state. */
   plan?: string | null;
   plan_status?: string | null;
   plan_expires_at?: string | null;
@@ -600,10 +599,10 @@ export function useAuth(): AuthContextValue {
  * row the AuthProvider already loaded; no extra round trip.
  *
  * `ready` is false until the profile fetch settles. Gate any
- * hide/redirect on it — before that the value is the permissive
- * trial default and would otherwise flash the wrong UI.
+ * hide/redirect on it. A settled failed account read is ready to show
+ * the recoverable unavailable screen, without optional permissions.
  */
 export function useEntitlements(): Entitlements & { ready: boolean } {
-  const { entitlements, profileLoading, account } = useAuth();
-  return { ...entitlements, ready: !profileLoading && account !== null };
+  const { entitlements, profileLoading, user } = useAuth();
+  return { ...entitlements, ready: !profileLoading && user !== null };
 }

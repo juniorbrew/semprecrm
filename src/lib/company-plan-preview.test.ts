@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_CATALOG, resolveEntitlements } from './plans';
-import { companyPlanPreview } from './company-plan-preview';
+import { companyPlanPreview, getCapacityExcess } from './company-plan-preview';
+
+describe('proposed capacity warnings', () => {
+  it('counts pending invitations and connected channels before adoption', () => {
+    expect(
+      getCapacityExcess(
+        { members_count: 2, pending_invites_count: 1, channels_count: 2 },
+        { max_users: 2, max_channels: 1 }
+      )
+    ).toEqual([
+      { key: 'max_users', used: 3, limit: 2 },
+      { key: 'max_channels', used: 2, limit: 1 },
+    ]);
+  });
+  it('preserves unlimited and zero meanings', () => {
+    expect(
+      getCapacityExcess(
+        { members_count: 1, pending_invites_count: 0, channels_count: 0 },
+        { max_users: null, max_channels: 0 }
+      )
+    ).toEqual([]);
+  });
+});
 const id = '39000000-0000-4000-8000-000000000001';
 const nextId = '39000000-0000-4000-8000-000000000002';
 const account = {

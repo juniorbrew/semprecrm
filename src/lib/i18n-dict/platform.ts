@@ -1,4 +1,6 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Current usage exceeds the proposed limits. New additions will be blocked until capacity is available.':
+    'O uso atual excede os limites propostos. Novas inclusões serão bloqueadas até haver capacidade disponível.',
   'Reload the company to confirm the saved conditions.':
     'Recarregue a empresa para confirmar as condições salvas.',
   'Reload company and discard draft': 'Recarregar empresa e descartar rascunho',

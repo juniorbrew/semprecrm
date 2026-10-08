@@ -30,7 +30,7 @@ export const PLAN_COLUMNS =
  *
  * Returns `null` when the row can't be read (missing account or DB
  * error). Callers decide what that means — the engines treat it as
- * "don't run" (fail closed), the settings UI as "show trial".
+ * "don't run" (fail closed), the settings UI as "plan unavailable".
  */
 export async function loadAccountEntitlements(
   db: SupabaseClient,

@@ -37,7 +37,10 @@ import { cn } from '@/lib/utils';
 import { PlatformAccountSummary } from './account-summary';
 import { PlatformAccountActivity } from './account-activity';
 import { PlanStatusChip, planStatusLabelKey } from './plan-status-chip';
-import { companyPlanPreview } from '@/lib/company-plan-preview';
+import {
+  companyPlanPreview,
+  getCapacityExcess,
+} from '@/lib/company-plan-preview';
 import { parsePlanDefinition, type PlanVersion } from '@/lib/plan-catalog';
 
 // ------------------------------------------------------------
@@ -276,6 +279,7 @@ export function PlatformAccountForm({
         `${t(MODULE_LABELS[m])}: ${t(granted.modules[m] ? 'On' : 'Off')} → ${t(preview.entitlements.modules[m] ? 'On' : 'Off')}`
     ),
   ];
+  const capacityExcess = getCapacityExcess(row, preview.entitlements.limits);
 
   return (
     <section className="space-y-5">
@@ -374,6 +378,20 @@ export function PlatformAccountForm({
       {(adopt || plan !== row.plan) && (
         <div className="bg-muted space-y-2 rounded-lg p-4">
           <h2 className="font-semibold">{t('Changes after saving')}</h2>
+          {capacityExcess.length > 0 && (
+            <div role="status" className="space-y-1 text-sm">
+              <p className="font-medium">
+                {t(
+                  'Current usage exceeds the proposed limits. New additions will be blocked until capacity is available.'
+                )}
+              </p>
+              {capacityExcess.map((item) => (
+                <p key={item.key}>
+                  {t(LIMIT_LABELS[item.key])}: {item.used} / {item.limit}
+                </p>
+              ))}
+            </div>
+          )}
           <p className="text-muted-foreground text-sm">
             {t(
               'Individual overrides are preserved. Existing users and channels will not be removed.'

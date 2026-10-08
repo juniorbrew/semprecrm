@@ -18,7 +18,13 @@ export function verificationEnv() {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
   );
-  if (status.API_URL !== 'http://127.0.0.1:57021')
+  // Windows can reserve the original port after a restart. Both ports
+  // belong only to this isolated verification stack; never accept remote URLs.
+  if (
+    !['http://127.0.0.1:57021', 'http://127.0.0.1:58021'].includes(
+      status.API_URL
+    )
+  )
     throw new Error('Refusing non-isolated Supabase URL');
   const keyPath = join(workdir, 'test-vapid.json');
   mkdirSync(workdir, { recursive: true });

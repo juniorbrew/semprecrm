@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { parseHistoryFilters, projectHistoryChanges } from './history';
+import {
+  parseHistoryFilters,
+  projectHistoryChanges,
+  projectPlanVersionChange,
+} from './history';
+
+describe('version change projection', () => {
+  it('exposes only positive safe revision numbers', () => {
+    expect(
+      projectPlanVersionChange('plan.changed', {
+        plan_version_change: {
+          from_revision: 1,
+          to_revision: 2,
+          secret: 'hidden',
+        },
+      })
+    ).toEqual({ from_revision: 1, to_revision: 2 });
+    for (const value of [-1, 0, 1.5, '2', Number.MAX_SAFE_INTEGER + 1])
+      expect(
+        projectPlanVersionChange('plan.changed', {
+          plan_version_change: { from_revision: 1, to_revision: value },
+        })
+      ).toBeNull();
+    expect(
+      projectPlanVersionChange('contact.deleted', {
+        plan_version_change: { from_revision: 1, to_revision: 2 },
+      })
+    ).toBeNull();
+  });
+});
 
 describe('history date and actor filters', () => {
   it('includes whole Bahia days using an exclusive next-day boundary', () => {
