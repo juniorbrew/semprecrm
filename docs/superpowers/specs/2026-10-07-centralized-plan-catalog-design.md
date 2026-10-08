@@ -1,6 +1,6 @@
 # Gestão centralizada dos planos do SempreCRM
 
-Status: desenho para revisão do usuário; implementação e publicação ainda não iniciadas.
+Status: desenho aprovado pelo usuário em 2026-10-07; implementação e publicação ainda não iniciadas.
 
 ## Objetivo e decisão confirmada
 
