@@ -1,4 +1,7 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Company status, expiration and capacity alerts':
+    'Alertas de situação, vencimento e capacidade',
+  'No companies need attention.': 'Nenhuma empresa precisa de atenção.',
   'Current usage exceeds the proposed limits. New additions will be blocked until capacity is available.':
     'O uso atual excede os limites propostos. Novas inclusões serão bloqueadas até haver capacidade disponível.',
   'Reload the company to confirm the saved conditions.':

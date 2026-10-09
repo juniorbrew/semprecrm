@@ -35,6 +35,28 @@ function account(
 }
 
 describe('platform overview', () => {
+  it.each(['suspended', 'past_due'] as const)(
+    'includes %s companies even without expiration or capacity alerts',
+    (plan_status) => {
+      const row = account({ plan_status });
+      expect(getAccountHealth(row, now).attention).toBe(true);
+      expect(summarizeAccounts([row], now)).toMatchObject({
+        attention: 1,
+        expiring: 0,
+        expired: 0,
+        atLimit: 0,
+      });
+      expect(
+        summarizeAccounts([{ ...row, members_count: 10 }], now).attention
+      ).toBe(1);
+    }
+  );
+  it('does not flag a healthy or canceled company without other alerts', () => {
+    expect(getAccountHealth(account(), now).attention).toBe(false);
+    expect(
+      getAccountHealth(account({ plan_status: 'canceled' }), now).attention
+    ).toBe(false);
+  });
   it('counts operational trials separately from expired trials and suspended companies', () => {
     const rows = [
       account(),

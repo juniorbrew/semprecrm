@@ -259,7 +259,11 @@ try {
     plan: 'trial',
     plan_expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
   });
-  await identity('Suspensa', false, { plan_status: 'suspended', plan: 'pro' });
+  const suspended = await identity('Suspensa', false, {
+    plan_status: 'suspended',
+    plan: 'pro',
+  });
+  await identity('Pagamento', false, { plan_status: 'past_due', plan: 'pro' });
   const expired = await identity('Vencida', false, {
     plan_status: 'trial',
     plan: 'trial',
@@ -324,6 +328,26 @@ try {
   checkBrowserErrors('overview');
   assert.match(browser('get', 'text', 'body'), /Plano vencido/);
   assert.match(browser('get', 'text', 'body'), /Limite de usuários atingido/);
+  const attentionSelector = '[aria-labelledby="platform-alerts"]';
+  const attentionText = browser('get', 'text', attentionSelector);
+  assert.match(attentionText, /Conta suspensa/);
+  assert.match(attentionText, /Pagamento em atraso/);
+  browser(
+    'eval',
+    `document.querySelector('${attentionSelector} a[href="/platform/${suspended.account.id}"]').scrollIntoView({ block: 'nearest' })`
+  );
+  browser('screenshot', join(out, 'status-alerts.png'));
+  browser(
+    'click',
+    `${attentionSelector} a[href="/platform/${suspended.account.id}"]`
+  );
+  browser('wait', '--url', `**/platform/${suspended.account.id}`);
+  browser('wait', '--text', 'Verificação Suspensa');
+  browser('open', `${base}/platform`);
+  browser('wait', '--text', 'Uma visão consolidada das empresas no SempreCRM.');
+  pass(
+    'Status alerts include suspended and past-due companies and open their detail'
+  );
   browser('set', 'viewport', '1440', '1000');
   browser('screenshot', join(out, 'desktop.png'), '--full');
   assert.ok(noOverflow());
@@ -865,6 +889,7 @@ try {
   pass('Lead status labels translate without pre-hydration DOM mutation');
   checkBrowserErrors('leads');
   pass('Company editor and existing leads page remain accessible');
+  browser('set', 'viewport', '375', '812');
   browser('open', `${base}/platform`);
   browser('wait', '--text', 'Uma visão consolidada das empresas no SempreCRM.');
   assert.ok(noOverflow());
@@ -895,6 +920,7 @@ try {
     'Light overview accessibility'
   );
   const network = browser('network', 'requests');
+  writeFileSync(join(out, 'network-requests.txt'), network);
   assert.ok(
     !/\) (?:4\d\d|5\d\d)\b/.test(network),
     'No failed browser requests'

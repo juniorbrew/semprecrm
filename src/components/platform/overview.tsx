@@ -157,7 +157,7 @@ export function PlatformOverview({
                   </span>
                 </h2>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  {t('Expiration and capacity alerts')}
+                  {t('Company status, expiration and capacity alerts')}
                 </p>
               </div>
               <p className="text-muted-foreground text-xs">
@@ -170,9 +170,7 @@ export function PlatformOverview({
                   className="text-primary size-5 shrink-0"
                   aria-hidden="true"
                 />
-                <p className="text-sm">
-                  {t('No expiration or capacity alerts.')}
-                </p>
+                <p className="text-sm">{t('No companies need attention.')}</p>
               </div>
             ) : (
               <ul className="border-border bg-card divide-border max-h-96 divide-y overflow-y-auto rounded-xl border">
@@ -195,6 +193,12 @@ export function PlatformOverview({
                             {row.name}
                           </p>
                           <ul className="text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                            {health.ent.status === 'suspended' && (
+                              <li>{t('Account suspended')}</li>
+                            )}
+                            {health.ent.status === 'past_due' && (
+                              <li>{t('Payment past due')}</li>
+                            )}
                             {health.expired ? (
                               <li>
                                 {t('Expired plan')}
