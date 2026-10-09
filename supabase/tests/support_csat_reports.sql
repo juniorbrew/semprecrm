@@ -7,6 +7,7 @@
 -- idempotent). Apply 074-075 in the same transaction:
 --   (echo "BEGIN;"; cat supabase/migrations/07[45]_*.sql supabase/tests/support_csat_reports.sql) \
 --     | docker exec -i supabase_db_semprecrm psql -v ON_ERROR_STOP=1 -U postgres -d postgres
+-- On a DB already past 075, apply only 083 (report_timezone) before this file.
 -- ============================================================
 \set ON_ERROR_STOP on
 CREATE FUNCTION pg_temp.assert_true(ok boolean, label text) RETURNS void LANGUAGE plpgsql AS $$
@@ -365,6 +366,19 @@ UPDATE accounts SET preferences = '{"business_hours":{"timezone":"Not/AZone"}}':
 SELECT pg_temp.assert_true(public.report_timezone((SELECT acc_b FROM ids)) = 'America/Sao_Paulo', 'unknown time zone falls back');
 UPDATE accounts SET preferences = '{"business_hours":{"timezone":"Asia/Tokyo"}}'::jsonb WHERE id = (SELECT acc_b FROM ids);
 SELECT pg_temp.assert_true(public.report_timezone((SELECT acc_b FROM ids)) = 'Asia/Tokyo', 'the account time zone is used');
+-- 083: POSIX offsets were never zone names ("UTC+3" is 3 h WEST); Etc/GMT±N are.
+UPDATE accounts SET preferences = '{"business_hours":{"timezone":"UTC+3"}}'::jsonb WHERE id = (SELECT acc_b FROM ids);
+SELECT pg_temp.assert_true(public.report_timezone((SELECT acc_b FROM ids)) = 'America/Sao_Paulo', 'a POSIX offset falls back');
+UPDATE accounts SET preferences = '{"business_hours":{"timezone":"Etc/GMT+3"}}'::jsonb WHERE id = (SELECT acc_b FROM ids);
+SELECT pg_temp.assert_true(public.report_timezone((SELECT acc_b FROM ids)) = 'Etc/GMT+3', 'Etc/GMT+N is a real zone');
+-- every zone the server lists is still accepted
+UPDATE accounts SET preferences = '{}'::jsonb WHERE id = (SELECT acc_b FROM ids);
+CREATE FUNCTION pg_temp.tz_roundtrip(v text, acc uuid) RETURNS text LANGUAGE plpgsql AS $f$
+BEGIN
+  UPDATE accounts SET preferences = jsonb_build_object('business_hours', jsonb_build_object('timezone', v)) WHERE id = acc;
+  RETURN public.report_timezone(acc);
+END $f$;
+SELECT pg_temp.assert_eq((SELECT count(*)::int FROM pg_timezone_names WHERE pg_temp.tz_roundtrip(name, (SELECT acc_b FROM ids)) <> name), 0, 'all pg_timezone_names accepted');
 
 -- ---- bad input -------------------------------------------------------------------------------
 SET ROLE authenticated;
