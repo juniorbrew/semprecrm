@@ -2028,6 +2028,7 @@ export const ConversationItem = memo(function ConversationItem({
                 "truncate text-xs leading-4",
                 isUnread ? "font-medium text-foreground" : "text-muted-foreground"
               )}
+              data-no-translate
             >
               {conversation.last_message_text || noMessages}
             </p>
