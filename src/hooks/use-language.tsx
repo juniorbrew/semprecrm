@@ -45,15 +45,25 @@ function readInitialLanguage(): Language {
   return DEFAULT_LANGUAGE;
 }
 
+const SKIP_SELECTOR =
+  "script, style, pre, code, [contenteditable='true'], [data-no-translate]";
+
 function shouldSkip(node: Node): boolean {
   const parent = node instanceof Element ? node : node.parentElement;
-  return !!parent?.closest(
-    "script, style, pre, code, [contenteditable='true'], [data-no-translate]"
-  );
+  return !!parent?.closest(SKIP_SELECTOR);
 }
 
-function translateTextNode(node: Text, language: Language) {
-  if (shouldSkip(node)) return;
+// The walker prunes a skipped element with its whole subtree, so nodes
+// it yields need no per-node ancestor walk (`checked`).
+const skipFilter: NodeFilter = {
+  acceptNode: (node) =>
+    node instanceof Element && node.matches(SKIP_SELECTOR)
+      ? NodeFilter.FILTER_REJECT
+      : NodeFilter.FILTER_ACCEPT,
+};
+
+function translateTextNode(node: Text, language: Language, checked = false) {
+  if (!checked && shouldSkip(node)) return;
   const lastApplied = appliedText.get(node);
   if (
     !originalText.has(node) ||
@@ -67,8 +77,12 @@ function translateTextNode(node: Text, language: Language) {
   appliedText.set(node, target);
 }
 
-function translateElement(element: Element, language: Language) {
-  if (shouldSkip(element)) return;
+function translateElement(
+  element: Element,
+  language: Language,
+  checked = false
+) {
+  if (!checked && shouldSkip(element)) return;
   const originals =
     originalAttributes.get(element) ?? new Map<string, string>();
   const applied = appliedAttributes.get(element) ?? new Map<string, string>();
@@ -93,18 +107,20 @@ function translateElement(element: Element, language: Language) {
 }
 
 function translateTree(root: Node, language: Language) {
+  if (shouldSkip(root)) return;
   if (root.nodeType === Node.TEXT_NODE)
-    translateTextNode(root as Text, language);
-  if (root instanceof Element) translateElement(root, language);
+    translateTextNode(root as Text, language, true);
+  if (root instanceof Element) translateElement(root, language, true);
   const walker = document.createTreeWalker(
     root,
-    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    skipFilter
   );
   let node = walker.nextNode();
   while (node) {
     if (node.nodeType === Node.TEXT_NODE)
-      translateTextNode(node as Text, language);
-    else translateElement(node as Element, language);
+      translateTextNode(node as Text, language, true);
+    else translateElement(node as Element, language, true);
     node = walker.nextNode();
   }
 }
