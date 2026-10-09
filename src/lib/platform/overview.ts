@@ -28,7 +28,13 @@ export function getAccountHealth(row: PlatformAccountRow, now: Date) {
     expiring,
     usersAtLimit,
     channelsAtLimit,
-    attention: expired || expiring || usersAtLimit || channelsAtLimit,
+    attention:
+      expired ||
+      expiring ||
+      usersAtLimit ||
+      channelsAtLimit ||
+      ent.status === 'suspended' ||
+      ent.status === 'past_due',
   };
 }
 
