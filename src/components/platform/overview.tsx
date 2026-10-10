@@ -16,16 +16,19 @@ import {
   Cable,
 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
-import { getAccountHealth, summarizeAccounts } from '@/lib/platform/overview';
+import {
+  getAccountHealth,
+  summarizeAccounts,
+  type PlatformOverviewRow,
+} from '@/lib/platform/overview';
 import { PLAN_LABELS } from '@/lib/plans';
-import type { PlatformAccountRow } from '@/types';
 import { PlanStatusChip } from './plan-status-chip';
 
 export function PlatformOverview({
   rows,
   snapshotAt,
 }: {
-  rows: PlatformAccountRow[];
+  rows: PlatformOverviewRow[];
   snapshotAt: string;
 }) {
   const { t, language } = useLanguage();
@@ -157,7 +160,12 @@ export function PlatformOverview({
                   </span>
                 </h2>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  {t('Company status, expiration and capacity alerts')}
+                  {t('Company status, expiration, capacity and channel alerts')}
+                </p>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  {t(
+                    'Channels show their last recorded state. Refresh to reload it.'
+                  )}
                 </p>
               </div>
               <p className="text-muted-foreground text-xs">
@@ -193,6 +201,12 @@ export function PlatformOverview({
                             {row.name}
                           </p>
                           <ul className="text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                            {row.official_disconnected && (
+                              <li>{t('Official WhatsApp disconnected')}</li>
+                            )}
+                            {row.qr_disconnected && (
+                              <li>{t('WhatsApp via QR code disconnected')}</li>
+                            )}
                             {health.ent.status === 'suspended' && (
                               <li>{t('Account suspended')}</li>
                             )}

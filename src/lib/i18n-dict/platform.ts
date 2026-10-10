@@ -1,4 +1,10 @@
 export const DICT_PLATFORM: Record<string, string> = {
+  'Company status, expiration, capacity and channel alerts':
+    'Alertas de situação, vencimento, capacidade e canais',
+  'Channels show their last recorded state. Refresh to reload it.':
+    'Os canais mostram o último estado registrado. Atualize para recarregá-lo.',
+  'Official WhatsApp disconnected': 'WhatsApp oficial desconectado',
+  'WhatsApp via QR code disconnected': 'WhatsApp via QR code desconectado',
   'Company status, expiration and capacity alerts':
     'Alertas de situação, vencimento e capacidade',
   'No companies need attention.': 'Nenhuma empresa precisa de atenção.',

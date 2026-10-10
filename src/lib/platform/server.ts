@@ -8,6 +8,7 @@ import { notFound, redirect } from 'next/navigation';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { cache } from 'react';
 import { parsePlanDefinition } from '@/lib/plan-catalog';
+import type { PlatformChannelAlerts } from './overview';
 
 import { createClient } from '@/lib/supabase/server';
 import type { PlatformAccountRow } from '@/types';
@@ -84,6 +85,18 @@ export async function listPlatformAccounts(
     ...row,
     plan_definition: parsePlanDefinition(row.plan_definition),
   }));
+}
+
+/** Admin-only indicators; channel credentials and error text stay in the DB. */
+export async function getPlatformChannelAlerts(
+  supabase: SupabaseClient
+): Promise<PlatformChannelAlerts> {
+  const { data, error } = await supabase.rpc('platform_channel_alerts');
+  if (error) {
+    console.error('[platform] channel alerts unavailable');
+    throw new Error('Failed to load channel alerts');
+  }
+  return data as PlatformChannelAlerts;
 }
 
 /** One account by id (via the same RPC so the counts come along). */

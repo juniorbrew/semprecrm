@@ -19,9 +19,11 @@ import { verifyPlanCatalog } from './verify-plan-catalog.mjs';
 
 const env = verificationEnv();
 assert.ok(
-  ['http://127.0.0.1:57021', 'http://127.0.0.1:58021'].includes(
-    env.SUPABASE_INTERNAL_URL
-  )
+  [
+    'http://127.0.0.1:57021',
+    'http://127.0.0.1:58021',
+    'http://127.0.0.1:59021',
+  ].includes(env.SUPABASE_INTERNAL_URL)
 );
 const base = 'http://localhost:3107';
 const browserBin = process.env.AGENT_BROWSER_BIN;
@@ -85,7 +87,10 @@ async function identity(label, platform = false, fields = {}) {
   );
   users.push(user.id);
   const [account] = unwrap(
-    await admin.from('accounts').select('id').eq('owner_user_id', user.id)
+    await admin
+      .from('accounts')
+      .select('id, owner_user_id')
+      .eq('owner_user_id', user.id)
   );
   accountIds.push(account.id);
   if (fields.plan) {
@@ -281,6 +286,31 @@ try {
     plan_expires_at: new Date(Date.now() + 20 * 86_400_000).toISOString(),
     limit_overrides: { max_users: 1 },
   });
+  const channelCompany = await identity('Canal desconectado', false, {
+    plan_status: 'active',
+    plan: 'pro',
+    plan_expires_at: null,
+    limit_overrides: { max_channels: null },
+  });
+  unwrap(
+    await admin.from('wa_qr_sessions').insert([
+      { account_id: tenant.account.id, status: 'disconnected' },
+      {
+        account_id: channelCompany.account.id,
+        status: 'disconnected',
+        last_error: 'HIDDEN_CHANNEL_ERROR',
+      },
+    ])
+  );
+  unwrap(
+    await admin.from('whatsapp_config').insert({
+      account_id: channelCompany.account.id,
+      user_id: channelCompany.account.owner_user_id,
+      phone_number_id: `synthetic-channel-${randomUUID()}`,
+      access_token: 'HIDDEN_CHANNEL_TOKEN',
+      status: 'disconnected',
+    })
+  );
   for (const path of [
     '/platform',
     '/platform/accounts',
@@ -332,6 +362,88 @@ try {
   const attentionText = browser('get', 'text', attentionSelector);
   assert.match(attentionText, /Conta suspensa/);
   assert.match(attentionText, /Pagamento em atraso/);
+  assert.match(attentionText, /WhatsApp via QR code desconectado/);
+  assert.match(attentionText, /WhatsApp oficial desconectado/);
+  assert.ok(
+    !attentionText.includes('Verificação Ativa'),
+    'Empty disconnected QR is not an alert'
+  );
+  const channelLink = `${attentionSelector} a[href="/platform/${channelCompany.account.id}"]`;
+  assert.equal(
+    browser('get', 'count', channelLink).trim(),
+    '1',
+    'Both channels count as one company alert'
+  );
+  browser('click', channelLink);
+  browser('wait', '--url', `**/platform/${channelCompany.account.id}`);
+  browser('wait', '--text', 'Verificação Canal desconectado');
+  browser('open', `${base}/platform`);
+  browser('wait', '--text', 'Uma visão consolidada das empresas no SempreCRM.');
+  assert.ok(!browser('get', 'text', 'body').includes('HIDDEN_CHANNEL_ERROR'));
+  assert.ok(
+    !(await (await request('/platform', operator)).text()).includes(
+      'HIDDEN_CHANNEL_TOKEN'
+    )
+  );
+  browser('set', 'viewport', '1440', '1000');
+  browser(
+    'eval',
+    `document.querySelector('${channelLink}').scrollIntoView({ block: 'center' })`
+  );
+  browser('screenshot', join(out, 'channel-alerts-desktop.png'), '--full');
+  browser('set', 'viewport', '375', '812');
+  browser(
+    'eval',
+    `document.querySelector('${channelLink}').scrollIntoView({ block: 'center' })`
+  );
+  browser('screenshot', join(out, 'channel-alerts-mobile.png'), '--full');
+  assert.ok(noOverflow());
+  const channelAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'channel-alerts-a11y.json'),
+    JSON.stringify(channelAudit, null, 2)
+  );
+  assert.equal(
+    channelAudit.data.counts.violations,
+    0,
+    'Channel alerts accessibility'
+  );
+  browser('click', refFor('Mudar para o modo claro'));
+  browser('wait', '--fn', 'document.getAnimations().length === 0');
+  browser('screenshot', join(out, 'channel-alerts-mobile-light.png'), '--full');
+  const channelLightAudit = JSON.parse(browser('a11y', '--json'));
+  writeFileSync(
+    join(out, 'channel-alerts-a11y-light.json'),
+    JSON.stringify(channelLightAudit, null, 2)
+  );
+  assert.equal(
+    channelLightAudit.data.counts.violations,
+    0,
+    'Light channel alerts accessibility'
+  );
+  browser('click', refFor('Mudar para o modo escuro'));
+  unwrap(
+    await admin
+      .from('wa_qr_sessions')
+      .update({ status: 'connected', last_error: null })
+      .eq('account_id', channelCompany.account.id)
+  );
+  unwrap(
+    await admin
+      .from('whatsapp_config')
+      .update({ status: 'connected' })
+      .eq('account_id', channelCompany.account.id)
+  );
+  browser('click', refFor('Atualizar visão geral'));
+  browser('wait', '--fn', `!document.querySelector('${channelLink}')`);
+  assert.equal(
+    browser('get', 'count', channelLink).trim(),
+    '0',
+    'Reconnect clears the recorded alert'
+  );
+  pass(
+    'Recorded channel alert, empty QR exclusion, details, mobile and reconnect refresh'
+  );
   browser(
     'eval',
     `document.querySelector('${attentionSelector} a[href="/platform/${suspended.account.id}"]').scrollIntoView({ block: 'nearest' })`
