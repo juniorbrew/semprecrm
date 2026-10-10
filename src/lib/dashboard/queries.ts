@@ -1,12 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import {
-  daysAgoStart,
-  DOW_SHORT_MON_FIRST,
-  lastNDayKeys,
-  localDayKey,
-  mondayIndex,
-  startOfLocalDay,
-} from './date-utils'
+import { daysAgoStart, lastNDayKeys, mondayIndex, startOfLocalDay } from './date-utils'
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
@@ -18,14 +11,29 @@ import type {
 } from './types'
 
 // ------------------------------------------------------------
-// All client-side aggregation. RLS scopes every query to the
-// signed-in user automatically, so we never pass user_id explicitly
-// here. Perf is acceptable for the current scale (low thousands of
-// messages) — if a tenant's dataset outgrows this, we'd migrate the
-// heavy aggregations to SQL RPCs. Noted in the PR.
+// RLS scopes every query (and the SECURITY INVOKER RPCs of migration
+// 084) to the signed-in user, so we never pass user_id here. Anything
+// that would read an unbounded number of rows is aggregated in SQL:
+// PostgREST caps a read at max_rows (1000) and a client-side sum past
+// that silently undercounts.
 // ------------------------------------------------------------
 
 type DB = SupabaseClient
+
+/** The browser's zone: the charts bucket by the user's local day. */
+const localTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone
+
+interface StageDeals {
+  stage_id: string
+  deal_count: number
+  total_value: number | string
+}
+
+async function loadOpenDealsByStage(db: DB): Promise<StageDeals[]> {
+  const { data, error } = await db.rpc('dashboard_open_deals_by_stage')
+  if (error) throw error
+  return (data ?? []) as StageDeals[]
+}
 
 // --- 1. Metric cards ---------------------------------------------------
 
@@ -61,7 +69,7 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       .select('id', { count: 'exact', head: true })
       .gte('created_at', yesterdayStart)
       .lt('created_at', todayStart),
-    db.from('deals').select('value, status').eq('status', 'open'),
+    loadOpenDealsByStage(db),
     db
       .from('messages')
       .select('id', { count: 'exact', head: true })
@@ -75,8 +83,8 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       .lt('created_at', todayStart),
   ])
 
-  const openDealsRows = (openDeals.data ?? []) as { value: number | null }[]
-  const openDealsValue = openDealsRows.reduce((sum, d) => sum + (d.value ?? 0), 0)
+  const openDealsValue = openDeals.reduce((sum, d) => sum + Number(d.total_value), 0)
+  const openDealsCount = openDeals.reduce((sum, d) => sum + d.deal_count, 0)
 
   return {
     activeConversations: {
@@ -91,7 +99,7 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       previous: newContactsYesterday.count ?? 0,
     },
     openDealsValue,
-    openDealsCount: openDealsRows.length,
+    openDealsCount,
     messagesSentToday: {
       current: messagesToday.count ?? 0,
       previous: messagesYesterday.count ?? 0,
@@ -105,48 +113,37 @@ export async function loadConversationsSeries(
   db: DB,
   rangeDays: number,
 ): Promise<ConversationsSeriesPoint[]> {
-  const start = daysAgoStart(rangeDays - 1).toISOString()
-  const { data, error } = await db
-    .from('messages')
-    .select('created_at, sender_type')
-    .gte('created_at', start)
-    .order('created_at', { ascending: true })
+  const { data, error } = await db.rpc('dashboard_message_series', {
+    p_start: daysAgoStart(rangeDays - 1).toISOString(),
+    p_tz: localTimeZone(),
+  })
   if (error) throw error
 
-  const keys = lastNDayKeys(rangeDays)
-  const buckets = new Map<string, { incoming: number; outgoing: number }>()
-  for (const k of keys) buckets.set(k, { incoming: 0, outgoing: 0 })
-
-  for (const row of (data ?? []) as { created_at: string; sender_type: string }[]) {
-    const key = localDayKey(row.created_at)
-    const bucket = buckets.get(key)
-    if (!bucket) continue
-    if (row.sender_type === 'customer') bucket.incoming += 1
-    else bucket.outgoing += 1 // agent + bot both count as outgoing
-  }
-
-  return keys.map((day) => ({ day, ...(buckets.get(day) ?? { incoming: 0, outgoing: 0 }) }))
+  // One row per local day with traffic (agent + bot count as outgoing);
+  // seed every day of the range so quiet days still plot a 0.
+  const byDay = new Map(
+    ((data ?? []) as { day: string; incoming: number; outgoing: number }[]).map((r) => [r.day, r]),
+  )
+  return lastNDayKeys(rangeDays).map((day) => ({
+    day,
+    incoming: byDay.get(day)?.incoming ?? 0,
+    outgoing: byDay.get(day)?.outgoing ?? 0,
+  }))
 }
 
 // --- 3. Pipeline donut -------------------------------------------------
 
 export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
-  const [stagesRes, dealsRes] = await Promise.all([
+  const [stagesRes, deals] = await Promise.all([
     db.from('pipeline_stages').select('id, name, color, pipeline_id, position').order('position'),
-    db.from('deals').select('stage_id, value, status').eq('status', 'open'),
+    loadOpenDealsByStage(db),
   ])
 
   const stages =
     (stagesRes.data ?? []) as { id: string; name: string; color: string }[]
-  const deals = (dealsRes.data ?? []) as { stage_id: string; value: number | null }[]
-
-  const byStage = new Map<string, { count: number; total: number }>()
-  for (const d of deals) {
-    const row = byStage.get(d.stage_id) ?? { count: 0, total: 0 }
-    row.count += 1
-    row.total += d.value ?? 0
-    byStage.set(d.stage_id, row)
-  }
+  const byStage = new Map(
+    deals.map((d) => [d.stage_id, { count: d.deal_count, total: Number(d.total_value) }]),
+  )
 
   const slices: PipelineStageSlice[] = stages
     .map((s) => ({
@@ -170,96 +167,40 @@ export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
 // --- 4. Response time by day of week ----------------------------------
 
 export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
-  // Pull the last 14 days of messages in one shot, then walk per
-  // conversation to find each "first inbound" → "first subsequent
-  // outbound" pair. 14 days gives us both "this week" + "last week"
-  // with enough overlap if the user opens the dashboard late on a
-  // Monday.
-  const fourteenDaysAgo = daysAgoStart(13).toISOString()
-  const { data, error } = await db
-    .from('messages')
-    .select('conversation_id, sender_type, created_at')
-    .gte('created_at', fourteenDaysAgo)
-    .order('conversation_id', { ascending: true })
-    .order('created_at', { ascending: true })
+  // Last 14 days: "this week" + "last week" with overlap when the user
+  // opens the dashboard late on a Monday. Migration 084 pairs, per
+  // conversation, the first customer message after an outbound with the
+  // next outbound (a double-messaging customer counts once) and returns
+  // per-weekday sums; each bar averages both weeks so it has more
+  // samples to stand on. Week boundaries are the browser's local Mondays.
+  const now = new Date()
+  const { data, error } = await db.rpc('dashboard_response_time', {
+    p_start: daysAgoStart(13).toISOString(),
+    p_tz: localTimeZone(),
+    p_this_week_start: daysAgoStart(mondayIndex(now)).toISOString(),
+    p_last_week_start: daysAgoStart(mondayIndex(now) + 7).toISOString(),
+  })
   if (error) throw error
 
-  const rows = (data ?? []) as {
-    conversation_id: string
-    sender_type: string
-    created_at: string
-  }[]
-
-  // Group per conversation, pair unreplied customer messages with the
-  // next outbound message from the agent/bot. A single customer message
-  // can only count once (avoids inflating averages if the customer
-  // double-messages while the agent takes time to reply).
-  interface Sample {
-    customerAt: Date
-    responseAt: Date
+  interface Sum {
+    sum_minutes: number
+    samples: number
   }
-  const samples: Sample[] = []
+  const result = data as { buckets: (Sum & { dow: number })[]; this_week: Sum; last_week: Sum }
+  const avg = (s: Sum | undefined) => (s && s.samples > 0 ? s.sum_minutes / s.samples : null)
+  const byDow = new Map(result.buckets.map((b) => [b.dow, b]))
 
-  let currentConv = ''
-  let pendingCustomer: Date | null = null
-  for (const row of rows) {
-    if (row.conversation_id !== currentConv) {
-      currentConv = row.conversation_id
-      pendingCustomer = null
-    }
-    const ts = new Date(row.created_at)
-    if (row.sender_type === 'customer') {
-      if (!pendingCustomer) pendingCustomer = ts
-    } else if (pendingCustomer) {
-      samples.push({ customerAt: pendingCustomer, responseAt: ts })
-      pendingCustomer = null
-    }
-  }
-
-  const now = new Date()
-  const thisWeekStart = daysAgoStart(mondayIndex(now))
-  const lastWeekStart = daysAgoStart(mondayIndex(now) + 7)
-
-  // Per-day-of-week buckets, averaged over both weeks' worth of data
-  // so each bar has more samples to stand on. If a day has no samples
-  // its avgMinutes stays null and the chart renders the bar muted.
-  const byDow = new Map<number, number[]>()
-  for (let i = 0; i < 7; i++) byDow.set(i, [])
-  const thisWeekMins: number[] = []
-  const lastWeekMins: number[] = []
-
-  for (const s of samples) {
-    const diffMin = (s.responseAt.getTime() - s.customerAt.getTime()) / 60_000
-    if (diffMin < 0) continue
-    const dow = mondayIndex(s.customerAt)
-    byDow.get(dow)!.push(diffMin)
-    if (s.customerAt >= thisWeekStart) {
-      thisWeekMins.push(diffMin)
-    } else if (s.customerAt >= lastWeekStart && s.customerAt < thisWeekStart) {
-      lastWeekMins.push(diffMin)
-    }
-  }
-
-  const avg = (arr: number[]) =>
-    arr.length === 0 ? null : arr.reduce((a, b) => a + b, 0) / arr.length
-
-  const buckets: ResponseTimeBucket[] = Array.from({ length: 7 }, (_, dow) => {
-    const samples = byDow.get(dow) ?? []
-    return {
-      dow,
-      avgMinutes: avg(samples),
-      samples: samples.length,
-    }
-  })
-
-  // Silence unused-label warnings — keep the arrays explicitly named
-  // for readability above.
-  void DOW_SHORT_MON_FIRST
+  // A day without samples keeps avgMinutes null and the chart renders the bar muted.
+  const buckets: ResponseTimeBucket[] = Array.from({ length: 7 }, (_, dow) => ({
+    dow,
+    avgMinutes: avg(byDow.get(dow)),
+    samples: byDow.get(dow)?.samples ?? 0,
+  }))
 
   return {
     buckets,
-    thisWeekAvg: avg(thisWeekMins),
-    lastWeekAvg: avg(lastWeekMins),
+    thisWeekAvg: avg(result.this_week),
+    lastWeekAvg: avg(result.last_week),
   }
 }
 
