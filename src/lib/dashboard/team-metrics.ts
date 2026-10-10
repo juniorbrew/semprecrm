@@ -3,7 +3,7 @@
 // (spec round 2 §1).
 //
 // `loadTeamMetrics` reads the roster and the per-user numbers that
-// migration 085 (`dashboard_team_metrics`) counts in SQL — handled
+// migration 086 (`dashboard_team_metrics`) counts in SQL — handled
 // conversations, closes, first responses, completed tasks, open
 // assignments — and the pure `aggregateTeamMetrics` joins them. The
 // counting rules live (and are tested) in SQL: the old raw-row reads
@@ -47,7 +47,7 @@ export interface TeamMetricsRow {
   openAssigned: number
 }
 
-/** One row of `dashboard_team_metrics` (migration 085). */
+/** One row of `dashboard_team_metrics` (migration 086). */
 export interface TeamMemberStats {
   user_id: string
   handled: number

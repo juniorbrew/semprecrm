@@ -30,7 +30,7 @@ const stat = (user_id: string, extra: Partial<TeamMetricsInput['stats'][number]>
 
 // The counting rules (distinct handled conversations, closes by actor,
 // first-response mean/median, tasks, open assignments) live in SQL since
-// migration 085 and are tested in supabase/tests/dashboard_team_metrics.sql.
+// migration 086 and are tested in supabase/tests/dashboard_team_metrics.sql.
 describe('aggregateTeamMetrics', () => {
   it('gives every member a zero row and keeps the roster order', () => {
     const r = aggregateTeamMetrics(empty, 30)

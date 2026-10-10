@@ -1,5 +1,5 @@
 -- ============================================================
--- 085: team metrics ("Equipe" block of the dashboard) in SQL.
+-- 086: team metrics ("Equipe" block of the dashboard) in SQL.
 --
 -- src/lib/dashboard/team-metrics.ts read every agent message of the
 -- period (up to 90 days), every close event, first response, completed

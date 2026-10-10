@@ -1,8 +1,8 @@
 -- ============================================================
--- Migration 085 (dashboard_team_metrics) — the counting rules that
+-- Migration 086 (dashboard_team_metrics) — the counting rules that
 -- used to run in the browser (and were unit-tested there), RLS and
 -- grants. Nothing is committed (ends in ROLLBACK):
---   (echo "BEGIN;"; cat supabase/migrations/085_*.sql supabase/tests/dashboard_team_metrics.sql) \
+--   (echo "BEGIN;"; cat supabase/migrations/086_*.sql supabase/tests/dashboard_team_metrics.sql) \
 --     | docker exec -i supabase_db_semprecrm psql -v ON_ERROR_STOP=1 -U postgres -d postgres
 -- ============================================================
 \set ON_ERROR_STOP on
