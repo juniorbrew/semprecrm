@@ -4,7 +4,19 @@ import type { PlatformAccountRow } from '@/types';
 export type AttentionFilter = 'all' | 'expiring' | 'expired' | 'limits';
 export type AccountStatusFilter = 'all' | PlanStatus;
 
-export function getAccountHealth(row: PlatformAccountRow, now: Date) {
+export type PlatformChannelAlerts = Record<
+  string,
+  {
+    official_disconnected: boolean;
+    qr_disconnected: boolean;
+  }
+>;
+export type PlatformOverviewRow = PlatformAccountRow & {
+  official_disconnected?: boolean;
+  qr_disconnected?: boolean;
+};
+
+export function getAccountHealth(row: PlatformOverviewRow, now: Date) {
   const ent = resolveEntitlements(row, now);
   const expiry = ent.expiresAt ? new Date(ent.expiresAt).getTime() : null;
   const hasExpiry =
@@ -34,7 +46,9 @@ export function getAccountHealth(row: PlatformAccountRow, now: Date) {
       usersAtLimit ||
       channelsAtLimit ||
       ent.status === 'suspended' ||
-      ent.status === 'past_due',
+      ent.status === 'past_due' ||
+      row.official_disconnected === true ||
+      row.qr_disconnected === true,
   };
 }
 
@@ -54,7 +68,7 @@ export function matchesAccountFilter(
   return true;
 }
 
-export function summarizeAccounts(rows: PlatformAccountRow[], now: Date) {
+export function summarizeAccounts(rows: PlatformOverviewRow[], now: Date) {
   const summary = {
     total: rows.length,
     active: 0,

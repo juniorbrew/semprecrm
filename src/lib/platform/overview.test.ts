@@ -35,6 +35,18 @@ function account(
 }
 
 describe('platform overview', () => {
+  it.each([
+    { official_disconnected: true },
+    { qr_disconnected: true },
+    { official_disconnected: true, qr_disconnected: true },
+  ])('includes recorded channel alerts once per company: %j', (channels) => {
+    const row = { ...account(), ...channels };
+    expect(getAccountHealth(row, now).attention).toBe(true);
+    expect(summarizeAccounts([row], now).attention).toBe(1);
+    expect(
+      summarizeAccounts([{ ...row, plan_status: 'suspended' }], now).attention
+    ).toBe(1);
+  });
   it.each(['suspended', 'past_due'] as const)(
     'includes %s companies even without expiration or capacity alerts',
     (plan_status) => {

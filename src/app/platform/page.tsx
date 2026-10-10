@@ -1,12 +1,20 @@
 import { PlatformOverview } from '@/components/platform/overview';
 import {
   listPlatformAccounts,
+  getPlatformChannelAlerts,
   requirePlatformAdmin,
 } from '@/lib/platform/server';
 
-// Summary uses the existing admin-only RPC; no broader data access.
 export default async function PlatformPage() {
   const supabase = await requirePlatformAdmin();
-  const rows = await listPlatformAccounts(supabase);
-  return <PlatformOverview rows={rows} snapshotAt={new Date().toISOString()} />;
+  const [rows, channelAlerts] = await Promise.all([
+    listPlatformAccounts(supabase),
+    getPlatformChannelAlerts(supabase),
+  ]);
+  return (
+    <PlatformOverview
+      rows={rows.map((row) => ({ ...row, ...channelAlerts[row.id] }))}
+      snapshotAt={new Date().toISOString()}
+    />
+  );
 }

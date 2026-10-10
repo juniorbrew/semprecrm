@@ -1,0 +1,30 @@
+{
+  "unitTests": {
+    "passed": 3742,
+    "skipped": 1,
+    "failed": 0,
+    "filesPassed": 273
+  },
+  "targetedTests": { "passed": 23, "failed": 0 },
+  "browserGroupsPassed": 19,
+  "productionBuild": "passed",
+  "typecheck": "passed",
+  "changedFilesLint": "passed",
+  "format": "passed",
+  "diffCheck": "passed",
+  "sql": {
+    "alertAccountsVerified": 1001,
+    "channelStates": "passed",
+    "safeProjection": "passed",
+    "anonymousAndNonadminDenied": "passed",
+    "authenticatedAdminAllowed": "passed",
+    "fixtures": "transaction rolled back"
+  },
+  "channelAccessibilityViolations": { "dark375": 0, "light375": 0 },
+  "independentReviews": {
+    "backendSecuritySql": "approved",
+    "frontendTests": "approved"
+  },
+  "browserFixtureCleanup": "verified; original 47 local accounts preserved",
+  "productionChanged": false
+}

@@ -1,0 +1,121 @@
+{
+  "success": true,
+  "data": {
+    "axeVersion": "4.12.1",
+    "counts": {
+      "inapplicable": 52,
+      "incomplete": 1,
+      "passes": 37,
+      "violations": 0
+    },
+    "incomplete": [
+      {
+        "help": "Elements must meet minimum color contrast ratio thresholds",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=axeAPI",
+        "id": "color-contrast",
+        "impact": "serious",
+        "nodeCount": 135,
+        "nodes": [
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<p class=\"truncate text-sm font-medium\" data-no-translate=\"true\">Verificação Vencida</p>",
+            "target": [
+              "li:nth-child(1) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .truncate"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<li>Plano vencido<span data-no-translate=\"true\"> · <!-- -->09/10/2026</span></li>",
+            "target": [
+              "li:nth-child(1) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .gap-x-4.gap-y-1 > li"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<span data-no-translate=\"true\"> · <!-- -->09/10/2026</span>",
+            "target": [
+              "li:nth-child(1) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .gap-x-4.gap-y-1 > li > span"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<p class=\"truncate text-sm font-medium\" data-no-translate=\"true\">Rafael Almeida</p>",
+            "target": [
+              "li:nth-child(2) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .truncate"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<li>Plano vencido<span data-no-translate=\"true\"> · <!-- -->05/10/2026</span></li>",
+            "target": [
+              "li:nth-child(2) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .gap-x-4.gap-y-1 > li"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<span data-no-translate=\"true\"> · <!-- -->05/10/2026</span>",
+            "target": [
+              "li:nth-child(2) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .gap-x-4.gap-y-1 > li > span"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<p class=\"truncate text-sm font-medium\" data-no-translate=\"true\">tenant-b</p>",
+            "target": [
+              "li:nth-child(3) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .truncate"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<li>Plano vencido<span data-no-translate=\"true\"> · <!-- -->05/10/2026</span></li>",
+            "target": [
+              "li:nth-child(3) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .gap-x-4.gap-y-1 > li"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<span data-no-translate=\"true\"> · <!-- -->05/10/2026</span>",
+            "target": [
+              "li:nth-child(3) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .gap-x-4.gap-y-1 > li > span"
+            ]
+          },
+          {
+            "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element",
+            "html": "<p class=\"truncate text-sm font-medium\" data-no-translate=\"true\">tenant-a</p>",
+            "target": [
+              "li:nth-child(4) > .sm\\:px-5.gap-4.p-4 > .items-start.gap-3.min-w-0 > .min-w-0 > .truncate"
+            ]
+          }
+        ],
+        "tags": [
+          "cat.color",
+          "wcag2aa",
+          "wcag143",
+          "TTv5",
+          "TT13.c",
+          "EN-301-549",
+          "EN-9.1.4.3",
+          "ACT",
+          "RGAAv4",
+          "RGAA-3.2.1"
+        ]
+      }
+    ],
+    "lifecycle": {
+      "effectiveLaunch": {
+        "browserLaunched": true,
+        "engine": "chrome",
+        "launchHash": 11677035664275012000
+      },
+      "launched": false,
+      "relaunchedBrowser": false,
+      "restartedBackground": false,
+      "restoreStatus": "not_configured",
+      "reused": true,
+      "saveStatus": "not_attempted"
+    },
+    "url": "http://localhost:3107/platform",
+    "violations": []
+  },
+  "error": null
+}
