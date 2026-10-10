@@ -271,8 +271,9 @@ async function retryOrGiveUp(job: AiReplyJob, err: unknown, deps: AutoReplyDeps)
 }
 
 async function patchJob(db: SupabaseClient, id: string, patch: Row): Promise<void> {
-  const { error } = await db.from('ai_reply_jobs').update(patch).eq('id', id);
-  if (error) console.error('[ai/auto-reply] job update failed:', id, error.message);
+  // A send may proceed only after its checkpoint is durably recorded.
+  const { data, error } = await db.from('ai_reply_jobs').update(patch).eq('id', id).select('id');
+  if (error || !data || data.length !== 1) throw new Error('ai reply job update failed');
 }
 
 /**
