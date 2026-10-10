@@ -14,15 +14,23 @@ const members: TeamMetricsInput['members'] = [
   { user_id: 'caio', full_name: 'Caio', avatar_url: null, role: 'viewer', availability: null },
 ]
 
-const empty: TeamMetricsInput = {
-  members,
-  agentMessages: [],
-  statusEvents: [],
-  firstResponses: [],
-  completedTasks: [],
-  openAssigned: [],
-}
+const empty: TeamMetricsInput = { members, stats: [] }
 
+const stat = (user_id: string, extra: Partial<TeamMetricsInput['stats'][number]> = {}) => ({
+  user_id,
+  handled: 0,
+  resolved: 0,
+  first_response_avg_seconds: null,
+  first_response_median_seconds: null,
+  first_response_samples: 0,
+  tasks_completed: 0,
+  open_assigned: 0,
+  ...extra,
+})
+
+// The counting rules (distinct handled conversations, closes by actor,
+// first-response mean/median, tasks, open assignments) live in SQL since
+// migration 086 and are tested in supabase/tests/dashboard_team_metrics.sql.
 describe('aggregateTeamMetrics', () => {
   it('gives every member a zero row and keeps the roster order', () => {
     const r = aggregateTeamMetrics(empty, 30)
@@ -44,97 +52,40 @@ describe('aggregateTeamMetrics', () => {
     expect(r.maxFirstResponseAvgSeconds).toBe(0)
   })
 
-  it('counts handled conversations as distinct per user', () => {
+  it('puts each member numbers on their row, drops non-members, sets the bar maximum', () => {
     const r = aggregateTeamMetrics(
       {
-        ...empty,
-        agentMessages: [
-          { conversation_id: 'c1', sender_id: 'ana' },
-          { conversation_id: 'c1', sender_id: 'ana' },
-          { conversation_id: 'c2', sender_id: 'ana' },
-          { conversation_id: 'c2', sender_id: 'bia' },
-          { conversation_id: 'c3', sender_id: null },
-          { conversation_id: 'c4', sender_id: 'ghost' },
-        ],
-      },
-      7,
-    )
-    const by = Object.fromEntries(r.rows.map((x) => [x.user_id, x]))
-    expect(by.ana.handled).toBe(2)
-    expect(by.bia.handled).toBe(1)
-    expect(by.caio.handled).toBe(0)
-  })
-
-  it('counts only status_changed → closed as resolved, by actor', () => {
-    const r = aggregateTeamMetrics(
-      {
-        ...empty,
-        statusEvents: [
-          { actor_user_id: 'ana', payload: { status: 'closed' } },
-          { actor_user_id: 'ana', payload: { status: 'closed' } },
-          { actor_user_id: 'ana', payload: { status: 'open' } },
-          { actor_user_id: 'bia', payload: { status: 'pending' } },
-          { actor_user_id: null, payload: { status: 'closed' } },
-          { actor_user_id: 'bia', payload: null },
-        ],
-      },
-      7,
-    )
-    const by = Object.fromEntries(r.rows.map((x) => [x.user_id, x]))
-    expect(by.ana.resolved).toBe(2)
-    expect(by.bia.resolved).toBe(0)
-  })
-
-  it('computes mean and median first-response per responder and the bar maximum', () => {
-    const r = aggregateTeamMetrics(
-      {
-        ...empty,
-        firstResponses: [
-          { first_response_by: 'ana', first_response_seconds: 60 },
-          { first_response_by: 'ana', first_response_seconds: 120 },
-          { first_response_by: 'ana', first_response_seconds: 600 },
-          { first_response_by: 'bia', first_response_seconds: 30 },
-          { first_response_by: 'bia', first_response_seconds: 90 },
-          { first_response_by: null, first_response_seconds: 5 },
-          { first_response_by: 'ana', first_response_seconds: null },
-          { first_response_by: 'ana', first_response_seconds: -5 },
+        members,
+        stats: [
+          stat('ana', {
+            handled: 2,
+            resolved: 2,
+            first_response_avg_seconds: 260,
+            first_response_median_seconds: 120,
+            first_response_samples: 3,
+            tasks_completed: 2,
+          }),
+          stat('bia', { handled: 1, first_response_avg_seconds: 60, first_response_median_seconds: 60, first_response_samples: 2, open_assigned: 3 }),
+          stat('ghost', { handled: 9, first_response_avg_seconds: 9999, first_response_samples: 1 }),
         ],
       },
       90,
     )
+    expect(r.rows.map((x) => x.user_id)).toEqual(['ana', 'bia', 'caio'])
     const by = Object.fromEntries(r.rows.map((x) => [x.user_id, x]))
-    expect(by.ana.firstResponseAvgSeconds).toBe(260)
-    expect(by.ana.firstResponseMedianSeconds).toBe(120)
-    expect(by.ana.firstResponseSamples).toBe(3)
-    expect(by.bia.firstResponseAvgSeconds).toBe(60)
-    expect(by.bia.firstResponseMedianSeconds).toBe(60)
-    expect(by.caio.firstResponseAvgSeconds).toBeNull()
+    expect(by.ana).toMatchObject({
+      handled: 2,
+      resolved: 2,
+      firstResponseAvgSeconds: 260,
+      firstResponseMedianSeconds: 120,
+      firstResponseSamples: 3,
+      tasksCompleted: 2,
+      openAssigned: 0,
+    })
+    expect(by.bia).toMatchObject({ handled: 1, firstResponseAvgSeconds: 60, openAssigned: 3 })
+    expect(by.caio).toMatchObject({ handled: 0, firstResponseAvgSeconds: null })
+    // ghost is not a member: neither a row nor the bar's 100%.
     expect(r.maxFirstResponseAvgSeconds).toBe(260)
-  })
-
-  it('counts completed tasks by assignee and current open assignments', () => {
-    const r = aggregateTeamMetrics(
-      {
-        ...empty,
-        completedTasks: [
-          { assignee_user_id: 'ana' },
-          { assignee_user_id: 'ana' },
-          { assignee_user_id: null },
-          { assignee_user_id: 'left' },
-        ],
-        openAssigned: [
-          { assigned_agent_id: 'bia' },
-          { assigned_agent_id: 'bia' },
-          { assigned_agent_id: 'bia' },
-          { assigned_agent_id: null },
-        ],
-      },
-      30,
-    )
-    const by = Object.fromEntries(r.rows.map((x) => [x.user_id, x]))
-    expect(by.ana.tasksCompleted).toBe(2)
-    expect(by.bia.openAssigned).toBe(3)
-    expect(by.ana.openAssigned).toBe(0)
   })
 })
 
@@ -150,15 +101,10 @@ describe('median', () => {
 describe('sortTeamRows', () => {
   const rows = aggregateTeamMetrics(
     {
-      ...empty,
-      agentMessages: [
-        { conversation_id: 'c1', sender_id: 'bia' },
-        { conversation_id: 'c2', sender_id: 'bia' },
-        { conversation_id: 'c3', sender_id: 'ana' },
-      ],
-      firstResponses: [
-        { first_response_by: 'ana', first_response_seconds: 300 },
-        { first_response_by: 'bia', first_response_seconds: 20 },
+      members,
+      stats: [
+        stat('bia', { handled: 2, first_response_avg_seconds: 20, first_response_median_seconds: 20, first_response_samples: 1 }),
+        stat('ana', { handled: 1, first_response_avg_seconds: 300, first_response_median_seconds: 300, first_response_samples: 1 }),
       ],
     },
     7,
