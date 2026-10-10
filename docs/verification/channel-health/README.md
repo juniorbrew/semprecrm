@@ -6,7 +6,7 @@ Empresas sem canal e sessões QR vazias não recebem alerta de desconexão. Os e
 
 ## Implementação
 
-- Migração aditiva `084_platform_channel_alerts.sql`: consulta administrativa que retorna somente identificadores e indicadores booleanos, em um único JSON para evitar truncamento dos alertas.
+- Migração aditiva `085_platform_channel_alerts.sql`: consulta administrativa que retorna somente identificadores e indicadores booleanos, em um único JSON para evitar truncamento dos alertas.
 - A página verifica o acesso administrativo e o segundo login antes de consultar os dados. Falhas de leitura usam a tela de erro existente.
 - O resumo, os filtros, os limites dos planos e as condições já concedidas permanecem nos fluxos existentes. Nenhuma escrita de empresa é adicionada à visão geral.
 - Sem novas dependências, alterações de credenciais, reconexão automática ou modificações no gateway.
@@ -25,8 +25,9 @@ Recursos utilizados: Superpowers para testes e verificação, Impeccable e prát
 
 ## Limites e publicação
 
-Ainda não publicado. A aplicação depende da migração 084 antes da atualização do código. O banco produtivo e o gateway não foram alterados nesta etapa.
+Ainda não publicado. A aplicação depende da migração 085 antes da atualização do código. O banco produtivo e o gateway não foram alterados nesta etapa.
 
 O estado registrado pode estar desatualizado; uma consulta posterior ao gateway pode apagar sinais anteriores de desconexão QR. A listagem administrativa de empresas mantém seu limite anterior de retorno; o novo agregado de alertas foi verificado acima de 1.000 registros, mas não altera essa listagem.
 
 A base da implementação é `ebce337` (main). A última publicação conhecida era `6157aa9`; as alterações intermediárias, incluindo a migração 083, precisam ser consideradas explicitamente na preparação da implantação.
+
