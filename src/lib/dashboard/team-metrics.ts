@@ -2,11 +2,12 @@
 // Team metrics — per-member numbers for the dashboard "Equipe" block
 // (spec round 2 §1).
 //
-// `loadTeamMetrics` pulls the raw rows for the period (members,
-// messages sent by agents, `status_changed → closed` events, first
-// responses, completed tasks, open assignments) with the caller's RLS-
-// scoped client and hands them to the pure `aggregateTeamMetrics`,
-// which is what the unit tests exercise.
+// `loadTeamMetrics` reads the roster and the per-user numbers that
+// migration 085 (`dashboard_team_metrics`) counts in SQL — handled
+// conversations, closes, first responses, completed tasks, open
+// assignments — and the pure `aggregateTeamMetrics` joins them. The
+// counting rules live (and are tested) in SQL: the old raw-row reads
+// were capped at PostgREST's max_rows and undercounted busy teams.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -46,18 +47,22 @@ export interface TeamMetricsRow {
   openAssigned: number
 }
 
+/** One row of `dashboard_team_metrics` (migration 085). */
+export interface TeamMemberStats {
+  user_id: string
+  handled: number
+  resolved: number
+  first_response_avg_seconds: number | null
+  first_response_median_seconds: number | null
+  first_response_samples: number
+  tasks_completed: number
+  open_assigned: number
+}
+
 export interface TeamMetricsInput {
   members: TeamMember[]
-  /** Agent messages in the period: who sent it and to which conversation. */
-  agentMessages: { conversation_id: string; sender_id: string | null }[]
-  /** `conversation_events` rows of type status_changed in the period. */
-  statusEvents: { actor_user_id: string | null; payload: { status?: string } | null }[]
-  /** Conversations whose first response landed in the period. */
-  firstResponses: { first_response_by: string | null; first_response_seconds: number | null }[]
-  /** Tasks completed in the period. */
-  completedTasks: { assignee_user_id: string | null }[]
-  /** Conversations open right now with an assignee. */
-  openAssigned: { assigned_agent_id: string | null }[]
+  /** Per-user numbers for the period; users outside the roster are ignored. */
+  stats: TeamMemberStats[]
 }
 
 export interface TeamMetricsResult {
@@ -65,11 +70,6 @@ export interface TeamMetricsResult {
   rows: TeamMetricsRow[]
   /** Longest average first-response among the rows — the bar's 100%. */
   maxFirstResponseAvgSeconds: number
-}
-
-function mean(values: number[]): number | null {
-  if (values.length === 0) return null
-  return values.reduce((a, b) => a + b, 0) / values.length
 }
 
 export function median(values: number[]): number | null {
@@ -103,53 +103,16 @@ export function aggregateTeamMetrics(input: TeamMetricsInput, period: TeamPeriod
     })
   }
 
-  const handledSets = new Map<string, Set<string>>()
-  for (const msg of input.agentMessages) {
-    if (!msg.sender_id || !byUser.has(msg.sender_id)) continue
-    let set = handledSets.get(msg.sender_id)
-    if (!set) {
-      set = new Set()
-      handledSets.set(msg.sender_id, set)
-    }
-    set.add(msg.conversation_id)
-  }
-  for (const [userId, set] of handledSets) byUser.get(userId)!.handled = set.size
-
-  for (const ev of input.statusEvents) {
-    if (!ev.actor_user_id || ev.payload?.status !== 'closed') continue
-    const row = byUser.get(ev.actor_user_id)
-    if (row) row.resolved += 1
-  }
-
-  const samples = new Map<string, number[]>()
-  for (const fr of input.firstResponses) {
-    if (!fr.first_response_by || fr.first_response_seconds === null) continue
-    if (!byUser.has(fr.first_response_by)) continue
-    if (!Number.isFinite(fr.first_response_seconds) || fr.first_response_seconds < 0) continue
-    let arr = samples.get(fr.first_response_by)
-    if (!arr) {
-      arr = []
-      samples.set(fr.first_response_by, arr)
-    }
-    arr.push(fr.first_response_seconds)
-  }
-  for (const [userId, arr] of samples) {
-    const row = byUser.get(userId)!
-    row.firstResponseAvgSeconds = mean(arr)
-    row.firstResponseMedianSeconds = median(arr)
-    row.firstResponseSamples = arr.length
-  }
-
-  for (const task of input.completedTasks) {
-    if (!task.assignee_user_id) continue
-    const row = byUser.get(task.assignee_user_id)
-    if (row) row.tasksCompleted += 1
-  }
-
-  for (const conv of input.openAssigned) {
-    if (!conv.assigned_agent_id) continue
-    const row = byUser.get(conv.assigned_agent_id)
-    if (row) row.openAssigned += 1
+  for (const st of input.stats) {
+    const row = byUser.get(st.user_id)
+    if (!row) continue
+    row.handled = st.handled
+    row.resolved = st.resolved
+    row.firstResponseAvgSeconds = st.first_response_avg_seconds
+    row.firstResponseMedianSeconds = st.first_response_median_seconds
+    row.firstResponseSamples = st.first_response_samples
+    row.tasksCompleted = st.tasks_completed
+    row.openAssigned = st.open_assigned
   }
 
   const rows = [...byUser.values()]
@@ -222,53 +185,16 @@ export async function loadTeamMetrics(
 ): Promise<TeamMetricsResult> {
   const since = daysAgoStart(period - 1).toISOString()
 
-  const [members, agentMessages, statusEvents, firstResponses, completedTasks, openAssigned] =
-    await Promise.all([
-      db
-        .from('profiles')
-        .select('user_id, full_name, avatar_url, account_role, availability')
-        .eq('account_id', accountId)
-        .order('full_name', { ascending: true }),
-      // messages has no account_id: join through conversations.
-      db
-        .from('messages')
-        .select('conversation_id, sender_id, conversations!inner(account_id)')
-        .eq('conversations.account_id', accountId)
-        .eq('sender_type', 'agent')
-        .not('sender_id', 'is', null)
-        .gte('created_at', since),
-      db
-        .from('conversation_events')
-        .select('actor_user_id, payload')
-        .eq('account_id', accountId)
-        .eq('event_type', 'status_changed')
-        .gte('created_at', since),
-      db
-        .from('conversations')
-        .select('first_response_by, first_response_seconds')
-        .eq('account_id', accountId)
-        .not('first_response_at', 'is', null)
-        .gte('first_response_at', since),
-      db
-        .from('tasks')
-        .select('assignee_user_id')
-        .eq('account_id', accountId)
-        .not('completed_at', 'is', null)
-        .gte('completed_at', since),
-      db
-        .from('conversations')
-        .select('assigned_agent_id')
-        .eq('account_id', accountId)
-        .eq('status', 'open')
-        .not('assigned_agent_id', 'is', null),
-    ])
-
-  for (const r of [members, agentMessages, statusEvents, firstResponses, openAssigned]) {
-    if (r.error) throw r.error
-  }
-  // The tasks module may be off / the table missing on older forks —
-  // treat a failure there as "no tasks" rather than hiding the block.
-  const tasks = completedTasks.error ? [] : (completedTasks.data ?? [])
+  const [members, stats] = await Promise.all([
+    db
+      .from('profiles')
+      .select('user_id, full_name, avatar_url, account_role, availability')
+      .eq('account_id', accountId)
+      .order('full_name', { ascending: true }),
+    db.rpc('dashboard_team_metrics', { p_account_id: accountId, p_since: since }),
+  ])
+  if (members.error) throw members.error
+  if (stats.error) throw stats.error
 
   return aggregateTeamMetrics(
     {
@@ -285,11 +211,7 @@ export async function loadTeamMetrics(
         role: p.account_role,
         availability: p.availability,
       })),
-      agentMessages: (agentMessages.data ?? []) as TeamMetricsInput['agentMessages'],
-      statusEvents: (statusEvents.data ?? []) as TeamMetricsInput['statusEvents'],
-      firstResponses: (firstResponses.data ?? []) as TeamMetricsInput['firstResponses'],
-      completedTasks: tasks as TeamMetricsInput['completedTasks'],
-      openAssigned: (openAssigned.data ?? []) as TeamMetricsInput['openAssigned'],
+      stats: (stats.data ?? []) as TeamMemberStats[],
     },
     period,
   )
