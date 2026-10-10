@@ -142,6 +142,105 @@ const jobRow = (id = 'job-1') => db.table('ai_reply_jobs').find((j) => j.id === 
 const conv = () => db.table('conversations')[0];
 const agentRow = () => db.table('ai_agents')[0] as Row;
 
+function failingJobWrites(shouldFail: (patch: Row) => boolean): SupabaseClient {
+  const client = db.client();
+  return {
+    rpc: client.rpc,
+    from: (table: string) => {
+      const query = client.from(table) as unknown as {
+        update: (patch: Row) => unknown;
+      };
+      if (table !== 'ai_reply_jobs') return query;
+      const update = query.update.bind(query);
+      query.update = (patch: Row) => {
+        if (!shouldFail(patch)) return update(patch);
+        const result = {
+          data: null,
+          error: { message: 'SENSITIVE database diagnostic' },
+        };
+        return {
+          eq: () => ({
+            select: async () => result,
+            then: (resolve: (value: unknown) => unknown) =>
+              Promise.resolve(result).then(resolve),
+          }),
+        };
+      };
+      return query;
+    },
+  } as unknown as SupabaseClient;
+}
+
+describe('durable automatic-reply job writes', () => {
+  it.each([
+    ['prepared reply', (patch: Row) => Array.isArray(patch.reply_parts)],
+    ['first bubble checkpoint', (patch: Row) => patch.sent_parts === 1],
+  ])(
+    'does not send when the %s cannot be recorded',
+    async (_name, shouldFail) => {
+      await expect(
+        runAutoReplyJob(job(), deps({ db: failingJobWrites(shouldFail) }))
+      ).rejects.toThrow('ai reply job update failed');
+      expect(sent).toEqual([]);
+      expect(jobRow().sent_parts).toBe(0);
+    }
+  );
+
+  it('does not send when the job disappeared during pacing', async () => {
+    await expect(
+      runAutoReplyJob(
+        job(),
+        deps({ pace: async () => void db.tables.set('ai_reply_jobs', []) })
+      )
+    ).rejects.toThrow('ai reply job update failed');
+    expect(sent).toEqual([]);
+  });
+
+  it('retries only the unsent bubble after its checkpoint fails', async () => {
+    modelText = reply('Um.\n\nDois.');
+    db.rpcHandler = () => ({ data: [{ ...jobRow() }], error: null });
+    let failure = true;
+    const flaky = failingJobWrites((patch) => {
+      if (patch.sent_parts !== 2 || !failure) return false;
+      failure = false;
+      return true;
+    });
+    const first = await drainAutoReplies(deps({ db: flaky }));
+    expect(first).toMatchObject({ failed: 1, replied: 0 });
+    expect(sent).toEqual(['Um.']);
+    expect(jobRow()).toMatchObject({
+      status: 'queued',
+      sent_parts: 1,
+      reply_parts: ['Um.', 'Dois.'],
+    });
+    const second = await drainAutoReplies(deps({ db: flaky }));
+    expect(second).toMatchObject({ failed: 0, replied: 1 });
+    expect(sent).toEqual(['Um.', 'Dois.']);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('does not resend after recording completion fails', async () => {
+    db.rpcHandler = () => ({ data: [{ ...jobRow() }], error: null });
+    let failure = true;
+    const flaky = failingJobWrites((patch) => {
+      if (patch.status !== 'done' || !failure) return false;
+      failure = false;
+      return true;
+    });
+    expect(await drainAutoReplies(deps({ db: flaky }))).toMatchObject({
+      failed: 1,
+    });
+    expect(sent).toEqual(['Olá! Abrimos às 8h.']);
+    expect(jobRow()).toMatchObject({ status: 'queued', sent_parts: 1 });
+    expect(await drainAutoReplies(deps({ db: flaky }))).toMatchObject({
+      replied: 1,
+      failed: 0,
+    });
+    expect(sent).toEqual(['Olá! Abrimos às 8h.']);
+    expect(prompts).toHaveLength(1);
+  });
+});
+
 describe('runAutoReplyJob — reply', () => {
   it('replies, records the job, the agent used and the conversation', async () => {
     jobRow().agent_id = null;
