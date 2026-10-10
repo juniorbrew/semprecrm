@@ -1,0 +1,25 @@
+# /etc/logrotate.d/semprecrm — rotação dos logs do PM2 (app, cron, gateway).
+# Instalar: sudo cp deploy/contabo/logrotate-semprecrm /etc/logrotate.d/semprecrm
+# Testar:   sudo logrotate -d /etc/logrotate.d/semprecrm
+#
+# copytruncate: o PM2 mantém os arquivos abertos; copiar e zerar evita reload.
+# Pode perder as linhas escritas no instante da cópia, aceitável para estes logs.
+# su: /var/log/semprecrm pertence ao usuário semprecrm (o logrotate recusa
+# diretório gravável por outro usuário sem isto). backup.log é do root e fica de fora.
+/var/log/semprecrm/out.log
+/var/log/semprecrm/err.log
+/var/log/semprecrm/cron.out.log
+/var/log/semprecrm/cron.err.log
+/var/log/semprecrm/wa-gateway.out.log
+/var/log/semprecrm/wa-gateway.err.log
+{
+    su semprecrm semprecrm
+    daily
+    maxsize 20M
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

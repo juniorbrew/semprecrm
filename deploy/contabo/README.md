@@ -161,5 +161,6 @@ bash /var/www/semprecrm/deploy/contabo/deploy.sh main
 - Uma instância só (`instances: 1`). O rate limit é em memória de um processo; para escalar em vários
   nós troque o `check` em `src/lib/rate-limit.ts` por Redis.
 - Firewall: libere só 22, 80 e 443 (`ufw allow OpenSSH && ufw allow 'Nginx Full' && ufw enable`).
-- Logs: `pm2 logs semprecrm` ou `/var/log/semprecrm/`.
+- Logs: `pm2 logs semprecrm` ou `/var/log/semprecrm/`. Rotação diária (14 dias, compactados) com
+  `sudo cp deploy/contabo/logrotate-semprecrm /etc/logrotate.d/semprecrm` — ver o próprio arquivo.
 - Backups do banco ficam por conta do Supabase (PITR no plano Pro) ou de um `pg_dump` agendado.
