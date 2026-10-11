@@ -145,6 +145,34 @@ export const DICT_AI: Record<string, string> = {
   'Delete this item from the knowledge base?': 'Excluir este item da base de conhecimento?',
   'Item deleted': 'Item excluído',
   'Knowledge base updated': 'Base de conhecimento atualizada',
+  Draft: 'Rascunho',
+  Published: 'Publicado',
+  'Pending changes': 'Alterações pendentes',
+  'Unavailable to AI': 'Indisponível para a IA',
+  'Use published version in suggestions': 'Usar versão publicada nas sugestões',
+  Review: 'Revisar',
+  'Review version': 'Revisar versão',
+  'Version preview': 'Prévia da versão',
+  'Publish version': 'Publicar versão',
+  'Version published': 'Versão publicada',
+  "Failed to publish the knowledge item": "Não foi possível publicar o item de conhecimento.",
+  "Invalid publication version": "Versão inválida para publicação.",
+  "Draft changed; review the latest version": "O rascunho mudou. Revise a versão mais recente.",
+  'Could not publish the version': 'Não foi possível publicar a versão',
+  'A newer draft exists. Review the latest version before publishing.':
+    'Existe um rascunho mais recente. Revise a última versão antes de publicar.',
+  'Knowledge item not found. Refresh the knowledge base.':
+    'Item da base não encontrado. Atualize a base de conhecimento.',
+  'Draft saved': 'Rascunho salvo',
+  'Save draft': 'Salvar rascunho',
+  'File saved as draft': 'Arquivo salvo como rascunho',
+  'Version restored as draft': 'Versão restaurada como rascunho',
+  'Saving, uploading and restoring create drafts. The AI only changes when you publish. Review the latest version in the history before publishing.':
+    'Salvar, enviar arquivos e restaurar cria rascunhos. A IA só muda quando você publica. Revise a última versão no histórico antes de publicar.',
+  'Publishing makes this reviewed version available to the AI when the item is enabled.':
+    'Publicar disponibiliza esta versão revisada para a IA quando o item está ativado.',
+  'Save a draft, then review and publish it from the version history.':
+    'Salve um rascunho, depois revise e publique pelo histórico de versões.',
   // categories + version history (migration 087)
   'Category (optional)': 'Categoria (opcional)',
   'E.g.: Delivery, Payments, Opening hours': 'Ex.: Entrega, Pagamentos, Horário de atendimento',
