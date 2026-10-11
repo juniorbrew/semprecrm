@@ -99,6 +99,8 @@ SELECT pg_temp.assert_true(
   'created_by stamped from the session');
 
 -- Accent-insensitive: "preço" finds "Precos" (stemmed + unaccented).
+SELECT ai_knowledge_publish_item((SELECT acc_a FROM ids), id, 1) FROM a_items;
+
 SELECT pg_temp.assert_true(
   EXISTS (SELECT 1 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'qual o preço do bolo?', 5) s
            JOIN a_items a ON a.id = s.item_id WHERE a.name = 'precos'),
@@ -146,11 +148,11 @@ SELECT pg_temp.assert_true(
                JOIN a_items a ON a.id = s.item_id WHERE a.name = 'precos'),
   'disabled item is not searched');
 
--- Edit replaces chunks atomically.
+-- Edit replaces draft chunks atomically, keeping the publication.
 SELECT ai_knowledge_save_item((SELECT acc_a FROM ids), (SELECT id FROM a_items WHERE name = 'horario'), 'text', 'Horário',
   NULL, 'Abrimos todos os dias.', NULL, ARRAY['Abrimos todos os dias.']);
 SELECT pg_temp.assert_true(
-  (SELECT count(*) = 1 FROM ai_knowledge_chunks WHERE item_id = (SELECT id FROM a_items WHERE name = 'horario')),
+  (SELECT count(*) = 1 FROM ai_knowledge_chunks WHERE item_id = (SELECT id FROM a_items WHERE name = 'horario') AND NOT published),
   'edit replaced the chunks');
 
 -- Admin A cannot write into account B.
@@ -172,7 +174,7 @@ SELECT pg_temp.assert_true(
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-00000000000d', true);
 SELECT pg_temp.assert_true((SELECT count(*) = 0 FROM ai_knowledge_items), 'agent cannot read items (admin-only)');
-SELECT pg_temp.assert_true((SELECT count(*) = 3 FROM ai_knowledge_chunks), 'agent reads own account chunks');
+SELECT pg_temp.assert_true((SELECT count(*) = 4 FROM ai_knowledge_chunks), 'agent reads own account chunks');
 SELECT pg_temp.assert_true(
   EXISTS (SELECT 1 FROM ai_knowledge_search((SELECT acc_a FROM ids), 'quanto custa a entrega', 5)),
   'agent can search (used by Sugerir resposta)');
@@ -185,11 +187,14 @@ DO $$ BEGIN
   RAISE EXCEPTION 'agent inserted an item';
 EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 UPDATE ai_knowledge_items SET enabled = false;
-DELETE FROM ai_knowledge_chunks;
+DO $$ BEGIN
+  DELETE FROM ai_knowledge_chunks;
+  RAISE EXCEPTION 'agent deleted chunks';
+EXCEPTION WHEN insufficient_privilege THEN NULL; END $$;
 RESET ROLE;
 SELECT pg_temp.assert_true(
   (SELECT count(*) = 3 FROM ai_knowledge_chunks c JOIN ai_knowledge_items i ON i.id = c.item_id
-    WHERE i.account_id = (SELECT acc_a FROM ids))
+    WHERE i.account_id = (SELECT acc_a FROM ids) AND NOT c.published)
   AND (SELECT count(*) = 2 FROM ai_knowledge_items WHERE account_id = (SELECT acc_a FROM ids) AND enabled),
   'agent update/delete touched nothing');
 

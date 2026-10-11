@@ -42,12 +42,14 @@ export interface KbItemSummary {
   content_chars: number;
   category: string | null;
   enabled: boolean;
+  latest_version: number | null;
+  published_version: number | null;
   created_at: string;
   updated_at: string;
 }
 
 export const KB_ITEM_SUMMARY_COLUMNS =
-  'id, kind, title, source_filename, content_chars, category, enabled, created_at, updated_at';
+  'id, kind, title, source_filename, content_chars, category, enabled, latest_version, published_version, created_at, updated_at';
 
 export interface KbItem {
   id: string;
@@ -58,6 +60,8 @@ export interface KbItem {
   source_filename: string | null;
   category: string | null;
   enabled: boolean;
+  latest_version: number | null;
+  published_version: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -59,15 +59,20 @@ function KbHistoryDialog({
   item,
   onClose,
   onRestored,
+  onPublished,
 }: {
   item: KbItemSummary | null;
   onClose: () => void;
   onRestored: () => Promise<void>;
+  onPublished: (item: KbItemSummary) => void;
 }) {
   const { t, language } = useLanguage();
   const [versions, setVersions] = useState<KbVersion[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [restoring, setRestoring] = useState<number | null>(null);
+  const [preview, setPreview] = useState<KbVersion | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const busy = restoring !== null || publishing;
   const date = useMemo(
     () => new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" }),
     [language],
@@ -87,16 +92,18 @@ function KbHistoryDialog({
 
   useEffect(() => {
     setVersions(null);
+    setPreview(null);
     if (item) void load(item.id);
   }, [item, load]);
 
   async function restore(versionNo: number) {
-    if (!item) return;
+    if (!item || busy) return;
+    setPreview(null);
     setRestoring(versionNo);
     try {
       const res = await fetch(`/api/ai/knowledge/${item.id}/versions/${versionNo}/restore`, { method: "POST" });
       if (!res.ok) throw await apiError(res);
-      toast.success(t("Version restored"));
+      toast.success(t("Version restored as draft"));
       await Promise.all([onRestored(), load(item.id)]);
     } catch (err) {
       toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Failed to save the knowledge item"));
@@ -105,14 +112,44 @@ function KbHistoryDialog({
     }
   }
 
-  const latest = versions?.[0]?.version_no;
+  async function publish() {
+    if (!item || !preview || busy || preview.version_no !== item.latest_version || preview.version_no === item.published_version) return;
+    setPublishing(true);
+    try {
+      const res = await fetch(`/api/ai/knowledge/${item.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ publish_version: preview.version_no }),
+      });
+      if (res.status === 409 || res.status === 404) {
+        setPreview(null);
+        toast.error(t(res.status === 409
+          ? "A newer draft exists. Review the latest version before publishing."
+          : "Knowledge item not found. Refresh the knowledge base."));
+        if (res.status === 404) onClose();
+        await Promise.all([onRestored(), load(item.id)]);
+        return;
+      }
+      if (!res.ok) throw await apiError(res);
+      onPublished(((await res.json()) as { item: KbItemSummary }).item);
+      setPreview(null);
+      toast.success(t("Version published"));
+    } catch (err) {
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Could not publish the version"));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  const latest = item?.latest_version;
   return (
-    <Dialog open={item !== null} onOpenChange={(open) => (!open && restoring === null ? onClose() : undefined)}>
-      <DialogContent className="sm:max-w-lg">
+    <Dialog open={item !== null} onOpenChange={(open) => (!open && !busy ? onClose() : undefined)}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg" showCloseButton={!busy}>
         <DialogHeader>
           <DialogTitle>{t("Version history")}</DialogTitle>
           <DialogDescription>
             {t("Every save is kept. Restoring creates a new version — nothing is erased.")}
+            {" "}{t("Saving, uploading and restoring create drafts. The AI only changes when you publish. Review the latest version in the history before publishing.")}
           </DialogDescription>
         </DialogHeader>
         {failed ? (
@@ -120,7 +157,7 @@ function KbHistoryDialog({
         ) : versions === null ? (
           <div className="h-24 animate-pulse rounded-lg bg-muted/60" />
         ) : (
-          <ol className="max-h-[60vh] divide-y divide-border overflow-y-auto border-y border-border">
+          <ol className="max-h-[30vh] divide-y divide-border overflow-y-auto border-y border-border">
             {versions.map((v) => (
               <li key={v.version_no} className="space-y-1 py-3">
                 <div className="flex items-center justify-between gap-2">
@@ -130,6 +167,7 @@ function KbHistoryDialog({
                     </span>
                     <span data-no-translate> · {date.format(new Date(v.created_at))}</span>
                     {v.version_no === latest ? <span> · {t("current")}</span> : null}
+                    {v.version_no === item?.published_version ? <span> · {t("Published")}</span> : null}
                     {v.restored_from ? (
                       <span>
                         {" "}
@@ -137,17 +175,25 @@ function KbHistoryDialog({
                       </span>
                     ) : null}
                   </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button size="sm" variant="outline" disabled={busy}
+                      aria-label={`${t("Review version")} ${v.version_no}`}
+                      aria-pressed={preview?.version_no === v.version_no}
+                      onClick={() => setPreview(v)}>
+                      {t("Review")}
+                    </Button>
                   {v.version_no !== latest ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={restoring !== null}
+                      disabled={busy}
                       onClick={() => void restore(v.version_no)}
                     >
                       {restoring === v.version_no ? <Loader2 className="size-3.5 animate-spin" /> : null}
                       {t("Restore")}
                     </Button>
                   ) : null}
+                  </div>
                 </div>
                 <div className="text-sm text-foreground" data-no-translate>
                   {v.title}
@@ -160,8 +206,28 @@ function KbHistoryDialog({
             ))}
           </ol>
         )}
+        {preview ? (
+          <section aria-label={t("Version preview")} className="min-w-0 space-y-3">
+            <h3 className="text-sm font-medium">{t("Version")} {preview.version_no} · {t("Version preview")}</h3>
+            <div className="max-h-[30vh] space-y-3 overflow-y-auto break-words rounded-lg border border-border p-3" data-no-translate>
+              <p className="font-medium">{preview.title}</p>
+              {preview.category ? <p className="text-sm text-muted-foreground">{preview.category}</p> : null}
+              {preview.question ? <p className="whitespace-pre-wrap text-sm">{preview.question}</p> : null}
+              <p className="whitespace-pre-wrap text-sm">{preview.content}</p>
+            </div>
+            {preview.version_no === item?.latest_version && preview.version_no !== item?.published_version ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">{t("Publishing makes this reviewed version available to the AI when the item is enabled.")}</p>
+                <Button disabled={busy} onClick={() => void publish()} aria-label={`${t("Publish version")} ${preview.version_no}`}>
+                  {publishing ? <Loader2 className="size-4 animate-spin" /> : null}
+                  {t("Publish version")} {preview.version_no}
+                </Button>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         <DialogFooter>
-          <Button variant="outline" disabled={restoring !== null} onClick={onClose}>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             {t("Close")}
           </Button>
         </DialogFooter>
@@ -259,7 +325,7 @@ export function AiKnowledge() {
         body: JSON.stringify(body),
       });
       if (!res.ok) throw await apiError(res);
-      toast.success(t("Knowledge base updated"));
+      toast.success(t("Draft saved"));
       setDraft(null);
       await load();
     } catch (err) {
@@ -281,7 +347,7 @@ export function AiKnowledge() {
       form.set("file", file);
       const res = await fetch("/api/ai/knowledge", { method: "POST", body: form });
       if (!res.ok) throw await apiError(res);
-      toast.success(t("File added to the knowledge base"));
+      toast.success(t("File saved as draft"));
       await load();
     } catch (err) {
       toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Failed to save the knowledge item"));
@@ -396,6 +462,9 @@ export function AiKnowledge() {
         <p className="text-sm text-muted-foreground">
           {t("Files: .txt, .md, .csv or .pdf with text (scanned PDFs are not read), up to 5 MB.")}
         </p>
+        <p className="text-sm text-muted-foreground">
+          {t("Saving, uploading and restoring create drafts. The AI only changes when you publish. Review the latest version in the history before publishing.")}
+        </p>
       </div>
 
       {loadError ? (
@@ -446,6 +515,11 @@ export function AiKnowledge() {
                 </div>
                 <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                   <span>{kindLabel[item.kind]}</span>
+                  <span>· {item.published_version == null ? t("Draft") : t("Published")}
+                    {item.published_version != null ? ` · ${t("Version")} ${item.published_version}` : ""}
+                  </span>
+                  {item.published_version != null && item.latest_version !== item.published_version ? <span>· {t("Pending changes")}</span> : null}
+                  {item.published_version != null && !item.enabled ? <span>· {t("Unavailable to AI")}</span> : null}
                   {item.category ? <span data-no-translate>· {item.category}</span> : null}
                   <span>
                     · {num.format(item.content_chars)} {t("characters")}
@@ -459,10 +533,10 @@ export function AiKnowledge() {
               </div>
               <div className="flex items-center gap-1.5">
                 <Switch
-                  checked={item.enabled}
-                  disabled={busyId === item.id}
+                  checked={item.published_version != null && item.enabled}
+                  disabled={busyId === item.id || item.published_version == null}
                   onCheckedChange={(v) => void toggle(item, v)}
-                  aria-label={`${t("Use in suggestions")}: ${item.title}`}
+                  aria-label={`${t("Use published version in suggestions")}: ${item.title}`}
                 />
                 <Button
                   size="sm"
@@ -499,7 +573,12 @@ export function AiKnowledge() {
         </div>
       )}
 
-      <KbHistoryDialog item={historyItem} onClose={() => setHistoryItem(null)} onRestored={load} />
+      <KbHistoryDialog
+        item={historyItem ? items?.find((item) => item.id === historyItem.id) ?? null : null}
+        onClose={() => setHistoryItem(null)}
+        onRestored={load}
+        onPublished={(published) => setItems((prev) => prev?.map((item) => item.id === published.id ? published : item) ?? prev)}
+      />
 
       {/* Test the search */}
       <div className="space-y-2 pt-2">
@@ -568,6 +647,7 @@ export function AiKnowledge() {
                 ? t("Write the question the way customers ask it, and the answer the assistant should use.")
                 : t("Short, factual texts work best: one subject per item.")}
             </DialogDescription>
+            <p className="text-sm text-muted-foreground">{t("Save a draft, then review and publish it from the version history.")}</p>
           </DialogHeader>
           {draft ? (
             <div className="space-y-4">
@@ -638,7 +718,7 @@ export function AiKnowledge() {
             </Button>
             <Button disabled={saving || !draftValid} onClick={() => void saveDraft()}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-              {t("Save")}
+              {t("Save draft")}
             </Button>
           </DialogFooter>
         </DialogContent>
