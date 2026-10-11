@@ -11,6 +11,7 @@ import { AGENT_ERRORS } from '@/lib/ai/agents';
 import { MEMORY_ERRORS } from '@/lib/ai/memory';
 import { MODULE_LABELS } from '@/lib/plans';
 import { AGENT_PRESETS } from '@/lib/ai/agent-presets';
+import { LAB_LIMITS, LAB_SCENARIOS } from '@/lib/ai/lab-scenarios';
 import { CHANNEL_LABEL, MODE_LABEL, STATUS_LABEL } from '@/components/ai-agents/agent-card';
 import { SAFETY_CHECKS } from '@/components/ai-agents/agent-config-form';
 import { operationHelp } from '@/components/ai-agents/agent-operation-bar';
@@ -50,6 +51,8 @@ const KEYS = [
   ...Object.values(MODE_LABEL),
   ...Object.values(CHANNEL_LABEL),
   ...AGENT_PRESETS.flatMap((p) => [p.label, p.summary]),
+  ...LAB_SCENARIOS.flatMap((s) => [s.label, ...s.expect]),
+  LAB_LIMITS,
   ...SAFETY_CHECKS.flatMap((c) => [c.title, c.protects]),
   ...[
     { enabled: false, mode: 'suggest', paused_at: null },
