@@ -5,11 +5,13 @@
 -- Additive only:
 --   * ai_knowledge_items.category — optional free-text group (1..60).
 --   * ai_knowledge_item_versions — one row per saved state of an item
---     (create, edit, restore). Admins read it; authenticated can only
---     INSERT through ai_knowledge_save_item (no UPDATE/DELETE grant), so
---     history is immutable. Versions go with their item on delete.
+--     (create, edit, restore). Admins read it. Nobody but
+--     ai_knowledge_record_version (SECURITY DEFINER) writes it: no
+--     INSERT/UPDATE/DELETE for authenticated, so a version can neither be
+--     forged nor changed. It records what the app saves (create, edit,
+--     restore); deleting an item deletes its history with it.
 --   * ai_knowledge_save_item gains p_category and p_restored_from
---     (defaults NULL) and writes the version in the same transaction as
+--     (defaults NULL) and records the version in the same transaction as
 --     the item and its chunks.
 --   * Backfill: every existing item gets version 1 = its current state.
 --
@@ -74,11 +76,10 @@ ALTER TABLE ai_knowledge_item_versions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS ai_knowledge_item_versions_select ON ai_knowledge_item_versions;
 CREATE POLICY ai_knowledge_item_versions_select ON ai_knowledge_item_versions FOR SELECT
   USING (is_account_member(account_id, 'admin'));
+-- No write policy: versions are written only by ai_knowledge_record_version.
 DROP POLICY IF EXISTS ai_knowledge_item_versions_insert ON ai_knowledge_item_versions;
-CREATE POLICY ai_knowledge_item_versions_insert ON ai_knowledge_item_versions FOR INSERT
-  WITH CHECK (is_account_member(account_id, 'admin'));
 REVOKE ALL ON TABLE ai_knowledge_item_versions FROM PUBLIC, anon, authenticated;
-GRANT SELECT, INSERT ON TABLE ai_knowledge_item_versions TO authenticated;
+GRANT SELECT ON TABLE ai_knowledge_item_versions TO authenticated;
 GRANT ALL ON TABLE ai_knowledge_item_versions TO service_role;
 
 -- Backfill: the current state of every item is its version 1.
@@ -87,6 +88,43 @@ INSERT INTO ai_knowledge_item_versions
 SELECT i.id, i.account_id, 1, i.kind, i.title, i.question, i.content, i.category, i.source_filename, i.created_by, i.updated_at
   FROM ai_knowledge_items i
  WHERE NOT EXISTS (SELECT 1 FROM ai_knowledge_item_versions v WHERE v.item_id = i.id);
+
+-- The only writer of versions: snapshots the item as saved, numbers it
+-- max+1 (callers hold the item row lock, so numbers are consecutive),
+-- stamps the caller as author and accepts restored_from only if that
+-- version exists. Admin of the item's account only.
+CREATE OR REPLACE FUNCTION public.ai_knowledge_record_version(p_item_id UUID, p_restored_from INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_account UUID;
+  v_next    INTEGER;
+BEGIN
+  SELECT account_id INTO v_account FROM ai_knowledge_items WHERE id = p_item_id;
+  IF v_account IS NULL OR NOT is_account_member(v_account, 'admin') THEN
+    RAISE EXCEPTION 'Not found' USING ERRCODE = 'P0002';
+  END IF;
+  IF p_restored_from IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM ai_knowledge_item_versions WHERE item_id = p_item_id AND version_no = p_restored_from
+  ) THEN
+    RAISE EXCEPTION 'Unknown version' USING ERRCODE = '22023';
+  END IF;
+  SELECT coalesce(max(version_no), 0) + 1 INTO v_next
+    FROM ai_knowledge_item_versions WHERE item_id = p_item_id;
+  INSERT INTO ai_knowledge_item_versions
+    (item_id, account_id, version_no, kind, title, question, content, category, source_filename, restored_from, created_by)
+  SELECT i.id, i.account_id, v_next, i.kind, i.title, i.question, i.content, i.category, i.source_filename,
+         p_restored_from, auth.uid()
+    FROM ai_knowledge_items i
+   WHERE i.id = p_item_id;
+  RETURN v_next;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.ai_knowledge_record_version(UUID, INTEGER) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ai_knowledge_record_version(UUID, INTEGER) TO authenticated, service_role;
 
 -- Save = item + chunks + version, one transaction. The UPDATE locks the
 -- item row, so concurrent saves of one item get consecutive versions.
@@ -109,8 +147,8 @@ SET search_path = public
 AS $$
 DECLARE
   v_id       UUID;
-  v_category TEXT := NULLIF(btrim(p_category), '');
-  v_next     INTEGER;
+  -- Same normalisation as parseKbItemInput: collapse whitespace, trim.
+  v_category TEXT := NULLIF(btrim(regexp_replace(p_category, '\s+', ' ', 'g')), '');
 BEGIN
   IF NOT is_account_member(p_account_id, 'admin') THEN
     RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
@@ -136,16 +174,12 @@ BEGIN
   SELECT v_id, p_account_id, t.ord - 1, t.c
     FROM unnest(p_chunks) WITH ORDINALITY AS t(c, ord);
 
-  SELECT coalesce(max(version_no), 0) + 1 INTO v_next
-    FROM ai_knowledge_item_versions WHERE item_id = v_id;
-  INSERT INTO ai_knowledge_item_versions
-    (item_id, account_id, version_no, kind, title, question, content, category, source_filename, restored_from, created_by)
-  SELECT i.id, i.account_id, v_next, i.kind, i.title, i.question, i.content, i.category, i.source_filename,
-         p_restored_from, auth.uid()
-    FROM ai_knowledge_items i
-   WHERE i.id = v_id;
+  PERFORM public.ai_knowledge_record_version(v_id, p_restored_from);
   RETURN v_id;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.ai_knowledge_save_item(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, INTEGER) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.ai_knowledge_save_item(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, INTEGER) TO authenticated, service_role;
+
+-- The 8-argument save was dropped: refresh PostgREST's function cache now.
+NOTIFY pgrst, 'reload schema';

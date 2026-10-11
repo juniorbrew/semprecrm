@@ -38,24 +38,34 @@ export async function POST(
 
     const { data: row, error: readErr } = await ctx.supabase
       .from('ai_knowledge_item_versions')
-      .select('kind, title, question, content, category')
+      .select('title, question, content, category')
       .eq('item_id', id)
       .eq('account_id', ctx.accountId)
       .eq('version_no', versionNo)
       .maybeSingle();
     if (readErr) throw new Error(`knowledge version read failed: ${readErr.message}`);
     if (!row) return NextResponse.json({ error: KB_ERRORS.versionNotFound }, { status: 404 });
-    const v = row as { kind: KbKind; title: string; question: string | null; content: string; category: string | null };
+    const v = row as { title: string; question: string | null; content: string; category: string | null };
+    // The item's live kind (it never changes) decides how the text is chunked.
+    const { data: item0, error: itemErr } = await ctx.supabase
+      .from('ai_knowledge_items')
+      .select('kind')
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .maybeSingle();
+    if (itemErr) throw new Error(`knowledge read failed: ${itemErr.message}`);
+    if (!item0) return NextResponse.json({ error: KB_ERRORS.notFound }, { status: 404 });
+    const kind = (item0 as { kind: KbKind }).kind;
 
     const { error } = await ctx.supabase.rpc('ai_knowledge_save_item', {
       p_account_id: ctx.accountId,
       p_item_id: id,
-      p_kind: v.kind,
+      p_kind: kind,
       p_title: v.title,
       p_question: v.question,
       p_content: v.content,
       p_source_filename: null,
-      p_chunks: chunksForItem(v.kind, v.content, v.question),
+      p_chunks: chunksForItem(kind, v.content, v.question),
       p_category: v.category,
       p_restored_from: versionNo,
     });
@@ -70,7 +80,7 @@ export async function POST(
       action: AUDIT_ACTIONS.AI_KNOWLEDGE_CHANGED,
       entityType: 'ai_knowledge_item',
       entityId: id,
-      metadata: { op: 'restored', kind: v.kind, version: versionNo },
+      metadata: { op: 'restored', kind, version: versionNo },
     });
 
     const { data: item } = await ctx.supabase

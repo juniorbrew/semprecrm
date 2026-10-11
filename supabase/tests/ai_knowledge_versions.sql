@@ -68,7 +68,19 @@ SELECT pg_temp.assert_true((SELECT version_no = 3 AND restored_from = 1 AND cont
                            'restore = new version 3 with the old content');
 SELECT pg_temp.assert_true((SELECT content LIKE '%5 dias%' FROM ai_knowledge_items WHERE id = (SELECT item FROM st)), 'restore updates the item');
 
--- History is immutable, even for the owner.
+-- History is immutable and cannot be forged, even by the owner.
+SELECT pg_temp.assert_fails(format(
+  'INSERT INTO ai_knowledge_item_versions(item_id, account_id, version_no, kind, title, content) VALUES (%L, %L, 2147483647, %L, %L, %L)',
+  (SELECT item FROM st), (SELECT acc_a FROM ids), 'faq', 'x', 'x'), 'admins cannot insert a version directly');
+SELECT pg_temp.assert_fails(format('SELECT public.ai_knowledge_save_item(%L, %L, %L, %L, %L, %L, NULL, ARRAY[%L], NULL, 42)',
+  (SELECT acc_a FROM ids), (SELECT item FROM st), 'faq', 'T', 'Q?', 'c', 'c'), 'restored_from must be an existing version');
+SELECT pg_temp.assert_eq((SELECT max(version_no) FROM ai_knowledge_item_versions WHERE item_id = (SELECT item FROM st)), 3,
+                         'failed saves leave no version behind');
+SELECT public.ai_knowledge_save_item((SELECT acc_a FROM ids), (SELECT item FROM st), 'faq', 'Prazo de entrega',
+  'Qual o prazo de entrega?', 'Entregamos em até 5 dias úteis.', NULL, ARRAY['Entregamos em até 5 dias úteis.'], E'Entrega	  rápida
+');
+SELECT pg_temp.assert_true((SELECT category = 'Entrega rápida' FROM ai_knowledge_items WHERE id = (SELECT item FROM st)),
+                           'the RPC collapses whitespace in the category like the app does');
 SELECT pg_temp.assert_fails(format('UPDATE ai_knowledge_item_versions SET content = %L WHERE item_id = %L', 'x', (SELECT item FROM st)), 'versions cannot be updated');
 SELECT pg_temp.assert_fails(format('DELETE FROM ai_knowledge_item_versions WHERE item_id = %L', (SELECT item FROM st)), 'versions cannot be deleted');
 SELECT pg_temp.assert_fails(format('SELECT public.ai_knowledge_save_item(%L, %L, %L, %L, NULL, %L, NULL, ARRAY[%L], %L)',
@@ -95,6 +107,8 @@ SELECT pg_temp.assert_fails(format(
   (SELECT item FROM st), (SELECT acc_b FROM ids), 'text', 'x', 'x'), 'tenant B cannot attach a version to A''s item');
 SELECT pg_temp.assert_fails(format('SELECT public.ai_knowledge_save_item(%L, %L, %L, %L, NULL, %L, NULL, ARRAY[%L])',
   (SELECT acc_a FROM ids), (SELECT item FROM st), 'faq', 'T', 'c', 'c'), 'tenant B cannot save into A');
+SELECT pg_temp.assert_fails(format('SELECT public.ai_knowledge_record_version(%L, NULL)', (SELECT item FROM st)),
+                            'tenant B cannot record a version of A''s item');
 RESET ROLE;
 
 -- ---- delete takes the history with it -------------------------------------------
@@ -104,7 +118,10 @@ DELETE FROM ai_knowledge_items WHERE id = (SELECT item FROM st);
 RESET ROLE;
 SELECT pg_temp.assert_eq((SELECT count(*) FROM ai_knowledge_item_versions WHERE item_id = (SELECT item FROM st)), 0, 'versions go with the item');
 
-SELECT pg_temp.assert_true(NOT has_table_privilege('authenticated', 'ai_knowledge_item_versions', 'UPDATE'), 'no UPDATE grant');
+SELECT pg_temp.assert_true(NOT has_table_privilege('authenticated', 'ai_knowledge_item_versions', 'UPDATE')
+                           AND NOT has_table_privilege('authenticated', 'ai_knowledge_item_versions', 'INSERT')
+                           AND NOT has_table_privilege('authenticated', 'ai_knowledge_item_versions', 'DELETE'), 'authenticated only reads versions');
+SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.ai_knowledge_record_version(uuid, integer)', 'EXECUTE'), 'anon cannot record versions');
 SELECT pg_temp.assert_true(NOT has_table_privilege('anon', 'ai_knowledge_item_versions', 'SELECT'), 'anon reads nothing');
 
 ROLLBACK;

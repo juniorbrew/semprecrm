@@ -256,6 +256,12 @@ describe('categories and versions (087)', () => {
     expect(h.rpc).toHaveBeenCalledTimes(2);
   });
 
+  it('an edit without `category` keeps the current one', async () => {
+    h.items[0].category = 'Loja';
+    expect((await PATCH(new Request(url, json({ title: 't', content: 'c' }, 'PATCH')), params(ITEM_A))).status).toBe(200);
+    expect(h.rpc.mock.calls[0][1]).toMatchObject({ p_item_id: ITEM_A, p_category: 'Loja' });
+  });
+
   it('lists the versions of an own item only', async () => {
     const res = await VERSIONS(new Request(url), params(ITEM_A));
     expect(res.status).toBe(200);

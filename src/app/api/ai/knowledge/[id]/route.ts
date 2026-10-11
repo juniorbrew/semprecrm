@@ -73,7 +73,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const { data: current, error: readErr } = await ctx.supabase
       .from('ai_knowledge_items')
-      .select('id, kind')
+      .select('id, kind, category')
       .eq('id', id)
       .eq('account_id', ctx.accountId)
       .maybeSingle();
@@ -93,7 +93,9 @@ export async function PATCH(request: Request, { params }: Params) {
       const kind = current.kind as KbItem['kind'];
       const parsed = parseKbItemInput(kind, body);
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-      const { title, question, content, category } = parsed.value;
+      const { title, question, content } = parsed.value;
+      // A body without `category` keeps the current one (empty string clears it).
+      const category = 'category' in body ? parsed.value.category : ((current.category as string | null) ?? null);
       const { error } = await ctx.supabase.rpc('ai_knowledge_save_item', {
         p_account_id: ctx.accountId,
         p_item_id: id,
