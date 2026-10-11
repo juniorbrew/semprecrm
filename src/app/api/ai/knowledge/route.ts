@@ -100,7 +100,8 @@ export async function POST(request: Request) {
         (typeof typed === 'string' ? typed.replace(/\s+/g, ' ').trim() : '') ||
         name.replace(/\.[^.]*$/, '').trim() ||
         'Arquivo';
-      body = { title: sliceChars(title, 0, KB_LIMITS.titleMaxChars), content };
+      const category = form?.get('category');
+      body = { title: sliceChars(title, 0, KB_LIMITS.titleMaxChars), content, category };
     } else {
       body = (await request.json().catch(() => null)) as unknown;
       const k = (body as { kind?: unknown } | null)?.kind;
@@ -115,7 +116,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: KB_ERRORS.tooMany }, { status: 409 });
     }
 
-    const { title, question, content } = parsed.value;
+    const { title, question, content, category } = parsed.value;
     const { data: id, error } = await ctx.supabase.rpc('ai_knowledge_save_item', {
       p_account_id: ctx.accountId,
       p_item_id: null,
@@ -125,6 +126,7 @@ export async function POST(request: Request) {
       p_content: content,
       p_source_filename: sourceFilename,
       p_chunks: chunksForItem(kind, content, question),
+      p_category: category,
     });
     if (error || !id) {
       console.error('[POST /api/ai/knowledge] save failed:', error?.message);

@@ -145,6 +145,17 @@ export const DICT_AI: Record<string, string> = {
   'Delete this item from the knowledge base?': 'Excluir este item da base de conhecimento?',
   'Item deleted': 'Item excluído',
   'Knowledge base updated': 'Base de conhecimento atualizada',
+  // categories + version history (migration 087)
+  'Category (optional)': 'Categoria (opcional)',
+  'E.g.: Delivery, Payments, Opening hours': 'Ex.: Entrega, Pagamentos, Horário de atendimento',
+  'The category can have up to 60 characters.': 'A categoria pode ter até 60 caracteres.',
+  'Version not found': 'Versão não encontrada',
+  'Every save is kept. Restoring creates a new version — nothing is erased.':
+    'Cada vez que você salva, a versão fica guardada. Restaurar cria uma nova versão — nada é apagado.',
+  'Could not load the history': 'Não foi possível carregar o histórico',
+  current: 'atual',
+  'restored from version': 'restaurada da versão',
+  'Version restored': 'Versão restaurada',
   'File added to the knowledge base': 'Arquivo adicionado à base de conhecimento',
   'Test the search': 'Testar busca',
   'Type a question as a customer would, e.g.: how much is delivery?':

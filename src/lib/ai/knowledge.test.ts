@@ -67,7 +67,7 @@ describe('parseKbItemInput', () => {
   it('validates FAQ, text and file limits', () => {
     expect(parseKbItemInput('faq', { question: ' Entregam? ', content: 'Sim' })).toEqual({
       ok: true,
-      value: { title: 'Entregam?', question: 'Entregam?', content: 'Sim' },
+      value: { title: 'Entregam?', question: 'Entregam?', content: 'Sim', category: null },
     });
     expect(parseKbItemInput('faq', { content: 'Sim' })).toEqual({ ok: false, error: KB_ERRORS.question });
     expect(parseKbItemInput('text', { title: '', content: 'x' })).toEqual({ ok: false, error: KB_ERRORS.title });
@@ -75,6 +75,15 @@ describe('parseKbItemInput', () => {
     expect(parseKbItemInput('text', { title: 't', content: 'x'.repeat(20_001) })).toEqual({ ok: false, error: KB_ERRORS.content });
     expect(parseKbItemInput('file', { title: 't', content: 'x'.repeat(20_001) }).ok).toBe(true);
     expect(parseKbItemInput('text', null)).toEqual({ ok: false, error: KB_ERRORS.body });
+  });
+
+  it('category (087): trimmed, empty means none, longer than 60 is rejected', () => {
+    const ok = (category: unknown) => parseKbItemInput('text', { title: 't', content: 'x', category });
+    expect(ok('  Entrega   rápida ')).toMatchObject({ ok: true, value: { category: 'Entrega rápida' } });
+    expect(ok('   ')).toMatchObject({ ok: true, value: { category: null } });
+    expect(ok(undefined)).toMatchObject({ ok: true, value: { category: null } });
+    expect(ok('c'.repeat(KB_LIMITS.categoryMaxChars))).toMatchObject({ ok: true });
+    expect(ok('c'.repeat(KB_LIMITS.categoryMaxChars + 1))).toEqual({ ok: false, error: KB_ERRORS.category });
   });
 
   it('a FAQ with a question longer than a title still saves (title = question cut at 200)', () => {

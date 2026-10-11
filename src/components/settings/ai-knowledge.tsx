@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { History, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import { useLanguage } from "@/hooks/use-language";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   type KbItemSummary,
   type KbKind,
   type KbSearchHit,
+  type KbVersion,
 } from "@/lib/ai/knowledge";
 import { SettingsGroup } from "./settings-group";
 
@@ -47,6 +48,126 @@ interface Draft {
   title: string;
   question: string;
   content: string;
+  category: string;
+}
+
+/**
+ * Saved states of one item (migration 087), newest first. Restoring puts
+ * an old state back as a NEW version; the history itself never changes.
+ */
+function KbHistoryDialog({
+  item,
+  onClose,
+  onRestored,
+}: {
+  item: KbItemSummary | null;
+  onClose: () => void;
+  onRestored: () => Promise<void>;
+}) {
+  const { t, language } = useLanguage();
+  const [versions, setVersions] = useState<KbVersion[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [restoring, setRestoring] = useState<number | null>(null);
+  const date = useMemo(
+    () => new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" }),
+    [language],
+  );
+
+  const load = useCallback(async (id: string) => {
+    setFailed(false);
+    try {
+      const res = await fetch(`/api/ai/knowledge/${id}/versions`, { cache: "no-store" });
+      if (!res.ok) throw await apiError(res);
+      setVersions(((await res.json()) as { versions: KbVersion[] }).versions);
+    } catch (err) {
+      console.error("[ai-knowledge] history failed:", err);
+      setFailed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    setVersions(null);
+    if (item) void load(item.id);
+  }, [item, load]);
+
+  async function restore(versionNo: number) {
+    if (!item) return;
+    setRestoring(versionNo);
+    try {
+      const res = await fetch(`/api/ai/knowledge/${item.id}/versions/${versionNo}/restore`, { method: "POST" });
+      if (!res.ok) throw await apiError(res);
+      toast.success(t("Version restored"));
+      await Promise.all([onRestored(), load(item.id)]);
+    } catch (err) {
+      toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Failed to save the knowledge item"));
+    } finally {
+      setRestoring(null);
+    }
+  }
+
+  const latest = versions?.[0]?.version_no;
+  return (
+    <Dialog open={item !== null} onOpenChange={(open) => (!open && restoring === null ? onClose() : undefined)}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("Version history")}</DialogTitle>
+          <DialogDescription>
+            {t("Every save is kept. Restoring creates a new version — nothing is erased.")}
+          </DialogDescription>
+        </DialogHeader>
+        {failed ? (
+          <p className="text-sm text-muted-foreground">{t("Could not load the history")}</p>
+        ) : versions === null ? (
+          <div className="h-24 animate-pulse rounded-lg bg-muted/60" />
+        ) : (
+          <ol className="max-h-[60vh] divide-y divide-border overflow-y-auto border-y border-border">
+            {versions.map((v) => (
+              <li key={v.version_no} className="space-y-1 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      {t("Version")} {v.version_no}
+                    </span>
+                    <span data-no-translate> · {date.format(new Date(v.created_at))}</span>
+                    {v.version_no === latest ? <span> · {t("current")}</span> : null}
+                    {v.restored_from ? (
+                      <span>
+                        {" "}
+                        · {t("restored from version")} {v.restored_from}
+                      </span>
+                    ) : null}
+                  </div>
+                  {v.version_no !== latest ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={restoring !== null}
+                      onClick={() => void restore(v.version_no)}
+                    >
+                      {restoring === v.version_no ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                      {t("Restore")}
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="text-sm text-foreground" data-no-translate>
+                  {v.title}
+                  {v.category ? <span className="text-muted-foreground"> · {v.category}</span> : null}
+                </div>
+                <p className="line-clamp-3 whitespace-pre-line text-sm text-muted-foreground" data-no-translate>
+                  {v.content}
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
+        <DialogFooter>
+          <Button variant="outline" disabled={restoring !== null} onClick={onClose}>
+            {t("Close")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /**
@@ -65,6 +186,8 @@ export function AiKnowledge() {
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [historyItem, setHistoryItem] = useState<KbItemSummary | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -72,6 +195,14 @@ export function AiKnowledge() {
 
   const num = useMemo(() => new Intl.NumberFormat(language), [language]);
   const kindLabel: Record<KbKind, string> = { faq: t("FAQ"), text: t("Text"), file: t("File") };
+  const categories = useMemo(
+    () =>
+      [...new Set((items ?? []).map((i) => i.category).filter((c): c is string => !!c))].sort((a, b) =>
+        a.localeCompare(b, language),
+      ),
+    [items, language],
+  );
+  const visibleItems = categoryFilter ? (items ?? []).filter((i) => i.category === categoryFilter) : (items ?? []);
 
   const load = useCallback(async () => {
     setLoadError(false);
@@ -95,7 +226,14 @@ export function AiKnowledge() {
       const res = await fetch(`/api/ai/knowledge/${item.id}`, { cache: "no-store" });
       if (!res.ok) throw await apiError(res);
       const full = ((await res.json()) as { item: KbItem }).item;
-      setDraft({ id: full.id, kind: full.kind, title: full.title, question: full.question ?? "", content: full.content });
+      setDraft({
+        id: full.id,
+        kind: full.kind,
+        title: full.title,
+        question: full.question ?? "",
+        content: full.content,
+        category: full.category ?? "",
+      });
     } catch (err) {
       toast.error(err instanceof ApiError && err.message ? t(err.message) : t("Could not load the item"));
     } finally {
@@ -113,6 +251,7 @@ export function AiKnowledge() {
         title: draft.kind === "faq" ? draft.question : draft.title,
         question: draft.question,
         content: draft.content,
+        category: draft.category,
       };
       const res = await fetch(draft.id ? `/api/ai/knowledge/${draft.id}` : "/api/ai/knowledge", {
         method: draft.id ? "PATCH" : "POST",
@@ -222,7 +361,9 @@ export function AiKnowledge() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setDraft({ id: null, kind: "faq", title: "", question: "", content: "" })}
+            onClick={() =>
+              setDraft({ id: null, kind: "faq", title: "", question: "", content: "", category: categoryFilter })
+            }
           >
             <Plus className="size-3.5" />
             {t("Add question")}
@@ -230,7 +371,9 @@ export function AiKnowledge() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setDraft({ id: null, kind: "text", title: "", question: "", content: "" })}
+            onClick={() =>
+              setDraft({ id: null, kind: "text", title: "", question: "", content: "", category: categoryFilter })
+            }
           >
             <Plus className="size-3.5" />
             {t("Add text")}
@@ -273,8 +416,29 @@ export function AiKnowledge() {
           {t("The knowledge base is empty. Add your most frequent questions first.")}
         </p>
       ) : (
+        <div className="space-y-2">
+          {categories.length > 0 ? (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="kb-category-filter" className="text-sm text-muted-foreground">
+                {t("Category")}
+              </Label>
+              <select
+                id="kb-category-filter"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground"
+              >
+                <option value="">{t("All")}</option>
+                {categories.map((c) => (
+                  <option key={c} value={c} data-no-translate>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         <ul className="divide-y divide-border border-y border-border">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <li key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium text-foreground" data-no-translate>
@@ -282,6 +446,7 @@ export function AiKnowledge() {
                 </div>
                 <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                   <span>{kindLabel[item.kind]}</span>
+                  {item.category ? <span data-no-translate>· {item.category}</span> : null}
                   <span>
                     · {num.format(item.content_chars)} {t("characters")}
                   </span>
@@ -312,6 +477,15 @@ export function AiKnowledge() {
                   size="sm"
                   variant="ghost"
                   disabled={busyId === item.id}
+                  onClick={() => setHistoryItem(item)}
+                  aria-label={`${t("Version history")}: ${item.title}`}
+                >
+                  <History className="size-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busyId === item.id}
                   onClick={() => void remove(item)}
                   aria-label={`${t("Delete")}: ${item.title}`}
                   className="text-destructive hover:text-destructive"
@@ -322,7 +496,10 @@ export function AiKnowledge() {
             </li>
           ))}
         </ul>
+        </div>
       )}
+
+      <KbHistoryDialog item={historyItem} onClose={() => setHistoryItem(null)} onRestored={load} />
 
       {/* Test the search */}
       <div className="space-y-2 pt-2">
@@ -421,6 +598,22 @@ export function AiKnowledge() {
                   />
                 </div>
               )}
+              <div className="space-y-2">
+                <Label htmlFor="kb-category">{t("Category (optional)")}</Label>
+                <Input
+                  id="kb-category"
+                  list="kb-category-options"
+                  value={draft.category}
+                  maxLength={KB_LIMITS.categoryMaxChars}
+                  onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+                  placeholder={t("E.g.: Delivery, Payments, Opening hours")}
+                />
+                <datalist id="kb-category-options">
+                  {categories.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="kb-content">
                   {draft.kind === "faq" ? t("Answer") : t("Content")}

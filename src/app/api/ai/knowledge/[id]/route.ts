@@ -2,8 +2,9 @@
 // /api/ai/knowledge/:id — one knowledge item. Admin+ and module `ai`.
 //
 // GET    → the full item (for the edit form)
-// PATCH  → { enabled } toggles it; { title, question?, content } edits
-//          it and re-chunks (kind and source file never change)
+// PATCH  → { enabled } toggles it; { title, question?, content, category? }
+//          edits it, re-chunks and records a new version (087); kind and
+//          source file never change
 // DELETE → removes it (chunks cascade)
 //
 // Everything through the caller's RLS client, filtered by the session
@@ -29,7 +30,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 export const dynamic = 'force-dynamic';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ITEM_COLUMNS = 'id, kind, title, question, content, source_filename, enabled, created_at, updated_at';
+const ITEM_COLUMNS = 'id, kind, title, question, content, source_filename, category, enabled, created_at, updated_at';
 const notFound = () => NextResponse.json({ error: KB_ERRORS.notFound }, { status: 404 });
 
 type Params = { params: Promise<{ id: string }> };
@@ -92,7 +93,7 @@ export async function PATCH(request: Request, { params }: Params) {
       const kind = current.kind as KbItem['kind'];
       const parsed = parseKbItemInput(kind, body);
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-      const { title, question, content } = parsed.value;
+      const { title, question, content, category } = parsed.value;
       const { error } = await ctx.supabase.rpc('ai_knowledge_save_item', {
         p_account_id: ctx.accountId,
         p_item_id: id,
@@ -102,6 +103,7 @@ export async function PATCH(request: Request, { params }: Params) {
         p_content: content,
         p_source_filename: null,
         p_chunks: chunksForItem(kind, content, question),
+        p_category: category,
       });
       if (error) {
         console.error('[PATCH /api/ai/knowledge/:id] save failed:', error.message);

@@ -15,6 +15,8 @@ export type KbKind = (typeof KB_KINDS)[number];
 export const KB_LIMITS = {
   titleMaxChars: 200,
   questionMaxChars: 1000,
+  /** Migration 087. */
+  categoryMaxChars: 60,
   contentMaxChars: 20_000,
   fileContentMaxChars: 200_000,
   fileMaxBytes: 5 * 1024 * 1024,
@@ -38,12 +40,14 @@ export interface KbItemSummary {
   title: string;
   source_filename: string | null;
   content_chars: number;
+  category: string | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
 }
 
-export const KB_ITEM_SUMMARY_COLUMNS = 'id, kind, title, source_filename, content_chars, enabled, created_at, updated_at';
+export const KB_ITEM_SUMMARY_COLUMNS =
+  'id, kind, title, source_filename, content_chars, category, enabled, created_at, updated_at';
 
 export interface KbItem {
   id: string;
@@ -52,10 +56,26 @@ export interface KbItem {
   question: string | null;
   content: string;
   source_filename: string | null;
+  category: string | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/** A saved state of an item (migration 087): immutable, newest first in the list. */
+export interface KbVersion {
+  version_no: number;
+  title: string;
+  question: string | null;
+  content: string;
+  category: string | null;
+  content_chars: number;
+  restored_from: number | null;
+  created_at: string;
+}
+
+export const KB_VERSION_COLUMNS =
+  'version_no, title, question, content, category, content_chars, restored_from, created_at';
 
 export interface KbSearchHit {
   chunk_id: string;
@@ -171,6 +191,8 @@ export const KB_ERRORS = {
   kind: 'Unknown knowledge item type',
   title: `The title is required (up to ${KB_LIMITS.titleMaxChars} characters).`,
   question: `The question is required (up to ${KB_LIMITS.questionMaxChars} characters).`,
+  category: `The category can have up to ${KB_LIMITS.categoryMaxChars} characters.`,
+  versionNotFound: 'Version not found',
   content: `The content is required (up to ${KB_LIMITS.contentMaxChars.toLocaleString('en-US')} characters).`,
   tooMany: `The knowledge base is full (up to ${KB_LIMITS.maxItemsPerAccount} items). Remove items you no longer need.`,
   notFound: 'Knowledge item not found',
@@ -182,6 +204,8 @@ export interface KbItemInput {
   title: string;
   question: string | null;
   content: string;
+  /** Optional group; empty = none. */
+  category: string | null;
 }
 
 /**
@@ -199,6 +223,8 @@ export function parseKbItemInput(
   const content = cleanText(str(b.content));
   const title = str(b.title).replace(/\s+/g, ' ').trim();
   const question = kind === 'faq' ? str(b.question).replace(/\s+/g, ' ').trim() : null;
+  const category = str(b.category).replace(/\s+/g, ' ').trim() || null;
+  if (category && category.length > KB_LIMITS.categoryMaxChars) return { ok: false, error: KB_ERRORS.category };
 
   if (kind === 'faq') {
     if (!question || question.length > KB_LIMITS.questionMaxChars) return { ok: false, error: KB_ERRORS.question };
@@ -212,7 +238,7 @@ export function parseKbItemInput(
   if (content.length > maxContent) {
     return { ok: false, error: kind === 'file' ? KB_ERRORS.fileContent : KB_ERRORS.content };
   }
-  return { ok: true, value: { title: finalTitle, question, content } };
+  return { ok: true, value: { title: finalTitle, question, content, category } };
 }
 
 /**
