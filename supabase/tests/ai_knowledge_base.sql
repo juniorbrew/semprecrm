@@ -66,7 +66,7 @@ SELECT pg_temp.assert_true(
   NOT has_table_privilege('anon', 'ai_knowledge_items', 'SELECT')
   AND NOT has_table_privilege('anon', 'ai_knowledge_chunks', 'SELECT')
   AND NOT has_function_privilege('anon', 'public.ai_knowledge_search(uuid, text, integer)', 'EXECUTE')
-  AND NOT has_function_privilege('anon', 'public.ai_knowledge_save_item(uuid, uuid, text, text, text, text, text, text[])', 'EXECUTE'),
+  AND NOT has_function_privilege('anon', 'public.ai_knowledge_save_item(uuid, uuid, text, text, text, text, text, text[], text, integer)', 'EXECUTE'),
   'anon has no access');
 
 -- Service role / no session: search returns nothing (membership check).

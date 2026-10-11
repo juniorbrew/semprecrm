@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ------------------------------------------------------------
-// /api/ai/knowledge, /api/ai/knowledge/:id, /api/ai/knowledge/search
+// /api/ai/knowledge, /api/ai/knowledge/:id, /api/ai/knowledge/search,
+// /api/ai/knowledge/:id/versions[/:version/restore] (087)
 //
 // Session context and a tiny PostgREST-ish client are mocked; what is
 // tested is gatekeeping (role, module, account isolation) and what the
@@ -14,6 +15,7 @@ const h = vi.hoisted(() => ({
   role: 'admin' as string | null,
   aiModule: true,
   items: [] as Row[],
+  versions: [] as Row[],
   rpc: vi.fn(),
   audits: [] as Row[],
 }));
@@ -25,13 +27,14 @@ vi.mock('@/lib/audit-server', () => ({ audit: vi.fn(async (e: Row) => h.audits.p
 function makeSupabase() {
   return {
     rpc: h.rpc,
-    from() {
-      let rows = [...h.items];
+    from(table: string) {
+      let rows = [...(table === 'ai_knowledge_item_versions' ? h.versions : h.items)];
       let op: 'select' | 'update' | 'delete' = 'select';
       let patch: Row = {};
       const b = {
         select: () => b,
         order: () => b,
+        limit: () => b,
         eq: (col: string, val: unknown) => {
           rows = rows.filter((r) => r[col] === val);
           return b;
@@ -79,6 +82,8 @@ import { KB_EXTRACT_ERRORS } from '@/lib/ai/knowledge-extract';
 import { GET as LIST, POST as CREATE } from './route';
 import { DELETE, GET as READ, PATCH } from './[id]/route';
 import { POST as SEARCH } from './search/route';
+import { GET as VERSIONS } from './[id]/versions/route';
+import { POST as RESTORE } from './[id]/versions/[version]/restore/route';
 
 const ITEM_A = '11111111-1111-4111-8111-111111111111';
 const ITEM_B = '22222222-2222-4222-8222-222222222222';
@@ -98,6 +103,11 @@ beforeEach(() => {
   h.items = [
     { id: ITEM_A, account_id: 'acc-a', kind: 'text', title: 'Horário', content: 'Abrimos às 7h', enabled: true },
     { id: ITEM_B, account_id: 'acc-b', kind: 'text', title: 'SEGREDO B', content: 'x', enabled: true },
+  ];
+  h.versions = [
+    { item_id: ITEM_A, account_id: 'acc-a', version_no: 1, kind: 'text', title: 'Horário', question: null, content: 'Abrimos às 6h', category: 'Loja' },
+    { item_id: ITEM_A, account_id: 'acc-a', version_no: 2, kind: 'text', title: 'Horário', question: null, content: 'Abrimos às 7h', category: null },
+    { item_id: ITEM_B, account_id: 'acc-b', version_no: 1, kind: 'text', title: 'SEGREDO B', question: null, content: 'x', category: null },
   ];
   h.rpc.mockReset();
   h.rpc.mockImplementation(async (fn: string) =>
@@ -231,6 +241,67 @@ describe('items', () => {
 
     expect((await DELETE(new Request(url), params(ITEM_A))).status).toBe(200);
     expect(h.items.map((i) => i.id)).toEqual([ITEM_B]);
+  });
+});
+
+describe('categories and versions (087)', () => {
+  const vparams = (id: string, version: string) => ({ params: Promise.resolve({ id, version }) });
+
+  it('create and edit hand the category to the save RPC; too long is a 400', async () => {
+    expect((await CREATE(new Request(url, json({ kind: 'text', title: 't', content: 'c', category: ' Loja ' })))).status).toBe(201);
+    expect(h.rpc.mock.calls[0][1]).toMatchObject({ p_category: 'Loja' });
+    expect((await PATCH(new Request(url, json({ title: 't', content: 'c', category: '' }, 'PATCH')), params(ITEM_A))).status).toBe(200);
+    expect(h.rpc.mock.calls[1][1]).toMatchObject({ p_item_id: ITEM_A, p_category: null });
+    expect((await CREATE(new Request(url, json({ kind: 'text', title: 't', content: 'c', category: 'x'.repeat(61) })))).status).toBe(400);
+    expect(h.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it('an edit without `category` keeps the current one', async () => {
+    h.items[0].category = 'Loja';
+    expect((await PATCH(new Request(url, json({ title: 't', content: 'c' }, 'PATCH')), params(ITEM_A))).status).toBe(200);
+    expect(h.rpc.mock.calls[0][1]).toMatchObject({ p_item_id: ITEM_A, p_category: 'Loja' });
+  });
+
+  it('lists the versions of an own item only', async () => {
+    const res = await VERSIONS(new Request(url), params(ITEM_A));
+    expect(res.status).toBe(200);
+    expect((await res.json()).versions.map((v: Row) => v.version_no).sort()).toEqual([1, 2]);
+    expect((await VERSIONS(new Request(url), params(ITEM_B))).status).toBe(404);
+    expect((await VERSIONS(new Request(url), params('nope'))).status).toBe(404);
+  });
+
+  it('restore re-saves the old version as a new one, marked restored_from, and audits it', async () => {
+    const res = await RESTORE(new Request(url, { method: 'POST' }), vparams(ITEM_A, '1'));
+    expect(res.status).toBe(200);
+    const [fn, args] = h.rpc.mock.calls[0];
+    expect(fn).toBe('ai_knowledge_save_item');
+    expect(args).toMatchObject({
+      p_account_id: 'acc-a',
+      p_item_id: ITEM_A,
+      p_kind: 'text',
+      p_content: 'Abrimos às 6h',
+      p_chunks: ['Abrimos às 6h'],
+      p_category: 'Loja',
+      p_restored_from: 1,
+    });
+    expect(h.audits[0]).toMatchObject({ metadata: { op: 'restored', version: 1 } });
+    expect(JSON.stringify(h.audits)).not.toContain('Abrimos');
+  });
+
+  it("restore: another account's version, a missing one or a bad number is a 404 without saving", async () => {
+    expect((await RESTORE(new Request(url, { method: 'POST' }), vparams(ITEM_B, '1'))).status).toBe(404);
+    expect((await RESTORE(new Request(url, { method: 'POST' }), vparams(ITEM_A, '9'))).status).toBe(404);
+    for (const bad of ['0', '-1', '1.5', 'abc']) {
+      expect((await RESTORE(new Request(url, { method: 'POST' }), vparams(ITEM_A, bad))).status).toBe(404);
+    }
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it('agents get 403 on history and restore', async () => {
+    h.role = 'agent';
+    expect((await VERSIONS(new Request(url), params(ITEM_A))).status).toBe(403);
+    expect((await RESTORE(new Request(url, { method: 'POST' }), vparams(ITEM_A, '1'))).status).toBe(403);
+    expect(h.rpc).not.toHaveBeenCalled();
   });
 });
 
