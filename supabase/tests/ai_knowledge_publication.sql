@@ -95,4 +95,3 @@ SET CONSTRAINTS ALL IMMEDIATE;
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.ai_knowledge_publish_item(uuid,uuid,integer)', 'execute'), 'anonymous cannot publish');
 SELECT 'PASS: publication, drafts, service search, roles, isolation and bypass protection';
 ROLLBACK;
-
