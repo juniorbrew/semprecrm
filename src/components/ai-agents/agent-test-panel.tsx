@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useLanguage } from "@/hooks/use-language";
 import { AGENT_LIMITS } from "@/lib/ai/agents";
+import { LAB_LIMITS, LAB_SCENARIOS } from "@/lib/ai/lab-scenarios";
 
 /** Response of POST /api/ai/agents/:id/test. */
 export interface AgentTestResult {
@@ -78,9 +79,28 @@ export function AgentTestResultView({ result }: { result: AgentTestResult }) {
   );
 }
 
+/** What a good answer does for the chosen lab scenario, and what this test does not exercise. */
+function ScenarioCriteria({ scenarioId }: { scenarioId: string }) {
+  const { t } = useLanguage();
+  const scenario = LAB_SCENARIOS.find((s) => s.id === scenarioId);
+  if (!scenario) return null;
+  return (
+    <div className="rounded-lg border border-border p-4">
+      <p className="mb-2 text-sm font-medium text-foreground">{t("What a good answer does")}</p>
+      <ul className="list-inside list-disc space-y-1 text-sm text-foreground">
+        {scenario.expect.map((e) => (
+          <li key={e}>{t(e)}</li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-muted-foreground">{t(LAB_LIMITS)}</p>
+    </div>
+  );
+}
+
 /** The Teste tab: a made-up customer message → what the agent would answer. */
 export function AgentTestPanel({ agentId, canTest }: { agentId: string; canTest: boolean }) {
   const { t } = useLanguage();
+  const [scenarioId, setScenarioId] = useState("");
   const [message, setMessage] = useState("");
   const [customer, setCustomer] = useState("");
   const [running, setRunning] = useState(false);
@@ -123,6 +143,26 @@ export function AgentTestPanel({ agentId, canTest }: { agentId: string; canTest:
           </p>
         </div>
         <div className="space-y-2">
+          <Label htmlFor="agent-test-scenario">{t("Scenario")}</Label>
+          <select
+            id="agent-test-scenario"
+            value={scenarioId}
+            onChange={(e) => {
+              setScenarioId(e.target.value);
+              const scenario = LAB_SCENARIOS.find((s) => s.id === e.target.value);
+              if (scenario) setMessage(scenario.message);
+            }}
+            className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm text-foreground"
+          >
+            <option value="">{t("My own message")}</option>
+            {LAB_SCENARIOS.map((s) => (
+              <option key={s.id} value={s.id}>
+                {t(s.label)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
           <Label htmlFor="agent-test-customer">{t("Customer name (optional)")}</Label>
           <Input
             id="agent-test-customer"
@@ -158,6 +198,7 @@ export function AgentTestPanel({ agentId, canTest }: { agentId: string; canTest:
       </section>
       <section className="space-y-4 border-t border-border pt-6" aria-live="polite">
         <h2 className="text-base font-semibold text-foreground">{t("Result")}</h2>
+        <ScenarioCriteria scenarioId={scenarioId} />
         {result ? (
           <AgentTestResultView result={result} />
         ) : (
