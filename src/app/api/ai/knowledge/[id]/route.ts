@@ -30,7 +30,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 export const dynamic = 'force-dynamic';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ITEM_COLUMNS = 'id, kind, title, question, content, source_filename, category, enabled, created_at, updated_at';
+const ITEM_COLUMNS = 'id, kind, title, question, content, source_filename, category, enabled, latest_version, published_version, created_at, updated_at';
 const notFound = () => NextResponse.json({ error: KB_ERRORS.notFound }, { status: 404 });
 
 type Params = { params: Promise<{ id: string }> };
@@ -80,8 +80,22 @@ export async function PATCH(request: Request, { params }: Params) {
     if (readErr) throw new Error(`knowledge read failed: ${readErr.message}`);
     if (!current) return notFound();
 
-    let op: 'enabled' | 'disabled' | 'edited';
-    if (typeof body.enabled === 'boolean' && !('content' in body)) {
+    let op: 'enabled' | 'disabled' | 'edited' | 'published';
+    if ('publish_version' in body) {
+      const version = body.publish_version;
+      if (typeof version !== 'number' || !Number.isInteger(version) || version < 1 || version > 2147483647 || Object.keys(body).length !== 1) {
+        return NextResponse.json({ error: 'Invalid publication version' }, { status: 400 });
+      }
+      const { error } = await ctx.supabase.rpc('ai_knowledge_publish_item', {
+        p_account_id: ctx.accountId,
+        p_item_id: id,
+        p_version: version,
+      });
+      if (error?.code === '40001') return NextResponse.json({ error: 'Draft changed; review the latest version' }, { status: 409 });
+      if (error?.code === 'P0002') return notFound();
+      if (error) return NextResponse.json({ error: 'Failed to publish the knowledge item' }, { status: 500 });
+      op = 'published';
+    } else if (typeof body.enabled === 'boolean' && !('content' in body)) {
       const { error } = await ctx.supabase
         .from('ai_knowledge_items')
         .update({ enabled: body.enabled })
@@ -120,7 +134,7 @@ export async function PATCH(request: Request, { params }: Params) {
       action: AUDIT_ACTIONS.AI_KNOWLEDGE_CHANGED,
       entityType: 'ai_knowledge_item',
       entityId: id,
-      metadata: { op, kind: current.kind },
+      metadata: { op, kind: current.kind, ...(op === 'published' ? { version: body.publish_version } : {}) },
     });
 
     const { data: item } = await ctx.supabase

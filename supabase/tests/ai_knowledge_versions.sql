@@ -54,7 +54,8 @@ SELECT pg_temp.assert_eq((SELECT count(*) FROM ai_knowledge_item_versions WHERE 
 SELECT pg_temp.assert_true((SELECT content LIKE '%5 dias%' FROM ai_knowledge_item_versions WHERE item_id = (SELECT item FROM st) AND version_no = 1),
                            'version 1 keeps the old text');
 
--- Search reads the current item only.
+-- Search requires an explicit publication of the saved version.
+SELECT public.ai_knowledge_publish_item((SELECT acc_a FROM ids), (SELECT item FROM st), 2);
 SELECT pg_temp.assert_true((SELECT bool_and(content LIKE '%3 dias%') AND count(*) >= 1
                               FROM public.ai_knowledge_search((SELECT acc_a FROM ids), 'prazo de entrega dias', 5)),
                            'search returns the current text, not old versions');
@@ -124,4 +125,5 @@ SELECT pg_temp.assert_true(NOT has_table_privilege('authenticated', 'ai_knowledg
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.ai_knowledge_record_version(uuid, integer)', 'EXECUTE'), 'anon cannot record versions');
 SELECT pg_temp.assert_true(NOT has_table_privilege('anon', 'ai_knowledge_item_versions', 'SELECT'), 'anon reads nothing');
 
+SET CONSTRAINTS ALL IMMEDIATE;
 ROLLBACK;

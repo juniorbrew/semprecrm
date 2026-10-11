@@ -318,3 +318,40 @@ describe('search', () => {
     expect((await SEARCH(new Request(url, json({ query: '  ' })))).status).toBe(400);
   });
 });
+
+
+describe('publication', () => {
+  it('publishes the reviewed version using the session tenant and audits only metadata', async () => {
+    const res = await PATCH(new Request(url, json({ publish_version: 2 }, 'PATCH')), params(ITEM_A));
+    expect(res.status).toBe(200);
+    expect(h.rpc).toHaveBeenCalledWith('ai_knowledge_publish_item', {
+      p_account_id: 'acc-a', p_item_id: ITEM_A, p_version: 2,
+    });
+    expect(h.audits[0].metadata).toEqual({ op: 'published', kind: 'text', version: 2 });
+  });
+  it('rejects malformed or mixed publication requests', async () => {
+    for (const body of [{ publish_version: 0 }, { publish_version: '2' }, { publish_version: 1.5 }, { publish_version: 2147483648 },
+      { publish_version: 2, content: 'unreviewed' }]) {
+      expect((await PATCH(new Request(url, json(body, 'PATCH')), params(ITEM_A))).status).toBe(400);
+    }
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+  it('rejects stale review without an audit success', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: '40001' } });
+    expect((await PATCH(new Request(url, json({ publish_version: 1 }, 'PATCH')), params(ITEM_A))).status).toBe(409);
+    expect(h.audits).toEqual([]);
+  });
+  it('does not publish another tenant item or without the AI plan/admin role', async () => {
+    expect((await PATCH(new Request(url, json({ publish_version: 1 }, 'PATCH')), params(ITEM_B))).status).toBe(404);
+    h.role = 'agent';
+    expect((await PATCH(new Request(url, json({ publish_version: 1 }, 'PATCH')), params(ITEM_A))).status).toBe(403);
+    h.role = 'admin'; h.aiModule = false;
+    expect((await PATCH(new Request(url, json({ publish_version: 1 }, 'PATCH')), params(ITEM_A))).status).toBe(403);
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+  it('reports a publish failure without changing the item or auditing success', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'XX000' } });
+    expect((await PATCH(new Request(url, json({ publish_version: 2 }, 'PATCH')), params(ITEM_A))).status).toBe(500);
+    expect(h.audits).toEqual([]);
+  });
+});
