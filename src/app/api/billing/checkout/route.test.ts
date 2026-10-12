@@ -131,6 +131,16 @@ describe('billing checkout', () => {
     expect(h.fake.tables.billing_payments).toMatchObject([{ status: 'RECEIVED' }])
   })
 
+  it('does not cancel the replaced subscription if it was paid in the meantime', async () => {
+    await checkout({ plan: 'pro', cycle: 'monthly' })
+    const pending = [{ id: 'pay_sub_1', subscription: 'sub_1', status: 'PENDING', value: 89.9, dueDate: '2026-10-12', invoiceUrl: 'u' }]
+    vi.mocked(asaas.listSubscriptionPayments)
+      .mockResolvedValueOnce(pending) // first check: still pending
+      .mockResolvedValueOnce([{ ...pending[0], status: 'RECEIVED' }]) // re-check before cancel: paid
+    expect((await checkout({ plan: 'basico', cycle: 'monthly' })).status).toBe(200)
+    expect(asaas.deleteSubscription).not.toHaveBeenCalledWith('sub_1')
+  })
+
   it('a suspended account cannot subscribe its way out', async () => {
     h.fake.tables.accounts[0].plan_status = 'suspended'
     expect((await checkout({ plan: 'pro', cycle: 'monthly' })).status).toBe(403)

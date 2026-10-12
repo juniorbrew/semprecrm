@@ -164,10 +164,13 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: CHECKOUT_ERRORS.busy }, { status: 409 })
       }
     } catch (err) {
-      await cancelQuietly(subscription.id)
+      // The swap may have committed with only its reply lost: never cancel
+      // the subscription the account now points to.
+      const { data: now } = await db.from('account_billing').select('asaas_subscription_id').eq('account_id', ctx.accountId).maybeSingle()
+      if (now?.asaas_subscription_id !== subscription.id) await cancelQuietly(subscription.id)
       throw err
     }
-    if (current?.asaas_subscription_id) await cancelQuietly(current.asaas_subscription_id)
+    if (current?.asaas_subscription_id) await cancelReplaced(current.asaas_subscription_id)
     const url = openInvoice(await syncPayments(db, ctx.accountId, subscription.id))
 
     await audit({
@@ -189,13 +192,33 @@ export async function POST(request: Request) {
   }
 }
 
-/** Best effort: a leftover pending subscription is only noise, never a charge we keep. */
+/**
+ * Best effort cancel of a subscription that is not the account's.
+ * ponytail: a failed cancel is only logged; the leftover keeps sending
+ * charges until cancelled by hand in Asaas. Add a retry queue (hourly
+ * billing cron) if these logs ever show up.
+ */
 async function cancelQuietly(subscriptionId: string): Promise<void> {
   try {
     await deleteSubscription(subscriptionId)
   } catch (err) {
-    console.error('[billing/checkout] could not cancel subscription', subscriptionId, err instanceof Error ? err.message : err)
+    console.error('[billing/checkout] ORPHAN subscription, cancel it in Asaas:', subscriptionId, err instanceof Error ? err.message : err)
   }
+}
+
+/** The replaced subscription may have been paid meanwhile: then keep it and flag it for a refund. */
+async function cancelReplaced(subscriptionId: string): Promise<void> {
+  try {
+    const payments = await listSubscriptionPayments(subscriptionId)
+    if (payments.some((p) => PAID_STATUSES.has(p.status))) {
+      console.error('[billing/checkout] REPLACED subscription was paid, refund it in Asaas:', subscriptionId)
+      return
+    }
+  } catch (err) {
+    console.error('[billing/checkout] could not re-check replaced subscription', subscriptionId, err instanceof Error ? err.message : err)
+    return
+  }
+  await cancelQuietly(subscriptionId)
 }
 
 /** Stores the subscription's charges (as Asaas has them) and returns them. */
