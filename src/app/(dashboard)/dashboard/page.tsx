@@ -32,6 +32,7 @@ import type {
 import { MetricCard } from '@/components/dashboard/metric-card'
 import { SkeletonCard } from '@/components/dashboard/skeleton'
 import { QuickActions } from '@/components/dashboard/quick-actions'
+import { GettingStarted } from '@/components/dashboard/getting-started'
 import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
@@ -191,6 +192,9 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Setup checklist for new accounts (admins; hides itself when done). */}
+      <GettingStarted />
 
       {/* Metric cards. 2x2 until xl: at 1024px a 4-up row leaves ~168px
           per card, the titles wrap to two/three lines and the four
