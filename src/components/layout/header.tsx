@@ -55,10 +55,11 @@ const pageTitles: Record<string, string> = {
 };
 
 export function getPageTitle(pathname: string, language: Language = "pt-BR"): string {
-  const key =
-    pageTitles[pathname] ??
-    Object.entries(pageTitles).find(([path]) => pathname.startsWith(path))?.[1] ??
-    "Dashboard";
+  // Longest matching prefix: /ai/agents/<id> is "AI agents", not "/ai".
+  const match = Object.keys(pageTitles)
+    .filter((path) => pathname === path || pathname.startsWith(`${path}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  const key = match ? pageTitles[match] : "Dashboard";
   return translateLiteral(key, language);
 }
 
