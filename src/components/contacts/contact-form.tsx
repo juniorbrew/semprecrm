@@ -65,7 +65,6 @@ export function ContactForm({
   const [dupMatch, setDupMatch] = useState<
     { contact: ExistingContact; exact: boolean } | null
   >(null);
-  const [checkingDup, setCheckingDup] = useState(false);
 
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
@@ -92,17 +91,12 @@ export function ContactForm({
       setDupMatch(null);
       return;
     }
-    setCheckingDup(true);
-    try {
-      const existing = await findExistingContact(supabase, accountId, value);
-      setDupMatch(
-        existing
-          ? { contact: existing, exact: isExactMatch(existing, value) }
-          : null,
-      );
-    } finally {
-      setCheckingDup(false);
-    }
+    const existing = await findExistingContact(supabase, accountId, value);
+    setDupMatch(
+      existing
+        ? { contact: existing, exact: isExactMatch(existing, value) }
+        : null,
+    );
   }
 
   async function fetchTags() {
@@ -387,7 +381,12 @@ export function ContactForm({
             </Button>
             <Button
               type="submit"
-              disabled={saving || checkingDup || (!isEdit && !!dupMatch?.exact)}
+              // Not disabled while the on-blur duplicate lookup runs: when the
+              // phone is the last field typed, clicking here blurs it first and
+              // a disabled button would swallow the click. An exact duplicate
+              // that slips through is rejected by the unique index (022) and
+              // shown as the friendly notice in handleSubmit.
+              disabled={saving || (!isEdit && !!dupMatch?.exact)}
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {saving && <Loader2 className="size-4 animate-spin" />}
