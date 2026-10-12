@@ -96,7 +96,9 @@ async function findContactConversations(
     .from('contacts')
     .select('id, phone, anonymized_at')
     .eq('account_id', accountId)
-    .like('phone', `%${suffix}`)
+    // Digits-only generated column (022): a typed "(11) 9…" never ends
+    // in the last 8 digits on `phone`.
+    .like('phone_normalized', `%${suffix}`)
   if (contactErr) {
     console.error('[phone-echo] contact lookup failed:', contactErr.message)
     return { kind: 'error' }

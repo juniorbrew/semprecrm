@@ -15,7 +15,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
-import { isValidE164, normalizePhone } from '@/lib/whatsapp/phone-utils'
+import { DEFAULT_CURRENCY } from '@/lib/currency'
+import { isValidE164, normalizeTypedPhone } from '@/lib/whatsapp/phone-utils'
 import type { LeadSource, LeadSourceEventStatus } from '@/types'
 
 import { mapLeadFields, type MappedLead } from './map-fields'
@@ -315,7 +316,8 @@ export async function ingestLead(
   try {
     const lead = mapLeadFields(payload, source.field_map)
 
-    const phone = normalizePhone(lead.phone ?? '')
+    // Typed in a site form: "(11) 9…" without the country code → "55119…".
+    const phone = normalizeTypedPhone(lead.phone ?? '')
     if (!phone) {
       return finish(db, source, payload, fail('phone_missing', 400))
     }
@@ -334,7 +336,7 @@ export async function ingestLead(
     if (acctErr || !ownerUserId) {
       return finish(db, source, payload, fail('account_owner_not_found'))
     }
-    const currency = ((acct as Row).default_currency as string | undefined) ?? 'USD'
+    const currency = ((acct as Row).default_currency as string | undefined) ?? DEFAULT_CURRENCY
 
     const contact = await upsertContact(db, source, ownerUserId, phone, lead)
     if ('error' in contact) {

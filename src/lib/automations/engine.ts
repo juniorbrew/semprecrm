@@ -21,6 +21,7 @@ import type {
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
 import { accountHasModule } from '@/lib/plans-server'
+import { DEFAULT_CURRENCY } from '@/lib/currency'
 import {
   createTask,
   dueInHours,
@@ -1208,7 +1209,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         contact_id: args.contactId,
         title: await interpolate(cfg.title, args),
         value: cfg.value ?? 0,
-        currency: acct?.default_currency ?? 'USD',
+        currency: acct?.default_currency ?? DEFAULT_CURRENCY,
         status: 'open',
       })
       if (dealErr) throw new Error(`create_deal failed: ${dealErr.message}`)

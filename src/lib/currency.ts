@@ -10,8 +10,11 @@
  * nothing is known.
  */
 
-/** App-wide fallback when no account/deal currency is available. */
-export const DEFAULT_CURRENCY = "USD";
+/**
+ * App-wide fallback when no account/deal currency is available. SempreCRM
+ * serves Brazil: BRL, the same as the column defaults since migration 089.
+ */
+export const DEFAULT_CURRENCY = "BRL";
 
 export interface CurrencyOption {
   /** ISO-4217 code, e.g. "USD". Stored verbatim in the DB. */

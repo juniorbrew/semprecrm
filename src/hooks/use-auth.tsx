@@ -54,7 +54,7 @@ interface Profile {
 interface AccountSummary extends PlanAccountFields {
   id: string;
   name: string;
-  /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
+  /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'BRL' (089) in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
   /** Plan fields (migration 025). Optional so forks on a pre-025
@@ -286,7 +286,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               | null);
         // Narrow default_currency defensively: forks running pre-021
         // schemas won't have the column, so a missing/null value reads
-        // as the safe USD fallback rather than crashing the picker.
+        // as the DEFAULT_CURRENCY fallback rather than crashing the picker.
         const accountRow: AccountSummary | null = accountRaw
           ? {
               ...normalizeAssignedPlan(accountRaw),

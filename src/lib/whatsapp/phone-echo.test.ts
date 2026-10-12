@@ -115,7 +115,12 @@ function makeDb() {
       in: (k: string, vs: unknown[]) => (filters.push((r) => vs.includes(r[k])), b),
       like: (k: string, pattern: string) => {
         const suffix = pattern.replace(/^%/, '')
-        filters.push((r) => String(r[k] ?? '').endsWith(suffix))
+        // contacts.phone_normalized is a generated column (digits of phone).
+        const value = (r: R) =>
+          k === 'phone_normalized' && r.phone_normalized === undefined
+            ? String(r.phone ?? '').replace(/\D/g, '')
+            : String(r[k] ?? '')
+        filters.push((r) => value(r).endsWith(suffix))
         return b
       },
       // Only the shape phone-echo uses: last_message_at.is.null,last_message_at.lte."<iso>"
@@ -258,6 +263,14 @@ describe('ingestPhoneEcho', () => {
     expect(h.state.flowRuns[0]).toMatchObject({ status: 'active' })
     // the preview still moves
     expect(h.state.conversations[0]).toMatchObject({ last_message_at: iso(T0) })
+  })
+
+  it('finds a contact typed with punctuation and no country code', async () => {
+    seedConversation()
+    h.state.contacts[0].phone = '(11) 99999-0000'
+    const res = await ingestPhoneEcho(ECHO, makeDb())
+    expect(res).toMatchObject({ ok: true, contactId: 'c-1', conversationId: 'conv-1' })
+    expect(h.state.messages).toHaveLength(1)
   })
 
   it('never creates contacts or conversations (personal chats are skipped)', async () => {

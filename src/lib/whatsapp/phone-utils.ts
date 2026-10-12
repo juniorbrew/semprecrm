@@ -18,6 +18,24 @@ export function normalizePhone(phone: string): string {
 }
 
 /**
+ * A phone number a PERSON typed (contact form, CSV import, lead forms) as
+ * the digits WhatsApp expects. SempreCRM serves Brazil: without a leading
+ * "+", 10 or 11 digits (DDD + number, after dropping a trunk/"00" prefix of
+ * zeros) get the country code 55 — "(11) 98765-4321" → "5511987654321".
+ * A "+" means the country code is already there and is kept as typed.
+ * Never use it on numbers that come from WhatsApp: those always carry
+ * their country code, and a US number also has 11 digits.
+ */
+export function normalizeTypedPhone(input: string): string {
+  const raw = (input ?? '').trim()
+  const digits = raw.replace(/\D/g, '')
+  if (!digits || raw.startsWith('+')) return digits
+  if (digits.startsWith('00')) return digits.slice(2) // international "00"
+  const national = digits.replace(/^0/, '') // trunk "0" before the DDD
+  return national.length === 10 || national.length === 11 ? `55${national}` : digits
+}
+
+/**
  * Compare two phone numbers accounting for trunk prefix differences.
  * e.g. "370063949836" (with trunk 0) matches "37063949836" (without trunk 0)
  * by comparing the last 8 digits.

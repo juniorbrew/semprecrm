@@ -3,6 +3,7 @@ import {
   isRecipientNotAllowedError,
   isValidE164,
   normalizePhone,
+  normalizeTypedPhone,
   phoneVariants,
   phonesMatch,
   sanitizePhoneForMeta,
@@ -162,3 +163,26 @@ describe("isRecipientNotAllowedError", () => {
     expect(isRecipientNotAllowedError("")).toBe(false);
   });
 });
+
+describe('normalizeTypedPhone (numbers a person types)', () => {
+  it('adds 55 to Brazilian numbers typed without a country code', () => {
+    expect(normalizeTypedPhone('(11) 98765-4321')).toBe('5511987654321')
+    expect(normalizeTypedPhone('11 3456-7890')).toBe('551134567890')
+    expect(normalizeTypedPhone('011 98765-4321')).toBe('5511987654321') // trunk 0
+    expect(normalizeTypedPhone('55 98765-4321')).toBe('5555987654321') // DDD 55 (RS), not a country code
+  })
+
+  it('keeps numbers that already have a country code', () => {
+    expect(normalizeTypedPhone('+55 11 98765-4321')).toBe('5511987654321')
+    expect(normalizeTypedPhone('5511987654321')).toBe('5511987654321')
+    expect(normalizeTypedPhone('+1 415 555 1234')).toBe('14155551234')
+    expect(normalizeTypedPhone('0055 11 98765-4321')).toBe('5511987654321') // "00" international prefix
+  })
+
+  it('leaves short or empty input alone (validation decides)', () => {
+    expect(normalizeTypedPhone('123')).toBe('123')
+    expect(normalizeTypedPhone('0123456789')).toBe('0123456789') // zero-led, not a trunk prefix: stays invalid
+    expect(normalizeTypedPhone('   ')).toBe('')
+    expect(normalizeTypedPhone('')).toBe('')
+  })
+})
