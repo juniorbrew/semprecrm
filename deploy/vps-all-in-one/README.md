@@ -223,6 +223,36 @@ pendure-o num monitor que avise quando sair com erro.
 3. Depois do primeiro backup cifrado, apague os backups antigos em texto puro:
    `sudo find /var/backups/semprecrm -maxdepth 1 -type f -name '*.gz' -delete`.
 
+### Alternativa sem nuvem: o computador do administrador busca os backups
+
+Em vez do `rclone`, o computador onde está a chave privada baixa os `*.age` pela mesma conexão SSH usada
+para administrar a VPS. A VPS não recebe nenhuma credencial nova. Basta o `BACKUP_AGE_RECIPIENT` (passo 2
+sem `BACKUP_RCLONE_REMOTE`) e, no Windows:
+
+```powershell
+# copie deploy/vps-all-in-one/pull-backups.ps1 para %USERPROFILE%\SempreCRM-backups\ e teste:
+& "$env:USERPROFILE\SempreCRM-backups\pull-backups.ps1"   # 0 = ok, 1 = erro, 2 = backup da VPS atrasado
+# agendar: todo dia às 10h e ao entrar no Windows (recupera o horário perdido com o notebook desligado)
+$acao = New-ScheduledTaskAction -Execute "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe" `
+  -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$env:USERPROFILE\SempreCRM-backups\pull-backups.ps1`""
+Register-ScheduledTask -TaskName 'SempreCRM - baixar backups' -Action $acao -Force `
+  -Trigger @((New-ScheduledTaskTrigger -Daily -At 10:00), (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)) `
+  -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries)
+```
+
+O script baixa só os `*.age` que faltam, guarda 60 dias e registra tudo em `SempreCRM-backups\pull.log`.
+Use o atalho `WindowsApps\pwsh.exe` (o caminho em `Program Files\WindowsApps\...` muda a cada atualização do
+PowerShell e a tarefa falha com 0x80070002). Guarde a chave privada **fora** de pastas sincronizadas e com
+uma segunda cópia (cofre de senhas ou pen drive); os `*.age`, por serem cifrados, podem ficar numa pasta
+sincronizada como segunda cópia externa.
+
+Conferir um backup sem gravar dados decifrados em disco (Git Bash):
+
+```bash
+age -d -i semprecrm-backup.key db_X.sql.gz.age | gzip -dc | tail -3      # deve conter "dump complete"
+age -d -i semprecrm-backup.key storage_X.tar.gz.age | tar -tzf - | wc -l
+```
+
 ### Restaurar
 
 Pare o app antes (`pm2 stop semprecrm semprecrm-cron wa-gateway`) e suba de novo no fim.
