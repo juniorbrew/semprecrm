@@ -1,0 +1,195 @@
+// ============================================================
+// POST /api/billing/checkout — start (or resume) the account's paid
+// subscription on Asaas (docs/superpowers/specs/2026-10-12-billing-asaas-design.md).
+//
+// Owner only. Body { plan, cycle: 'monthly' | 'annual' }. The account is
+// the session's, never the body's. Returns { url }: the Asaas page where
+// the customer pays the first charge by Pix, boleto or card.
+//
+// Plan, catalog version and price are frozen in account_billing at this
+// moment; the account only changes when Asaas confirms the payment
+// (webhook). Asking again for the same plan/cycle returns the same
+// pending charge instead of a second subscription.
+// ============================================================
+
+import { NextResponse } from 'next/server'
+
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/automations/admin-client'
+import {
+  asaasConfigured,
+  AsaasError,
+  createCustomer,
+  createSubscription,
+  deleteSubscription,
+  listSubscriptionPayments,
+  type AsaasPayment,
+} from '@/lib/billing/asaas'
+import { asaasCycle, isBillingCycle, PAID_STATUSES, periodPriceCents, todayInSaoPaulo } from '@/lib/billing/rules'
+import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
+import { PLANS, type Plan } from '@/lib/plans'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+
+export const dynamic = 'force-dynamic'
+
+export const CHECKOUT_ERRORS = {
+  notConfigured: 'Online payment is not available yet. Talk to the SempreCRM team.',
+  body: 'Choose a plan and a billing cycle.',
+  notForSale: 'This plan is sold by our team. Talk to us to subscribe.',
+  taxId: 'Add your CPF or CNPJ in Settings → Empresa before subscribing.',
+  alreadyActive: 'This account already has an active subscription.',
+  confirming: 'Your payment is being confirmed. This takes a few minutes.',
+  provider: 'Could not reach the payment provider. Try again in a few minutes.',
+} as const
+
+type BillingRow = {
+  asaas_customer_id: string | null
+  asaas_subscription_id: string | null
+  plan: string
+  cycle: string
+  status: string
+}
+
+export async function POST(request: Request) {
+  try {
+    const ctx = await requireRole('owner')
+    const limit = checkRateLimit(`billing:checkout:${ctx.userId}`, RATE_LIMITS.adminAction)
+    if (!limit.success) return rateLimitResponse(limit)
+    if (!asaasConfigured()) return NextResponse.json({ error: CHECKOUT_ERRORS.notConfigured }, { status: 503 })
+
+    const body = (await request.json().catch(() => null)) as { plan?: unknown; cycle?: unknown } | null
+    const plan = body?.plan
+    const cycle = body?.cycle
+    if (typeof plan !== 'string' || !(PLANS as readonly string[]).includes(plan) || plan === 'trial' || !isBillingCycle(cycle)) {
+      return NextResponse.json({ error: CHECKOUT_ERRORS.body }, { status: 400 })
+    }
+
+    const db = supabaseAdmin()
+    const version = (await loadCurrentPlanCatalog(db)).find((v) => v.plan === (plan as Plan))
+    const monthly = version?.price_monthly_cents ?? null
+    if (!version || !monthly || monthly <= 0) {
+      return NextResponse.json({ error: CHECKOUT_ERRORS.notForSale }, { status: 400 })
+    }
+
+    const { data: account, error: accErr } = await db
+      .from('accounts')
+      .select('id, name, legal_name, tax_id, email, phone')
+      .eq('id', ctx.accountId)
+      .single()
+    if (accErr || !account) throw new Error(`account read failed: ${accErr?.message ?? 'not found'}`)
+    const taxId = String(account.tax_id ?? '').replace(/\D/g, '')
+    if (taxId.length !== 11 && taxId.length !== 14) {
+      return NextResponse.json({ error: CHECKOUT_ERRORS.taxId }, { status: 400 })
+    }
+
+    const { data: existing, error: billErr } = await db
+      .from('account_billing')
+      .select('asaas_customer_id, asaas_subscription_id, plan, cycle, status')
+      .eq('account_id', ctx.accountId)
+      .maybeSingle()
+    if (billErr) throw new Error(`billing read failed: ${billErr.message}`)
+    const current = existing as BillingRow | null
+    if (current && (current.status === 'active' || current.status === 'past_due')) {
+      return NextResponse.json({ error: CHECKOUT_ERRORS.alreadyActive }, { status: 409 })
+    }
+
+    if (current?.status === 'pending' && current.asaas_subscription_id) {
+      const payments = await syncPayments(db, ctx.accountId, current.asaas_subscription_id)
+      // Paid, webhook not here yet: never drop a paid subscription.
+      if (payments.some((p) => PAID_STATUSES.has(p.status))) {
+        return NextResponse.json({ error: CHECKOUT_ERRORS.confirming }, { status: 409 })
+      }
+      // Same plan/cycle still pending: hand back the same charge.
+      const url = openInvoice(payments)
+      if (url && current.plan === plan && current.cycle === cycle) return NextResponse.json({ url })
+      // A different choice replaces the old subscription.
+      await deleteSubscription(current.asaas_subscription_id)
+    }
+
+    const customerId =
+      current?.asaas_customer_id ??
+      (
+        await createCustomer({
+          name: String(account.legal_name || account.name),
+          cpfCnpj: taxId,
+          email: account.email,
+          mobilePhone: account.phone,
+          externalReference: ctx.accountId,
+        })
+      ).id
+
+    const value = periodPriceCents(monthly, cycle)
+    const label = plan === 'pro' ? 'Pro' : plan === 'basico' ? 'Básico' : plan
+    const subscription = await createSubscription({
+      customer: customerId,
+      value: value / 100,
+      nextDueDate: todayInSaoPaulo(),
+      cycle: asaasCycle(cycle),
+      description: `SempreCRM ${label} (${cycle === 'annual' ? 'anual' : 'mensal'})`,
+      externalReference: ctx.accountId,
+    })
+
+    const { error: upErr } = await db.from('account_billing').upsert({
+      account_id: ctx.accountId,
+      asaas_customer_id: customerId,
+      asaas_subscription_id: subscription.id,
+      plan,
+      plan_version_id: version.id,
+      cycle,
+      value_cents: value,
+      status: 'pending',
+    }, { onConflict: 'account_id' })
+    if (upErr) throw new Error(`billing save failed: ${upErr.message}`)
+
+    const url = openInvoice(await syncPayments(db, ctx.accountId, subscription.id))
+    await audit({
+      accountId: ctx.accountId,
+      actorUserId: ctx.userId,
+      action: AUDIT_ACTIONS.BILLING_CHECKOUT,
+      entityType: 'account_billing',
+      entityId: ctx.accountId,
+      metadata: { plan, cycle, value_cents: value },
+    })
+    if (!url) return NextResponse.json({ error: CHECKOUT_ERRORS.provider }, { status: 502 })
+    return NextResponse.json({ url })
+  } catch (err) {
+    if (err instanceof AsaasError) {
+      console.error('[billing/checkout] provider error:', err.message)
+      return NextResponse.json({ error: CHECKOUT_ERRORS.provider }, { status: 502 })
+    }
+    return toErrorResponse(err)
+  }
+}
+
+/** Stores the subscription's charges (as Asaas has them) and returns them. */
+async function syncPayments(
+  db: ReturnType<typeof supabaseAdmin>,
+  accountId: string,
+  subscriptionId: string,
+): Promise<AsaasPayment[]> {
+  const payments = await listSubscriptionPayments(subscriptionId)
+  if (payments.length > 0) {
+    const { error } = await db.from('billing_payments').upsert(
+      payments.map((p) => ({
+        asaas_payment_id: p.id,
+        account_id: accountId,
+        asaas_subscription_id: subscriptionId,
+        status: p.status,
+        billing_type: p.billingType ?? null,
+        value_cents: Math.round(p.value * 100),
+        due_date: p.dueDate,
+        invoice_url: p.invoiceUrl ?? null,
+      })),
+      { onConflict: 'asaas_payment_id' },
+    )
+    if (error) throw new Error(`payments save failed: ${error.message}`)
+  }
+  return payments
+}
+
+/** The payment page of the charge still to be paid. */
+function openInvoice(payments: AsaasPayment[]): string | null {
+  return payments.find((p) => p.status === 'PENDING' || p.status === 'OVERDUE')?.invoiceUrl ?? null
+}
