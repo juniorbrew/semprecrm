@@ -644,7 +644,7 @@ export function AiSettings() {
           title={t("AI agents")}
           description={t("Different instructions per team, number or tag, with suggestion or automatic mode. Managed on their own page.")}
         >
-          <Link href="/ai/agents" className="text-sm font-medium text-primary underline-offset-2 hover:underline">
+          <Link href="/ai/agents" className="text-sm font-medium text-foreground underline underline-offset-2">
             {t("Open AI agents")}
           </Link>
         </SettingsGroup>
