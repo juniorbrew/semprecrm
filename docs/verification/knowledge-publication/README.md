@@ -52,6 +52,10 @@ Verificação com `agent-browser`, Next 16.4.0 e Supabase local na migration 088
 
 Os testes automatizados da tabela acima pertencem à implementação do #99; não foram repetidos nesta retomada, que altera apenas evidências. A sessão anterior travava ao aguardar o fechamento dos pipes de subprocesso. Nesta sessão, chamadas diretas do CLI e autenticação temporária em memória permitiram concluir o fluxo; esperas por textos de toast já expirados foram descartadas em favor do estado persistido e das respostas da API.
 
+### Correção de contraste — 12/10/2026
+
+O link “Abrir agentes de IA” passou a usar `text-foreground` e sublinhado permanente, preservando destino, texto e navegação. Verificação autenticada local com conta temporária removida ao terminar: axe 4.12.1, escopo exclusivo `a[href="/ai/agents"]`, zero violações e zero verificações incompletas em claro e escuro. Resultados: `link-contrast-light.json`, `link-contrast-dark.json`; capturas inspecionadas: `link-contrast-mobile.png` (390 × 844) e `link-contrast-desktop.png` (1262 × 568). Isso resolve o contraste registrado anteriormente, sem declarar a página inteira aprovada em acessibilidade. ESLint do componente passou; detector Impeccable não encontrou ocorrências. Nenhuma alteração de comportamento, dependência ou banco.
+
 ## Reprodução local
 
 Com a migration 088 aplicada ao container local `supabase_db_semprecrm`, os testes SQL são executados dentro de transações e terminam com ROLLBACK. Prefixar `BEGIN;` em publicação/versões; base já abre a transação. Para backfill, prefixar `BEGIN;` e substituir o marcador `-- APPLY_MIGRATION_088` pelo arquivo de migração antes de enviar ao psql. O backfill reconstrói a forma anterior apenas dentro da transação de teste.
