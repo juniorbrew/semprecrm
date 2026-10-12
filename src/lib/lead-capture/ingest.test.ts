@@ -48,7 +48,11 @@ function makeDb() {
         if (f.kind === 'eq') return r[f.key] === f.value
         if (f.kind === 'in') return (f.value as unknown[]).includes(r[f.key])
         const suffix = String(f.value).replace(/^%/, '')
-        return String(r[f.key] ?? '').endsWith(suffix)
+        // contacts.phone_normalized is a generated column (digits of phone).
+        const v = f.key === 'phone_normalized' && r.phone_normalized === undefined
+          ? String(r.phone ?? '').replace(/\D/g, '')
+          : String(r[f.key] ?? '')
+        return v.endsWith(suffix)
       })
     const rows = () => state[table].filter(matches)
 
@@ -307,6 +311,12 @@ describe('ingestLead — errors', () => {
     expect(state.contacts).toHaveLength(0)
     expect(state.lead_source_events[0]).toMatchObject({ status: 'error', error: 'phone_missing', contact_id: null })
     expect(state.lead_sources[0].received_count).toBe(5)
+  })
+
+  it('a Brazilian number typed without the country code is stored with 55', async () => {
+    const res = await ingestLead(makeDb(), source(), { telefone: '(11) 98888-7777' })
+    expect(res.error).toBeUndefined()
+    expect(state.contacts.at(-1)?.phone).toBe('5511988887777')
   })
 
   it('400 phone_invalid for a too-short or zero-led number', async () => {

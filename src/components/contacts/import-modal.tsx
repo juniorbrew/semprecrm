@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
 import type { Language } from '@/lib/i18n';
+import { normalizeTypedPhone } from '@/lib/whatsapp/phone-utils';
 import {
   dedupeByPhone,
   isUniqueViolation,
@@ -248,7 +249,10 @@ export function ImportModal({
       return;
     }
 
-    setParsedRows(rows);
+    // Spreadsheets carry numbers as people typed them: store the digits
+    // with the country code ("(11) 9…" → "55119…") so WhatsApp and inbound
+    // matching agree; dedupe below runs on these values too.
+    setParsedRows(rows.map((r) => ({ ...r, phone: normalizeTypedPhone(r.phone) })));
     setHasTagsColumn(csvHasTags);
     setHasCompanyColumn(csvHasCompany);
 

@@ -91,6 +91,23 @@ describe("findExistingContact", () => {
     expect(hit).toBeNull();
   });
 
+  it("filters candidates on the digits-only column, so a typed number with punctuation is found", async () => {
+    // Contact typed as "(11) 98765-4321"; WhatsApp later sends 5511987654321.
+    const calls: Array<[string, string]> = [];
+    const builder = {
+      select: () => builder,
+      eq: () => builder,
+      like: (col: string, pattern: string) => {
+        calls.push([col, pattern]);
+        return Promise.resolve({ data: [{ id: "c1", phone: "(11) 98765-4321" }], error: null });
+      },
+    };
+    const db = { from: () => builder } as unknown as SupabaseClient;
+    const hit = await findExistingContact(db, "acct", "5511987654321");
+    expect(calls).toEqual([["phone_normalized", "%87654321"]]);
+    expect(hit?.id).toBe("c1");
+  });
+
   it("returns null for an empty phone without querying", async () => {
     const db = stubDb([{ id: "c1", phone: "15551234567" }]);
     expect(await findExistingContact(db, "acct", "   ")).toBeNull();

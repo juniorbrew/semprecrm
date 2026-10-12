@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
+import { normalizeTypedPhone } from '@/lib/whatsapp/phone-utils';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import {
@@ -86,7 +87,7 @@ export function ContactForm({
   // Runs on blur so we don't query on every keystroke.
   async function checkDuplicate() {
     if (isEdit || !accountId) return;
-    const value = phone.trim();
+    const value = normalizeTypedPhone(phone);
     if (!value) {
       setDupMatch(null);
       return;
@@ -154,7 +155,9 @@ export function ContactForm({
           .from('contacts')
           .update({
             name: name.trim() || null,
-            phone: phone.trim(),
+            // Digits with the country code ("(11) 9…" → "55119…"), the form
+            // WhatsApp sends and inbound messages are matched against.
+            phone: normalizeTypedPhone(phone),
             email: email.trim() || null,
             company: company.trim() || null,
             updated_at: new Date().toISOString(),
@@ -168,7 +171,9 @@ export function ContactForm({
             user_id: user.id,
             account_id: accountId,
             name: name.trim() || null,
-            phone: phone.trim(),
+            // Digits with the country code ("(11) 9…" → "55119…"), the form
+            // WhatsApp sends and inbound messages are matched against.
+            phone: normalizeTypedPhone(phone),
             email: email.trim() || null,
             company: company.trim() || null,
           })
@@ -216,7 +221,7 @@ export function ContactForm({
           const existing = await findExistingContact(
             supabase,
             accountId,
-            phone.trim(),
+            normalizeTypedPhone(phone),
           );
           if (existing) setDupMatch({ contact: existing, exact: true });
         }
