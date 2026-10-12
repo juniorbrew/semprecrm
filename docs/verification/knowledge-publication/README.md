@@ -32,11 +32,25 @@ API: `PATCH /api/ai/knowledge/:id` com apenas `{ "publish_version": 2 }`. Autent
 | Migração: drift de histórico, falta de versões/trechos e item desabilitado e rejeição de trechos incompatíveis | PASS — `supabase/tests/ai_knowledge_publication_backfill.sql` |
 | Duas sessões reais: save/publish nas duas ordens, saves concorrentes, busca coerente com múltiplos trechos e publish/delete | PASS — `scripts/verify-knowledge-publication-concurrency.mjs` |
 | API autenticada local: criação de rascunho e exclusão da busca | PASS — Next 16.4.0 + Supabase local |
-| Navegador desktop/mobile | BLOCKED — agent-browser abriu login mas o comando não encerrou; ETIMEDOUT. Não houve validação visual nem captura aprovada |
+| Navegador desktop/mobile | PASS funcional — sessão local retomada em 11/10/2026; criação, revisão, publicação, edição e restauração verificadas com conta sintética |
+| Acessibilidade automatizada | PARTIAL — axe 4.12.1 detectou contraste 3,31:1 no link existente “Abrir agentes de IA”; duas verificações exigem revisão manual |
 | Build Next 16.4.0 | PASS |
 | VPS/integração externa de IA | Não executado |
 
-**Entrega: PARTIAL para homologação**, pela validação visual pendente. O fluxo de interface está implementado e coberto por testes de componente; isso não substitui o teste real no navegador.
+**Fluxo de publicação: PASS local. Acessibilidade: PARTIAL.** Produção e provedor externo continuam sem validação nesta entrega.
+
+### Retomada visual — 11/10/2026
+
+Verificação com `agent-browser`, Next 16.4.0 e Supabase local na migration 088, sem chave de provedor. Conta temporária no plano Pro, removida ao terminar. Nenhum deploy foi executado. Capturas inspecionadas em desktop (1262 × 568) e viewport de celular (390 × 844); não houve teste em aparelho físico.
+
+- Criação pela interface: FAQ “Qual o prazo entrega verificacao?” com resposta de cinco dias. Exibiu “Rascunho” e interruptor desabilitado. Busca autenticada: HTTP 200, `hits: []`.
+- Histórico: botão de publicação apareceu somente após revisar a versão 1. Publicação retornou HTTP 200; busca encontrou um trecho com a resposta de cinco dias.
+- Edição pela interface: resposta alterada para dez dias e salva como versão 2. Busca continuou retornando os cinco dias publicados.
+- No viewport de celular, revisão da versão 2 exibiu conteúdo completo e botão “Publicar versão 2”. Restauração da versão 1 criou a versão 3. Banco confirmou `latest_version=3`, `published_version=1` e `restored_from=1`; busca continuou usando a publicação original.
+- Nenhum erro JavaScript registrado (`browser-errors.json`). Capturas: `review-desktop.png`, `review-mobile.png`, `restored-mobile.png`.
+- Auditoria axe: uma violação de contraste no link existente `/ai/agents`, fora do fluxo novo. Os itens incompletos de foco em conteúdo inerte e contraste de conteúdo parcialmente oculto não são classificados como PASS. Evidência em `a11y-mobile.json`.
+
+Os testes automatizados da tabela acima pertencem à implementação do #99; não foram repetidos nesta retomada, que altera apenas evidências. A sessão anterior travava ao aguardar o fechamento dos pipes de subprocesso. Nesta sessão, chamadas diretas do CLI e autenticação temporária em memória permitiram concluir o fluxo; esperas por textos de toast já expirados foram descartadas em favor do estado persistido e das respostas da API.
 
 ## Reprodução local
 
