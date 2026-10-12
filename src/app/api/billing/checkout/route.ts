@@ -41,6 +41,8 @@ export const CHECKOUT_ERRORS = {
   taxId: 'Add your CPF or CNPJ in Settings → Empresa before subscribing.',
   alreadyActive: 'This account already has an active subscription.',
   confirming: 'Your payment is being confirmed. This takes a few minutes.',
+  suspended: 'This account is suspended. Talk to the SempreCRM team.',
+  busy: 'Another subscription request is in progress. Try again.',
   provider: 'Could not reach the payment provider. Try again in a few minutes.',
 } as const
 
@@ -75,10 +77,13 @@ export async function POST(request: Request) {
 
     const { data: account, error: accErr } = await db
       .from('accounts')
-      .select('id, name, legal_name, tax_id, email, phone')
+      .select('id, name, legal_name, tax_id, email, phone, plan_status')
       .eq('id', ctx.accountId)
       .single()
     if (accErr || !account) throw new Error(`account read failed: ${accErr?.message ?? 'not found'}`)
+    if (account.plan_status === 'suspended') {
+      return NextResponse.json({ error: CHECKOUT_ERRORS.suspended }, { status: 403 })
+    }
     const taxId = String(account.tax_id ?? '').replace(/\D/g, '')
     if (taxId.length !== 11 && taxId.length !== 14) {
       return NextResponse.json({ error: CHECKOUT_ERRORS.taxId }, { status: 400 })
@@ -104,8 +109,7 @@ export async function POST(request: Request) {
       // Same plan/cycle still pending: hand back the same charge.
       const url = openInvoice(payments)
       if (url && current.plan === plan && current.cycle === cycle) return NextResponse.json({ url })
-      // A different choice replaces the old subscription.
-      await deleteSubscription(current.asaas_subscription_id)
+      // A different choice replaces the old subscription (below, once the new one exists).
     }
 
     const customerId =
@@ -131,19 +135,41 @@ export async function POST(request: Request) {
       externalReference: ctx.accountId,
     })
 
-    const { error: upErr } = await db.from('account_billing').upsert({
-      account_id: ctx.accountId,
-      asaas_customer_id: customerId,
-      asaas_subscription_id: subscription.id,
-      plan,
-      plan_version_id: version.id,
-      cycle,
-      value_cents: value,
-      status: 'pending',
-    }, { onConflict: 'account_id' })
-    if (upErr) throw new Error(`billing save failed: ${upErr.message}`)
-
+    // From here the new subscription exists in Asaas: if it does not end up
+    // as the account's one, cancel it so it never charges anybody.
+    try {
+      const row = {
+        asaas_customer_id: customerId,
+        asaas_subscription_id: subscription.id,
+        plan,
+        plan_version_id: version.id,
+        cycle,
+        value_cents: value,
+        status: 'pending',
+      }
+      // Compare-and-swap against what was read: a concurrent checkout loses.
+      const swap = current
+        ? db.from('account_billing').update(row).eq('account_id', ctx.accountId).eq('status', current.status)
+        : null
+      // An insert either succeeds or hits the primary key (23505): someone else won.
+      const { data: swapped, error: upErr } = swap
+        ? await (current?.asaas_subscription_id
+            ? swap.eq('asaas_subscription_id', current.asaas_subscription_id)
+            : swap.is('asaas_subscription_id', null)
+          ).select('account_id')
+        : await db.from('account_billing').insert({ account_id: ctx.accountId, ...row }).then((r) => ({ ...r, data: r.error ? [] : [row] }))
+      if (upErr && upErr.code !== '23505') throw new Error(`billing save failed: ${upErr.message}`)
+      if (upErr || !swapped?.length) {
+        await cancelQuietly(subscription.id)
+        return NextResponse.json({ error: CHECKOUT_ERRORS.busy }, { status: 409 })
+      }
+    } catch (err) {
+      await cancelQuietly(subscription.id)
+      throw err
+    }
+    if (current?.asaas_subscription_id) await cancelQuietly(current.asaas_subscription_id)
     const url = openInvoice(await syncPayments(db, ctx.accountId, subscription.id))
+
     await audit({
       accountId: ctx.accountId,
       actorUserId: ctx.userId,
@@ -160,6 +186,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: CHECKOUT_ERRORS.provider }, { status: 502 })
     }
     return toErrorResponse(err)
+  }
+}
+
+/** Best effort: a leftover pending subscription is only noise, never a charge we keep. */
+async function cancelQuietly(subscriptionId: string): Promise<void> {
+  try {
+    await deleteSubscription(subscriptionId)
+  } catch (err) {
+    console.error('[billing/checkout] could not cancel subscription', subscriptionId, err instanceof Error ? err.message : err)
   }
 }
 

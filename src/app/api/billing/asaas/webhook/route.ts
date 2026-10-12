@@ -8,8 +8,10 @@
 // replayed body cannot grant a plan.
 //
 // Delivery is at-least-once: each event id is stored once and an event
-// already processed answers 200 without doing anything. A failure answers
-// 500 so Asaas retries.
+// already processed answers 200 without doing anything. A transient
+// failure answers 500 so Asaas retries; one that would fail the same way
+// on every retry is stored and answered 200, because Asaas pauses the
+// whole queue (every tenant) after repeated failures.
 // ============================================================
 
 import { timingSafeEqual } from 'node:crypto'
@@ -17,7 +19,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { getPayment, type AsaasPayment } from '@/lib/billing/asaas'
+import { AsaasError, getPayment, type AsaasPayment } from '@/lib/billing/asaas'
 import { eventEffect, isBillingCycle, PAID_STATUSES, periodEnd } from '@/lib/billing/rules'
 
 export const dynamic = 'force-dynamic'
@@ -26,6 +28,14 @@ type WebhookBody = {
   id?: unknown
   event?: unknown
   payment?: { id?: unknown; subscription?: unknown } | null
+}
+
+/** Fails the same way on every retry: store it, do not block the queue. */
+class PermanentError extends Error {}
+
+function isPermanent(err: unknown): boolean {
+  if (err instanceof PermanentError) return true
+  return err instanceof AsaasError && [400, 404, 422].includes(err.status)
 }
 
 function tokenMatches(received: string | null, expected: string): boolean {
@@ -50,7 +60,7 @@ export async function POST(request: Request) {
   const db = supabaseAdmin()
   const { error: insErr } = await db
     .from('billing_webhook_events')
-    .insert({ event_id: eventId, event, payload: body })
+    .insert({ event_id: eventId, event, payload: redact(body) })
   if (insErr) {
     if (insErr.code !== '23505') {
       console.error('[billing/webhook] store failed:', insErr.message)
@@ -71,9 +81,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error('[billing/webhook] processing failed:', message)
-    await db.from('billing_webhook_events').update({ error: message.slice(0, 500) }).eq('event_id', eventId)
-    return NextResponse.json({ error: 'processing failed' }, { status: 500 })
+    const permanent = isPermanent(err)
+    console.error(`[billing/webhook] ${permanent ? 'event dropped' : 'processing failed'}:`, message)
+    await db
+      .from('billing_webhook_events')
+      .update({ error: message.slice(0, 500), ...(permanent ? { processed_at: new Date().toISOString() } : {}) })
+      .eq('event_id', eventId)
+    return permanent ? NextResponse.json({ ok: false }) : NextResponse.json({ error: 'processing failed' }, { status: 500 })
   }
 }
 
@@ -85,6 +99,8 @@ async function processEvent(
   const paymentId = typeof hint?.id === 'string' ? hint.id : null
   const subscriptionId = typeof hint?.subscription === 'string' ? hint.subscription : null
   if (!paymentId || !subscriptionId) return // not a subscription charge: nothing of ours
+  const effect = eventEffect(event)
+  if (effect === 'record') return // the API is read only when the account may change
 
   const { data: billing, error } = await db
     .from('account_billing')
@@ -96,21 +112,24 @@ async function processEvent(
 
   // The source of truth is the API, never the body.
   const payment = await getPayment(paymentId)
-  if (payment.subscription !== subscriptionId) throw new Error('payment does not belong to the subscription')
+  if (payment.subscription !== subscriptionId) throw new PermanentError('payment does not belong to the subscription')
   await savePayment(db, billing.account_id, subscriptionId, payment)
 
-  const effect = eventEffect(event)
   if (effect === 'activate') {
     if (!PAID_STATUSES.has(payment.status)) return // event says paid, API does not (yet)
-    if (!isBillingCycle(billing.cycle)) throw new Error(`unknown cycle ${billing.cycle}`)
+    if (!isBillingCycle(billing.cycle)) throw new PermanentError(`unknown cycle ${billing.cycle}`)
     const { error: rpcErr } = await db.rpc('billing_activate', {
       p_account_id: billing.account_id,
+      p_subscription_id: subscriptionId,
       p_period_end: periodEnd(payment.dueDate, billing.cycle).toISOString(),
     })
     if (rpcErr) throw new Error(`activate failed: ${rpcErr.message}`)
   } else if (effect === 'past_due') {
     if (PAID_STATUSES.has(payment.status)) return // stale event: already paid again
-    const { error: rpcErr } = await db.rpc('billing_mark_past_due', { p_account_id: billing.account_id })
+    const { error: rpcErr } = await db.rpc('billing_mark_past_due', {
+      p_account_id: billing.account_id,
+      p_subscription_id: subscriptionId,
+    })
     if (rpcErr) throw new Error(`past_due failed: ${rpcErr.message}`)
   }
 }
@@ -134,4 +153,12 @@ async function savePayment(
     paid_at: paidOn,
   }, { onConflict: 'asaas_payment_id' })
   if (error) throw new Error(`payment save failed: ${error.message}`)
+}
+
+/** The stored copy keeps no card data (Asaas sends a card token on card payments). */
+function redact(body: WebhookBody): WebhookBody {
+  if (!body.payment || typeof body.payment !== 'object') return body
+  const payment = { ...(body.payment as Record<string, unknown>) }
+  delete payment.creditCard
+  return { ...body, payment }
 }

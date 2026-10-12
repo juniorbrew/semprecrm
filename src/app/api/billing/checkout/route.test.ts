@@ -131,6 +131,31 @@ describe('billing checkout', () => {
     expect(h.fake.tables.billing_payments).toMatchObject([{ status: 'RECEIVED' }])
   })
 
+  it('a suspended account cannot subscribe its way out', async () => {
+    h.fake.tables.accounts[0].plan_status = 'suspended'
+    expect((await checkout({ plan: 'pro', cycle: 'monthly' })).status).toBe(403)
+    expect(asaas.createSubscription).not.toHaveBeenCalled()
+  })
+
+  it('a concurrent checkout that already swapped the row wins; the loser cancels its own subscription', async () => {
+    await checkout({ plan: 'pro', cycle: 'monthly' })
+    // Another request replaces sub_1 between our read and our write.
+    vi.mocked(asaas.createSubscription).mockImplementationOnce(async () => {
+      h.fake.tables.account_billing[0].asaas_subscription_id = 'sub_other'
+      return { id: 'sub_mine', status: 'ACTIVE' }
+    })
+    expect((await checkout({ plan: 'basico', cycle: 'monthly' })).status).toBe(409)
+    expect(asaas.deleteSubscription).toHaveBeenCalledWith('sub_mine')
+    expect(asaas.deleteSubscription).not.toHaveBeenCalledWith('sub_other')
+    expect(h.fake.tables.account_billing[0].asaas_subscription_id).toBe('sub_other')
+  })
+
+  it('if saving fails after Asaas created the subscription, it is cancelled', async () => {
+    h.fake = makeFakeDb(h.fake.tables, { fail: (t, op) => (t === 'account_billing' && op === 'insert' ? { message: 'db down' } : null) })
+    expect((await checkout({ plan: 'pro', cycle: 'monthly' })).status).toBe(500)
+    expect(asaas.deleteSubscription).toHaveBeenCalledWith('sub_1')
+  })
+
   it('an active subscription cannot be started again', async () => {
     h.fake.tables.account_billing.push({ account_id: 'acct-1', asaas_subscription_id: 'sub_0', plan: 'pro', cycle: 'monthly', status: 'active' })
     expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(409)

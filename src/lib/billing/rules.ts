@@ -56,6 +56,7 @@ export function eventEffect(event: string): BillingEffect {
     case 'PAYMENT_OVERDUE':
     case 'PAYMENT_REFUNDED':
     case 'PAYMENT_CHARGEBACK_REQUESTED':
+    case 'PAYMENT_RECEIVED_IN_CASH_UNDONE':
       return 'past_due'
     default:
       return 'record'

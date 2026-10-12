@@ -14,10 +14,18 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => h.fake.db }))
 vi.mock('@/lib/billing/asaas', () => ({
+  AsaasError: class AsaasError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+    ) {
+      super(message)
+    }
+  },
   getPayment: vi.fn(async (id: string) => ({ id, ...h.apiPayment })),
 }))
 
-import { getPayment } from '@/lib/billing/asaas'
+import { AsaasError, getPayment } from '@/lib/billing/asaas'
 import { POST } from './route'
 
 const TOKEN = 'whk_test_token_123'
@@ -63,7 +71,10 @@ describe('asaas webhook', () => {
     const res = await send(evt('evt_1', 'PAYMENT_RECEIVED'))
     expect(res.status).toBe(200)
     expect(h.fake.rpcCalls).toEqual([
-      { fn: 'billing_activate', args: { p_account_id: 'acct-1', p_period_end: '2026-11-18T02:59:59.000Z' } },
+      {
+        fn: 'billing_activate',
+        args: { p_account_id: 'acct-1', p_subscription_id: 'sub_1', p_period_end: '2026-11-18T02:59:59.000Z' },
+      },
     ])
     expect(h.fake.tables.billing_payments).toMatchObject([
       { asaas_payment_id: 'pay_1', account_id: 'acct-1', status: 'RECEIVED', value_cents: 8990, paid_at: '2026-10-12' },
@@ -79,11 +90,29 @@ describe('asaas webhook', () => {
     expect(h.fake.tables.billing_payments).toMatchObject([{ status: 'PENDING' }])
   })
 
-  it('refuses a payment that belongs to another subscription', async () => {
+  it('refuses a payment of another subscription, stored as an error without blocking the queue', async () => {
     h.apiPayment = { ...h.apiPayment, subscription: 'sub_other' }
-    expect((await send(evt('evt_1', 'PAYMENT_RECEIVED'))).status).toBe(500)
+    expect((await send(evt('evt_1', 'PAYMENT_RECEIVED'))).status).toBe(200)
     expect(h.fake.rpcCalls).toEqual([])
     expect(h.fake.tables.billing_webhook_events[0].error).toMatch(/does not belong/)
+    expect(h.fake.tables.billing_webhook_events[0].processed_at).toBeTruthy()
+  })
+
+  it('a transient API failure answers 500 so Asaas retries; a missing payment does not', async () => {
+    vi.mocked(getPayment).mockRejectedValueOnce(new AsaasError('Asaas GET /payments failed (503)', 503))
+    expect((await send(evt('evt_1', 'PAYMENT_RECEIVED'))).status).toBe(500)
+    expect(h.fake.tables.billing_webhook_events[0].processed_at).toBeFalsy()
+
+    vi.mocked(getPayment).mockRejectedValueOnce(new AsaasError('Asaas GET /payments failed (404)', 404))
+    expect((await send(evt('evt_2', 'PAYMENT_RECEIVED'))).status).toBe(200)
+    expect(h.fake.rpcCalls).toEqual([])
+  })
+
+  it('record-only events do not call the API, and stored payloads drop card data', async () => {
+    const body = { ...evt('evt_1', 'PAYMENT_CREATED'), payment: { id: 'pay_1', subscription: 'sub_1', creditCard: { creditCardToken: 'tok_secret' } } }
+    expect((await send(body)).status).toBe(200)
+    expect(getPayment).not.toHaveBeenCalled()
+    expect(JSON.stringify(h.fake.tables.billing_webhook_events[0].payload)).not.toMatch(/tok_secret/)
   })
 
   it('an event already processed does nothing the second time', async () => {
@@ -100,7 +129,7 @@ describe('asaas webhook', () => {
   it('overdue marks past_due, unless the API says it is paid again', async () => {
     h.apiPayment = { ...h.apiPayment, status: 'OVERDUE' }
     await send(evt('evt_1', 'PAYMENT_OVERDUE'))
-    expect(h.fake.rpcCalls).toEqual([{ fn: 'billing_mark_past_due', args: { p_account_id: 'acct-1' } }])
+    expect(h.fake.rpcCalls).toEqual([{ fn: 'billing_mark_past_due', args: { p_account_id: 'acct-1', p_subscription_id: 'sub_1' } }])
 
     h.apiPayment = { ...h.apiPayment, status: 'RECEIVED' }
     await send(evt('evt_2', 'PAYMENT_OVERDUE'))

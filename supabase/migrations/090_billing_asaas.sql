@@ -80,10 +80,12 @@ REVOKE ALL ON TABLE public.account_billing, public.billing_payments, public.bill
 GRANT SELECT ON TABLE public.account_billing, public.billing_payments TO authenticated;
 GRANT ALL ON TABLE public.account_billing, public.billing_payments, public.billing_webhook_events TO service_role;
 
--- A confirmed payment: the account gets the plan/version it subscribed to,
--- active until p_period_end (never shortened by an older payment).
-CREATE OR REPLACE FUNCTION public.billing_activate(p_account_id UUID, p_period_end TIMESTAMPTZ)
-RETURNS VOID
+-- A confirmed payment of the account's CURRENT subscription: the account
+-- gets the plan/version it subscribed to, active until p_period_end (never
+-- shortened by an older payment). A late payment of an older charge does
+-- not lift past_due. A platform suspension is never lifted by paying.
+CREATE OR REPLACE FUNCTION public.billing_activate(p_account_id UUID, p_subscription_id TEXT, p_period_end TIMESTAMPTZ)
+RETURNS BOOLEAN
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
@@ -91,9 +93,12 @@ DECLARE
   b public.account_billing%ROWTYPE;
   v_end TIMESTAMPTZ;
 BEGIN
-  SELECT * INTO b FROM public.account_billing WHERE account_id = p_account_id FOR UPDATE;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'no billing row for account %', p_account_id USING ERRCODE = 'P0002';
+  SELECT * INTO b FROM public.account_billing
+   WHERE account_id = p_account_id AND asaas_subscription_id = p_subscription_id
+   FOR UPDATE;
+  IF NOT FOUND THEN RETURN FALSE; END IF; -- replaced meanwhile
+  IF b.status = 'past_due' AND p_period_end <= coalesce(b.current_period_end, '-infinity') THEN
+    RETURN FALSE; -- an older charge: it does not cover the overdue one
   END IF;
   v_end := greatest(coalesce(b.current_period_end, p_period_end), p_period_end);
   UPDATE public.account_billing
@@ -102,29 +107,57 @@ BEGIN
   UPDATE public.accounts
      SET plan = b.plan, plan_version_id = b.plan_version_id,
          plan_status = 'active', plan_expires_at = v_end
-   WHERE id = p_account_id;
+   WHERE id = p_account_id AND plan_status <> 'suspended';
+  RETURN TRUE;
 END;
 $$;
 
--- Overdue / refunded / chargeback: the account turns past_due (read-only in
--- the app). Only while this subscription is the account's current one.
-CREATE OR REPLACE FUNCTION public.billing_mark_past_due(p_account_id UUID)
-RETURNS VOID
+-- Overdue / refunded / chargeback of the current subscription: the account
+-- turns past_due (read-only in the app). Only an active account changes:
+-- trial, suspended and canceled stay what they are.
+CREATE OR REPLACE FUNCTION public.billing_mark_past_due(p_account_id UUID, p_subscription_id TEXT)
+RETURNS BOOLEAN
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
 BEGIN
   UPDATE public.account_billing SET status = 'past_due'
-   WHERE account_id = p_account_id AND status IN ('active', 'past_due');
-  IF FOUND THEN
-    UPDATE public.accounts SET plan_status = 'past_due' WHERE id = p_account_id;
-  END IF;
+   WHERE account_id = p_account_id AND asaas_subscription_id = p_subscription_id
+     AND status IN ('active', 'past_due');
+  IF NOT FOUND THEN RETURN FALSE; END IF;
+  UPDATE public.accounts SET plan_status = 'past_due' WHERE id = p_account_id AND plan_status = 'active';
+  RETURN TRUE;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.billing_activate(UUID, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.billing_mark_past_due(UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.billing_activate(UUID, TIMESTAMPTZ) TO service_role;
-GRANT EXECUTE ON FUNCTION public.billing_mark_past_due(UUID) TO service_role;
+-- Safety net (cron): a paid period that ended without a new confirmed
+-- payment (subscription deleted in Asaas, webhook queue paused) turns
+-- past_due. current_period_end already includes the grace days.
+CREATE OR REPLACE FUNCTION public.billing_expire_lapsed()
+RETURNS INTEGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_count INTEGER;
+BEGIN
+  WITH lapsed AS (
+    UPDATE public.account_billing SET status = 'past_due'
+     WHERE status = 'active' AND current_period_end < now()
+    RETURNING account_id
+  )
+  UPDATE public.accounts a SET plan_status = 'past_due'
+    FROM lapsed WHERE a.id = lapsed.account_id AND a.plan_status = 'active';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.billing_activate(UUID, TEXT, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.billing_mark_past_due(UUID, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.billing_expire_lapsed() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.billing_activate(UUID, TEXT, TIMESTAMPTZ) TO service_role;
+GRANT EXECUTE ON FUNCTION public.billing_mark_past_due(UUID, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.billing_expire_lapsed() TO service_role;
 
 NOTIFY pgrst, 'reload schema';

@@ -43,7 +43,13 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
     cache: 'no-store',
   })
   const text = await res.text()
-  const data = text ? (JSON.parse(text) as unknown) : null
+  let data: unknown = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    // An HTML error page from a proxy: keep the status, drop the body.
+    if (res.ok) throw new AsaasError(`Asaas ${init.method ?? 'GET'} ${path.split('?')[0]} returned non-JSON`, 502)
+  }
   if (!res.ok) {
     // Asaas answers { errors: [{ code, description }] }; keep the
     // descriptions (no secrets in them), never the request.

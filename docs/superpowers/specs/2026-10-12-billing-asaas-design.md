@@ -25,6 +25,9 @@ Só planos com preço no catálogo (`platform_plan_versions.price_monthly_cents`
 1. O proprietário escolhe plano e ciclo → `POST /api/billing/checkout`.
 2. O servidor garante o cliente no Asaas (`POST /v3/customers`, CPF/CNPJ do cadastro, `externalReference` = id da conta) e cria a assinatura (`POST /v3/subscriptions`, `billingType: UNDEFINED`, `cycle: MONTHLY|YEARLY`, primeiro vencimento hoje, `externalReference` = id da conta).
 3. Devolve o link da primeira cobrança (`invoiceUrl`); o cliente paga no Asaas.
+   - Mesmo plano e ciclo ainda pendentes → devolve a mesma cobrança. Outra escolha → cria a assinatura nova, troca a linha com *compare-and-swap* e só então cancela a antiga. Quem perde uma corrida, ou falha depois de criar, cancela a própria assinatura.
+   - Cobrança pendente já paga (webhook ainda não chegou) → 409; nunca se cancela uma assinatura paga.
+   - Conta suspensa pela plataforma não assina (403).
 4. O Asaas avisa por webhook (`POST /api/billing/asaas/webhook`, token no cabeçalho `asaas-access-token`).
 
 ## Webhooks
@@ -38,10 +41,18 @@ Só planos com preço no catálogo (`platform_plan_versions.price_monthly_cents`
 |---|---|
 | `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED` | `plan` e versão da assinatura, `plan_status = active`, vencimento = vencimento da cobrança + 1 mês ou 1 ano + 5 dias de tolerância |
 | `PAYMENT_OVERDUE` | `plan_status = past_due` |
-| `PAYMENT_REFUNDED`, `PAYMENT_CHARGEBACK_REQUESTED` | `plan_status = past_due` |
-| demais | só registro |
+| `PAYMENT_REFUNDED`, `PAYMENT_CHARGEBACK_REQUESTED`, `PAYMENT_RECEIVED_IN_CASH_UNDONE` | `plan_status = past_due` |
+| demais | só registro (sem consultar a API) |
 
-- Responde 200 depois de gravar; erro ao aplicar fica registrado no evento e responde 500 para o Asaas tentar de novo.
+- Os efeitos valem só para a assinatura **atual** da conta (`billing_activate` / `billing_mark_past_due` recebem o id da assinatura).
+- Pagamento atrasado de uma cobrança antiga não tira a conta de `past_due`: só um pagamento que estende o período.
+- Suspensão pela plataforma nunca é desfeita por pagamento; `past_due` só sai de `active`.
+- Erro transitório (timeout, 5xx) → 500 para o Asaas tentar de novo. Erro que se repetiria sempre (cobrança inexistente, de outra assinatura) → registrado e 200, porque o Asaas pausa a fila inteira depois de falhas seguidas.
+- O corpo gravado não guarda dados de cartão (`payment.creditCard`).
+
+## Rede de segurança (cron)
+
+`GET /api/billing/cron` (de hora em hora, `scripts/cron-tick.mjs`) chama `billing_expire_lapsed()`: assinatura `active` cujo período (com tolerância) acabou sem pagamento novo vira `past_due`. Cobre assinatura apagada no Asaas e fila de webhook pausada. Contas sem assinatura no Asaas (ativadas à mão pela plataforma) não são afetadas.
 
 ## Segurança
 
