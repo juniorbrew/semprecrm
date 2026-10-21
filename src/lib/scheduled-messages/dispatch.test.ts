@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/automations/meta-send', () => ({ engineSendText: vi.fn() }))
 vi.mock('@/lib/push/send', () => ({ isPushConfigured: () => false, sendPushToUsers: vi.fn() }))
+const pauseSpy = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('@/lib/flows/pause-on-agent', () => ({ pauseActiveFlowRuns: pauseSpy }))
 vi.mock('@/lib/push/notify', () => ({ conversationUrl: (id: string) => `/inbox?c=${id}` }))
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -116,6 +118,18 @@ describe('runScheduledDispatch', () => {
     expect(send.mock.calls[0][0]).toMatchObject({ created_by: 'u1', content_text: 'Olá! Seu pedido saiu.' })
     expect(t.scheduled_messages[0]).toMatchObject({ status: 'sent', wa_message_id: 'wamid.s1', sent_at: NOW.toISOString() })
     expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('pauses the contact\'s active flow runs after a scheduled agent message goes out, and only then', async () => {
+    const { db } = makeDb({ scheduled: [sched()] })
+    await runScheduledDispatch(db, { now: NOW, send: okSend(), findOtherActive: noOther })
+    expect(pauseSpy).toHaveBeenCalledTimes(1)
+    expect(pauseSpy).toHaveBeenCalledWith('a1', 'k1', db)
+
+    pauseSpy.mockClear()
+    const blocked = makeDb({ scheduled: [sched()], contacts: [{ id: 'k1', account_id: 'a1', anonymized_at: 'x' }] })
+    await runScheduledDispatch(blocked.db, { now: NOW, send: okSend(), notifyFailure: notify, findOtherActive: noOther })
+    expect(pauseSpy).not.toHaveBeenCalled()
   })
 
   it('leaves future messages alone', async () => {

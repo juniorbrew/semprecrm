@@ -44,13 +44,17 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponse: () => new Response(null, { status: 429 }),
   RATE_LIMITS: { send: {} },
 }))
+const flowPauses = vi.hoisted(() => [] as Record<string, unknown>[])
 vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
       // The WhatsApp token is read with the service role (migration 076).
       if (table === 'whatsapp_config') return builder(table)
       const b: Record<string, unknown> = {
-        update: () => b,
+        update: (patch: Record<string, unknown>) => {
+          if (table === 'flow_runs') flowPauses.push(patch)
+          return b
+        },
         eq: () => b,
         then: (onF: (v: unknown) => unknown) =>
           Promise.resolve({ data: null, error: null }).then(onF),
@@ -286,6 +290,18 @@ describe('POST /api/whatsapp/send — QR conversations', () => {
     const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
     expect(res.status).toBe(503)
     expect(await res.json()).toMatchObject({ code: 'gateway_unconfigured' })
+  })
+})
+
+describe('POST /api/whatsapp/send — flow runs yield to the agent', () => {
+  it('pauses the contact\'s active flow runs after a manual send (QR and official)', async () => {
+    flowPauses.length = 0
+    fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'BAILEYS-9' }))
+    await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    h.state.conversation.channel = 'official'
+    await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(flowPauses).toHaveLength(2)
+    expect(flowPauses[0]).toMatchObject({ status: 'paused_by_agent', end_reason: 'agent_replied' })
   })
 })
 

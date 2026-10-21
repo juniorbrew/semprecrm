@@ -17,6 +17,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasMinRole, isAccountRole } from '@/lib/auth/roles'
 import { findOtherActiveConversation } from '@/lib/conversations/find-by-contact'
 import { engineSendText } from '@/lib/automations/meta-send'
+import { pauseActiveFlowRuns } from '@/lib/flows/pause-on-agent'
 import { conversationUrl } from '@/lib/push/notify'
 import { isPushConfigured, sendPushToUsers } from '@/lib/push/send'
 import { isWithinServiceWindow } from './schedule'
@@ -164,6 +165,8 @@ async function dispatchRow(db: SupabaseClient, row: ScheduledRow, now: Date, dep
   try {
     await precheck(db, row, now, deps.findOtherActive ?? findOtherActiveConversation)
     const sent = await send(row)
+    // It is an agent's message: a running bot flow must yield, like on a manual send.
+    await pauseActiveFlowRuns(row.account_id, row.contact_id, db)
     await writeOutcome(db, row.id, {
       status: 'sent',
       sent_at: stamp,

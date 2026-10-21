@@ -106,6 +106,7 @@ import { ContactAvatar, avatarInitial } from "./contact-avatar";
 import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filters";
 import { ConversationSnooze } from "./conversation-snooze";
 import { ScheduledOverview } from "./scheduled-overview";
+import { SCHEDULED_COPY } from "./scheduled-copy";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -1117,7 +1118,8 @@ export function ConversationList({
       .eq("id", conversationId)
       .maybeSingle();
     if (data) onSelectRef.current(data as Conversation);
-  }, []);
+    else toast.error(SCHEDULED_COPY[language].openFailed);
+  }, [language]);
 
   const handleSelect = useCallback((conv: Conversation) => {
     setCursorOverride(null);

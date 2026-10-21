@@ -43,6 +43,7 @@ export interface ScheduledCopy {
   filterMine: string;
   openConversation: string;
   unknownContact: string;
+  openFailed: string;
 }
 
 export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
@@ -99,6 +100,7 @@ export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
     filterMine: "Minhas",
     openConversation: "Abrir conversa",
     unknownContact: "Contato",
+    openFailed: "Não foi possível abrir a conversa. Tente de novo.",
   },
   "en-US": {
     schedule: "Schedule",
@@ -153,5 +155,6 @@ export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
     filterMine: "Mine",
     openConversation: "Open conversation",
     unknownContact: "Contact",
+    openFailed: "Could not open the conversation. Try again.",
   },
 };

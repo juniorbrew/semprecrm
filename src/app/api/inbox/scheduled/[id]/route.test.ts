@@ -145,6 +145,32 @@ describe('re-queuing a failed row', () => {
   })
 })
 
+describe('a stuck `sending` row (swept by the claim) cannot be re-sent without confirmation', () => {
+  it('POST /send without confirm: the claim parks it as maybe_sent, nothing is sent, 409 confirm_required', async () => {
+    h.ctx = { userId: 'u-author', role: 'agent', accountId: 'a1' }
+    h.rows = [row({ status: 'sending', error_code: null })]
+    // The SQL claim sweeps the stale row to failed/maybe_sent and (fixed) does NOT claim it again.
+    h.dispatch.mockImplementationOnce(async () => {
+      Object.assign(h.rows[0], { status: 'failed', error_code: 'maybe_sent' })
+      return { claimed: 0, sent: 0, failed: 0 }
+    })
+    const res = await SEND(json({}), params)
+    expect(res.status).toBe(409)
+    expect((await res.json()).code).toBe('confirm_required')
+    expect(h.rows[0]).toMatchObject({ status: 'failed', error_code: 'maybe_sent' })
+  })
+
+  it('with confirm the guard is lifted before the claim', async () => {
+    h.ctx = { userId: 'u-author', role: 'agent', accountId: 'a1' }
+    h.rows = [row({ status: 'failed', error_code: 'maybe_sent' })]
+    h.dispatch.mockImplementationOnce(async () => {
+      expect(h.rows[0].error_code).toBeNull() // the claim would skip a maybe_sent row
+      return { claimed: 1, sent: 1, failed: 0 }
+    })
+    expect((await SEND(json({ confirm: true }), params)).status).toBe(200)
+  })
+})
+
 describe('maybe_sent rows need an explicit confirmation', () => {
   beforeEach(() => {
     h.ctx = { userId: 'u-author', role: 'agent', accountId: 'a1' }

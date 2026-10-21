@@ -109,7 +109,11 @@ BEGIN
     SELECT s.id FROM public.scheduled_messages s
      WHERE CASE WHEN p_id IS NULL
                 THEN s.status = 'pending' AND s.scheduled_for <= p_now
-                ELSE s.id = p_id AND s.status IN ('pending', 'failed') END
+                -- "enviar agora"/retry: never a row the sweep just parked as maybe_sent
+                -- (that one needs the API's explicit confirmation, which clears the code first)
+                ELSE s.id = p_id
+                     AND (s.status = 'pending'
+                          OR (s.status = 'failed' AND s.error_code IS DISTINCT FROM 'maybe_sent')) END
      ORDER BY s.scheduled_for
      LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 25), 200))
      FOR UPDATE SKIP LOCKED

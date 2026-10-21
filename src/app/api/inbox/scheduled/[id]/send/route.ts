@@ -52,8 +52,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
   }
 
+  if (owned.error_code === MAYBE_SENT) {
+    // Confirmed: lift the guard so the claim may take it (the claim itself never takes maybe_sent rows).
+    await admin
+      .from('scheduled_messages')
+      .update({ error_code: null })
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .eq('status', 'failed')
+      .eq('error_code', MAYBE_SENT)
+  }
+
   const result = await runScheduledDispatch(admin, { id })
   if (result.claimed === 0) {
+    // The claim's sweep may have just parked a stuck `sending` row: same confirmation applies.
+    const { data: after } = await admin
+      .from('scheduled_messages')
+      .select('error_code')
+      .eq('id', id)
+      .maybeSingle()
+    if ((after as { error_code?: string | null } | null)?.error_code === MAYBE_SENT) {
+      return NextResponse.json(
+        {
+          error: 'Esta mensagem pode já ter sido enviada. Confira a conversa e confirme para tentar de novo.',
+          code: 'confirm_required',
+        },
+        { status: 409 },
+      )
+    }
     return NextResponse.json(
       { error: 'Esta mensagem já está sendo enviada ou foi enviada.', code: 'not_claimable' },
       { status: 409 },
