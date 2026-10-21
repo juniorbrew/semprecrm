@@ -1,5 +1,6 @@
 import {
   Bell,
+  Braces,
   Building2,
   CalendarDays,
   CheckSquare,
@@ -49,6 +50,7 @@ export const SETTINGS_SECTIONS = [
   'inbox',
   'support',
   'integrations',
+  'api',
   'audit',
   'branding',
   'company',
@@ -89,6 +91,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   inbox: { id: 'inbox', label: 'Atendimento', icon: Timer, group: 'workspace', adminOnly: true },
   support: { id: 'support', label: 'Suporte', icon: LifeBuoy, group: 'workspace', adminOnly: true },
   integrations: { id: 'integrations', label: 'Integrações', icon: Webhook, group: 'workspace', adminOnly: true },
+  api: { id: 'api', label: 'API e Webhooks', icon: Braces, group: 'workspace', adminOnly: true },
   audit: { id: 'audit', label: 'Auditoria', icon: ScrollText, group: 'workspace', adminOnly: true },
   branding: { id: 'branding', label: 'Marca', icon: Paintbrush, group: 'workspace', adminOnly: true },
   company: { id: 'company', label: 'Empresa', icon: Building2, group: 'workspace', adminOnly: true },

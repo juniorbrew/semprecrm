@@ -45,7 +45,7 @@ interface SendTextArgs {
   contactId: string
   text: string
   /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
-  origin?: 'automation' | 'ai' | 'csat'
+  origin?: 'automation' | 'ai' | 'csat' | 'api'
   /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
   skipPacing?: boolean
 }

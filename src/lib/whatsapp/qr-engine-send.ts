@@ -107,7 +107,7 @@ export interface EngineQrSendInput {
   /** Conversation-list preview; defaults to `text`. */
   preview?: string
   /** Which engine sent it — drives the bubble's sender label (migration 059). */
-  origin?: 'automation' | 'flow' | 'ai' | 'csat'
+  origin?: 'automation' | 'flow' | 'ai' | 'csat' | 'api'
 }
 
 /**

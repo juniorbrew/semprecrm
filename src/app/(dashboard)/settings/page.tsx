@@ -18,6 +18,7 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { TaskStatusesSettings } from '@/components/settings/task-statuses-settings';
 import { QuickRepliesSettings } from '@/components/settings/quick-replies-settings';
 import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings';
+import { ApiWebhooksSettings } from '@/components/settings/api-webhooks-settings';
 import { InboxSettings } from '@/components/settings/inbox-settings';
 import { SupportSettings } from '@/components/settings/support-settings';
 import { AuditLogSettings } from '@/components/settings/audit-log-settings';
@@ -79,6 +80,7 @@ export default function SettingsPage() {
     inbox: <InboxSettings />,
     support: <SupportSettings />,
     integrations: <LeadSourcesSettings />,
+    api: <ApiWebhooksSettings />,
     audit: <AuditLogSettings />,
     branding: <BrandingSettings />,
     company: <CompanySettings />,

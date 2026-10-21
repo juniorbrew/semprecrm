@@ -9,6 +9,7 @@
 
 import { DICT_AI } from './ai';
 import { DICT_API } from './api';
+import { DICT_API_WEBHOOKS } from './api-webhooks';
 import { DICT_AUTH } from './auth';
 import { DICT_COMPANIES } from './companies';
 import { DICT_CONTACTS } from './contacts';
@@ -20,6 +21,7 @@ import { DICT_SETTINGS } from './settings';
 import { DICT_PLATFORM } from './platform';
 
 export const EN_TO_PT_AREAS: Record<string, string> = {
+  ...DICT_API_WEBHOOKS,
   ...DICT_AI,
   ...DICT_API,
   ...DICT_AUTH,
