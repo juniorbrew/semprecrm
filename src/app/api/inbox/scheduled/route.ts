@@ -15,7 +15,11 @@ export const dynamic = 'force-dynamic'
 const COLUMNS =
   'id, conversation_id, created_by, content_text, scheduled_for, timezone, status, error_code, error_text, attempts, created_at'
 
-/** Open scheduled messages of one conversation (pending / sending / failed) — RLS: members of the account. */
+/**
+ * Open scheduled messages (pending / sending / failed) — RLS: members of the account.
+ * With `conversation_id`: that thread's panel. Without: the account-wide
+ * "Agendadas" list (`mine=1` narrows it to the caller's own).
+ */
 export async function GET(request: Request) {
   let ctx
   try {
@@ -23,8 +27,34 @@ export async function GET(request: Request) {
   } catch (err) {
     return toErrorResponse(err)
   }
-  const conversationId = new URL(request.url).searchParams.get('conversation_id')
-  if (!conversationId) return NextResponse.json({ error: 'conversation_id is required' }, { status: 400 })
+  const params = new URL(request.url).searchParams
+  const conversationId = params.get('conversation_id')
+
+  if (!conversationId) {
+    let q = ctx.supabase
+      .from('scheduled_messages')
+      .select(`${COLUMNS}, contact_id, contact:contacts(name)`)
+      .eq('account_id', ctx.accountId)
+      .neq('status', 'sent')
+      .order('scheduled_for', { ascending: true })
+      .limit(SCHEDULE_ACCOUNT_CAP)
+    if (params.get('mine') === '1') q = q.eq('created_by', ctx.userId)
+    const { data, error } = await q
+    if (error) {
+      if (/42P01|PGRST205|does not exist|schema cache/i.test(`${error.code ?? ''} ${error.message}`)) {
+        return NextResponse.json({ items: [] })
+      }
+      console.error('[scheduled] account list failed:', error.message)
+      return NextResponse.json({ error: 'Não foi possível carregar as mensagens agendadas.' }, { status: 500 })
+    }
+    const items = ((data ?? []) as unknown as Array<Record<string, unknown> & { contact: { name?: string | null } | { name?: string | null }[] | null }>).map(
+      ({ contact, ...row }) => ({
+        ...row,
+        contact_name: (Array.isArray(contact) ? contact[0] : contact)?.name ?? null,
+      }),
+    )
+    return NextResponse.json({ items })
+  }
 
   const { data, error } = await ctx.supabase
     .from('scheduled_messages')

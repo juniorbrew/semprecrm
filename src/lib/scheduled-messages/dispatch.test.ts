@@ -168,6 +168,49 @@ describe('runScheduledDispatch', () => {
     expect((await runScheduledDispatch(db, { now: NOW, send, notifyFailure: notify })).claimed).toBe(0)
   })
 
+  it('a failed outcome write is retried; if it never lands the send still counts and nothing is re-sent', async () => {
+    const { db, t } = makeDb({ scheduled: [sched()] })
+    let failures = 2
+    const real = db.from.bind(db)
+    ;(db as unknown as { from: unknown }).from = (table: string) => {
+      const b = real(table) as unknown as Record<string, (...a: unknown[]) => unknown>
+      if (table !== 'scheduled_messages') return b
+      const update = b.update
+      b.update = (p: unknown) => {
+        const q = update(p) as Record<string, unknown>
+        if ((p as R).status === 'sent' && failures > 0) {
+          failures--
+          return { eq: () => ({ eq: async () => ({ error: { message: 'db down' } }) }) }
+        }
+        return q
+      }
+      return b
+    }
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const send = okSend()
+    const out = await runScheduledDispatch(db, { now: NOW, send, findOtherActive: noOther })
+    expect(out.sent).toBe(1)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(t.scheduled_messages[0].status).toBe('sent') // third try landed
+
+    // Never lands: the row stays `sending` (the SQL sweep parks it as maybe_sent), and no tick re-claims it.
+    const stuck = makeDb({ scheduled: [sched()] })
+    const realStuck = stuck.db.from.bind(stuck.db)
+    ;(stuck.db as unknown as { from: unknown }).from = (table: string) => {
+      const b = realStuck(table) as unknown as Record<string, (...a: unknown[]) => unknown>
+      if (table === 'scheduled_messages') {
+        b.update = () => ({ eq: () => ({ eq: async () => ({ error: { message: 'db down' } }) }) })
+      }
+      return b
+    }
+    const send2 = okSend()
+    await runScheduledDispatch(stuck.db, { now: NOW, send: send2, findOtherActive: noOther })
+    await runScheduledDispatch(stuck.db, { now: NOW, send: send2, findOtherActive: noOther })
+    expect(send2).toHaveBeenCalledTimes(1)
+    expect(stuck.t.scheduled_messages[0].status).toBe('sending')
+    spy.mockRestore()
+  })
+
   it('a push failure never turns into a dispatch failure', async () => {
     const { db } = makeDb({ scheduled: [sched()] })
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})

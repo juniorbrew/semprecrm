@@ -40,12 +40,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(canAct = true, onRestoreText = vi.fn()) {
+function setup(canAct = true, onRestoreText = vi.fn(), who: { id: string; admin: boolean } = { id: "u1", admin: false }) {
   render(
     <ScheduledMessagesPanel
       conversationId="c1"
       language="pt-BR"
       canAct={canAct}
+      currentUserId={who.id}
+      isAdmin={who.admin}
       profiles={[{ user_id: "u1", full_name: "Ana" }]}
       refreshKey={0}
       onRestoreText={onRestoreText}
@@ -105,6 +107,31 @@ describe("ScheduledMessagesPanel", () => {
     await screen.findByText("Seu boleto vence amanhã.");
     expect(screen.queryByText("Cancelar envio")).toBeNull();
     expect(screen.queryByText("Enviar agora")).toBeNull();
+  });
+
+  it("another agent sees the message but no actions; an admin does", async () => {
+    setup(true, vi.fn(), { id: "u2", admin: false });
+    await screen.findByText("Seu boleto vence amanhã.");
+    expect(screen.queryByText("Cancelar envio")).toBeNull();
+    expect(screen.getByText("Só quem agendou (ou um administrador) pode alterar")).toBeTruthy();
+    cleanup();
+    setup(true, vi.fn(), { id: "u2", admin: true });
+    expect(await screen.findByText("Cancelar envio")).toBeTruthy();
+  });
+
+  it("a possibly-sent message asks for confirmation before retrying, and sends confirm:true", async () => {
+    listed = [item({ status: "failed", error_code: "maybe_sent", error_text: "Pode ter sido enviada — confira a conversa." })];
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    setup();
+    expect(await screen.findByText("Pode ter sido enviada")).toBeTruthy();
+    fireEvent.click(screen.getByText("Tentar de novo"));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls.some(([, i]) => i?.method === "POST")).toBe(false);
+    fireEvent.click(screen.getByText("Tentar de novo"));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u, i]) => String(u).endsWith("/s1/send") && i?.body === '{"confirm":true}')).toBe(true),
+    );
+    confirmSpy.mockRestore();
   });
 
   it("editing validates the new time before calling the server", async () => {

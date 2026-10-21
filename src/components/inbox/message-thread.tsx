@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { notifyPushEvent } from "@/lib/push/client";
 import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
+import { hasMinRole } from "@/lib/auth/roles";
 import { useLanguage } from "@/hooks/use-language";
 import type { Language } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -2628,6 +2629,8 @@ export function MessageThread({
         conversationId={conversation.id}
         language={language}
         canAct={canWriteHere && !contact?.anonymized_at}
+        currentUserId={user?.id ?? null}
+        isAdmin={!!accountRole && hasMinRole(accountRole, "admin")}
         profiles={profiles}
         refreshKey={scheduledRefresh}
         onRestoreText={(text) => setRestoreDraft({ key: Date.now(), text })}

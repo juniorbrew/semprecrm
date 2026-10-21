@@ -137,41 +137,55 @@ async function pushFailure(db: SupabaseClient, row: ScheduledRow, reason: string
   })
 }
 
+const WRITE_TRIES = 3
+
+/**
+ * Writes the outcome of a claimed row, checking the result and retrying. If
+ * it never lands the row stays `sending`; the SQL sweep then parks it as
+ * `maybe_sent`, which only an explicit, confirmed retry can re-send. Never
+ * throws: the provider call already happened.
+ */
+async function writeOutcome(db: SupabaseClient, id: string, patch: Record<string, unknown>): Promise<boolean> {
+  for (let i = 0; i < WRITE_TRIES; i++) {
+    try {
+      const { error } = await db.from('scheduled_messages').update(patch).eq('id', id).eq('status', 'sending')
+      if (!error) return true
+      console.error('[scheduled] outcome write failed:', error.message)
+    } catch (err) {
+      console.error('[scheduled] outcome write threw:', err instanceof Error ? err.message : err)
+    }
+  }
+  return false
+}
+
 async function dispatchRow(db: SupabaseClient, row: ScheduledRow, now: Date, deps: DispatchDeps): Promise<boolean> {
   const send = deps.send ?? defaultSend
   const stamp = now.toISOString()
   try {
     await precheck(db, row, now, deps.findOtherActive ?? findOtherActiveConversation)
     const sent = await send(row)
-    await db
-      .from('scheduled_messages')
-      .update({ status: 'sent', sent_at: stamp, wa_message_id: sent.whatsapp_message_id, updated_at: stamp })
-      .eq('id', row.id)
-      .eq('status', 'sending')
+    await writeOutcome(db, row.id, {
+      status: 'sent',
+      sent_at: stamp,
+      wa_message_id: sent.whatsapp_message_id,
+      updated_at: stamp,
+    })
     return true
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err)
     if (!(err instanceof Reject) && ALREADY_SENT_RE.test(raw)) {
-      await db
-        .from('scheduled_messages')
-        .update({
-          status: 'sent',
-          sent_at: stamp,
-          error_code: 'not_saved',
-          error_text: 'Enviada, mas não foi gravada na conversa.',
-          updated_at: stamp,
-        })
-        .eq('id', row.id)
-        .eq('status', 'sending')
+      await writeOutcome(db, row.id, {
+        status: 'sent',
+        sent_at: stamp,
+        error_code: 'not_saved',
+        error_text: 'Enviada, mas não foi gravada na conversa.',
+        updated_at: stamp,
+      })
       return true
     }
     const code = err instanceof Reject ? err.code : 'send_failed'
     const reason = err instanceof Reject ? err.message : `Falha ao enviar: ${raw}`.slice(0, 480)
-    await db
-      .from('scheduled_messages')
-      .update({ status: 'failed', error_code: code, error_text: reason, updated_at: stamp })
-      .eq('id', row.id)
-      .eq('status', 'sending')
+    await writeOutcome(db, row.id, { status: 'failed', error_code: code, error_text: reason, updated_at: stamp })
     try {
       await (deps.notifyFailure ?? ((r, why) => pushFailure(db, r, why)))(row, reason)
     } catch (pushErr) {

@@ -32,6 +32,17 @@ export interface ScheduledCopy {
   sentNow: string;
   genericError: string;
   timezoneNote: (tz: string) => string;
+  maybeSent: string;
+  confirmMaybeSent: string;
+  notAuthor: string;
+  overviewButton: string;
+  overviewTitle: string;
+  overviewBadge: (open: number, failed: number) => string;
+  overviewEmpty: string;
+  filterAll: string;
+  filterMine: string;
+  openConversation: string;
+  unknownContact: string;
 }
 
 export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
@@ -75,6 +86,19 @@ export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
     sentNow: "Mensagem enviada",
     genericError: "Não foi possível concluir. Tente de novo.",
     timezoneNote: (tz) => `Horário de ${tz}`,
+    maybeSent: "Pode ter sido enviada",
+    confirmMaybeSent:
+      "Esta mensagem pode já ter sido enviada ao cliente. Confira a conversa antes de continuar. Tentar de novo mesmo assim?",
+    notAuthor: "Só quem agendou (ou um administrador) pode alterar",
+    overviewButton: "Agendadas",
+    overviewTitle: "Mensagens agendadas",
+    overviewBadge: (open, failed) =>
+      failed > 0 ? `${open} agendadas, ${failed} não enviadas` : `${open} agendadas`,
+    overviewEmpty: "Nenhuma mensagem agendada. Use Agendar ao lado do botão Enviar.",
+    filterAll: "Todas",
+    filterMine: "Minhas",
+    openConversation: "Abrir conversa",
+    unknownContact: "Contato",
   },
   "en-US": {
     schedule: "Schedule",
@@ -116,5 +140,18 @@ export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
     sentNow: "Message sent",
     genericError: "Could not finish. Try again.",
     timezoneNote: (tz) => `${tz} time`,
+    maybeSent: "May have been sent",
+    confirmMaybeSent:
+      "This message may already have been sent to the customer. Check the conversation first. Try again anyway?",
+    notAuthor: "Only the author (or an admin) can change this",
+    overviewButton: "Scheduled",
+    overviewTitle: "Scheduled messages",
+    overviewBadge: (open, failed) =>
+      failed > 0 ? `${open} scheduled, ${failed} not sent` : `${open} scheduled`,
+    overviewEmpty: "No scheduled messages. Use Schedule next to the Send button.",
+    filterAll: "All",
+    filterMine: "Mine",
+    openConversation: "Open conversation",
+    unknownContact: "Contact",
   },
 };

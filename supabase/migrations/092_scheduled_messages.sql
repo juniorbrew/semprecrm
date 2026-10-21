@@ -12,8 +12,9 @@
 --   3. scheduled_messages_claim(): the cron's atomic claim. FOR UPDATE SKIP
 --      LOCKED + pending->sending in ONE statement, so overlapping ticks (or
 --      "enviar agora" racing the cron) can never take the same row. Rows
---      stuck in `sending` for 10 min (crashed worker) are parked as `failed`,
---      NOT re-sent: the send may have happened, a human decides.
+--      stuck in `sending` for 10 min (crashed worker) are parked as `failed`
+--      with error_code 'maybe_sent', NOT re-sent: the send may have
+--      happened, so the API only retries them after an explicit confirmation.
 --   4. RLS: members read; writes go only through the API (service role),
 --      which validates role, horizon and the conversation.
 --
@@ -63,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_account_open
 CREATE OR REPLACE FUNCTION public.scheduled_messages_cap()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('scheduled_messages:' || NEW.account_id::text, 0));
@@ -91,15 +92,17 @@ CREATE OR REPLACE FUNCTION public.scheduled_messages_claim(
 ) RETURNS SETOF public.scheduled_messages
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 BEGIN
-  -- crashed worker: never re-send, park for a human
+  -- crashed worker: never re-send, park for a human. The threshold is measured
+  -- against the real clock at sweep time (claimed_at is also stamped with it),
+  -- not against the caller-supplied p_now.
   UPDATE public.scheduled_messages
-     SET status = 'failed', error_code = 'interrupted',
-         error_text = 'O envio foi interrompido. Confira a conversa antes de reenviar.',
+     SET status = 'failed', error_code = 'maybe_sent',
+         error_text = 'Pode ter sido enviada — confira a conversa antes de tentar de novo.',
          updated_at = clock_timestamp()
-   WHERE status = 'sending' AND claimed_at < p_now - interval '10 minutes';
+   WHERE status = 'sending' AND claimed_at < clock_timestamp() - interval '10 minutes';
 
   RETURN QUERY
   WITH due AS (
@@ -112,7 +115,7 @@ BEGIN
      FOR UPDATE SKIP LOCKED
   )
   UPDATE public.scheduled_messages m
-     SET status = 'sending', claimed_at = p_now, attempts = m.attempts + 1,
+     SET status = 'sending', claimed_at = clock_timestamp(), attempts = m.attempts + 1,
          error_code = NULL, error_text = NULL, updated_at = clock_timestamp()
     FROM due
    WHERE m.id = due.id

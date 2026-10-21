@@ -9,25 +9,21 @@ import type { Language } from "@/lib/i18n";
 import {
   formatScheduledAt,
   parseLocalInput,
+  schedulePresets,
   toLocalInputValue,
   validateScheduleAt,
 } from "@/lib/scheduled-messages/schedule";
 import { SCHEDULED_COPY } from "./scheduled-copy";
-
-export interface ScheduledItem {
-  id: string;
-  created_by: string;
-  content_text: string;
-  scheduled_for: string;
-  status: "pending" | "sending" | "failed";
-  error_text: string | null;
-}
+import { MAYBE_SENT, call, canManageItem, cancelScheduled, sendScheduled, type ScheduledItem } from "./scheduled-api";
 
 interface ScheduledMessagesPanelProps {
   conversationId: string;
   language: Language;
   /** Agent+ (viewers see the list but cannot touch it). */
   canAct: boolean;
+  /** Only the author (or an admin+) may change a message: it goes out under the author's name. */
+  currentUserId?: string | null;
+  isAdmin?: boolean;
   profiles: { user_id: string; full_name?: string | null }[];
   /** Bump to refetch (after the composer scheduled something). */
   refreshKey: number;
@@ -38,18 +34,13 @@ interface ScheduledMessagesPanelProps {
 
 const POLL_MS = 30_000;
 
-async function call(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
-  const res = await fetch(url, init);
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : "request failed");
-  return body;
-}
-
 /** Pending scheduled messages of the open conversation, until they are sent. */
 export function ScheduledMessagesPanel({
   conversationId,
   language,
   canAct,
+  currentUserId = null,
+  isAdmin = false,
   profiles,
   refreshKey,
   onRestoreText,
@@ -98,16 +89,13 @@ export function ScheduledMessagesPanel({
 
   const cancel = (item: ScheduledItem) =>
     run(item.id, async () => {
-      const body = await call(`/api/inbox/scheduled/${item.id}`, { method: "DELETE" });
-      const text = typeof body.content_text === "string" ? body.content_text : item.content_text;
-      onRestoreText(text);
+      onRestoreText(await cancelScheduled(item));
       toast.success(copy.cancelledRestored);
     });
 
   const sendNow = (item: ScheduledItem) =>
     run(item.id, async () => {
-      await call(`/api/inbox/scheduled/${item.id}/send`, { method: "POST" });
-      toast.success(copy.sentNow);
+      if (await sendScheduled(item, language)) toast.success(copy.sentNow);
     });
 
   const saveEdit = () => {
@@ -119,11 +107,18 @@ export function ScheduledMessagesPanel({
       return;
     }
     const { id, text } = editing;
+    const target = items.find((i) => i.id === id);
+    const risky = target?.error_code === MAYBE_SENT;
+    if (risky && !window.confirm(copy.confirmMaybeSent)) return;
     void run(id, async () => {
       await call(`/api/inbox/scheduled/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content_text: text, scheduled_for: check.date.toISOString() }),
+        body: JSON.stringify({
+          content_text: text,
+          scheduled_for: check.date.toISOString(),
+          ...(risky ? { confirm: true } : {}),
+        }),
       });
       setEditing(null);
     });
@@ -151,6 +146,8 @@ export function ScheduledMessagesPanel({
           const sending = item.status === "sending";
           const risk = !failed && windowEnds !== null && at.getTime() >= windowEnds;
           const busy = busyId === item.id;
+          const mayBeSent = item.error_code === MAYBE_SENT;
+          const manageable = canAct && canManageItem(item, currentUserId, isAdmin);
           const isEditing = editing?.id === item.id;
           return (
             <li
@@ -199,7 +196,7 @@ export function ScheduledMessagesPanel({
                   <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm">{item.content_text}</p>
                   <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
                     <span className={failed ? "font-medium text-destructive" : undefined}>
-                      {failed ? copy.failed : sending ? copy.sending : copy.sendsAt(formatScheduledAt(at, clock, language))}
+                      {mayBeSent ? copy.maybeSent : failed ? copy.failed : sending ? copy.sending : copy.sendsAt(formatScheduledAt(at, clock, language))}
                     </span>
                     <span>{copy.by(nameOf(item.created_by))}</span>
                     {failed && <span>· {formatScheduledAt(at, clock, language)}</span>}
@@ -215,7 +212,10 @@ export function ScheduledMessagesPanel({
                       {copy.windowRisk}
                     </p>
                   )}
-                  {canAct && !sending && (
+                  {canAct && !manageable && !sending && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">{copy.notAuthor}</p>
+                  )}
+                  {manageable && !sending && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       <Button size="xs" variant="outline" disabled={busy} onClick={() => void sendNow(item)}>
                         {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
@@ -229,7 +229,11 @@ export function ScheduledMessagesPanel({
                           setEditing({
                             id: item.id,
                             text: item.content_text,
-                            when: toLocalInputValue(at.getTime() > clock.getTime() ? at : new Date(clock.getTime() + 3_600_000)),
+                            when: toLocalInputValue(
+                              at.getTime() > clock.getTime() + 60_000
+                                ? at
+                                : (schedulePresets(clock)[0]?.at ?? new Date(clock.getTime() + 3_600_000)),
+                            ),
                             error: null,
                           })
                         }

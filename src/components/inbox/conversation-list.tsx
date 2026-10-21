@@ -105,6 +105,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ContactAvatar, avatarInitial } from "./contact-avatar";
 import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filters";
 import { ConversationSnooze } from "./conversation-snooze";
+import { ScheduledOverview } from "./scheduled-overview";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -1108,6 +1109,16 @@ export function ConversationList({
   useEffect(() => {
     onSelectRef.current = onSelect;
   });
+  // "Agendadas" -> open the message's conversation (it may not be in the loaded page).
+  const openScheduledConversation = useCallback(async (conversationId: string) => {
+    const { data } = await createClient()
+      .from("conversations")
+      .select("*, contact:contacts(*)")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (data) onSelectRef.current(data as Conversation);
+  }, []);
+
   const handleSelect = useCallback((conv: Conversation) => {
     setCursorOverride(null);
     onSelectRef.current(conv);
@@ -1361,6 +1372,8 @@ export function ConversationList({
         >
           <h2 className="shrink-0 text-sm font-semibold text-foreground">{copy.title}</h2>
           <div className="flex min-w-0 items-center gap-1">
+            {/* Mensagens agendadas (migration 092): account-wide list, red badge on failures */}
+            <ScheduledOverview onOpenConversation={(id) => void openScheduledConversation(id)} />
             {/* Live filter — narrows Minhas / Todas to open or pending */}
             <DropdownMenu>
               <DropdownMenuTrigger
