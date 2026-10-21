@@ -35,7 +35,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const page = rows.slice(0, PAGE).map((d) => {
     const ev = d.event as { type?: string } | { type?: string }[] | null
     const type = Array.isArray(ev) ? ev[0]?.type : ev?.type
-    const { event: _event, ...rest } = d
+    const rest: Record<string, unknown> = { ...d }
+    delete rest.event
     return { ...rest, event_type: type ?? null, event_public_id: eventPublicId(d.event_id as string) }
   })
   return NextResponse.json({ deliveries: page, has_more: rows.length > PAGE })
