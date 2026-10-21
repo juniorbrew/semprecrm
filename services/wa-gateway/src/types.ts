@@ -63,6 +63,8 @@ export interface ReactRequest {
   /** a mensagem reagida foi enviada por nós (atendente/bot/celular) */
   from_me: boolean;
   emoji: string;
+  /** chat em que a mensagem do cliente chegou (`InboundPayload.chat_jid`), se o app guardou */
+  chat_jid?: string;
 }
 
 /** `POST /sessions/:id/presence` — "digitando..." no celular do cliente. */
@@ -90,6 +92,8 @@ export interface InboundPayload {
   text?: string;
   media?: { url: string; mimetype: string; filename?: string };
   quoted_message_id?: string;
+  /** chat como o Baileys endereçou (`…@s.whatsapp.net` ou `…@lid`); a reação precisa dele */
+  chat_jid?: string;
 }
 
 /**

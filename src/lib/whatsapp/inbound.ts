@@ -70,6 +70,12 @@ export interface InboundMessageInput {
   /** Provider id of the message being swipe-replied to, if any. */
   quotedMessageId?: string | null
   /**
+   * QR channel only — the chat jid as Baileys addressed it (phone or
+   * LID). Stored on the row so a later reaction can name the message
+   * by its original key (migration 091).
+   */
+  chatJid?: string | null
+  /**
    * Epoch seconds (Meta / Baileys), epoch millis, an ISO string or a
    * Date. `undefined` → now.
    */
@@ -892,6 +898,7 @@ export async function ingestInboundMessage(
     created_at: toIsoTimestamp(input.timestamp),
     reply_to_message_id: replyToInternalId,
     interactive_reply_id: interactiveReplyId,
+    ...(input.chatJid ? { wa_chat_jid: input.chatJid } : {}),
   })
 
   if (msgError) {

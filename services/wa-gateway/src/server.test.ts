@@ -127,7 +127,9 @@ describe("HTTP", () => {
     expect((await post({ ...valid, message_id: "" })).status).toBe(400);
     expect((await post({ ...valid, from_me: "no" })).status).toBe(400);
     expect((await post({ ...valid, emoji: "x".repeat(33) })).status).toBe(400);
+    expect((await post({ ...valid, chat_jid: "1-2@g.us" })).status).toBe(400); // grupo não
     expect(sessions.react).not.toHaveBeenCalled();
+    expect((await post({ ...valid, chat_jid: "123456789@lid" })).status).toBe(200);
 
     expect((await post(valid)).status).toBe(200);
     expect((await post({ ...valid, emoji: "" })).status).toBe(200); // remover

@@ -892,20 +892,22 @@ export class SessionManager {
   }
 
   /**
-   * Reação do atendente (`emoji: ""` remove). A chave da mensagem reagida
-   * vem do cache das recebidas; sem ela (gateway reiniciado ou mensagem
-   * antiga), é melhor-esforço: o chat do telefone discado. Num chat `@lid`
-   * o WhatsApp pode aceitar e não exibir — por isso o aviso no log.
+   * Reação do atendente (`emoji: ""` remove). O chat da mensagem reagida
+   * vem do cache das recebidas, depois do `chat_jid` que o app guardou na
+   * linha (sobrevive a reinício). Sem nenhum dos dois é melhor-esforço: o
+   * jid do telefone discado — num chat `@lid` o WhatsApp pode aceitar e
+   * não exibir, por isso o aviso no log.
    */
   async react(accountId: string, req: ReactRequest): Promise<void> {
     const sock = this.connectedSocket(accountId);
     const dialed = toJid(req.to);
     const known = req.from_me ? undefined : this.sessions.get(accountId)?.inboundKeys.get(req.message_id);
-    if (!req.from_me && !known) {
+    if (!req.from_me && !known && !req.chat_jid) {
       this.log.warn({ accountId, id: req.message_id }, "reação sem a chave original; usando o jid do telefone");
     }
     const key = {
-      remoteJid: known?.remoteJid ?? this.sessions.get(accountId)?.jidCache.get(dialed) ?? dialed,
+      remoteJid:
+        known?.remoteJid ?? req.chat_jid ?? this.sessions.get(accountId)?.jidCache.get(dialed) ?? dialed,
       id: req.message_id,
       fromMe: req.from_me,
       ...(known?.participant ? { participant: known.participant } : {}),

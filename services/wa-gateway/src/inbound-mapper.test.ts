@@ -66,6 +66,7 @@ describe("mapInboundMessage", () => {
         timestamp: 1_757_700_000,
         type: "text",
         text: "Olá!",
+        chat_jid: "5511999999999@s.whatsapp.net",
       },
     });
   });

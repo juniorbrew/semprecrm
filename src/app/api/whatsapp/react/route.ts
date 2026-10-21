@@ -83,7 +83,7 @@ export async function POST(request: Request) {
     // Resolve target message + its conversation; verify ownership.
     const { data: targetMessage, error: msgError } = await supabase
       .from('messages')
-      .select('id, message_id, conversation_id, sender_type')
+      .select('id, message_id, conversation_id, sender_type, wa_chat_jid')
       .eq('id', message_id)
       .maybeSingle();
 
@@ -135,6 +135,7 @@ export async function POST(request: Request) {
           messageId: targetMessage.message_id,
           fromMe: targetMessage.sender_type !== 'customer',
           emoji,
+          chatJid: targetMessage.wa_chat_jid,
         });
       } catch (err) {
         return qrErrorResponse(err);

@@ -260,10 +260,18 @@ export async function reactViaGateway(input: {
   messageId: string
   fromMe: boolean
   emoji: string
+  /** `messages.wa_chat_jid` of the reacted message, when stored (migration 091). */
+  chatJid?: string | null
 }): Promise<void> {
   await gatewayFetch(`/sessions/${encodeURIComponent(input.accountId)}/react`, {
     method: 'POST',
-    body: { to: input.to, message_id: input.messageId, from_me: input.fromMe, emoji: input.emoji },
+    body: {
+      to: input.to,
+      message_id: input.messageId,
+      from_me: input.fromMe,
+      emoji: input.emoji,
+      ...(input.chatJid ? { chat_jid: input.chatJid } : {}),
+    },
   })
 }
 

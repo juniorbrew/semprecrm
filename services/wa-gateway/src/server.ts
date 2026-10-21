@@ -15,6 +15,8 @@ export interface ServerDeps {
 }
 
 const ACCOUNT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** chat 1:1 como o Baileys endereça: telefone ou LID (grupos ficam de fora) */
+const CHAT_JID_RE = /^\d{5,20}(:\d+)?@(s\.whatsapp\.net|lid)$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -149,6 +151,9 @@ export function createApp(deps: ServerDeps): Hono {
     // um emoji (com modificadores/ZWJ) cabe folgado em 32 unidades UTF-16
     if (typeof body.emoji !== "string" || body.emoji.length > 32) {
       throw new GatewayError("emoji inválido", "invalid_request", 400);
+    }
+    if (body.chat_jid !== undefined && (typeof body.chat_jid !== "string" || !CHAT_JID_RE.test(body.chat_jid))) {
+      throw new GatewayError("chat_jid inválido", "invalid_request", 400);
     }
     await deps.sessions.react(c.req.param("accountId"), body);
     return c.json({ ok: true });

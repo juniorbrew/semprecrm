@@ -338,6 +338,7 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
   if (extracted.text != null && extracted.text !== "") payload.text = extracted.text;
   const quoted = extracted.contextInfo?.stanzaId;
   if (quoted) payload.quoted_message_id = quoted;
+  if (!fromMe && key.remoteJid) payload.chat_jid = key.remoteJid;
 
   const kind = fromMe ? "echo" : "message";
   return extracted.media ? { kind, payload, media: extracted.media } : { kind, payload };
