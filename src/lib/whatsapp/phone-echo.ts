@@ -325,3 +325,67 @@ export async function markMessageRevoked(
   }
   return { ok: true, found: Array.isArray(data) && data.length > 0 }
 }
+
+export interface CustomerReactionInput {
+  accountId: string
+  /** Provider id of the message the customer reacted to. */
+  messageId: string
+  /** The customer's phone (the conversation). */
+  from: string
+  /** "" = the customer removed their reaction. */
+  emoji: string
+}
+
+/**
+ * QR-channel customer reaction → `message_reactions` (same row shape the
+ * Cloud API webhook writes: actor_type 'customer', actor_id = contact).
+ * A target we never stored answers `found: false` so the gateway does
+ * not retry.
+ */
+export async function applyCustomerReaction(
+  input: CustomerReactionInput,
+  db: SupabaseClient,
+): Promise<RevokeResult> {
+  const lookup = await findContactConversations(db, input.accountId, input.from)
+  if (lookup.kind === 'error') return { ok: false, found: false }
+  if (lookup.kind === 'skip') return { ok: true, found: false }
+
+  const { data: target, error: targetErr } = await db
+    .from('messages')
+    .select('id, conversation_id')
+    .eq('message_id', input.messageId)
+    .in(
+      'conversation_id',
+      lookup.conversations.map((c) => c.id as string),
+    )
+    .limit(1)
+    .maybeSingle()
+  if (targetErr) {
+    console.error('[qr-reaction] target lookup failed:', targetErr.message)
+    return { ok: false, found: false }
+  }
+  if (!target) return { ok: true, found: false }
+
+  const { error } = input.emoji
+    ? await db.from('message_reactions').upsert(
+        {
+          message_id: target.id,
+          conversation_id: target.conversation_id,
+          actor_type: 'customer',
+          actor_id: lookup.contactId,
+          emoji: input.emoji,
+        },
+        { onConflict: 'message_id,actor_type,actor_id' },
+      )
+    : await db
+        .from('message_reactions')
+        .delete()
+        .eq('message_id', target.id)
+        .eq('actor_type', 'customer')
+        .eq('actor_id', lookup.contactId)
+  if (error) {
+    console.error('[qr-reaction] write failed:', error.message)
+    return { ok: false, found: true }
+  }
+  return { ok: true, found: true }
+}

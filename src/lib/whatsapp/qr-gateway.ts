@@ -8,6 +8,8 @@
 //   POST /sessions/:accountId/logout   → {}
 //   POST /sessions/:accountId/send     → { message_id }
 //   POST /sessions/:accountId/avatar   → { url | null }   (profile photo)
+//   POST /sessions/:accountId/react    → { ok }           (agent reaction)
+//   POST /sessions/:accountId/presence → { ok }           ("typing…")
 // Every request carries `x-gateway-secret: WA_GATEWAY_SECRET`; the
 // gateway calls us back with the same header.
 //
@@ -245,6 +247,37 @@ export async function markReadViaGateway(input: {
     { method: 'POST', body: { to: input.to, message_ids: input.messageIds } },
   )
   return { read: res.read ?? 0 }
+}
+
+/**
+ * Agent reaction to a QR-channel message (`emoji: ""` removes it).
+ * `fromMe` tells WhatsApp whose message it is — ours or the customer's.
+ */
+export async function reactViaGateway(input: {
+  accountId: string
+  /** Digits only. */
+  to: string
+  messageId: string
+  fromMe: boolean
+  emoji: string
+}): Promise<void> {
+  await gatewayFetch(`/sessions/${encodeURIComponent(input.accountId)}/react`, {
+    method: 'POST',
+    body: { to: input.to, message_id: input.messageId, from_me: input.fromMe, emoji: input.emoji },
+  })
+}
+
+/** "typing…" (`composing`) / stopped (`paused`) on the customer's phone. */
+export async function presenceViaGateway(input: {
+  accountId: string
+  /** Digits only. */
+  to: string
+  state: 'composing' | 'paused'
+}): Promise<void> {
+  await gatewayFetch(`/sessions/${encodeURIComponent(input.accountId)}/presence`, {
+    method: 'POST',
+    body: { to: input.to, state: input.state },
+  })
 }
 
 /**

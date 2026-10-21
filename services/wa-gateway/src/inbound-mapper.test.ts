@@ -337,6 +337,23 @@ describe("mapInboundMessage — apagar para todos (REVOKE)", () => {
     expect(out).toEqual({ kind: "skip", reason: "group" });
   });
 
+  it("reação do cliente vira `reaction` com o id da mensagem REAGIDA", () => {
+    const react = (fromMe: boolean, text: string | null) =>
+      fixture({
+        key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe, id: "RX1" },
+        message: { reactionMessage: { key: { id: "ORIG1", fromMe: true }, text } },
+      });
+    expect(mapInboundMessage(ACCOUNT, react(false, "❤️"))).toEqual({
+      kind: "reaction",
+      payload: { account_id: ACCOUNT, message_id: "ORIG1", from: "5511988887777", emoji: "❤️", timestamp: 1_757_700_000 },
+    });
+    // reação removida: emoji vazio
+    const removed = mapInboundMessage(ACCOUNT, react(false, ""));
+    expect(removed.kind === "reaction" && removed.payload.emoji).toBe("");
+    // reação feita pelo nosso celular: ignorada
+    expect(mapInboundMessage(ACCOUNT, react(true, "👍"))).toEqual({ kind: "skip", reason: "protocol" });
+  });
+
   it("revokedMessageId só reconhece o tipo REVOKE", () => {
     expect(revokedMessageId({ protocolMessage: { type: 0, key: { id: "A" } } })).toBe("A");
     expect(revokedMessageId({ protocolMessage: { type: 14, key: { id: "A" } } })).toBeUndefined();

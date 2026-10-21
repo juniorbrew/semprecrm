@@ -2624,6 +2624,7 @@ export function MessageThread({
         conversationId={conversation.id}
         sessionExpired={isOfficial && sessionInfo.expired}
         templatesEnabled={isOfficial}
+        typingIndicator={!isOfficial}
         contactName={contact?.name ?? conversation.contact?.name ?? null}
         onSend={handleSend}
         onSendMedia={handleSendMedia}

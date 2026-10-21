@@ -51,6 +51,27 @@ export interface AvatarResponse {
   url: string | null;
 }
 
+/**
+ * `POST /sessions/:id/react` — reação do atendente a uma mensagem da conversa.
+ * `emoji: ""` remove a reação.
+ */
+export interface ReactRequest {
+  /** telefone do contato (dígitos) */
+  to: string;
+  /** id WhatsApp da mensagem reagida (`messages.message_id` no app) */
+  message_id: string;
+  /** a mensagem reagida foi enviada por nós (atendente/bot/celular) */
+  from_me: boolean;
+  emoji: string;
+}
+
+/** `POST /sessions/:id/presence` — "digitando..." no celular do cliente. */
+export interface PresenceRequest {
+  /** telefone do contato (dígitos) */
+  to: string;
+  state: "composing" | "paused";
+}
+
 export interface SendResponse {
   message_id: string;
 }
@@ -82,6 +103,20 @@ export interface RevokePayload {
   /** telefone do cliente da conversa (dígitos) */
   from: string;
   revoked_by: "customer" | "phone";
+  timestamp: number;
+}
+
+/**
+ * `POST /api/channels/qr/reaction` — o cliente reagiu (ou tirou a reação,
+ * `emoji: ""`) a uma mensagem da conversa.
+ */
+export interface ReactionPayload {
+  account_id: string;
+  /** id da mensagem REAGIDA */
+  message_id: string;
+  /** telefone do cliente (dígitos) */
+  from: string;
+  emoji: string;
   timestamp: number;
 }
 
