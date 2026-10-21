@@ -1,5 +1,6 @@
 import path from "node:path";
 import { httpOrigin, type MediaPolicy } from "./outbound-media.js";
+import { DEFAULT_SEND_QUEUE, type SendQueueConfig } from "./send-queue.js";
 
 export interface GatewayConfig {
   port: number;
@@ -45,6 +46,43 @@ export interface GatewayConfig {
    * `https://cdn.exemplo.com`) — essas extras não podem apontar para rede interna.
    */
   mediaPolicy: MediaPolicy;
+  /**
+   * Fila anti-banimento dos envios (ver send-queue.ts): envios `bulk` saem
+   * espaçados e com teto por minuto; `interactive` nunca espera.
+   */
+  sendQueue: SendQueueConfig;
+}
+
+function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number): number {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min) throw new Error(`${name} inválida (inteiro >= ${min}): ${raw}`);
+  return n;
+}
+
+const flag = (v: string | undefined, fallback: boolean) =>
+  v?.trim() ? !/^(false|0|no|off)$/i.test(v.trim()) : fallback;
+
+function loadSendQueue(env: NodeJS.ProcessEnv): SendQueueConfig {
+  const d = DEFAULT_SEND_QUEUE;
+  const delayMinMs = intEnv(env, "WA_BULK_DELAY_MIN_MS", d.delayMinMs, 0);
+  const delayMaxMs = intEnv(env, "WA_BULK_DELAY_MAX_MS", d.delayMaxMs, 0);
+  if (delayMaxMs < delayMinMs) throw new Error("WA_BULK_DELAY_MAX_MS não pode ser menor que WA_BULK_DELAY_MIN_MS");
+  const maxWaitMs = intEnv(env, "WA_BULK_MAX_WAIT_MS", d.maxWaitMs, 1000);
+  // O app desiste do gateway em 150 s para bulk (qr-gateway.ts): a espera tem de caber nisso.
+  if (maxWaitMs > 120_000) throw new Error("WA_BULK_MAX_WAIT_MS não pode passar de 120000 (timeout do app: 150 s)");
+  return {
+    enabled: flag(env.WA_SEND_QUEUE, d.enabled),
+    delayMinMs,
+    delayMaxMs,
+    maxPerMinute: intEnv(env, "WA_BULK_MAX_PER_MINUTE", d.maxPerMinute, 1),
+    maxQueue: intEnv(env, "WA_BULK_MAX_QUEUE", d.maxQueue, 1),
+    maxWaitMs,
+    typingEnabled: flag(env.WA_BULK_TYPING, d.typingEnabled),
+    typingMsPerChar: intEnv(env, "WA_TYPING_MS_PER_CHAR", d.typingMsPerChar, 0),
+    typingMaxMs: intEnv(env, "WA_TYPING_MAX_MS", d.typingMaxMs, 0),
+  };
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -92,5 +130,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     logLevel: env.LOG_LEVEL?.trim() || "info",
     markOnline: !/^(false|0|no|off)$/i.test(env.WA_MARK_ONLINE?.trim() ?? ""),
     mediaPolicy: { storageOrigins, extraOrigins },
+    sendQueue: loadSendQueue(env),
   };
 }

@@ -7,6 +7,8 @@ import {
   renderInteractiveAsText,
   renderTemplateBody,
 } from './qr-engine-send'
+import { isGatewayThrottled } from './qr-gateway'
+import { isUncertainSend } from './uncertain-send'
 
 // ------------------------------------------------------------
 // Engine-side QR helpers: the text fallbacks for templates and
@@ -126,7 +128,11 @@ describe('engineSendViaQr', () => {
     })
     expect(res).toEqual({ whatsapp_message_id: 'B-1' })
     expect(fetchMock.mock.calls[0][0]).toBe('http://gateway.test:3201/sessions/acct-1/send')
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ to: '5511999990000', text: 'Bem-vindo!' })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      to: '5511999990000',
+      priority: 'bulk',
+      text: 'Bem-vindo!',
+    })
     expect(state.inserted[0]).toMatchObject({
       sender_type: 'bot',
       content_type: 'text',
@@ -167,6 +173,28 @@ describe('engineSendViaQr', () => {
       }),
     ).rejects.toThrow(/contact not found/)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a gateway 429 throttled is a retryable GatewayRequestError, not an outage, and persists nothing', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'throttled', message: 'fila cheia' }), { status: 429 }),
+    )
+    const state = {
+      channel: 'qr',
+      contact: { id: 'c-1', phone: '+55 (11) 99999-0000' },
+      inserted: [] as Record<string, unknown>[],
+      updates: [] as Record<string, unknown>[],
+    }
+    const err = await engineSendViaQr(makeDb(state), {
+      accountId: 'acct-1',
+      conversationId: 'conv-1',
+      contactId: 'c-1',
+      text: 'oi',
+      contentType: 'text',
+    }).catch((e: unknown) => e)
+    expect(isGatewayThrottled(err)).toBe(true)
+    expect(isUncertainSend(err)).toBe(false)
+    expect(state.inserted).toEqual([])
   })
 
   it('surfaces a gateway outage as an error without persisting', async () => {

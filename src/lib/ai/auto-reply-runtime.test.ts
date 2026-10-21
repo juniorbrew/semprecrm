@@ -30,6 +30,7 @@ import {
 } from './auto-reply-runtime';
 import { resetAccountCapWarnings } from './automatic-cap';
 import { AiError } from './errors';
+import { GatewayRequestError } from '@/lib/whatsapp/qr-gateway';
 
 const NOW = new Date('2026-09-29T15:00:00Z');
 
@@ -346,6 +347,19 @@ describe('runAutoReplyJob — sends that may or may not have gone out', () => {
       }),
     );
     expect(jobRow()).toMatchObject({ sent_parts: 1, outcome: 'handoff' });
+  });
+
+  it('gateway throttled: retried in a minute without burning an attempt', async () => {
+    db.rpcHandler = () => ({ data: [job({ attempts: 2 })], error: null });
+    const r = await drainAutoReplies(
+      deps({
+        send: async () => {
+          throw new GatewayRequestError('fila cheia', 429, 'throttled');
+        },
+      }),
+    );
+    expect(r.failed).toBe(1);
+    expect(jobRow()).toMatchObject({ status: 'queued', attempts: 1, sent_parts: 0, run_after: '2026-09-29T15:01:00.000Z' });
   });
 
   it('a send refused before leaving is retried from the same bubble', async () => {

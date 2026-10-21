@@ -66,15 +66,44 @@ backoff exponencial (erros 5xx/rede); 4xx são descartados com log.
 
 | Rota (gateway)                      | Corpo / resposta |
 | ----------------------------------- | ---------------- |
-| `GET /health`                       | `{ ok, sessions, uptime }` |
+| `GET /health`                       | `{ ok, sessions, uptime, send_queue: { enabled, queued, active_accounts, sent_interactive, sent_bulk, throttled, max_queue_depth, oldest_wait_ms } }` |
 | `POST /sessions/:id/connect`        | → `{ status }` |
 | `GET /sessions/:id`                 | → `{ status: disconnected\|qr\|connecting\|connected, qr?, phone?, name?, connected_at? }` |
 | `POST /sessions/:id/logout`         | → `{ status: "disconnected" }` |
-| `POST /sessions/:id/send`           | `{ to: "5511999999999", text?, media?: { url, mimetype, filename?, caption?, ptt? } }` → `{ message_id }` |
+| `POST /sessions/:id/send`           | `{ to: "5511999999999", text?, media?: { url, mimetype, filename?, caption?, ptt? }, priority?: interactive\|bulk }` → `{ message_id }` |
 | `POST /sessions/:id/avatar`         | `{ to: "5511999999999", contact_id: "<uuid>" }` → `{ url: string \| null }` |
 
 Erros: `401` sem secret; `400 invalid_request`; `409 not_connected`;
-`422 not_on_whatsapp`; `429 throttled` (fila de fotos cheia); `502 send_failed`.
+`422 not_on_whatsapp`; `429 throttled` (fila de fotos ou de envio cheia / vez que não chegou a tempo — nada foi enviado, pode tentar de novo); `502 send_failed`.
+
+### Fila anti-banimento dos envios
+
+Rajada de mensagens de um número conectado por QR é o padrão que o anti-spam do
+WhatsApp procura. Todo `send` passa por uma fila por conta (`src/send-queue.ts`),
+conforme o campo `priority` do pedido:
+
+- `interactive` (padrão; atendente na caixa de entrada): sai na hora, **nunca**
+  espera, nem com a fila de bulk cheia. Conta no teto por minuto e empurra o
+  próximo bulk (o intervalo conta do último envio de qualquer prioridade).
+- `bulk` (automações, fluxos, resposta da IA, pesquisa de satisfação): FIFO por
+  conta, um de cada vez, com intervalo aleatório entre
+  `WA_BULK_DELAY_MIN_MS` e `WA_BULK_DELAY_MAX_MS` e no máximo
+  `WA_BULK_MAX_PER_MINUTE` envios por minuto (janela deslizante). Texto bulk
+  mostra "digitando…" por um tempo proporcional ao tamanho (teto
+  `WA_TYPING_MAX_MS`) antes de sair.
+- Nada se perde em silêncio: fila cheia (`WA_BULK_MAX_QUEUE`), espera estimada
+  acima do limite ou vez que não chega em `WA_BULK_MAX_WAIT_MS` → `429 throttled`
+  *sem ter enviado*; o app pode repetir com segurança. No desligamento, o que
+  esperava também recebe 429.
+- Contas não se bloqueiam entre si; a fila vive na memória do processo.
+- Reconexão: a espera pela sessão (`sendWaitMs`) acontece dentro da vez do
+  envio, então a ordem se mantém e o 409 só aparece se a sessão não voltar.
+- Estado da fila em `GET /health` (`send_queue`). `WA_SEND_QUEUE=false` desliga
+  tudo (envio imediato, sem "digitando…").
+
+O app marca como `bulk` os envios do motor (`engineSendViaQr`) e como
+`interactive` a rota `/api/whatsapp/send`; o timeout do app para `bulk` é de
+150 s (a espera máxima padrão é 90 s).
 
 `send` durante uma reconexão (queda de rede, reinício) não devolve 409 na hora:
 espera até 15 s a sessão voltar a `connected` e, se o socket cair no meio do
@@ -165,6 +194,7 @@ contas que tiverem `creds.json` (`resumeAll`).
 src/index.ts           entrada: config, logger, servidor HTTP, retomada das sessões, shutdown
 src/server.ts          rotas Hono + middleware do secret
 src/session-manager.ts Map<accountId, sessão>: connect/logout/getStatus/send, reconexão, eventos
+src/send-queue.ts      fila anti-banimento por conta (interactive x bulk, intervalo aleatório, teto/min)
 src/inbound-mapper.ts  puro: WAMessage do Baileys → payload de /inbound (LID → telefone, mídia, citação)
 src/media.ts           download da mídia + upload no bucket chat-media
 src/app-client.ts      fila + retry/backoff para os endpoints do app

@@ -88,6 +88,16 @@ const GATEWAY_ERROR_COPY: Record<string, string> = {
   not_on_whatsapp: 'Este número não está no WhatsApp.',
   send_failed: 'O WhatsApp recusou o envio. Tente novamente.',
   invalid_request: 'Pedido inválido para o gateway do WhatsApp.',
+  throttled: 'Muitas mensagens em fila neste número. Aguarde um instante e tente novamente.',
+}
+
+/**
+ * The gateway's anti-ban queue refused the send (429 `throttled`: queue full,
+ * or the turn did not come within the max wait). Nothing reached WhatsApp, so
+ * a retry is always safe — unlike `GatewayUnreachableError`, which is uncertain.
+ */
+export function isGatewayThrottled(err: unknown): boolean {
+  return err instanceof GatewayRequestError && err.status === 429 && err.code === 'throttled'
 }
 
 export interface GatewaySessionState {
@@ -204,12 +214,28 @@ export interface GatewayMedia {
   ptt?: boolean
 }
 
+/**
+ * `interactive`: an agent typing in the inbox — leaves at once. `bulk`:
+ * automations, flows, AI replies, campaigns — queued by the gateway with
+ * human-like random gaps and a per-minute cap (services/wa-gateway/src/send-queue.ts).
+ */
+export type GatewaySendPriority = 'interactive' | 'bulk'
+
+const SEND_TIMEOUT_MS: Record<GatewaySendPriority, number> = {
+  interactive: 30_000,
+  // Gateway WA_BULK_MAX_WAIT_MS (default 90 s) + typing + media download/upload,
+  // so the gateway always answers (200 or 429) before we give up on it.
+  bulk: 150_000,
+}
+
 export interface GatewaySendInput {
   accountId: string
   /** Digits only, e.g. "5511999999999". */
   to: string
   text?: string
   media?: GatewayMedia
+  /** Defaults to `interactive`. */
+  priority?: GatewaySendPriority
 }
 
 export async function sendViaGateway(input: GatewaySendInput): Promise<{ message_id: string }> {
@@ -219,11 +245,12 @@ export async function sendViaGateway(input: GatewaySendInput): Promise<{ message
       method: 'POST',
       body: {
         to: input.to,
+        priority: input.priority ?? 'interactive',
         ...(input.text !== undefined ? { text: input.text } : {}),
         ...(input.media ? { media: input.media } : {}),
       },
-      // Media uploads can take a while on the gateway side.
-      timeoutMs: 30_000,
+      // Media uploads can take a while on the gateway side; bulk also queues.
+      timeoutMs: SEND_TIMEOUT_MS[input.priority ?? 'interactive'],
     },
   )
   if (!res.message_id) {

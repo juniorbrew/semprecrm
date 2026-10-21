@@ -174,7 +174,7 @@ describe('POST /api/whatsapp/send — QR conversations', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('http://gateway.test:3201/sessions/acct-1/send')
     expect(init.headers['x-gateway-secret']).toBe('shh')
-    expect(JSON.parse(init.body)).toEqual({ to: '5511999990000', text: 'oi' })
+    expect(JSON.parse(init.body)).toEqual({ to: '5511999990000', priority: 'interactive', text: 'oi' })
 
     expect(h.state.inserted[0]).toMatchObject({
       sender_type: 'agent',
@@ -200,6 +200,7 @@ describe('POST /api/whatsapp/send — QR conversations', () => {
     expect(res.status).toBe(200)
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
       to: '5511999990000',
+      priority: 'interactive',
       media: {
         // rebuilt on the internal storage route the gateway allowlists
         url: 'http://kong.internal:8000/storage/v1/object/public/chat-media/account-acct-1/1-foto.png',

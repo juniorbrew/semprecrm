@@ -92,7 +92,7 @@ describe('flows senders on a QR conversation', () => {
   it('text goes through the gateway', async () => {
     const r = await engineSendText({ ...BASE, text: 'oi' })
     expect(r.whatsapp_message_id).toBe('B-1')
-    expect(gatewayBody()).toEqual({ to: '5511999990000', text: 'oi' })
+    expect(gatewayBody()).toEqual({ to: '5511999990000', priority: 'bulk', text: 'oi' })
     expect(h.meta.sendTextMessage).not.toHaveBeenCalled()
     expect(h.state.inserted[0]).toMatchObject({ channel: 'qr', sender_type: 'bot' })
   })
@@ -133,6 +133,7 @@ describe('flows senders on a QR conversation', () => {
     vi.unstubAllEnvs()
     expect(gatewayBody()).toEqual({
       to: '5511999990000',
+      priority: 'bulk',
       media: { url: link, mimetype: 'image/jpeg', caption: 'foto' },
     })
     expect(h.state.inserted[0]).toMatchObject({ content_type: 'image', media_url: link })
@@ -158,7 +159,7 @@ describe('flows senders on a QR conversation', () => {
 describe('automation template on a QR conversation', () => {
   it('renders the template body as text', async () => {
     await automationSendTemplate({ ...BASE, templateName: 'welcome', params: ['Ana'] })
-    expect(gatewayBody()).toEqual({ to: '5511999990000', text: 'Olá Ana, bem-vindo!' })
+    expect(gatewayBody()).toEqual({ to: '5511999990000', priority: 'bulk', text: 'Olá Ana, bem-vindo!' })
     expect(h.meta.sendTemplateMessage).not.toHaveBeenCalled()
     expect(h.state.inserted[0]).toMatchObject({ content_type: 'text', template_name: 'welcome', channel: 'qr' })
   })

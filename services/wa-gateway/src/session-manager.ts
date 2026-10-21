@@ -29,6 +29,7 @@ import {
 import { jidToPhone, mapInboundMessage } from "./inbound-mapper.js";
 import type { Logger } from "./logger.js";
 import type { MediaStore } from "./media.js";
+import { SendQueue, SendThrottledError, typingDurationMs, type SendQueueConfig } from "./send-queue.js";
 import { MediaUrlRejected, downloadOutboundMedia, type MediaPolicy } from "./outbound-media.js";
 import type {
   AckStatus,
@@ -38,6 +39,7 @@ import type {
   ReactRequest,
   ReadRequest,
   ReadResponse,
+  SendPriority,
   SendRequest,
   SendResponse,
   SessionStatus,
@@ -187,6 +189,10 @@ export interface SessionManagerOptions {
   reconnectMaxMs?: number;
   /** quanto `send()` espera a sessão reconectar antes de responder 409 (padrão 15 s) */
   sendWaitMs?: number;
+  /** fila anti-banimento dos envios (injeção/ajuste; padrão em send-queue.ts) */
+  sendQueue?: Partial<SendQueueConfig>;
+  /** espera do "digitando…" (injeção para testes) */
+  sleep?: (ms: number) => Promise<void>;
   /**
    * Ficar online ao conectar (padrão true) — sem isso o Baileys manda
    * recibos "inactive" e o cliente vê só um tique. Ver GatewayConfig.markOnline.
@@ -288,6 +294,7 @@ export class SessionManager {
   private readonly reconnectBaseMs: number;
   private readonly reconnectMaxMs: number;
   private readonly sendWaitMs: number;
+  private readonly sendQueue: SendQueue;
   private versionPromise?: Promise<WAVersion | undefined>;
   private readonly avatarThrottle: AvatarThrottle;
   private readonly downloadAvatar: (url: string) => Promise<DownloadedAvatar>;
@@ -302,6 +309,7 @@ export class SessionManager {
     this.reconnectBaseMs = opts.reconnectBaseMs ?? 2000;
     this.reconnectMaxMs = opts.reconnectMaxMs ?? 60_000;
     this.sendWaitMs = opts.sendWaitMs ?? 15_000;
+    this.sendQueue = new SendQueue(opts.sendQueue);
   }
 
   // ---------- API pública ----------
@@ -404,12 +412,47 @@ export class SessionManager {
     if (!req.text && !req.media) {
       throw new GatewayError("informe text ou media", "invalid_request", 400);
     }
+    toJid(req.to); // número inválido → 400 já, sem ocupar a fila
+    const priority = req.priority ?? "interactive";
+    try {
+      return await this.sendQueue.run(accountId, priority, () => this.deliver(s, req, priority));
+    } catch (err) {
+      if (err instanceof SendThrottledError) {
+        this.log.warn({ accountId, reason: err.reason, ...this.sendQueue.stats() }, "envio recusado pela fila");
+        throw new GatewayError(err.message, "throttled", 429);
+      }
+      throw err;
+    }
+  }
+
+  /** Estatísticas da fila de envio, expostas em GET /health. */
+  sendQueueStats() {
+    return this.sendQueue.stats();
+  }
+
+  /** "digitando…" proporcional ao texto, antes de um envio bulk. Falha de presença nunca barra o envio. */
+  private async simulateTyping(sock: WASocket, jid: string, text: string): Promise<void> {
+    const ms = typingDurationMs(text.length, this.sendQueue.config);
+    if (ms <= 0) return;
+    try {
+      await sock.sendPresenceUpdate("composing", jid);
+      await (this.opts.sleep ?? ((n) => new Promise<void>((r) => setTimeout(r, n))))(ms);
+      await sock.sendPresenceUpdate("paused", jid);
+    } catch (err) {
+      this.log.debug({ err: (err as Error).message }, "presença de digitação falhou (ignorado)");
+    }
+  }
+
+  private async deliver(s: Session, req: SendRequest, priority: SendPriority): Promise<SendResponse> {
+    const accountId = s.accountId;
     const dialed = toJid(req.to);
     const content = buildContent(req, req.media ? await this.fetchSendMedia(accountId, req.media) : undefined);
     // jid já resolvido num envio anterior (número cujo jid difere do discado)
     let jid = s.jidCache.get(dialed) ?? dialed;
 
     let sock = await this.waitForConnected(s);
+    if (priority === "bulk" && req.text && !req.media) await this.simulateTyping(sock, jid, req.text);
+    sock = await this.waitForConnected(s);
     // Id escolhido por nós e registrado antes do envio: o eco desse id (se
     // algum aparelho vinculado o repassar) é descartado em `onInbound`.
     const messageId = generateMessageIDV2(sock.user?.id);
@@ -523,6 +566,7 @@ export class SessionManager {
 
   /** Fecha todos os sockets sem apagar credenciais (shutdown do processo). */
   async shutdown(): Promise<void> {
+    this.sendQueue.shutdown();
     for (const s of this.sessions.values()) {
       s.stopping = true;
       this.clearReconnect(s);

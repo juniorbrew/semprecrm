@@ -15,8 +15,17 @@ export interface SessionStatusResponse {
   connected_at?: string;
 }
 
+/**
+ * `interactive`: atendente na caixa de entrada — sai na hora, nunca espera na
+ * fila anti-banimento. `bulk`: automações, fluxos, IA, campanhas — entra na
+ * fila da conta, com intervalos aleatórios e teto por minuto (send-queue.ts).
+ */
+export type SendPriority = "interactive" | "bulk";
+
 export interface SendRequest {
   to: string;
+  /** padrão `interactive` (compatível com apps antigos que não mandam o campo) */
+  priority?: SendPriority;
   text?: string;
   media?: {
     url: string;

@@ -286,6 +286,7 @@ export async function POST(request: Request) {
         const sent = await sendViaGateway({
           accountId,
           to: sanitizedPhone,
+          priority: 'interactive',
           ...(isMediaKind
             ? {
                 media: {
@@ -306,7 +307,7 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: err.message, code: err.code }, { status: 503 })
         }
         if (err instanceof GatewayRequestError) {
-          // 409 not_connected / 422 not_on_whatsapp / 502 send_failed —
+          // 409 not_connected / 422 not_on_whatsapp / 429 throttled / 502 send_failed —
           // the message is already the pt-BR toast the inbox shows.
           return NextResponse.json(
             { error: err.message, code: err.code },

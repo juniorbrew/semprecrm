@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
     end = vi.fn();
     updateMediaMessage = vi.fn();
     readMessages = vi.fn(async (_keys: unknown[]) => undefined);
+    sendPresenceUpdate = vi.fn(async (_p: string, _jid?: string) => undefined);
     profilePictureUrl = vi.fn(async (_jid: string, _type?: string, _t?: number) => "https://pps.whatsapp.net/v/p.jpg" as string | undefined);
     signalRepository = { lidMapping: { getPNForLID: vi.fn(async () => null as string | null) } };
     emit(event: string, payload: unknown) {
@@ -59,6 +60,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
 
 import { SessionManager, GatewayError, ackFromStatus, buildContent, toJid } from "./session-manager.js";
 import { AvatarThrottle } from "./avatar.js";
+import type { SendQueueConfig } from "./send-queue.js";
 
 const logger = pino({ level: "silent" });
 const ACCOUNT = "11111111-2222-3333-4444-555555555555";
@@ -81,6 +83,8 @@ function makeManager(
   dataDir: string,
   extra: {
     sendWaitMs?: number;
+    sendQueue?: Partial<SendQueueConfig>;
+    sleep?: (ms: number) => Promise<void>;
     markOnline?: boolean;
     downloadMedia?: (url: string, mimetype: string) => Promise<Buffer>;
   } = {},
@@ -1061,5 +1065,112 @@ describe("ensurePrivateAuthDir (permissões das credenciais)", () => {
     expect((await fsp.stat(dir)).mode & 0o777).toBe(0o700);
     expect((await fsp.stat(p.join(dir, "creds.json"))).mode & 0o777).toBe(0o600);
     await fsp.rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("SessionManager — fila anti-banimento", () => {
+  const FAST = { delayMinMs: 30, delayMaxMs: 30, typingMsPerChar: 1, typingMaxMs: 50 };
+
+  async function connectedQ(extra: Parameters<typeof makeManager>[1] = {}) {
+    const ctx = makeManager(dataDir, extra);
+    await ctx.manager.connect(ACCOUNT);
+    const sock = mocks.sockets[0];
+    sock.user = { id: "5511999999999@s.whatsapp.net" };
+    sock.emit("connection.update", { connection: "open" });
+    await until(() => ctx.manager.getStatus(ACCOUNT).status === "connected");
+    return { ...ctx, sock };
+  }
+
+  it("interactive (padrão) sai na hora, sem digitando", async () => {
+    const { manager, sock } = await connectedQ({ sendQueue: FAST });
+    await manager.send(ACCOUNT, { to: "5511999999999", text: "a" });
+    await manager.send(ACCOUNT, { to: "5511999999999", text: "b" });
+    expect(sock.sendMessage).toHaveBeenCalledTimes(2);
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it("bulk de texto: composing → espera → paused → envia; segundo bulk espera o intervalo", async () => {
+    const sleep = vi.fn(async (_ms: number) => undefined);
+    const { manager, sock } = await connectedQ({ sendQueue: FAST, sleep });
+    const calls: string[] = [];
+    sock.sendPresenceUpdate.mockImplementation(async (p: string) => void calls.push(p));
+    sock.sendMessage.mockImplementation(async () => {
+      calls.push("send");
+      return { key: { id: "SENT1", fromMe: true } };
+    });
+    const t0 = Date.now();
+    await manager.send(ACCOUNT, { to: "5511999999999", text: "0123456789", priority: "bulk" });
+    expect(calls).toEqual(["composing", "paused", "send"]);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep.mock.calls[0][0]).toBeGreaterThan(0);
+    await manager.send(ACCOUNT, { to: "5511999999999", text: "1", priority: "bulk" });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+  });
+
+  it("falha na presença não impede o envio; mídia bulk não digita", async () => {
+    const { manager, sock } = await connectedQ({ sendQueue: { ...FAST, delayMinMs: 0, delayMaxMs: 0 } });
+    sock.sendPresenceUpdate.mockRejectedValueOnce(new Error("sem presença"));
+    await manager.send(ACCOUNT, { to: "5511999999999", text: "oi", priority: "bulk" });
+    expect(sock.sendMessage).toHaveBeenCalledTimes(1);
+    sock.sendPresenceUpdate.mockClear();
+    await manager.send(ACCOUNT, {
+      to: "5511999999999",
+      media: { url: "https://x/y.png", mimetype: "image/png" },
+      priority: "bulk",
+    });
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it("interactive passa na frente de um backlog bulk", async () => {
+    const { manager, sock } = await connectedQ({ sendQueue: { ...FAST, delayMinMs: 200, delayMaxMs: 200 } });
+    const order: string[] = [];
+    sock.sendMessage.mockImplementation(async (_j: string, c: unknown) => {
+      order.push((c as { text: string }).text);
+      return { key: { id: "S", fromMe: true } };
+    });
+    const bulk = ["b1", "b2", "b3"].map((text) =>
+      manager.send(ACCOUNT, { to: "5511999999999", text, priority: "bulk" }),
+    );
+    await until(() => order.length === 1);
+    await manager.send(ACCOUNT, { to: "5511999999999", text: "agente" });
+    expect(order).toEqual(["b1", "agente"]);
+    await Promise.all(bulk);
+    expect(order).toEqual(["b1", "agente", "b2", "b3"]);
+  });
+
+  it("fila cheia → 429 throttled, e o envio não acontece", async () => {
+    const { manager, sock } = await connectedQ({
+      sendQueue: { ...FAST, delayMinMs: 500, delayMaxMs: 500, maxQueue: 1, maxWaitMs: 60_000 },
+    });
+    const first = manager.send(ACCOUNT, { to: "5511999999999", text: "1", priority: "bulk" });
+    await until(() => sock.sendMessage.mock.calls.length === 1);
+    const second = manager.send(ACCOUNT, { to: "5511999999999", text: "2", priority: "bulk" });
+    await expect(manager.send(ACCOUNT, { to: "5511999999999", text: "3", priority: "bulk" })).rejects.toMatchObject({
+      code: "throttled",
+      httpStatus: 429,
+    });
+    expect(manager.sendQueueStats()).toMatchObject({ queued: 1, throttled: 1 });
+    await first;
+    await second;
+    expect(sock.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("fila desligada: bulk sai na hora", async () => {
+    const { manager, sock } = await connectedQ({ sendQueue: { enabled: false } });
+    await Promise.all([1, 2, 3].map((n) => manager.send(ACCOUNT, { to: "5511999999999", text: `${n}`, priority: "bulk" })));
+    expect(sock.sendMessage).toHaveBeenCalledTimes(3);
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it("bulk enfileirado durante reconexão espera o socket voltar", async () => {
+    const { manager, sock } = await connectedQ({ sendQueue: { ...FAST, delayMinMs: 0, delayMaxMs: 0 }, sendWaitMs: 1000 });
+    sock.emit("connection.update", { connection: "close", lastDisconnect: { error: new Boom("x", { statusCode: 428 }) } });
+    const p = manager.send(ACCOUNT, { to: "5511999999999", text: "oi", priority: "bulk" });
+    await until(() => mocks.sockets.length === 2);
+    const sock2 = mocks.sockets[1];
+    sock2.user = { id: "5511999999999@s.whatsapp.net" };
+    sock2.emit("connection.update", { connection: "open" });
+    await expect(p).resolves.toEqual({ message_id: "SENT1" });
+    expect(sock2.sendMessage).toHaveBeenCalledTimes(1);
   });
 });

@@ -138,9 +138,11 @@ export async function engineSendViaQr(
   }
   await assertConversationOwned(db, input.accountId, input.contactId, input.conversationId)
 
+  // Automations, flows, AI replies and CSAT are bulk: the gateway paces them.
   const { message_id } = await sendViaGateway({
     accountId: input.accountId,
     to,
+    priority: 'bulk',
     ...(input.text !== undefined ? { text: input.text } : {}),
     ...(media ? { media } : {}),
   })
