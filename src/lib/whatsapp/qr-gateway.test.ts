@@ -28,7 +28,7 @@ describe('sendViaGateway priority', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ priority: 'bulk' })
     const delays = spy.mock.calls.map((c) => c[1])
     expect(delays).toContain(30_000)
-    expect(delays).toContain(150_000)
+    expect(delays).toContain(60_000) // 15 s queue wait + 45 s of gateway work
   })
 
   it('maps 429 throttled to a GatewayRequestError with pt-BR copy', async () => {

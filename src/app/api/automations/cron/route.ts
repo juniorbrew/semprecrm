@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { withBulkSendBudget } from '@/lib/whatsapp/send-budget'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
@@ -26,7 +27,12 @@ import { isPushConfigured } from '@/lib/push/send'
  * only; expensive SELECT ... FOR UPDATE is avoided in favor of a
  * two-step UPDATE-by-id.
  */
-export async function GET(request: Request) {
+export function GET(request: Request) {
+  // Bulk QR sends in this tick share one time budget (see send-budget.ts).
+  return withBulkSendBudget(40_000, () => handle(request))
+}
+
+async function handle(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
   if (!expected) {
     return NextResponse.json({ error: 'cron not configured' }, { status: 503 })

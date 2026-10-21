@@ -70,8 +70,6 @@ function loadSendQueue(env: NodeJS.ProcessEnv): SendQueueConfig {
   const delayMaxMs = intEnv(env, "WA_BULK_DELAY_MAX_MS", d.delayMaxMs, 0);
   if (delayMaxMs < delayMinMs) throw new Error("WA_BULK_DELAY_MAX_MS não pode ser menor que WA_BULK_DELAY_MIN_MS");
   const maxWaitMs = intEnv(env, "WA_BULK_MAX_WAIT_MS", d.maxWaitMs, 1000);
-  // O app desiste do gateway em 150 s para bulk (qr-gateway.ts): a espera tem de caber nisso.
-  if (maxWaitMs > 120_000) throw new Error("WA_BULK_MAX_WAIT_MS não pode passar de 120000 (timeout do app: 150 s)");
   return {
     enabled: flag(env.WA_SEND_QUEUE, d.enabled),
     delayMinMs,

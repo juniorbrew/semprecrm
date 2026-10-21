@@ -26,6 +26,12 @@ export interface SendRequest {
   to: string;
   /** padrão `interactive` (compatível com apps antigos que não mandam o campo) */
   priority?: SendPriority;
+  /**
+   * Só para `bulk`: quanto o chamador aceita esperar pela vez (ms). Acima da
+   * espera estimada, ou estourado o prazo, o gateway responde 429 `throttled`
+   * sem enviar. Limitado por WA_BULK_MAX_WAIT_MS; ausente = esse teto.
+   */
+  max_wait_ms?: number;
   text?: string;
   media?: {
     url: string;

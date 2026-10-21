@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/automations/meta-send', () => ({ engineSendText: vi.fn() }))
 
+import { GatewayRequestError } from '@/lib/whatsapp/qr-gateway'
 import { runCsatCron } from './csat-cron'
 import { makeFakeDb } from './csat-fake-db'
 
@@ -127,6 +128,17 @@ describe('runCsatCron', () => {
       const c = setup({ extra: { csat_responses: [{ ...sent, sent_at: minutesAgo(8 * 24 * 60) }] } })
       expect(await c.run()).toMatchObject({ sent: 1 })
     })
+  })
+
+  it('a gateway throttled send is retried later without spending an attempt', async () => {
+    const { state, send, run } = setup()
+    send.mockRejectedValueOnce(new GatewayRequestError('fila cheia', 429, 'throttled'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await run()
+    spy.mockRestore()
+    expect(state.tables.csat_responses).toEqual([])
+    expect(state.tables.csat_jobs[0]).toMatchObject({ claimed_at: null, attempts: 0 })
+    expect(new Date(String(state.tables.csat_jobs[0].run_at)).toISOString()).toBe('2026-09-30T12:01:00.000Z')
   })
 
   it('a failed send removes the reservation and releases the job for another try', async () => {

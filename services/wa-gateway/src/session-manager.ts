@@ -415,7 +415,9 @@ export class SessionManager {
     toJid(req.to); // número inválido → 400 já, sem ocupar a fila
     const priority = req.priority ?? "interactive";
     try {
-      return await this.sendQueue.run(accountId, priority, () => this.deliver(s, req, priority));
+      return await this.sendQueue.run(accountId, priority, () => this.deliver(s, req, priority), {
+        maxWaitMs: req.max_wait_ms,
+      });
     } catch (err) {
       if (err instanceof SendThrottledError) {
         this.log.warn({ accountId, reason: err.reason, ...this.sendQueue.stats() }, "envio recusado pela fila");

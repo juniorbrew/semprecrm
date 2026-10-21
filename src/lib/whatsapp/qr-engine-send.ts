@@ -14,7 +14,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { WhatsAppChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
-import { sendViaGateway, type GatewayMedia } from './qr-gateway'
+import {
+  BULK_MAX_WAIT_MS,
+  GatewayRequestError,
+  sendViaGateway,
+  type GatewayMedia,
+  type GatewaySendPriority,
+} from './qr-gateway'
+import { remainingBulkSendBudgetMs } from './send-budget'
 import { accountMediaUrlForServer } from '@/lib/storage/media-url'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from './phone-echo'
@@ -108,6 +115,14 @@ export interface EngineQrSendInput {
   preview?: string
   /** Which engine sent it — drives the bubble's sender label (migration 059). */
   origin?: 'automation' | 'flow' | 'ai' | 'csat'
+  /**
+   * `bulk` (default): automations, AI replies, surveys — the gateway paces
+   * them and a full queue answers `throttled`, which the caller parks and
+   * retries. `interactive`: flows, whose steps run inside the inbound
+   * request (no resume mechanism, and the gateway's 15 s callback timeout):
+   * they leave at once, exactly as before the queue existed.
+   */
+  priority?: GatewaySendPriority
 }
 
 /**
@@ -138,11 +153,24 @@ export async function engineSendViaQr(
   }
   await assertConversationOwned(db, input.accountId, input.contactId, input.conversationId)
 
-  // Automations, flows, AI replies and CSAT are bulk: the gateway paces them.
+  const priority = input.priority ?? 'bulk'
+  let maxWaitMs = BULK_MAX_WAIT_MS
+  if (priority === 'bulk') {
+    // Inside a cron tick the budget bounds the whole handler; when it is
+    // spent the send is refused as `throttled` without calling the gateway.
+    const left = remainingBulkSendBudgetMs()
+    if (left !== null) {
+      if (left < 1_000) {
+        throw new GatewayRequestError('Orçamento de envio do ciclo esgotado; tente no próximo.', 429, 'throttled')
+      }
+      maxWaitMs = Math.min(maxWaitMs, left)
+    }
+  }
   const { message_id } = await sendViaGateway({
     accountId: input.accountId,
     to,
-    priority: 'bulk',
+    priority,
+    ...(priority === 'bulk' ? { maxWaitMs } : {}),
     ...(input.text !== undefined ? { text: input.text } : {}),
     ...(media ? { media } : {}),
   })

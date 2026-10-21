@@ -81,7 +81,6 @@ describe("loadConfig — fila de envio", () => {
 
   it("valor inválido ou intervalo invertido falha na subida", () => {
     expect(() => loadConfig({ ...BASE, WA_BULK_MAX_PER_MINUTE: "0" })).toThrow(/WA_BULK_MAX_PER_MINUTE/);
-    expect(() => loadConfig({ ...BASE, WA_BULK_MAX_WAIT_MS: "200000" })).toThrow(/WA_BULK_MAX_WAIT_MS/);
     expect(() => loadConfig({ ...BASE, WA_BULK_DELAY_MIN_MS: "abc" })).toThrow(/WA_BULK_DELAY_MIN_MS/);
     expect(() => loadConfig({ ...BASE, WA_BULK_DELAY_MIN_MS: "9000", WA_BULK_DELAY_MAX_MS: "1000" })).toThrow(/MAX/);
   });

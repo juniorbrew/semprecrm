@@ -123,15 +123,91 @@ describe("SendQueue", () => {
     await Promise.all(ps);
   });
 
-  it("espera estimada acima do limite → recusa na hora (wait_too_long)", async () => {
-    const q = mk({ maxWaitMs: 2000, delayMinMs: 2000, delayMaxMs: 2000 });
-    const first = q.run("acc", "bulk", async () => 1);
+  it("pedido com prazo curto: espera estimada acima do prazo → recusa na hora (wait_too_long)", async () => {
+    const q = mk({ delayMinMs: 2000, delayMaxMs: 2000 });
+    const first = q.run("acc", "bulk", async () => 1, { maxWaitMs: 5000 });
     await vi.advanceTimersByTimeAsync(0);
-    const queued = [q.run("acc", "bulk", async () => 2), q.run("acc", "bulk", async () => 3)];
-    queued.forEach((p) => p.catch(() => undefined));
-    await expect(q.run("acc", "bulk", async () => 4)).rejects.toMatchObject({ reason: "wait_too_long" });
+    // estimativas: 2 s e 4 s cabem em 5 s; a terceira (6 s) não
+    const queued = [
+      q.run("acc", "bulk", async () => 2, { maxWaitMs: 5000 }),
+      q.run("acc", "bulk", async () => 3, { maxWaitMs: 5000 }),
+    ];
+    await expect(q.run("acc", "bulk", async () => 4, { maxWaitMs: 5000 })).rejects.toMatchObject({
+      reason: "wait_too_long",
+    });
+    // prazo 0: só entra se puder sair agora
+    await expect(q.run("acc", "bulk", async () => 5, { maxWaitMs: 0 })).rejects.toMatchObject({
+      reason: "wait_too_long",
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(Promise.all([first, ...queued])).resolves.toEqual([1, 2, 3]);
+  });
+
+  it("o teto por minuto entra na estimativa", async () => {
+    const q = mk({ delayMinMs: 0, delayMaxMs: 0, maxPerMinute: 1, maxWaitMs: 120_000 });
+    void q.run("acc", "bulk", async () => 1);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(q.run("acc", "bulk", async () => 2, { maxWaitMs: 30_000 })).rejects.toMatchObject({
+      reason: "wait_too_long",
+    });
+    const ok = q.run("acc", "bulk", async () => 3, { maxWaitMs: 61_000 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(ok).resolves.toBe(3);
+  });
+
+  it("sem prazo no pedido não há recusa por estimativa: o limite é maxQueue, de verdade", async () => {
+    const q = mk({ maxQueue: 100, maxWaitMs: 90_000, delayMinMs: 3000, delayMaxMs: 8000 });
+    const ps = Array.from({ length: 101 }, (_, i) => q.run("acc", "bulk", async () => i));
+    ps.forEach((p) => p.catch(() => undefined));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(q.stats().queued).toBe(100); // 1 saiu, 100 esperando: nenhum recusado
+    expect(q.stats().throttled).toBe(0);
+    await expect(q.run("acc", "bulk", async () => 0)).rejects.toMatchObject({ reason: "queue_full" });
     q.shutdown();
-    await first;
+  });
+
+  it("fan-out de 50 destinatários: quem leva 429 estaciona e o cron retoma; os 50 saem, nenhum se perde", async () => {
+    // Modelo do app: os envios chegam juntos (eventos concorrentes) com prazo de 15 s; em 429
+    // `throttled` o passo é estacionado (pending execution, run_at +60 s). O cron roda a cada
+    // minuto, retoma as linhas vencidas em sequência com orçamento de 45 s e re-estaciona o que
+    // levar 429 de novo.
+    const q = new SendQueue(
+      { delayMinMs: 3000, delayMaxMs: 8000, maxPerMinute: 15, maxQueue: 100, maxWaitMs: 90_000 },
+      { random: () => 0.5 },
+    );
+    const sent: number[] = [];
+    const pending = new Map<number, number>(); // id → run_at
+    let parked = 0;
+    const attempt = async (id: number, maxWaitMs: number): Promise<void> => {
+      try {
+        await q.run("acc", "bulk", async () => void sent.push(id), { maxWaitMs });
+        pending.delete(id);
+      } catch (err) {
+        expect(err).toMatchObject({ name: "SendThrottledError" });
+        parked += 1;
+        pending.set(id, Date.now() + 60_000);
+      }
+    };
+    const cronTick = async () => {
+      const deadline = Date.now() + 45_000;
+      for (const [id, runAt] of [...pending]) {
+        const left = deadline - Date.now();
+        if (runAt > Date.now() || left < 1000) continue;
+        await attempt(id, Math.min(15_000, left));
+      }
+    };
+    const fanOut = Array.from({ length: 50 }, (_, i) => attempt(i, 15_000));
+    for (let tick = 0; tick < 12 && (sent.length < 50 || pending.size); tick += 1) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      void cronTick();
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    await Promise.all(fanOut);
+    expect([...sent].sort((a, b) => a - b)).toEqual(Array.from({ length: 50 }, (_, i) => i));
+    expect(new Set(sent).size).toBe(50); // nenhum enviado duas vezes
+    expect(pending.size).toBe(0);
+    expect(parked).toBeGreaterThan(0); // o prazo curto realmente estacionou gente
+    expect(q.stats()).toMatchObject({ queued: 0, sent_bulk: 50 });
   });
 
   it("vez que não chega em maxWaitMs → SendThrottledError(max_wait) e sai da fila", async () => {

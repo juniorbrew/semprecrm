@@ -221,12 +221,17 @@ export interface GatewayMedia {
  */
 export type GatewaySendPriority = 'interactive' | 'bulk'
 
-const SEND_TIMEOUT_MS: Record<GatewaySendPriority, number> = {
-  interactive: 30_000,
-  // Gateway WA_BULK_MAX_WAIT_MS (default 90 s) + typing + media download/upload,
-  // so the gateway always answers (200 or 429) before we give up on it.
-  bulk: 150_000,
-}
+/**
+ * How long a bulk send may wait for its turn in the gateway queue. Short on
+ * purpose: callers are request handlers (cron ticks, inbound processing) and
+ * never block for minutes; on a longer wait the gateway answers 429
+ * `throttled` at once and the caller parks the work (see `isGatewayThrottled`).
+ */
+export const BULK_MAX_WAIT_MS = 15_000
+
+/** Time the gateway needs after its turn: typing indicator, media download, upload. */
+const SEND_WORK_MS = 45_000
+const INTERACTIVE_TIMEOUT_MS = 30_000
 
 export interface GatewaySendInput {
   accountId: string
@@ -236,9 +241,13 @@ export interface GatewaySendInput {
   media?: GatewayMedia
   /** Defaults to `interactive`. */
   priority?: GatewaySendPriority
+  /** Bulk only: longest wait for the queue turn (default BULK_MAX_WAIT_MS). */
+  maxWaitMs?: number
 }
 
 export async function sendViaGateway(input: GatewaySendInput): Promise<{ message_id: string }> {
+  const bulk = input.priority === 'bulk'
+  const maxWaitMs = bulk ? Math.max(0, input.maxWaitMs ?? BULK_MAX_WAIT_MS) : undefined
   const res = await gatewayFetch<{ message_id?: string }>(
     `/sessions/${encodeURIComponent(input.accountId)}/send`,
     {
@@ -246,11 +255,12 @@ export async function sendViaGateway(input: GatewaySendInput): Promise<{ message
       body: {
         to: input.to,
         priority: input.priority ?? 'interactive',
+        ...(maxWaitMs !== undefined ? { max_wait_ms: maxWaitMs } : {}),
         ...(input.text !== undefined ? { text: input.text } : {}),
         ...(input.media ? { media: input.media } : {}),
       },
       // Media uploads can take a while on the gateway side; bulk also queues.
-      timeoutMs: SEND_TIMEOUT_MS[input.priority ?? 'interactive'],
+      timeoutMs: maxWaitMs !== undefined ? maxWaitMs + SEND_WORK_MS : INTERACTIVE_TIMEOUT_MS,
     },
   )
   if (!res.message_id) {

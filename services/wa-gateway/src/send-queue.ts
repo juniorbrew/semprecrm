@@ -14,9 +14,13 @@
  *     entre o fim do envio anterior (de qualquer prioridade) e o início do
  *     próximo, e teto de `maxPerMinute` numa janela deslizante de 60 s.
  *
- * Nada se perde em silêncio: fila cheia, espera estimada acima do limite, ou
- * a vez que não chega em `maxWaitMs` → `SendThrottledError` (o gateway
- * responde 429 `throttled` e o app tenta de novo). Contas não se bloqueiam
+ * Nada se perde em silêncio: fila cheia (`maxQueue`, o limite é exatamente
+ * esse) ou a vez que não chega no prazo do pedido → `SendThrottledError` (o
+ * gateway responde 429 `throttled` e o app tenta de novo). O prazo é o
+ * `maxWaitMs` da config, ou o menor `maxWaitMs` que o próprio pedido informa:
+ * quem informa um prazo (o app, em contextos que não podem ficar minutos
+ * bloqueados) também ganha recusa imediata quando a espera ESTIMADA já passa
+ * dele, em vez de ocupar a conexão até o prazo estourar. Contas não se bloqueiam
  * entre si. A fila vive na memória do processo; no desligamento os pedidos
  * em espera são recusados (429), nunca descartados.
  */
@@ -35,7 +39,7 @@ export interface SendQueueConfig {
   maxPerMinute: number;
   /** quantos bulk podem esperar por conta */
   maxQueue: number;
-  /** tempo máximo que um bulk espera a sua vez */
+  /** teto do tempo que um bulk espera a sua vez (o pedido pode pedir menos) */
   maxWaitMs: number;
   /** "digitando…" antes de texto bulk */
   typingEnabled: boolean;
@@ -134,7 +138,12 @@ export class SendQueue {
    * da conta. Rejeita com `SendThrottledError` sem ter rodado `run` — por
    * isso o chamador pode tentar de novo sem risco de duplicar.
    */
-  run<T>(accountId: string, priority: SendPriority, run: () => Promise<T>): Promise<T> {
+  run<T>(
+    accountId: string,
+    priority: SendPriority,
+    run: () => Promise<T>,
+    opts: { maxWaitMs?: number } = {},
+  ): Promise<T> {
     if (!this.cfg.enabled) return run();
     const lane = this.lane(accountId);
     if (priority === "interactive") return this.exec(priority, run, lane);
@@ -142,10 +151,12 @@ export class SendQueue {
     if (lane.queue.length >= this.cfg.maxQueue) {
       return this.refuse("fila de envio desta conta está cheia", "queue_full");
     }
-    // Falha rápido em vez de segurar a conexão por maxWaitMs para depois recusar.
-    const avgGap = (this.cfg.delayMinMs + this.cfg.delayMaxMs) / 2;
-    if ((lane.queue.length + 1) * avgGap > this.cfg.maxWaitMs * 1.5) {
-      return this.refuse("fila de envio desta conta está longa demais; tente mais tarde", "wait_too_long");
+    const requested = opts.maxWaitMs;
+    const maxWaitMs = Math.max(0, Math.min(requested ?? this.cfg.maxWaitMs, this.cfg.maxWaitMs));
+    const gapMs = this.cfg.delayMinMs + Math.floor(this.random() * (this.cfg.delayMaxMs - this.cfg.delayMinMs + 1));
+    // Só quem prometeu um prazo curto ganha a recusa imediata (o chamador estaciona e tenta depois).
+    if (requested !== undefined && this.estimateStartIn(lane, gapMs) > maxWaitMs) {
+      return this.refuse("a fila de envio desta conta está longa demais para este prazo; tente mais tarde", "wait_too_long");
     }
     return new Promise<T>((resolve, reject) => {
       const item: Item = {
@@ -153,7 +164,7 @@ export class SendQueue {
         resolve: resolve as (v: unknown) => void,
         reject,
         enqueuedAt: this.now(),
-        gapMs: this.cfg.delayMinMs + Math.floor(this.random() * (this.cfg.delayMaxMs - this.cfg.delayMinMs + 1)),
+        gapMs,
       };
       item.waitTimer = setTimeout(() => {
         const i = lane.queue.indexOf(item);
@@ -161,11 +172,33 @@ export class SendQueue {
         lane.queue.splice(i, 1);
         this.throttled += 1;
         reject(new SendThrottledError("a vez deste envio não chegou a tempo; tente novamente", "max_wait"));
-      }, this.cfg.maxWaitMs);
+      }, maxWaitMs);
       item.waitTimer.unref?.();
       lane.queue.push(item);
       this.pump(lane);
     });
+  }
+
+  /**
+   * Em quantos ms um item NOVO (com intervalo `gapMs`) começaria se entrasse
+   * agora no fim da fila: simula a fila inteira com intervalo e teto por minuto.
+   * Não conta a duração dos envios nem o "digitando…" — é uma estimativa;
+   * o prazo do pedido é o limite de verdade.
+   */
+  private estimateStartIn(lane: Lane, gapMs: number): number {
+    const now = this.now();
+    const window = lane.sends.filter((t) => t > now - WINDOW_MS);
+    let last = lane.lastEndAt;
+    let start = now;
+    for (const gap of [...lane.queue.map((i) => i.gapMs), gapMs]) {
+      start = Math.max(now, last === undefined ? now : last + gap);
+      while (window.length && window[0] <= start - WINDOW_MS) window.shift();
+      if (window.length >= this.cfg.maxPerMinute) start = Math.max(start, window[0] + WINDOW_MS);
+      while (window.length && window[0] <= start - WINDOW_MS) window.shift();
+      window.push(start);
+      last = start;
+    }
+    return start - now;
   }
 
   stats(): SendQueueStats {

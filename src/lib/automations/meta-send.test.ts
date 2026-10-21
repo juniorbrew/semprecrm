@@ -21,7 +21,6 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   sendTemplateMessage: (...a: unknown[]) => h.sendTemplateMessage(...a),
 }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
-vi.mock('./qr-pacing', () => ({ paceAutomatedQrSend: vi.fn(async () => {}) }))
 vi.mock('@/lib/whatsapp/qr-engine-send', () => ({
   assertConversationOwned: (...a: unknown[]) => h.assertConversationOwned(...(a as [])),
   conversationChannel: vi.fn(async () => 'official'),

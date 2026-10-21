@@ -106,6 +106,12 @@ export function createApp(deps: ServerDeps): Hono {
     if (body.priority !== undefined && body.priority !== "interactive" && body.priority !== "bulk") {
       throw new GatewayError("priority precisa ser interactive ou bulk", "invalid_request", 400);
     }
+    if (
+      body.max_wait_ms !== undefined &&
+      !(typeof body.max_wait_ms === "number" && Number.isFinite(body.max_wait_ms) && body.max_wait_ms >= 0)
+    ) {
+      throw new GatewayError("max_wait_ms precisa ser um número >= 0", "invalid_request", 400);
+    }
     const result = await deps.sessions.send(c.req.param("accountId"), body);
     return c.json(result);
   });

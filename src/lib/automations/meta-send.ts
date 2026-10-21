@@ -19,7 +19,6 @@ import {
   loadTemplateBody,
   renderTemplateBody,
 } from '@/lib/whatsapp/qr-engine-send'
-import { paceAutomatedQrSend } from './qr-pacing'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -46,8 +45,6 @@ interface SendTextArgs {
   text: string
   /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
   origin?: 'automation' | 'ai' | 'csat'
-  /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
-  skipPacing?: boolean
 }
 
 interface SendTemplateArgs {
@@ -81,8 +78,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Web session, so deliver through the gateway. Templates don't exist
   // there — send the rendered body as plain text instead.
   if ((await conversationChannel(db, input.conversationId)) === 'qr') {
-    // Anti-ban: automated sends of one number go out spaced, not in a burst.
-    if (!(input.kind === 'text' && input.skipPacing)) await paceAutomatedQrSend(input.accountId)
+    // Anti-ban pacing is the gateway's job (bulk queue); a `throttled` answer
+    // propagates so the automation engine / AI / CSAT can park and retry.
     if (input.kind === 'template') {
       const body = await loadTemplateBody(db, input.accountId, input.templateName, input.language)
       if (!body) {

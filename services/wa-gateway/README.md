@@ -70,7 +70,7 @@ backoff exponencial (erros 5xx/rede); 4xx são descartados com log.
 | `POST /sessions/:id/connect`        | → `{ status }` |
 | `GET /sessions/:id`                 | → `{ status: disconnected\|qr\|connecting\|connected, qr?, phone?, name?, connected_at? }` |
 | `POST /sessions/:id/logout`         | → `{ status: "disconnected" }` |
-| `POST /sessions/:id/send`           | `{ to: "5511999999999", text?, media?: { url, mimetype, filename?, caption?, ptt? }, priority?: interactive\|bulk }` → `{ message_id }` |
+| `POST /sessions/:id/send`           | `{ to: "5511999999999", text?, media?: { url, mimetype, filename?, caption?, ptt? }, priority?: interactive\|bulk, max_wait_ms? }` → `{ message_id }` |
 | `POST /sessions/:id/avatar`         | `{ to: "5511999999999", contact_id: "<uuid>" }` → `{ url: string \| null }` |
 
 Erros: `401` sem secret; `400 invalid_request`; `409 not_connected`;
@@ -91,19 +91,26 @@ conforme o campo `priority` do pedido:
   `WA_BULK_MAX_PER_MINUTE` envios por minuto (janela deslizante). Texto bulk
   mostra "digitando…" por um tempo proporcional ao tamanho (teto
   `WA_TYPING_MAX_MS`) antes de sair.
-- Nada se perde em silêncio: fila cheia (`WA_BULK_MAX_QUEUE`), espera estimada
-  acima do limite ou vez que não chega em `WA_BULK_MAX_WAIT_MS` → `429 throttled`
-  *sem ter enviado*; o app pode repetir com segurança. No desligamento, o que
-  esperava também recebe 429.
+- Nada se perde em silêncio: fila cheia (`WA_BULK_MAX_QUEUE`, o limite é esse
+  mesmo) ou vez que não chega no prazo → `429 throttled` *sem ter enviado*; o
+  app pode repetir com segurança. O prazo é `WA_BULK_MAX_WAIT_MS` (teto) ou o
+  `max_wait_ms` do pedido, se menor. Quem manda `max_wait_ms` também leva 429
+  na hora quando a espera ESTIMADA (simulação da fila com intervalo e teto por
+  minuto) já passa do prazo — o app usa 15 s, estaciona o passo e tenta de novo
+  num ciclo do cron, em vez de segurar a requisição. Sem `max_wait_ms` não há
+  recusa por estimativa. No desligamento, o que esperava também recebe 429.
 - Contas não se bloqueiam entre si; a fila vive na memória do processo.
 - Reconexão: a espera pela sessão (`sendWaitMs`) acontece dentro da vez do
   envio, então a ordem se mantém e o 409 só aparece se a sessão não voltar.
 - Estado da fila em `GET /health` (`send_queue`). `WA_SEND_QUEUE=false` desliga
   tudo (envio imediato, sem "digitando…").
 
-O app marca como `bulk` os envios do motor (`engineSendViaQr`) e como
-`interactive` a rota `/api/whatsapp/send`; o timeout do app para `bulk` é de
-150 s (a espera máxima padrão é 90 s).
+O app marca como `bulk` (com `max_wait_ms: 15000`) os envios de automações, IA e
+pesquisas de satisfação; ao receber `throttled` ele estaciona o passo e retoma
+no próximo ciclo (automações: execução pendente; IA: job reagendado; CSAT: job
+re-armado), sem gastar tentativa. Fluxos (executados dentro da requisição de
+entrada, sem como estacionar) e a rota `/api/whatsapp/send` usam `interactive`.
+O timeout do app para `bulk` é `max_wait_ms` + 45 s.
 
 `send` durante uma reconexão (queda de rede, reinício) não devolve 409 na hora:
 espera até 15 s a sessão voltar a `connected` e, se o socket cair no meio do

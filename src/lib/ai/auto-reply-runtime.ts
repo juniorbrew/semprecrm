@@ -35,7 +35,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { engineSendText } from '@/lib/automations/meta-send';
-import { paceAutomatedQrSend } from '@/lib/automations/qr-pacing';
 import { startOfLocalDay } from '@/lib/business-hours';
 import { accountHasModule } from '@/lib/plans-server';
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send';
@@ -98,10 +97,9 @@ export interface AutoReplyDeps {
 export function defaultAutoReplyDeps(): AutoReplyDeps {
   return {
     db: supabaseAdmin(),
-    send: (a) => engineSendText({ ...a, origin: 'ai', skipPacing: true }),
-    pace: async (accountId, channel) => {
-      if (channel === 'qr') await paceAutomatedQrSend(accountId);
-    },
+    send: (a) => engineSendText({ ...a, origin: 'ai' }),
+    // QR anti-ban pacing lives in the gateway queue (bulk priority).
+    pace: async () => {},
     runModel: runModelCall,
     hasAiModule: (db, accountId) => accountHasModule(db, accountId, 'ai'),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
