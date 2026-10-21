@@ -48,6 +48,12 @@ interface SendTextArgs {
   origin?: 'automation' | 'ai' | 'csat'
   /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
   skipPacing?: boolean
+  /**
+   * A human agent's message sent later (scheduled messages, migration 092):
+   * persisted as `sender_type='agent'` authored by this user, exactly like a
+   * manual reply, and never paced like an automation.
+   */
+  agentId?: string
 }
 
 interface SendTemplateArgs {
@@ -82,7 +88,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // there — send the rendered body as plain text instead.
   if ((await conversationChannel(db, input.conversationId)) === 'qr') {
     // Anti-ban: automated sends of one number go out spaced, not in a burst.
-    if (!(input.kind === 'text' && input.skipPacing)) await paceAutomatedQrSend(input.accountId)
+    if (!(input.kind === 'text' && (input.skipPacing || input.agentId))) await paceAutomatedQrSend(input.accountId)
     if (input.kind === 'template') {
       const body = await loadTemplateBody(db, input.accountId, input.templateName, input.language)
       if (!body) {
@@ -103,7 +109,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
     }
     return engineSendViaQr(db, {
-      origin: input.origin ?? 'automation',
+      origin: input.agentId ? undefined : (input.origin ?? 'automation'),
+      agentId: input.agentId,
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -221,10 +228,12 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       : templateContentText(templateRow, input.params ?? [])
   const template_name = input.kind === 'template' ? input.templateName : null
 
+  const agentId = input.kind === 'text' ? input.agentId : undefined
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
-    sender_type: 'bot',
-    origin: (input.kind === 'text' && input.origin) || 'automation',
+    sender_type: agentId ? 'agent' : 'bot',
+    ...(agentId ? { sender_id: agentId } : {}),
+    origin: agentId ? null : (input.kind === 'text' && input.origin) || 'automation',
     content_type,
     content_text,
     template_name,

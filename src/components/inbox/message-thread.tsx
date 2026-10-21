@@ -90,6 +90,7 @@ import {
 import { ConversationReminder } from "./conversation-reminder";
 import { ConversationSnooze } from "./conversation-snooze";
 import { MessageBubble } from "./message-bubble";
+import { ScheduledMessagesPanel } from "./scheduled-messages-panel";
 import { senderLabelFor } from "./sender-label";
 import { MessageActions } from "./message-actions";
 import {
@@ -504,6 +505,10 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  // Scheduled messages (migration 092): bump to refetch the pending list;
+  // a cancelled one hands its text back to the composer.
+  const [scheduledRefresh, setScheduledRefresh] = useState(0);
+  const [restoreDraft, setRestoreDraft] = useState<{ key: number; text: string } | null>(null);
   // Automatic reply (migration 066): pause / resume + hand-over card.
   // Refetched when the realtime row's pause or status changes.
   const { state: aiAuto, reload: reloadAiAuto } = useAiAutoState(
@@ -2619,9 +2624,20 @@ export function MessageThread({
         />
       )}
 
+      <ScheduledMessagesPanel
+        conversationId={conversation.id}
+        language={language}
+        canAct={canWriteHere && !contact?.anonymized_at}
+        profiles={profiles}
+        refreshKey={scheduledRefresh}
+        onRestoreText={(text) => setRestoreDraft({ key: Date.now(), text })}
+      />
+
       {/* Composer */}
       <MessageComposer
         conversationId={conversation.id}
+        onScheduled={() => setScheduledRefresh((n) => n + 1)}
+        restoreDraft={restoreDraft}
         sessionExpired={isOfficial && sessionInfo.expired}
         templatesEnabled={isOfficial}
         contactName={contact?.name ?? conversation.contact?.name ?? null}
