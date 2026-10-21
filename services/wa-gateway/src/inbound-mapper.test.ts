@@ -352,6 +352,13 @@ describe("mapInboundMessage — apagar para todos (REVOKE)", () => {
     expect(removed.kind === "reaction" && removed.payload.emoji).toBe("");
     // reação feita pelo nosso celular: ignorada
     expect(mapInboundMessage(ACCOUNT, react(true, "👍"))).toEqual({ kind: "skip", reason: "protocol" });
+    // dentro de mensagem temporária (efêmera) também
+    const ephemeral = fixture({
+      key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe: false, id: "RX2" },
+      message: { ephemeralMessage: { message: { reactionMessage: { key: { id: "ORIG2" }, text: "😂" } } } },
+    });
+    const out = mapInboundMessage(ACCOUNT, ephemeral);
+    expect(out.kind === "reaction" && out.payload.message_id).toBe("ORIG2");
   });
 
   it("revokedMessageId só reconhece o tipo REVOKE", () => {

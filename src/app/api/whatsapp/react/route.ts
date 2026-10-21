@@ -188,7 +188,7 @@ export async function POST(request: Request) {
       if (delError) {
         console.error('[whatsapp/react] DB delete failed:', delError.message);
         return NextResponse.json(
-          { error: 'Reaction sent to Meta but DB delete failed' },
+          { error: 'Reaction sent but DB delete failed' },
           { status: 500 },
         );
       }
@@ -209,7 +209,7 @@ export async function POST(request: Request) {
       if (upsertError) {
         console.error('[whatsapp/react] DB upsert failed:', upsertError.message);
         return NextResponse.json(
-          { error: 'Reaction sent to Meta but DB upsert failed' },
+          { error: 'Reaction sent but DB upsert failed' },
           { status: 500 },
         );
       }
