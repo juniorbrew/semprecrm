@@ -44,7 +44,9 @@ interface SendTextArgs {
   contactId: string
   text: string
   /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
-  origin?: 'automation' | 'ai' | 'csat'
+  origin?: 'automation' | 'ai' | 'csat' | 'api'
+  /** Public API idempotency claim (migration 093), stored on the message row. */
+  apiRequestId?: string
   /**
    * QR channel only. Immediate replies to a customer who just wrote (out-of-hours
    * notice, survey thanks) pass `interactive` so the gateway queue never refuses them.
@@ -114,6 +116,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     return engineSendViaQr(db, {
       origin: input.agentId ? undefined : (input.origin ?? 'automation'),
       agentId: input.agentId,
+      apiRequestId: input.apiRequestId,
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -241,6 +244,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     sender_type: agentId ? 'agent' : 'bot',
     ...(agentId ? { sender_id: agentId } : {}),
     origin: agentId ? null : (input.kind === 'text' && input.origin) || 'automation',
+    ...(input.kind === 'text' && input.apiRequestId ? { api_request_id: input.apiRequestId } : {}),
     content_type,
     content_text,
     template_name,

@@ -379,7 +379,8 @@ export type MessageOrigin =
   | 'flow'
   | 'system'
   | 'ai'
-  | 'csat';
+  | 'csat'
+  | 'api';
 export type ContentType =
   | 'text'
   | 'image'

@@ -6,7 +6,9 @@ module.exports = {
       name: "semprecrm",
       cwd: "/var/www/semprecrm",
       script: "node_modules/next/dist/bin/next",
-      args: "start -p 3000",
+      // -H 127.0.0.1: only nginx, cron and wa-gateway (all loopback) reach the app. Listening on
+      // 0.0.0.0 would let anyone hit :3000 directly with a forged X-Real-IP.
+      args: "start -H 127.0.0.1 -p 3000",
       instances: 1, // keep 1: the in-memory rate limiter assumes a single process
       exec_mode: "fork",
       autorestart: true,
