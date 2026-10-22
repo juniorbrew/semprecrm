@@ -33,6 +33,7 @@ async function main(): Promise<void> {
     logger,
     markOnline: config.markOnline,
     mediaPolicy: config.mediaPolicy,
+    sendQueue: config.sendQueue,
   });
 
   const app = createApp({ secret: config.secret, sessions, logger });

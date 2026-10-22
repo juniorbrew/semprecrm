@@ -22,7 +22,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
-import { GatewayRequestError } from '@/lib/whatsapp/qr-gateway'
+import { GatewayRequestError, isGatewayThrottled } from '@/lib/whatsapp/qr-gateway'
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import {
   CSAT_JOB_ONLY_REASONS,
@@ -107,7 +107,16 @@ export async function runCsatCron(
       out.errors += 1
       console.error('[csat] job', job.id, 'failed:', err instanceof Error ? err.message : err)
       // Release the claim; csat_claim_jobs picks it up again (max 3 attempts).
-      await db.from('csat_jobs').update({ claimed_at: null }).eq('id', job.id).is('processed_at', null)
+      // A throttled send never left the gateway: retry in a minute without
+      // spending one of those attempts.
+      const release = isGatewayThrottled(err)
+        ? {
+            claimed_at: null,
+            attempts: Math.max(0, (job.attempts ?? 1) - 1),
+            run_at: new Date(now.getTime() + 60_000).toISOString(),
+          }
+        : { claimed_at: null }
+      await db.from('csat_jobs').update(release).eq('id', job.id).is('processed_at', null)
     }
   }
   return out

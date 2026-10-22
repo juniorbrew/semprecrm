@@ -35,10 +35,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { engineSendText } from '@/lib/automations/meta-send';
-import { paceAutomatedQrSend } from '@/lib/automations/qr-pacing';
 import { startOfLocalDay } from '@/lib/business-hours';
 import { accountHasModule } from '@/lib/plans-server';
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send';
+import { isGatewayThrottled } from '@/lib/whatsapp/qr-gateway';
 import { parseActions } from './skills';
 import { executeActions } from './skills-exec';
 import { loadSkillContext, supabaseSkillGateway } from './skills-gateway';
@@ -97,10 +97,9 @@ export interface AutoReplyDeps {
 export function defaultAutoReplyDeps(): AutoReplyDeps {
   return {
     db: supabaseAdmin(),
-    send: (a) => engineSendText({ ...a, origin: 'ai', skipPacing: true }),
-    pace: async (accountId, channel) => {
-      if (channel === 'qr') await paceAutomatedQrSend(accountId);
-    },
+    send: (a) => engineSendText({ ...a, origin: 'ai' }),
+    // QR anti-ban pacing lives in the gateway queue (bulk priority).
+    pace: async () => {},
     runModel: runModelCall,
     hasAiModule: (db, accountId) => accountHasModule(db, accountId, 'ai'),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -262,6 +261,11 @@ const errText = (err: unknown) => (err instanceof AiError ? `ai:${err.code}` : e
 /** A thrown job: retry with back-off, or — out of attempts — hand over silently. */
 async function retryOrGiveUp(job: AiReplyJob, err: unknown, deps: AutoReplyDeps): Promise<void> {
   console.error('[ai/auto-reply] job failed:', job.id, errText(err));
+  if (isGatewayThrottled(err)) {
+    // The gateway's anti-ban queue refused the send: nothing went out, so this is not a failed attempt.
+    await requeue(deps.db, job, new Date(deps.now().getTime() + 60_000), { last_error: errText(err), attempts: Math.max(0, job.attempts - 1) });
+    return;
+  }
   if (job.attempts >= AUTO_REPLY.maxAttempts) {
     await patchJob(deps.db, job.id, { status: 'failed', last_error: errText(err) });
     await giveUp(job, deps, 'A IA falhou várias vezes ao responder');

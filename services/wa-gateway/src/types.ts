@@ -15,8 +15,23 @@ export interface SessionStatusResponse {
   connected_at?: string;
 }
 
+/**
+ * `interactive`: atendente na caixa de entrada — sai na hora, nunca espera na
+ * fila anti-banimento. `bulk`: automações, fluxos, IA, campanhas — entra na
+ * fila da conta, com intervalos aleatórios e teto por minuto (send-queue.ts).
+ */
+export type SendPriority = "interactive" | "bulk";
+
 export interface SendRequest {
   to: string;
+  /** padrão `interactive` (compatível com apps antigos que não mandam o campo) */
+  priority?: SendPriority;
+  /**
+   * Só para `bulk`: quanto o chamador aceita esperar pela vez (ms). Acima da
+   * espera estimada, ou estourado o prazo, o gateway responde 429 `throttled`
+   * sem enviar. Limitado por WA_BULK_MAX_WAIT_MS; ausente = esse teto.
+   */
+  max_wait_ms?: number;
   text?: string;
   media?: {
     url: string;

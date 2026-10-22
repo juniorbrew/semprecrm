@@ -51,3 +51,37 @@ describe("loadConfig — GATEWAY_BIND", () => {
     expect(loadConfig({ ...BASE, GATEWAY_BIND: "0.0.0.0" }).bind).toBe("0.0.0.0");
   });
 });
+
+describe("loadConfig — fila de envio", () => {
+  it("padrões seguros", () => {
+    expect(loadConfig(BASE).sendQueue).toEqual({
+      enabled: true,
+      delayMinMs: 3000,
+      delayMaxMs: 8000,
+      maxPerMinute: 15,
+      maxQueue: 100,
+      maxWaitMs: 90_000,
+      typingEnabled: true,
+      typingMsPerChar: 40,
+      typingMaxMs: 4000,
+    });
+  });
+
+  it("lê o ambiente e liga/desliga com flags", () => {
+    const c = loadConfig({
+      ...BASE,
+      WA_SEND_QUEUE: "off",
+      WA_BULK_TYPING: "false",
+      WA_BULK_DELAY_MIN_MS: "1000",
+      WA_BULK_DELAY_MAX_MS: "2000",
+      WA_BULK_MAX_PER_MINUTE: "6",
+    }).sendQueue;
+    expect(c).toMatchObject({ enabled: false, typingEnabled: false, delayMinMs: 1000, delayMaxMs: 2000, maxPerMinute: 6 });
+  });
+
+  it("valor inválido ou intervalo invertido falha na subida", () => {
+    expect(() => loadConfig({ ...BASE, WA_BULK_MAX_PER_MINUTE: "0" })).toThrow(/WA_BULK_MAX_PER_MINUTE/);
+    expect(() => loadConfig({ ...BASE, WA_BULK_DELAY_MIN_MS: "abc" })).toThrow(/WA_BULK_DELAY_MIN_MS/);
+    expect(() => loadConfig({ ...BASE, WA_BULK_DELAY_MIN_MS: "9000", WA_BULK_DELAY_MAX_MS: "1000" })).toThrow(/MAX/);
+  });
+});

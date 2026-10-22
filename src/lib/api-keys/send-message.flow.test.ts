@@ -140,6 +140,7 @@ describe('classifySendFailure', () => {
     ['gateway not configured', new GatewayNotConfiguredError(), 422, 'channel_not_configured', false],
     ['Meta not configured', new Error('WhatsApp not configured for this account'), 422, 'channel_not_configured', false],
     ['gateway not_connected', new GatewayRequestError('x', 409, 'not_connected'), 422, 'channel_not_connected', false],
+    ['gateway throttled (anti-ban queue full, refused before sending)', new GatewayRequestError('x', 429, 'throttled'), 429, 'send_queue_full', false],
     ['gateway not_on_whatsapp', new GatewayRequestError('x', 422, 'not_on_whatsapp'), 422, 'not_on_whatsapp', false],
     ['gateway invalid_request', new GatewayRequestError('x', 400, 'invalid_request'), 422, 'send_rejected', false],
     ['gateway rejects our secret (401)', new GatewayUnreachableError('x', 401), 502, 'send_failed', false],

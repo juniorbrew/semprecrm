@@ -660,6 +660,8 @@ async function replyOutOfHoursIfNeeded(
       conversationId: conversation.id,
       contactId,
       text: prefs.out_of_hours_message,
+      // An immediate reply to a customer who just wrote: never queued behind bulk sends.
+      priority: 'interactive',
     })
     await stamp()
     return 'sent'

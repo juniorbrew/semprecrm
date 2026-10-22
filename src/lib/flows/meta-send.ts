@@ -73,6 +73,7 @@ export async function engineSendText(
   if ((await conversationChannel(db, args.conversationId)) === 'qr') {
     return engineSendViaQr(db, {
       origin: 'flow',
+      priority: 'interactive',
       accountId: args.accountId,
       conversationId: args.conversationId,
       contactId: args.contactId,
@@ -195,6 +196,7 @@ export async function engineSendMedia(
   if ((await conversationChannel(db, args.conversationId)) === 'qr') {
     return engineSendViaQr(db, {
       origin: 'flow',
+      priority: 'interactive',
       accountId: args.accountId,
       conversationId: args.conversationId,
       contactId: args.contactId,
@@ -375,6 +377,7 @@ async function sendInteractiveViaMeta(
     })
     return engineSendViaQr(db, {
       origin: 'flow',
+      priority: 'interactive',
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,

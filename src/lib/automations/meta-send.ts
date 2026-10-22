@@ -19,7 +19,6 @@ import {
   loadTemplateBody,
   renderTemplateBody,
 } from '@/lib/whatsapp/qr-engine-send'
-import { paceAutomatedQrSend } from './qr-pacing'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -48,8 +47,12 @@ interface SendTextArgs {
   origin?: 'automation' | 'ai' | 'csat' | 'api'
   /** Public API idempotency claim (migration 093), stored on the message row. */
   apiRequestId?: string
-  /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
-  skipPacing?: boolean
+  /**
+   * QR channel only. Immediate replies to a customer who just wrote (out-of-hours
+   * notice, survey thanks) pass `interactive` so the gateway queue never refuses them.
+   * Default: `bulk` (paced).
+   */
+  priority?: 'interactive' | 'bulk'
   /**
    * A human agent's message sent later (scheduled messages, migration 092):
    * persisted as `sender_type='agent'` authored by this user, exactly like a
@@ -89,8 +92,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Web session, so deliver through the gateway. Templates don't exist
   // there — send the rendered body as plain text instead.
   if ((await conversationChannel(db, input.conversationId)) === 'qr') {
-    // Anti-ban: automated sends of one number go out spaced, not in a burst.
-    if (!(input.kind === 'text' && (input.skipPacing || input.agentId))) await paceAutomatedQrSend(input.accountId)
+    // Anti-ban pacing is the gateway's job (bulk queue); a `throttled` answer
+    // propagates so the automation engine / AI / CSAT can park and retry.
     if (input.kind === 'template') {
       const body = await loadTemplateBody(db, input.accountId, input.templateName, input.language)
       if (!body) {
@@ -119,6 +122,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       contactId: input.contactId,
       text: input.text,
       contentType: 'text',
+      // A scheduled human message (agentId) is never paced, like a manual reply.
+      ...(input.kind === 'text' && (input.priority || input.agentId)
+        ? { priority: input.priority ?? 'interactive' }
+        : {}),
     })
   }
 

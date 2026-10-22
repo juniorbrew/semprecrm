@@ -124,11 +124,12 @@ Falhas de envio, e o que cada uma garante:
 |---|---|---|---|
 | 422 | `channel_not_configured`, `channel_not_connected`, `not_on_whatsapp`, `send_rejected` | **Não** | Corrija (conecte o canal, confira o número) e tente de novo |
 | 502 | `send_failed` | **Não**: o WhatsApp/Meta recusou com 400, 401, 403, 404 ou 422 | Pode tentar de novo (depois de corrigir a causa) |
+| 429 | `send_queue_full` | **Não**: a fila anti-bloqueio do número QR está cheia e recusou antes de enviar | Tente de novo com a mesma chave em ~1 minuto |
 | 503 | `temporarily_unavailable` | **Não**: não foi possível registrar o envio com segurança e ele nem começou | Tente de novo com a mesma chave |
 | 502 | `send_unknown` | **Não se sabe**: timeout, conexão caiu ou erro do provedor depois que o envio começou | **Não reenvie às cegas.** Veja a conversa no Atendimento |
 | 502 | `send_unconfirmed` | **Sim**, mas não foi possível registrá-la | **Não reenvie** |
 
-Só `send_failed`, `temporarily_unavailable` e os `422` garantem que nada foi enviado. Qualquer outro erro depois
+Só `send_failed`, `send_queue_full`, `temporarily_unavailable` e os `422` garantem que nada foi enviado. Qualquer outro erro depois
 do início do envio (inclusive respostas 408, 409, 429 e 5xx do provedor) é tratado como "talvez tenha saído".
 
 #### Evite envio duplicado: `Idempotency-Key`

@@ -38,6 +38,13 @@ describe("HTTP", () => {
     expect(await res.json()).toMatchObject({ ok: true, sessions: 1 });
   });
 
+  it("GET /health inclui as estatísticas da fila de envio quando disponíveis", async () => {
+    const { app, sessions } = makeApp();
+    (sessions as Record<string, unknown>).sendQueueStats = () => ({ queued: 3 });
+    const res = await app.request("/health", { headers: auth });
+    expect(await res.json()).toMatchObject({ send_queue: { queued: 3 } });
+  });
+
   it("GET /sessions/:id devolve o status com qr", async () => {
     const { app, sessions } = makeApp();
     const res = await app.request("/sessions/acc-1", { headers: auth });
@@ -79,6 +86,23 @@ describe("HTTP", () => {
       body: JSON.stringify({ to: "5511999999999", text: "oi" }),
     });
     expect(notConnected.status).toBe(409);
+
+    const badPriority = await app.request("/sessions/acc-1/send", {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ to: "5511999999999", text: "oi", priority: "urgent" }),
+    });
+    expect(badPriority.status).toBe(400);
+
+    sessions.send.mockRejectedValueOnce(new GatewayError("fila cheia", "throttled", 429));
+    const throttled = await app.request("/sessions/acc-1/send", {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ to: "5511999999999", text: "oi", priority: "bulk" }),
+    });
+    expect(throttled.status).toBe(429);
+    expect(await throttled.json()).toEqual({ error: "throttled", message: "fila cheia" });
+    expect(sessions.send).toHaveBeenLastCalledWith("acc-1", expect.objectContaining({ priority: "bulk" }));
     expect(await notConnected.json()).toEqual({ error: "not_connected", message: "sessão não conectada" });
   });
 

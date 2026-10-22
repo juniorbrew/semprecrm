@@ -175,6 +175,10 @@ export function classifySendFailure(err: unknown): ApiSendError {
     if (err.code === 'not_on_whatsapp') {
       return new ApiSendError(422, 'not_on_whatsapp', 'This number is not on WhatsApp.')
     }
+    if (err.code === 'throttled') {
+      // The gateway's anti-ban queue refuses BEFORE sending (see send-queue.ts): nothing left.
+      return new ApiSendError(429, 'send_queue_full', 'The WhatsApp send queue for this number is full. Nothing was sent; retry in about a minute.')
+    }
     if (err.code === 'invalid_request') {
       return new ApiSendError(422, 'send_rejected', 'The WhatsApp gateway rejected the request.')
     }

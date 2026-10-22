@@ -10,7 +10,8 @@ export interface ServerDeps {
   sessions: Pick<
     SessionManager,
     "connect" | "logout" | "getStatus" | "send" | "markRead" | "fetchAvatar" | "react" | "presence" | "listAccountIds"
-  >;
+  > &
+    Partial<Pick<SessionManager, "sendQueueStats">>;
   logger: Logger;
 }
 
@@ -51,7 +52,12 @@ export function createApp(deps: ServerDeps): Hono {
   });
 
   app.get("/health", (c) =>
-    c.json({ ok: true, sessions: deps.sessions.listAccountIds().length, uptime: Math.floor(process.uptime()) }),
+    c.json({
+      ok: true,
+      sessions: deps.sessions.listAccountIds().length,
+      uptime: Math.floor(process.uptime()),
+      send_queue: deps.sessions.sendQueueStats?.(),
+    }),
   );
 
   app.use("/sessions/:accountId/*", async (c, next) => {
@@ -96,6 +102,15 @@ export function createApp(deps: ServerDeps): Hono {
     // A origem é conferida no download (outbound-media.ts).
     if (body.media && !httpOrigin(body.media.url)) {
       throw new GatewayError("media.url precisa ser http(s)", "invalid_request", 400);
+    }
+    if (body.priority !== undefined && body.priority !== "interactive" && body.priority !== "bulk") {
+      throw new GatewayError("priority precisa ser interactive ou bulk", "invalid_request", 400);
+    }
+    if (
+      body.max_wait_ms !== undefined &&
+      !(typeof body.max_wait_ms === "number" && Number.isFinite(body.max_wait_ms) && body.max_wait_ms >= 0)
+    ) {
+      throw new GatewayError("max_wait_ms precisa ser um número >= 0", "invalid_request", 400);
     }
     const result = await deps.sessions.send(c.req.param("accountId"), body);
     return c.json(result);

@@ -21,7 +21,6 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   sendTemplateMessage: (...a: unknown[]) => h.sendTemplateMessage(...a),
 }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
-vi.mock('./qr-pacing', () => ({ paceAutomatedQrSend: vi.fn(async () => {}) }))
 vi.mock('@/lib/whatsapp/qr-engine-send', () => ({
   assertConversationOwned: (...a: unknown[]) => h.assertConversationOwned(...(a as [])),
   conversationChannel: vi.fn(async () => 'official'),
@@ -64,7 +63,8 @@ vi.mock('./admin-client', () => ({
   }),
 }))
 
-import { engineSendTemplate } from './meta-send'
+import { conversationChannel, engineSendViaQr } from '@/lib/whatsapp/qr-engine-send'
+import { engineSendText, engineSendTemplate } from './meta-send'
 
 const ARGS = {
   accountId: 'acct-1',
@@ -143,5 +143,33 @@ describe('engineSendTemplate — webhook stub (migration 053)', () => {
     await expect(engineSendTemplate(ARGS)).rejects.toThrow(/Sync from Meta/)
     expect(h.sendTemplateMessage).not.toHaveBeenCalled()
     expect(h.inserts).toHaveLength(0)
+  })
+})
+
+describe('engineSendText — QR priority', () => {
+  const TEXT = { accountId: 'acct-1', userId: 'u-1', conversationId: 'conv-1', contactId: 'c-1', text: 'oi' }
+
+  it('passes an explicit interactive priority to the gateway send', async () => {
+    vi.mocked(conversationChannel).mockResolvedValueOnce('qr')
+    vi.mocked(engineSendViaQr).mockResolvedValueOnce({ whatsapp_message_id: 'w' })
+    await engineSendText({ ...TEXT, priority: 'interactive' })
+    expect(engineSendViaQr).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ priority: 'interactive' }))
+  })
+
+  it('leaves the priority unset (bulk by default) for callers that do not ask', async () => {
+    vi.mocked(conversationChannel).mockResolvedValueOnce('qr')
+    vi.mocked(engineSendViaQr).mockResolvedValueOnce({ whatsapp_message_id: 'w' })
+    await engineSendText(TEXT)
+    expect(vi.mocked(engineSendViaQr).mock.calls.at(-1)?.[1]).not.toHaveProperty('priority')
+  })
+
+  it('sends a scheduled human message (agentId) as interactive — never paced like an automation', async () => {
+    vi.mocked(conversationChannel).mockResolvedValueOnce('qr')
+    vi.mocked(engineSendViaQr).mockResolvedValueOnce({ whatsapp_message_id: 'w' })
+    await engineSendText({ ...TEXT, agentId: 'agent-1' })
+    expect(engineSendViaQr).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ priority: 'interactive', agentId: 'agent-1' }),
+    )
   })
 })

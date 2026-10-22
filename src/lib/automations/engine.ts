@@ -30,6 +30,7 @@ import {
   type TaskPriority,
 } from '@/lib/tasks'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { isGatewayThrottled } from '@/lib/whatsapp/qr-gateway'
 import { DestinoNaoPermitido, fetchSeguro } from '@/lib/webhooks/ssrf'
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
 import { applyRouting } from '@/lib/support/routing'
@@ -58,6 +59,8 @@ export interface AutomationContext {
    * through wait steps so a resumed run keeps its place in the chain.
    */
   chain_depth?: number
+  /** Times a send step was parked because the gateway queue was full. */
+  throttle_retries?: number
 }
 
 export interface DispatchInput {
@@ -563,6 +566,8 @@ interface RunState {
   parked: boolean
   failed: boolean
   error: string | null
+  /** Consecutive throttled parks of this run (shared by every scope; reset by a step that goes through). */
+  throttleRetries?: number
   /** Lazily loaded account preferences (timezone, business hours). */
   prefs?: Promise<AccountPreferences>
 }
@@ -809,7 +814,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         parent_step_id: args.parentStepId,
         branch: args.branch,
         next_step_position: step.position + 1,
-        context: { ...args.context, chain_depth: args.depth },
+        context: { ...args.context, chain_depth: args.depth, throttle_retries: 0 },
         run_at: new Date(Date.now() + ms).toISOString(),
         status: 'pending',
         conversation_id: conversationId,
@@ -875,7 +880,19 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         detail,
       })
       run.actions += 1
+      // A step that went through ends the throttle streak for the rest of the run.
+      run.throttleRetries = 0
     } catch (err) {
+      // The gateway's anti-ban queue refused the message (nothing was sent):
+      // park THIS step and let the cron resume it, instead of failing the run.
+      if (!args.dryRun && SEND_STEP_TYPES.has(step.step_type) && isGatewayThrottled(err)) {
+        const parkedDetail = await parkThrottledStep(step, args)
+        if (parkedDetail) {
+          run.results.push({ step_id: step.id, step_type: step.step_type, status: 'skipped', detail: parkedDetail })
+          run.parked = true
+          return
+        }
+      }
       const msg = err instanceof Error ? err.message : String(err)
       run.results.push({
         step_id: step.id,
@@ -888,6 +905,47 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
       return
     }
   }
+}
+
+/** A throttled send is retried this many times (one cron tick apart) before the run fails. */
+const THROTTLE_MAX_RETRIES = 30
+const THROTTLE_RETRY_MS = 60_000
+
+/**
+ * Re-queue a send step the gateway refused with `throttled`: a pending
+ * execution at the SAME position (not +1) that the cron resumes about a
+ * minute later. Returns the log detail, or null when the retries ran out
+ * (or parking failed) and the step must fail as before.
+ */
+async function parkThrottledStep(step: AutomationStep, args: ExecuteArgs): Promise<string | null> {
+  const tries = (args.run.throttleRetries ?? args.context.throttle_retries ?? 0) + 1
+  if (tries > THROTTLE_MAX_RETRIES) return null
+  let conversationId: string | null = null
+  try {
+    conversationId = await resolveConversationId(args)
+  } catch {
+    conversationId = null
+  }
+  const { error } = await supabaseAdmin().from('automation_pending_executions').insert({
+    automation_id: args.automation.id,
+    account_id: args.automation.account_id,
+    user_id: args.automation.user_id,
+    contact_id: args.contactId,
+    log_id: args.logId,
+    parent_step_id: args.parentStepId,
+    branch: args.branch,
+    next_step_position: step.position,
+    context: { ...args.context, chain_depth: args.depth, throttle_retries: tries },
+    run_at: new Date(Date.now() + THROTTLE_RETRY_MS).toISOString(),
+    status: 'pending',
+    conversation_id: conversationId,
+    cancel_on_reply: false,
+  })
+  if (error) {
+    console.error('[automations] cannot park throttled step:', error.message)
+    return null
+  }
+  return `fila de envio do WhatsApp cheia; nova tentativa em 1 min (${tries}/${THROTTLE_MAX_RETRIES})`
 }
 
 /** Dry-run description of what a step would do (pt-BR, shown verbatim). */

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { withBulkSendBudget } from '@/lib/whatsapp/send-budget'
 import { NextResponse, after } from 'next/server'
 
 import { claimAutoReplies, runClaimedJobs } from '@/lib/ai/auto-reply-runtime'
@@ -14,7 +15,12 @@ export const dynamic = 'force-dynamic'
  * process (MAX_CONCURRENCY); `ai_reply_claim` reaps dead jobs and uses
  * FOR UPDATE SKIP LOCKED, so overlapping calls never share a job.
  */
-export async function GET(request: Request) {
+export function GET(request: Request) {
+  // Bulk QR sends in this tick share one time budget (see send-budget.ts).
+  return withBulkSendBudget(40_000, () => handle(request))
+}
+
+async function handle(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
   if (!expected) return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
   const supplied = Buffer.from(request.headers.get('x-cron-secret') ?? '')

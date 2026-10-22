@@ -206,6 +206,7 @@ import {
 import { engineSendText } from './meta-send';
 import type { Automation } from '@/types';
 import { PLAN_CATALOG } from '@/lib/plans';
+import { GatewayRequestError } from '@/lib/whatsapp/qr-gateway';
 
 const ACCOUNT = 'acct-1';
 const CONTACT = 'contact-1';
@@ -804,5 +805,106 @@ describe('contacts with resolved conversations (migrations 060 / 062)', () => {
     expect(vi.mocked(engineSendText).mock.calls[0]?.[0]).toMatchObject({
       conversationId: 'live',
     });
+  });
+});
+
+describe('gateway throttled (anti-ban queue full)', () => {
+  const throttled = () => new GatewayRequestError('fila cheia', 429, 'throttled');
+
+  it('parks the send step at the same position instead of failing, and resumes it', async () => {
+    const a = automation();
+    step(a.id, 'send_message', { text: 'primeira' }, 0);
+    step(a.id, 'send_message', { text: 'segunda' }, 1);
+    vi.mocked(engineSendText).mockRejectedValueOnce(throttled());
+
+    await message();
+    const pending = h.db.automation_pending_executions[0] as Row;
+    expect(pending).toMatchObject({ status: 'pending', next_step_position: 0 });
+    expect((pending.context as Row).throttle_retries).toBe(1);
+    expect(logs()[0].status).toBe('waiting');
+
+    await resumePendingExecution(pending as never);
+    expect(vi.mocked(engineSendText).mock.calls.map((c) => c[0].text)).toEqual(['primeira', 'primeira', 'segunda']);
+    expect(logs()[0].status).toBe('success');
+    expect(pending.status).toBe('done');
+  });
+
+  it('a step that goes through resets the throttle streak for the rest of the run', async () => {
+    const a = automation();
+    step(a.id, 'send_message', { text: 'primeira' }, 0);
+    step(a.id, 'send_message', { text: 'segunda' }, 1);
+    vi.mocked(engineSendText)
+      .mockRejectedValueOnce(throttled()) // primeira: parked (streak 1)
+      .mockResolvedValueOnce({ whatsapp_message_id: 'w' }) // primeira on resume: ok, streak -> 0
+      .mockRejectedValueOnce(throttled()); // segunda: parked again
+    await message();
+    const first = h.db.automation_pending_executions[0] as Row;
+    await resumePendingExecution(first as never);
+    const second = h.db.automation_pending_executions[1] as Row;
+    expect(second).toMatchObject({ status: 'pending', next_step_position: 1 });
+    expect((second.context as Row).throttle_retries).toBe(1);
+  });
+
+  it('gives up with a failed log once the retries are spent', async () => {
+    const a = automation();
+    step(a.id, 'send_message', { text: 'oi' }, 0);
+    vi.mocked(engineSendText).mockRejectedValue(throttled());
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: CONTACT,
+      context: { message_text: 'x', conversation_id: CONV, throttle_retries: 30 },
+    });
+    vi.mocked(engineSendText).mockReset();
+    vi.mocked(engineSendText).mockResolvedValue({ whatsapp_message_id: 'wamid' });
+    expect(logs()[0].status).toBe('failed');
+    expect(h.db.automation_pending_executions ?? []).toHaveLength(0);
+  });
+
+  it('50-recipient fan-out: a gateway that takes 6 sends per cron tick loses nothing and sends nothing twice', async () => {
+    const a = automation();
+    step(a.id, 'send_message', { text: 'primeira' }, 0);
+    step(a.id, 'send_message', { text: 'segunda' }, 1);
+    const ids = Array.from({ length: 50 }, (_, i) => `c-${i}`);
+    h.db.contacts = ids.map((id) => ({ id, account_id: ACCOUNT, name: id, phone: '5511999990000' }));
+    h.db.conversations = ids.map((id) => ({ id: `conv-${id}`, account_id: ACCOUNT, contact_id: id, status: 'open', service_count: 1 }));
+
+    let budget = 6; // sends the gateway accepts before the next cron tick
+    const delivered: string[] = [];
+    vi.mocked(engineSendText).mockImplementation((async (args: { contactId: string; text: string }) => {
+      if (budget <= 0) throw throttled();
+      budget -= 1;
+      delivered.push(`${args.contactId}:${args.text}`);
+      return { whatsapp_message_id: 'wamid' };
+    }) as never);
+
+    // All 50 events arrive at once (inbound-triggered, concurrent).
+    await Promise.all(
+      ids.map((id) =>
+        runAutomationsForTrigger({
+          accountId: ACCOUNT,
+          triggerType: 'new_message_received',
+          contactId: id,
+          context: { message_text: 'oi', conversation_id: `conv-${id}` },
+        }),
+      ),
+    );
+
+    // Cron ticks: resume every due pending execution, one after another.
+    for (let tick = 0; tick < 40; tick += 1) {
+      const due = (h.db.automation_pending_executions ?? []).filter((r) => r.status === 'pending') as Row[];
+      if (due.length === 0) break;
+      budget = 6;
+      for (const row of due) {
+        row.status = 'running';
+        await resumePendingExecution(row as never);
+      }
+    }
+
+    const expected = ids.flatMap((id) => [`${id}:primeira`, `${id}:segunda`]).sort();
+    expect([...delivered].sort()).toEqual(expected);
+    expect(new Set(delivered).size).toBe(100);
+    expect(logs().map((l) => l.status)).toEqual(Array(50).fill('success'));
+    expect((h.db.automation_pending_executions ?? []).every((r) => r.status === 'done')).toBe(true);
   });
 });
