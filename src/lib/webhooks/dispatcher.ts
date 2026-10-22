@@ -44,13 +44,13 @@ export const REQUEST_TIMEOUT_MS = 10_000
 const SNIPPET_BYTES = 256
 
 /**
- * Up to SNIPPET_BYTES of a text / JSON response, for the delivery log. Anything
+ * Up to SNIPPET_BYTES of a plain-text / JSON response, for the delivery log. Anything
  * else (HTML pages, binaries) is not kept: the log must not become a way to read
  * what an internal or third-party service answers.
  */
-async function readSnippet(res: Response): Promise<string | null> {
+export async function readSnippet(res: Response): Promise<string | null> {
   if (!res.body) return null
-  if (!/^(application\/(.+\+)?json|text\/)/i.test(res.headers.get('content-type') ?? '')) {
+  if (!/^(application\/(.+\+)?json|text\/plain)/i.test(res.headers.get('content-type') ?? '')) {
     await res.body.cancel().catch(() => undefined)
     return null
   }
@@ -296,19 +296,21 @@ export async function runDispatch(
     const rows = (data ?? []) as ClaimedDelivery[]
     summary.claimed += rows.length
 
-    for (let i = 0; i < rows.length; i += concurrency) {
-      await Promise.all(
-        rows.slice(i, i + concurrency).map(async (row) => {
-          try {
-            summary[await deliverClaimed(deps, row)] += 1
-          } catch (err) {
-            // The lease expires and the row comes back due.
-            summary.errors += 1
-            console.error('[webhooks] delivery crashed:', err instanceof Error ? err.message : err)
-          }
-        }),
-      )
+    // Worker pool, not fixed chunks: one slow endpoint holds one worker, never a whole chunk.
+    let next = 0
+    const worker = async () => {
+      while (next < rows.length) {
+        const row = rows[next++]
+        try {
+          summary[await deliverClaimed(deps, row)] += 1
+        } catch (err) {
+          // The lease expires and the row comes back due.
+          summary.errors += 1
+          console.error('[webhooks] delivery crashed:', err instanceof Error ? err.message : err)
+        }
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(concurrency, rows.length) }, worker))
     // Rows capped per account can leave a batch short while work remains: keep going until
     // nothing is claimable (failed / held rows are rescheduled into the future, so this ends).
     if (opts.deliveryId || rows.length === 0 || now().getTime() >= deadline) break

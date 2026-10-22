@@ -21,8 +21,13 @@ describe('migration 093 contract', () => {
     expect(claim).toContain('claimed_until < now()')
     expect(claim).toContain("d.status = 'pending'")
     // fairness: capped per account
-    expect(claim).toContain('PARTITION BY s.account_id')
-    expect(claim).toContain('c.rn <= GREATEST(p_per_account, 1)')
+    // candidates are taken per account, never from one global oldest-first window
+    expect(claim).toContain('CROSS JOIN LATERAL')
+    expect(claim).toContain('WHERE d.account_id = a.account_id')
+    expect(claim).toContain('LIMIT GREATEST(p_per_account, 1)')
+    expect(claim).not.toContain('GREATEST(p_limit, 1) * 20')
+    expect(sql).toContain('idx_webhook_deliveries_account_due')
+    expect(sql).toContain("ON public.webhook_deliveries (account_id, next_attempt_at) WHERE status = 'pending'")
   })
 
   it('opens the dispatcher RPCs to service_role only (076 rule)', () => {
@@ -56,6 +61,7 @@ describe('migration 093 contract', () => {
   it('stores the contact on each event (LGPD scrub) and keeps idempotency + log tables service-side', () => {
     expect(sql).toContain('contact_id UUID REFERENCES public.contacts(id) ON DELETE CASCADE')
     expect(sql).toContain('PRIMARY KEY (account_id, key)')
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS conversation_id UUID')
     expect(sql).toContain('REVOKE ALL ON FUNCTION public.api_purge() FROM PUBLIC, anon, authenticated')
     expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.api_purge() TO service_role')
     expect(sql).toMatch(/REVOKE ALL ON TABLE public\.api_idempotency_keys, public\.api_request_log\s+FROM PUBLIC, anon, authenticated/)

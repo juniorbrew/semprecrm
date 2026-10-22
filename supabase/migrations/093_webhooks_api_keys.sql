@@ -130,6 +130,8 @@ CREATE TABLE IF NOT EXISTS public.webhook_deliveries (
 -- The dispatcher scan: only pending rows, ordered by when they are due.
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due
   ON public.webhook_deliveries (next_attempt_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_account_due
+  ON public.webhook_deliveries (account_id, next_attempt_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_endpoint
   ON public.webhook_deliveries (endpoint_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_event ON public.webhook_deliveries (event_id);
@@ -403,27 +405,31 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+  -- Candidates are picked PER ACCOUNT (a handful of rows each), never from one global
+  -- "oldest first" window: a tenant with a huge backlog on a slow endpoint cannot hide
+  -- everyone else's due rows. Accounts come from the (small) set of enabled endpoints;
+  -- idx_webhook_deliveries_account_due makes each probe an index range scan.
   WITH cand AS (
-    SELECT s.id, s.next_attempt_at,
-           row_number() OVER (PARTITION BY s.account_id ORDER BY s.next_attempt_at, s.id) AS rn
-      FROM (
-        SELECT d.id, d.account_id, d.next_attempt_at
+    SELECT x.id, x.next_attempt_at
+      FROM (SELECT DISTINCT e0.account_id FROM webhook_endpoints e0 WHERE e0.enabled) a
+      CROSS JOIN LATERAL (
+        SELECT d.id, d.next_attempt_at
           FROM webhook_deliveries d
           JOIN webhook_endpoints e ON e.id = d.endpoint_id
-         WHERE d.status = 'pending'
+         WHERE d.account_id = a.account_id
+           AND d.status = 'pending'
            AND d.next_attempt_at <= now()
            AND (d.claimed_until IS NULL OR d.claimed_until < now())
            AND e.enabled
            AND (p_delivery_id IS NULL OR d.id = p_delivery_id)
          ORDER BY d.next_attempt_at
-         LIMIT GREATEST(p_limit, 1) * 20
-      ) s
+         LIMIT GREATEST(p_per_account, 1)
+      ) x
   ), due AS (
     SELECT d.id
       FROM webhook_deliveries d
       JOIN cand c ON c.id = d.id
-     WHERE c.rn <= GREATEST(p_per_account, 1)
-       AND d.status = 'pending'
+     WHERE d.status = 'pending'
        AND (d.claimed_until IS NULL OR d.claimed_until < now())
      ORDER BY c.next_attempt_at
      LIMIT GREATEST(p_limit, 1)
@@ -480,6 +486,12 @@ CREATE TABLE IF NOT EXISTS public.api_idempotency_keys (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (account_id, key)
 );
+-- Recovery of a request that crashed mid-send: where the message would be (set right
+-- before the send starts; NULL = the send never began, so it is safe to run again).
+ALTER TABLE public.api_idempotency_keys
+  ADD COLUMN IF NOT EXISTS conversation_id UUID,
+  ADD COLUMN IF NOT EXISTS contact_id      UUID,
+  ADD COLUMN IF NOT EXISTS channel         TEXT;
 CREATE INDEX IF NOT EXISTS idx_api_idempotency_created ON public.api_idempotency_keys (created_at);
 
 CREATE TABLE IF NOT EXISTS public.api_request_log (

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildEventBody,
   deliverClaimed,
+  readSnippet,
   runDispatch,
   sendWebhookRequest,
   type ClaimedDelivery,
@@ -218,6 +219,29 @@ describe('runDispatch claim', () => {
     expect(a.claimed + b.claimed).toBe(7)
   })
 
+  it('a slow endpoint holds one worker, not a whole chunk of the batch', async () => {
+    const rows = ['slow', 'b', 'c', 'd', 'e', 'f'].map((id) => claimed({ delivery_id: id }))
+    const { db } = fakeDb(rows)
+    const finished: string[] = []
+    const send: SendFn = async (u, b, h) => {
+      const id = h['SempreCRM-Delivery-Id']
+      if (id === 'slow') await new Promise((r) => setTimeout(r, 80))
+      finished.push(id)
+      return ok(u, b, h)
+    }
+    await runDispatch({ db, now, send, decryptSecret: identity, accountActive: async () => true }, { concurrency: 3, batchSize: 10 })
+    expect(finished).toHaveLength(6)
+    // with fixed chunks of 3, d/e/f would have waited for "slow"
+    expect(finished[finished.length - 1]).toBe('slow')
+  })
+
+  it('asks the database for at most 10 rows per account per call', async () => {
+    const calls: Record<string, unknown>[] = []
+    const db = { rpc: async (_f: string, a: Record<string, unknown>) => (calls.push(a), { data: [], error: null }) } as unknown as SupabaseClient
+    await runDispatch({ db, now, accountActive: async () => true })
+    expect(calls[0]).toMatchObject({ p_limit: 40, p_per_account: 10 })
+  })
+
   it('does not claim a delivery that is already done', async () => {
     const { db } = fakeDb([claimed()])
     const first = await runDispatch({ db, now, send: ok, decryptSecret: identity, accountActive: async () => true }, { deliveryId: 'd1' })
@@ -265,6 +289,20 @@ describe('blocked accounts', () => {
     const out = await runDispatch({ db, now, send, decryptSecret: identity })
     expect(sends).toBe(0)
     expect(out.errors + out.held).toBe(2)
+  })
+})
+
+describe('response snippet', () => {
+  const res = (body: string, type: string) => new Response(body, { headers: { 'content-type': type } })
+  it('keeps at most 256 bytes of text / JSON', async () => {
+    expect(await readSnippet(res('{"ok":true}', 'application/json'))).toBe('{"ok":true}')
+    expect(await readSnippet(res('x'.repeat(5000), 'text/plain; charset=utf-8'))).toHaveLength(256)
+    expect(await readSnippet(res('{"a":1}', 'application/problem+json'))).toBe('{"a":1}')
+  })
+  it('drops HTML, binaries and bodies without a content type (nothing to read back from internal pages)', async () => {
+    expect(await readSnippet(res('<html>secret</html>', 'text/html; charset=utf-8'))).toBeNull()
+    expect(await readSnippet(res('PK', 'application/zip'))).toBeNull()
+    expect(await readSnippet(new Response(new Uint8Array([104, 105])))).toBeNull()
   })
 })
 
