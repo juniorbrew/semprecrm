@@ -35,6 +35,8 @@ Boas práticas:
   funcionando pelo período de transição escolhido (padrão 24 h, até 7 dias). Troque a chave na integração e
   pronto; ao fim do prazo a antiga para de valer sozinha.
 - **Revogar** derruba a chave imediatamente.
+- Uma chave que já está no período de transição não pode ser rotacionada de novo (isso prolongaria a antiga):
+  espere o prazo acabar ou revogue.
 - A tela mostra o prefixo, os 4 últimos caracteres, a observação, quando e **de qual IP** a chave foi usada
   pela última vez.
 - **Observação** (opcional): anote para que serve a chave.
@@ -43,7 +45,8 @@ Boas práticas:
   Vazio = qualquer endereço. A rotação copia a lista.
 - **Requisições**: em cada chave, o botão *Requisições* mostra as últimas 50 chamadas autenticadas dos
   últimos 7 dias (horário, rota, status HTTP e IP). Chamadas recusadas antes de identificar a chave
-  (chave inválida) não aparecem aí.
+  (chave inválida) não aparecem aí; as recusas de uma chave conhecida (IP não permitido, conta bloqueada, sem
+  permissão, limite excedido) aparecem, no máximo uma por minuto para cada motivo.
 - Nunca coloque a chave em código de navegador ou repositório público.
 
 ### Limites e erros
@@ -106,9 +109,19 @@ Resposta `201`:
 
 Erros específicos: `400 invalid_phone | invalid_text | invalid_channel | invalid_json`,
 `403 contact_opted_out` (o contato pediu para não receber mensagens), `403 module_not_included` (o canal usado
-não faz parte do plano), `409 channel_conflict`, `422 channel_not_configured`, `502 send_failed`
-(nada foi enviado, pode tentar de novo) e `502 send_unconfirmed` (a mensagem **saiu**, mas não foi possível
-registrá-la: **não reenvie**).
+não faz parte do plano), `409 channel_conflict`.
+
+Falhas de envio, e o que cada uma garante:
+
+| HTTP | `code` | A mensagem saiu? | O que fazer |
+|---|---|---|---|
+| 422 | `channel_not_configured`, `channel_not_connected`, `not_on_whatsapp`, `send_rejected` | **Não** | Corrija (conecte o canal, confira o número) e tente de novo |
+| 502 | `send_failed` | **Não**: o WhatsApp/Meta recusou (4xx) | Pode tentar de novo |
+| 502 | `send_unknown` | **Não se sabe**: timeout, conexão caiu ou erro do provedor depois que o envio começou | **Não reenvie às cegas.** Veja a conversa no Atendimento |
+| 502 | `send_unconfirmed` | **Sim**, mas não foi possível registrá-la | **Não reenvie** |
+
+Só `send_failed` e os `422` garantem que nada foi enviado. Qualquer outro erro depois do início do envio
+é tratado como "talvez tenha saído".
 
 #### Evite envio duplicado: `Idempotency-Key`
 
@@ -128,16 +141,22 @@ curl -X POST https://api.semprecrm.com.br/api/v1/messages \
 - Mesma chave com corpo diferente (`to`, `text` ou `channel`): `422 idempotency_key_reused`.
 - Mesma chave enquanto a primeira ainda está sendo processada: `409 idempotency_in_progress`; tente de novo em
   instantes.
-- Se a requisição falhou **antes** de qualquer envio (validação, canal indisponível, a Meta recusou), a chave é
-  liberada e você pode corrigir e tentar de novo com a mesma chave.
-- Se o servidor cair no meio, a chave fica como "em processamento" por até 24 h (`409`): preferimos recusar a
-  arriscar uma mensagem duplicada ao cliente.
+- Se a requisição falhou **com garantia de que nada saiu** (validação, plano, canal desconectado, a Meta
+  recusou com 4xx: ver a tabela acima), a chave é liberada e você pode corrigir e tentar de novo com a mesma
+  chave.
+- Se o resultado é **ambíguo** (`send_unknown`, `send_unconfirmed`: timeout, conexão caiu depois do envio), ele
+  é guardado e **repetido** nas próximas tentativas com a mesma chave (`Idempotent-Replayed: true`): a API nunca
+  reenvia no escuro. Para mandar de novo de propósito, use uma chave nova.
+- Se o servidor cair no meio, a requisição fica "em processamento" (`409`) por **3 minutos**. Depois disso, a
+  próxima tentativa com a mesma chave resolve o caso: se a mensagem aparece na conversa, a resposta de sucesso
+  original é devolvida; se o envio nem chegou a começar, a requisição é executada; se não dá para saber, vem
+  `502 send_unknown`. Nunca fica travada por 24 h e nunca duplica.
 - As chaves de idempotência valem por conta (não por chave de API) e são apagadas após 24 h.
 - No n8n, ative *Retry On Fail* no nó *HTTP Request* e use um valor estável no cabeçalho (ex.:
   `{{ $execution.id }}-{{ $itemIndex }}`), nunca algo que muda a cada tentativa.
 
 Observações do canal oficial: texto livre só chega dentro da janela de 24 h aberta pela última mensagem do
-cliente (regra do WhatsApp); fora dela a Meta recusa e a API responde `502 send_failed`. No canal QR os envios
+cliente (regra do WhatsApp); fora dela a Meta recusa e a API responde `502 send_failed` (nada foi enviado). No canal QR os envios
 da conta são espaçados (~1,2 s) para proteger o número, então uma rajada pode demorar.
 
 ### `GET /api/v1/contacts?phone=5511999990000` (`contacts:read`)

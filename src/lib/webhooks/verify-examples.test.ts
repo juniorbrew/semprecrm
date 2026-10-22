@@ -37,7 +37,7 @@ describe('docs/examples verify helpers', () => {
     ].join('\n')
     let out: string
     try {
-      out = execFileSync('python', ['-I', '-c', script], { encoding: 'utf8' }).trim()
+      out = execFileSync('python', ['-I', '-B', '-c', script], { encoding: 'utf8' }).trim()
     } catch {
       return
     }

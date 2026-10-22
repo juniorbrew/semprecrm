@@ -12,8 +12,13 @@ function setup(row: Partial<{ scopes: string[]; revoked_at: string | null; expir
   const gen = generateApiKey()
   const updates: Record<string, unknown>[] = []
   const lookups: unknown[] = []
+  const logs: Record<string, unknown>[] = []
   const db = {
     from: () => ({
+      insert: (r: Record<string, unknown>) => {
+        logs.push(r)
+        return Promise.resolve({ error: null })
+      },
       select: () => ({
         eq: (_c: string, hash: string) => ({
           maybeSingle: async () => {
@@ -42,7 +47,7 @@ function setup(row: Partial<{ scopes: string[]; revoked_at: string | null; expir
     new Request('https://app.test/api/v1/me', {
       headers: key ? { authorization: `Bearer ${key}`, 'x-forwarded-for': '203.0.113.9' } : { 'x-forwarded-for': '203.0.113.9' },
     })
-  return { gen, db, updates, lookups, req }
+  return { gen, db, updates, lookups, logs, req }
 }
 
 async function body(res: Response) {
@@ -166,6 +171,41 @@ describe('authenticateApiKey', () => {
     for (let i = 0; i < API_ACCOUNT_RATE_LIMIT.limit; i++) checkRateLimit('apiv1-acct:acc1', API_ACCOUNT_RATE_LIMIT)
     const r = await authenticateApiKey(t.req(), null, { db: t.db, accountBlocked: async () => false, now: () => NOW })
     expect(!r.ok && r.response.status).toBe(429)
+  })
+
+  it('refuses a client that is already over its bad-key budget BEFORE touching the database', async () => {
+    const t = setup({})
+    for (let i = 0; i <= API_BAD_KEY_RATE_LIMIT.limit; i++) {
+      await authenticateApiKey(t.req(generateApiKey().key), null, { db: t.db, accountBlocked: async () => false, now: () => NOW })
+    }
+    const before = t.lookups.length
+    const r = await authenticateApiKey(t.req(), null, { db: t.db, accountBlocked: async () => false, now: () => NOW })
+    expect(!r.ok && r.response.status).toBe(429)
+    expect(t.lookups.length).toBe(before)
+  })
+
+  it('records denials of an identifiable key in its request log, once a minute per reason', async () => {
+    const t = setup({ scopes: ['contacts:read'] })
+    const call = () => authenticateApiKey(t.req(), 'messages:send', { db: t.db, accountBlocked: async () => false, now: () => NOW })
+    await call()
+    await call()
+    expect(t.logs).toEqual([
+      { account_id: 'acc1', key_id: 'k1', method: 'GET', route: '/api/v1/me', status: 403, ip: '203.0.113.9' },
+    ])
+
+    const blocked = setup({})
+    await authenticateApiKey(blocked.req(), null, { db: blocked.db, accountBlocked: async () => true, now: () => NOW })
+    expect(blocked.logs[0]).toMatchObject({ status: 403, key_id: 'k1' })
+
+    const ipDenied = setup({ allowed_cidrs: ['198.51.100.0/24'] })
+    await authenticateApiKey(ipDenied.req(), null, { db: ipDenied.db, accountBlocked: async () => false, now: () => NOW })
+    expect(ipDenied.logs[0]).toMatchObject({ status: 403 })
+  })
+
+  it('does not log a request whose key is unknown (nothing to attribute it to)', async () => {
+    const t = setup({})
+    await authenticateApiKey(t.req(generateApiKey().key), null, { db: t.db, accountBlocked: async () => false, now: () => NOW })
+    expect(t.logs).toEqual([])
   })
 
   it('records last_used_at, at most once a minute per key', async () => {

@@ -22,11 +22,29 @@ export async function GET(request: Request) {
   }
   try {
     const db = supabaseAdmin()
-    const summary = await runDispatch({ db })
-    const { data: purged } = await db.rpc('webhook_purge', { p_days: 30, p_limit: 5000 })
-    // Idempotency keys (24 h) and the per-key request log (7 days / 200 rows).
-    const { data: apiPurged } = await db.rpc('api_purge')
-    return NextResponse.json({ ...summary, purged: (purged ?? 0) + (apiPurged ?? 0) })
+    // The purges run even when a dispatch pass throws: housekeeping must not depend on delivery health.
+    let summary: Awaited<ReturnType<typeof runDispatch>> | null = null
+    let dispatchError: unknown = null
+    try {
+      summary = await runDispatch({ db })
+    } catch (err) {
+      dispatchError = err
+    }
+    let purged = 0
+    for (const [fn, args] of [
+      ['webhook_purge', { p_days: 30, p_limit: 5000 }],
+      // Idempotency keys (24 h) and the per-key request log (7 days / 200 rows).
+      ['api_purge', undefined],
+    ] as const) {
+      try {
+        const { data } = await db.rpc(fn, args)
+        purged += typeof data === 'number' ? data : 0
+      } catch (err) {
+        console.error(`[webhooks] ${fn} failed:`, err instanceof Error ? err.message : err)
+      }
+    }
+    if (dispatchError) throw dispatchError
+    return NextResponse.json({ ...summary, purged })
   } catch (err) {
     console.error('[webhooks] cron failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ error: 'webhook dispatch failed' }, { status: 500 })

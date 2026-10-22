@@ -137,6 +137,7 @@ export const DICT_API_WEBHOOKS: Record<string, string> = {
   'Enter valid IP addresses or CIDR ranges (up to 10)': 'Informe endereços IP ou faixas CIDR válidos (até 10)',
   'The URL must use the default https port (443)': 'A URL deve usar a porta padrão do https (443)',
   'Enable the endpoint first': 'Ative o endpoint primeiro',
+  'This API key is already being rotated': 'Esta chave de API já está em período de transição',
   'Failed to load the request log': 'Não foi possível carregar o histórico de requisições',
 
   // ---- API key note, allowlist, request log; secret overlap ----------------

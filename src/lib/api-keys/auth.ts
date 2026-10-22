@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { loadAccountEntitlements } from '@/lib/plans-server'
-import { checkRateLimit, type RateLimitResult } from '@/lib/rate-limit'
+import { checkRateLimit, hasRateLimitBudget, type RateLimitResult } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/request-ip'
 
 import { ipInCidrs } from './cidr'
@@ -88,6 +88,11 @@ export async function authenticateApiKey(
     return { ok: false as const, response: apiError(status, code, message, status === 401 ? { 'WWW-Authenticate': 'Bearer' } : undefined) }
   }
 
+  // A client already over its bad-key budget is refused before any database work.
+  if (!hasRateLimitBudget(`apiv1-bad:${ipBucket}`, API_BAD_KEY_RATE_LIMIT)) {
+    return { ok: false, response: apiError(429, 'rate_limited', 'Too many invalid requests', { 'Retry-After': '60' }) }
+  }
+
   const key = parseBearerKey(request.headers.get('authorization'))
   if (!key) return deny(401, 'missing_api_key', 'Send your key as "Authorization: Bearer <key>".')
 
@@ -103,8 +108,16 @@ export async function authenticateApiKey(
   }
   if (!data) return deny(401, 'invalid_api_key', 'This API key is not valid.')
 
+  // From here the key is known: refusals are recorded in its request log (throttled).
+  const who = { accountId: data.account_id as string, keyId: data.id as string, ip }
+  const refuse = (status: number, code: string, message: string, headers?: Record<string, string>) => {
+    logDenial(db, who, request, status, code, now)
+    return { ok: false as const, response: apiError(status, code, message, headers) }
+  }
+
   const state = keyState(data, now)
   if (state !== 'active') {
+    logDenial(db, who, request, 401, `api_key_${state}`, now)
     return deny(401, state === 'revoked' ? 'api_key_revoked' : 'api_key_expired', `This API key was ${state}.`)
   }
 
@@ -113,19 +126,16 @@ export async function authenticateApiKey(
     ? await deps.accountBlocked(data.account_id)
     : await defaultAccountBlocked(db, data.account_id, now.getTime())
   if (blocked) {
-    return { ok: false, response: apiError(403, 'account_blocked', 'This account is suspended or its plan is not active.') }
+    return refuse(403, 'account_blocked', 'This account is suspended or its plan is not active.')
   }
 
   const cidrs = (data.allowed_cidrs ?? []) as string[]
   if (cidrs.length > 0 && !(ip && ipInCidrs(ip, cidrs))) {
-    return { ok: false, response: apiError(403, 'ip_not_allowed', 'This API key cannot be used from this IP address.') }
+    return refuse(403, 'ip_not_allowed', 'This API key cannot be used from this IP address.')
   }
 
   if (scope && !hasScope(data.scopes, scope)) {
-    return {
-      ok: false,
-      response: apiError(403, 'insufficient_scope', `This API key does not have the "${scope}" permission.`),
-    }
+    return refuse(403, 'insufficient_scope', `This API key does not have the "${scope}" permission.`)
   }
 
   const rate = checkRateLimit(`apiv1:${data.id}`, API_KEY_RATE_LIMIT)
@@ -133,14 +143,11 @@ export async function authenticateApiKey(
   if (!rate.success || !acct.success) {
     const hit = !rate.success ? rate : acct
     const retry = Math.max(1, Math.ceil((hit.reset - Date.now()) / 1000))
-    return {
-      ok: false,
-      response: apiError(429, 'rate_limited', 'Rate limit exceeded for this API key.', {
-        'Retry-After': String(retry),
-        'X-RateLimit-Limit': String(hit.limit),
-        'X-RateLimit-Remaining': '0',
-      }),
-    }
+    return refuse(429, 'rate_limited', 'Rate limit exceeded for this API key.', {
+      'Retry-After': String(retry),
+      'X-RateLimit-Limit': String(hit.limit),
+      'X-RateLimit-Remaining': '0',
+    })
   }
 
   touchKey(db, data.id, ip, now)
@@ -168,6 +175,42 @@ function touchKey(db: SupabaseClient, keyId: string, ip: string | null, now: Dat
     })
 }
 
+function insertLog(
+  db: SupabaseClient,
+  who: { accountId: string; keyId: string; ip: string | null },
+  request: Request,
+  status: number,
+) {
+  void db
+    .from('api_request_log')
+    .insert({
+      account_id: who.accountId,
+      key_id: who.keyId,
+      method: request.method,
+      route: new URL(request.url).pathname,
+      status,
+      ip: who.ip,
+    })
+    .then(({ error }: { error: { message: string } | null }) => {
+      if (error) console.error('[api-v1] request log failed:', error.message)
+    })
+}
+
+const lastDenialLogged = new Map<string, number>()
+const DENIAL_LOG_EVERY_MS = 60_000
+
+/** Denials of an identifiable key (blocked, IP, scope, 429) go to its log, once a minute per reason. */
+function logDenial(db: SupabaseClient, who: { accountId: string; keyId: string; ip: string | null }, request: Request, status: number, code: string, now: Date) {
+  const k = `${who.keyId}:${code}`
+  if (now.getTime() - (lastDenialLogged.get(k) ?? 0) < DENIAL_LOG_EVERY_MS) return
+  lastDenialLogged.set(k, now.getTime())
+  try {
+    insertLog(db, who, request, status)
+  } catch (err) {
+    console.error('[api-v1] request log failed:', err instanceof Error ? err.message : err)
+  }
+}
+
 /**
  * Records one authenticated request (time, route, status, IP) for the per-key log
  * in the settings UI. Bounded by api_purge(): 7 days and 200 rows per key. Never
@@ -180,20 +223,7 @@ export function respondLogged(
   deps: { db?: SupabaseClient } = {},
 ): NextResponse {
   try {
-    const db = deps.db ?? supabaseAdmin()
-    void db
-      .from('api_request_log')
-      .insert({
-        account_id: ctx.accountId,
-        key_id: ctx.keyId,
-        method: request.method,
-        route: new URL(request.url).pathname,
-        status: response.status,
-        ip: ctx.ip,
-      })
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) console.error('[api-v1] request log failed:', error.message)
-      })
+    insertLog(deps.db ?? supabaseAdmin(), ctx, request, response.status)
   } catch (err) {
     console.error('[api-v1] request log failed:', err instanceof Error ? err.message : err)
   }
@@ -203,4 +233,5 @@ export function respondLogged(
 export function __resetLastTouchedForTests() {
   lastTouched.clear()
   blockedCache.clear()
+  lastDenialLogged.clear()
 }

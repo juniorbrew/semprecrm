@@ -65,5 +65,5 @@ export async function POST(request: Request) {
     console.error('[webhooks] create endpoint failed:', error?.message)
     return NextResponse.json({ error: 'Failed to create the endpoint' }, { status: 500 })
   }
-  return NextResponse.json({ endpoint: data, secret }, { status: 201 })
+  return NextResponse.json({ endpoint: data, secret }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
 }

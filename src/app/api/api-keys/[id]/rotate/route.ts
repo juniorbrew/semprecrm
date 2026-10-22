@@ -39,6 +39,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (keyState(old, new Date()) !== 'active') {
     return NextResponse.json({ error: 'This API key is no longer active' }, { status: 409 })
   }
+  // Already rotated (in its grace period): rotating again would extend the old key's life.
+  if (old.expires_at) {
+    return NextResponse.json({ error: 'This API key is already being rotated' }, { status: 409 })
+  }
   if (grace > 0 && (await countActiveKeys(db, ctx.accountId)) >= MAX_ACTIVE_KEYS) {
     return NextResponse.json({ error: 'API key limit reached. Revoke a key first' }, { status: 409 })
   }
