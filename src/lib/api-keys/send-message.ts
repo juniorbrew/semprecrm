@@ -44,7 +44,8 @@ export interface ApiSendInput {
 }
 
 export interface ApiSendResult {
-  message_id: string
+  /** The SempreCRM message id; null only if the row could not be read back right after the send. */
+  message_id: string | null
   conversation_id: string
   contact_id: string
   channel: WhatsAppChannel
@@ -143,7 +144,7 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
     .maybeSingle()
 
   return {
-    message_id: (row?.id as string | undefined) ?? '',
+    message_id: (row?.id as string | undefined) ?? null,
     conversation_id: conv.conversation.id,
     contact_id: outcome.contact.id,
     channel,

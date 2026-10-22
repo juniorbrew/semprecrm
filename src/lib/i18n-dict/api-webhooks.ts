@@ -138,9 +138,15 @@ export const DICT_API_WEBHOOKS: Record<string, string> = {
   'The URL must use the default https port (443)': 'A URL deve usar a porta padrão do https (443)',
   'Enable the endpoint first': 'Ative o endpoint primeiro',
   'This API key is already being rotated': 'Esta chave de API já está em período de transição',
+  'Failed to update the API key': 'Não foi possível atualizar a chave de API',
+  'Nothing to update': 'Nada para atualizar',
   'Failed to load the request log': 'Não foi possível carregar o histórico de requisições',
 
   // ---- API key note, allowlist, request log; secret overlap ----------------
+  'API key updated': 'Chave de API atualizada',
+  'Edit API key': 'Editar chave de API',
+  'Change the name, note or allowed IPs. Permissions and the key itself stay the same; rotate the key to change them.':
+    'Altere o nome, a observação ou os IPs permitidos. As permissões e a própria chave não mudam; rotacione a chave para alterá-las.',
   'Only from': 'Somente de',
   Requests: 'Requisições',
   'No requests recorded yet.': 'Nenhuma requisição registrada ainda.',

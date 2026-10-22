@@ -314,6 +314,34 @@ describe('crash recovery (stale in_progress claim)', () => {
     expect(f.rows.get('acc|k1')).toMatchObject({ status: 'done', response_status: 201 })
   })
 
+  it('race: the original records its send target while a retry is deciding "unsent": the takeover backs off, one send only', async () => {
+    const f = fakeDb()
+    stale(f, { conversation_id: null, contact_id: null, channel: null })
+    const run = vi.fn(async () => sent())
+    // recovery reads the stale row (target NULL) and answers "unsent"; meanwhile the stalled
+    // original wakes up and records its target, right before it calls the provider
+    const recover = async (): Promise<RecoverResult> => {
+      Object.assign(f.rows.get('acc|k1')!, { conversation_id: 'conv1', contact_id: 'c1', channel: 'official' })
+      return { kind: 'unsent' }
+    }
+    const r = await runIdempotent(f.db, input, run, { ...ids(), now: pastLease, recover })
+    expect(r).toMatchObject({ kind: 'conflict', status: 409, code: 'idempotency_in_progress' })
+    expect(run).not.toHaveBeenCalled()
+    // the original's claim is untouched and can still finish
+    expect(f.rows.get('acc|k1')).toMatchObject({ claim_id: 'claim-old', status: 'in_progress', conversation_id: 'conv1' })
+  })
+
+  it('race, other order: the takeover deletes first, so the original cannot record its target (markSendTarget would match 0 rows)', async () => {
+    const f = fakeDb()
+    stale(f, { conversation_id: null, contact_id: null, channel: null })
+    let runs = 0
+    const r = await runIdempotent(f.db, input, async () => (runs++, sent()), { ...ids(), now: pastLease, recover: async () => ({ kind: 'unsent' }) })
+    expect(r).toMatchObject({ kind: 'fresh', status: 201 })
+    expect(runs).toBe(1)
+    // the old claim row is gone: an UPDATE ... WHERE claim_id = 'claim-old' now matches nothing
+    expect([...f.rows.values()].some((row) => row.claim_id === 'claim-old')).toBe(false)
+  })
+
   it('the original, slow request cannot clobber the takeover that replaced its claim', async () => {
     const f = fakeDb()
     let releaseA!: () => void

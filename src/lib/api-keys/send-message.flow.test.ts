@@ -94,6 +94,23 @@ describe('sendTextViaApi plan and failure handling', () => {
     expect(await failure(sendTextViaApi(db, input))).toMatchObject({ status: 502, code: 'send_unknown', maybeSent: true })
   })
 
+  it('returns message_id null (not "") when the row cannot be read back after the send', async () => {
+    const noRow = {
+      from: (table: string) => ({
+        select: () => {
+          const b: Record<string, unknown> = {
+            eq: () => b,
+            maybeSingle: async () => ({ data: table === 'accounts' ? { owner_user_id: 'u1' } : table === 'whatsapp_config' ? { id: 'cfg' } : null, error: null }),
+          }
+          return b
+        },
+      }),
+    } as unknown as SupabaseClient
+    const r = await sendTextViaApi(noRow, input)
+    expect(r.message_id).toBeNull()
+    expect(r.whatsapp_message_id).toBe('wamid.1')
+  })
+
   it('hands the idempotency claim id to the engine so it lands on the message row', async () => {
     await sendTextViaApi(db, { ...input, claimId: 'claim-A' })
     expect(h.lastArgs).toMatchObject({ origin: 'api', apiRequestId: 'claim-A' })

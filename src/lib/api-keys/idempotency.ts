@@ -142,7 +142,12 @@ export async function runIdempotent(
     if (found.kind === 'unsent' && !tookOver) {
       // The send never began. Take the claim over ATOMICALLY: of several concurrent retries
       // exactly one deletes the row and runs; the others see 409.
-      if (!(await remove(db, stale))) {
+      // `unstartedOnly`: the delete also requires conversation_id IS NULL. The original records its
+      // send target (conversation_id) in one atomic UPDATE right before the provider call, so
+      // exactly one of {that UPDATE, this DELETE} can win: if the original got there first the
+      // delete matches nothing and we back off; if we delete first the original's UPDATE matches
+      // nothing and it aborts without sending.
+      if (!(await remove(db, stale, true))) {
         return conflict(409, 'idempotency_in_progress', 'A request with this Idempotency-Key is being processed. Retry shortly.')
       }
       return runIdempotent(db, input, run, deps, true)
@@ -210,7 +215,7 @@ async function save(
 }
 
 /** Compare-and-delete of an in-progress claim. True only when exactly this claim was removed. */
-async function remove(db: SupabaseClient, where: Where): Promise<boolean> {
+async function remove(db: SupabaseClient, where: Where, unstartedOnly = false): Promise<boolean> {
   let q = db
     .from('api_idempotency_keys')
     .delete()
@@ -218,6 +223,7 @@ async function remove(db: SupabaseClient, where: Where): Promise<boolean> {
     .eq('key', where.key)
     .eq('status', 'in_progress')
   q = where.claim_id === null ? q.is('claim_id', null) : q.eq('claim_id', where.claim_id)
+  if (unstartedOnly) q = q.is('conversation_id', null)
   const { data, error } = await q.select('key')
   if (error) {
     console.error('[api-v1] releasing idempotency key failed:', error.message)

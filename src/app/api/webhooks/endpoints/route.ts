@@ -5,12 +5,12 @@ import { encrypt } from '@/lib/whatsapp/encryption'
 import { requireAdmin } from '@/lib/webhooks/admin-guard'
 import { validateEndpointUrl } from '@/lib/webhooks/endpoint-url'
 import { ENDPOINT_COLUMNS } from '@/lib/webhooks/columns'
+import { MAX_ENDPOINTS } from '@/lib/webhooks/limits'
 import { normalizeEvents } from '@/lib/webhooks/events'
 import { generateWebhookSecret } from '@/lib/webhooks/signing'
 
 export const dynamic = 'force-dynamic'
 
-const MAX_ENDPOINTS = 10
 
 export async function GET() {
   const gate = await requireAdmin()

@@ -70,7 +70,36 @@ export function ApiKeysGroup() {
   const [revoking, setRevoking] = useState<ApiKeyRow | null>(null);
   const [note, setNote] = useState('');
   const [cidrs, setCidrs] = useState('');
+  const [editing, setEditing] = useState<ApiKeyRow | null>(null);
+  const [eName, setEName] = useState('');
+  const [eNote, setENote] = useState('');
+  const [eCidrs, setECidrs] = useState('');
   const [logFor, setLogFor] = useState<string | null>(null);
+
+  function startEdit(k: ApiKeyRow) {
+    setEName(k.name);
+    setENote(k.note ?? '');
+    setECidrs((k.allowed_cidrs ?? []).join(', '));
+    setEditing(k);
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    setBusy(true);
+    try {
+      await apiJson(`/api/api-keys/${editing.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: eName, note: eNote, allowed_cidrs: eCidrs }),
+      });
+      setEditing(null);
+      toast.success(t('API key updated'));
+      await load();
+    } catch (err) {
+      toast.error(t(err instanceof Error ? err.message : 'Failed to update the API key'));
+    } finally {
+      setBusy(false);
+    }
+  }
   const [log, setLog] = useState<RequestLogRow[] | null>(null);
 
   async function toggleLog(id: string) {
@@ -235,6 +264,11 @@ export function ApiKeysGroup() {
                     <Button variant="ghost" size="sm" aria-expanded={logFor === k.id} onClick={() => void toggleLog(k.id)}>
                       {t('Requests')}
                     </Button>
+                    {k.state !== 'revoked' ? (
+                      <Button variant="ghost" size="sm" onClick={() => startEdit(k)}>
+                        {t('Edit')}
+                      </Button>
+                    ) : null}
                     {k.state === 'active' ? (
                       <>
                         <Button
@@ -424,6 +458,50 @@ export function ApiKeysGroup() {
             <Button onClick={rotate} disabled={busy}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : null}
               {t('Rotate key')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* edit name / note / IPs */}
+      <Dialog open={!!editing} onOpenChange={(o) => !busy && !o && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Edit API key')}</DialogTitle>
+            <DialogDescription>
+              {t('Change the name, note or allowed IPs. Permissions and the key itself stay the same; rotate the key to change them.')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-key-name">{t('Name')}</Label>
+              <Input id="edit-key-name" value={eName} maxLength={80} onChange={(e) => setEName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-key-note">{t('Note (optional)')}</Label>
+              <Input id="edit-key-note" value={eNote} maxLength={200} onChange={(e) => setENote(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-key-cidrs">{t('Allowed IP addresses (optional)')}</Label>
+              <textarea
+                id="edit-key-cidrs"
+                value={eCidrs}
+                onChange={(e) => setECidrs(e.target.value)}
+                rows={2}
+                className="w-full rounded-md border border-border bg-muted px-2 py-1.5 font-mono text-xs text-foreground focus:border-primary focus:outline-none"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('Leave empty to accept any address. Separate entries with commas or new lines (up to 10).')}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditing(null)} disabled={busy}>
+              {t('Cancel')}
+            </Button>
+            <Button onClick={saveEdit} disabled={busy || eName.trim().length === 0}>
+              {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t('Save')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -34,6 +34,8 @@ Boas práticas:
 - **Rotação sem downtime**: clique em **Rotacionar**. Uma chave nova é criada e a antiga continua
   funcionando pelo período de transição escolhido (padrão 24 h, até 7 dias). Troque a chave na integração e
   pronto; ao fim do prazo a antiga para de valer sozinha.
+- **Editar**: nome, observação e IPs permitidos podem ser alterados depois (botão *Editar*). Permissões não mudam:
+  rotacione a chave para obter outra com outras permissões.
 - **Revogar** derruba a chave imediatamente.
 - Uma chave que já está no período de transição não pode ser rotacionada de novo (isso prolongaria a antiga):
   espere o prazo acabar ou revogue.
@@ -104,7 +106,7 @@ Resposta `201`:
 ```json
 {
   "object": "message",
-  "message_id": "uuid da mensagem no SempreCRM",
+  "message_id": "uuid da mensagem no SempreCRM (null se não foi possível relê-la logo após o envio)",
   "conversation_id": "…",
   "contact_id": "…",
   "channel": "official",
@@ -448,7 +450,7 @@ seu receptor dentro desse prazo e nada se perde.
 
 ## 4. Limites e observações
 
-- Até 20 chaves ativas (as que ainda autenticam, incluindo antigas em período de transição) e 10 endpoints por
+- Até 20 chaves ativas (as que ainda autenticam, incluindo antigas em período de transição) e 16 endpoints por
   conta.
 - O limite de 120 req/min por chave é contado por processo do servidor.
 - Os eventos incluem texto de mensagens e telefones: trate o endpoint como dado sensível (LGPD) e use sempre
