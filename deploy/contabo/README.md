@@ -130,6 +130,23 @@ Detalhes do serviço (variáveis, rotas internas, logs, limitações do protocol
 `services/wa-gateway/README.md`. Lembre o aviso da tela: o canal não é oficial e o número pode ser banido;
 disparos e modelos continuam só na API oficial.
 
+## 6.1b Porta do app só em loopback
+
+O `ecosystem.config.cjs` inicia o Next com `-H 127.0.0.1 -p 3000`: o app só aceita conexões locais (Nginx,
+`semprecrm-cron`, `wa-gateway`, `deploy.sh`). Sem isso ele escuta em `0.0.0.0:3000` e, se o firewall (ufw) estiver
+desligado, qualquer um chega direto na porta 3000 com um `X-Real-IP` forjado e burla a lista de IPs permitidos
+das chaves de API. **Antes de aplicar** (`pm2 reload semprecrm` / próximo deploy) confira que nada usa um endereço
+que não seja loopback:
+
+- `grep APP_URL /var/www/semprecrm/services/wa-gateway/.env` deve ser `http://127.0.0.1:3000` (ou `localhost`), nunca
+  o IP público da VPS;
+- o upstream do Nginx já é `http://127.0.0.1:3000`, o `APP_URL` do cron também e o `deploy.sh` testa
+  `http://127.0.0.1:3000/login`;
+- nenhum contêiner (Supabase) chama o app. Se um dia chamar, use o gateway da rede Docker e não reabra a porta
+  para a internet.
+
+Teste depois: `ss -ltnp | grep 3000` deve mostrar `127.0.0.1:3000`, e `curl -m3 http://IP_PUBLICO:3000` deve falhar.
+
 ## 6.2 Agendador interno (`semprecrm-cron`)
 
 As etapas "Aguardar", os gatilhos por horário, o gatilho "Conversa sem resposta há X horas" e os
@@ -146,6 +163,9 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
 - Mensagens agendadas na conversa (migration 092): o mesmo loop chama `GET /api/inbox/scheduled/cron`
   a cada tick; o envio pode atrasar até ~1 minuto depois do horário escolhido. O endpoint também é
   bloqueado no `nginx.conf` pelo domínio público.
+- Também chama `GET /api/webhooks/cron` (migration 093): entrega os webhooks de saída pendentes (até 40 por
+  lote, repetindo enquanto houver fila e tempo) e apaga o histórico com mais de 30 dias. Com 2 ticks
+  sobrepostos nada é entregue em dobro (as linhas são reservadas com `FOR UPDATE SKIP LOCKED`).
 - Logs: `pm2 logs semprecrm-cron` ou `/var/log/semprecrm/cron.*.log` — uma linha por chamada
   (`GET /api/automations/cron 200 85ms processed=0 inactive_fired=2`).
 - Se preferir um crontab com `curl -H "x-cron-secret: …"`, chame `http://127.0.0.1:3000/...` na própria

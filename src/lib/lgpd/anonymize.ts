@@ -83,6 +83,7 @@ export const SCRUBBED_TABLES = {
   flow_runs: 'vars emptied',
   flow_run_events: 'payload emptied',
   lead_source_events: 'payload emptied',
+  webhook_events: 'outbound webhook events about the contact deleted (deliveries and attempts cascade)',
   broadcast_recipients: 'template_params nulled',
   automation_pending_executions: 'context emptied, pending ones cancelled',
   automation_logs: 'error_message nulled',
@@ -467,6 +468,20 @@ export async function scrubContactData(
         },
         'flow_runs lookup',
       )
+    })
+
+    // Outbound webhook events carry the phone, name and message text for 30 days
+    // (visible in the delivery log, re-sendable): delete them, pending retries included.
+    await step('webhook_events', async () => {
+      const res = must(
+        await admin
+          .from('webhook_events')
+          .delete({ count: 'exact' })
+          .eq('contact_id', contactId)
+          .eq('account_id', accountId),
+        'webhook_events delete',
+      )
+      add('webhook_events', res.count)
     })
 
     await step('lead_source_events', async () => {

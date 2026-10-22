@@ -281,6 +281,8 @@ export async function fetchSeguro(
     const literal = isIP(new URL(url).hostname.replace(/^\[|\]$/g, '')) !== 0;
     const res = literal ? await fetch(url, atual) : await requestFixado(url, atual, lookupVetado(resolver));
     if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
+    // maxRedirects 0: the 3xx itself is the answer (webhook delivery treats it as a failure).
+    if (maxRedirects === 0) return res;
     const location = res.headers.get('location');
     if (!location) return res;
     await res.body?.cancel().catch(() => undefined);

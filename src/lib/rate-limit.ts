@@ -81,6 +81,15 @@ function evictOldest() {
   if (!oldest.done) buckets.delete(oldest.value);
 }
 
+/**
+ * Read-only look at a bucket: true while the key still has budget. Does not count a request.
+ * For "reject early if this client is already over its failure budget".
+ */
+export function hasRateLimitBudget(rawKey: string, { limit }: RateLimitOptions): boolean {
+  const entry = buckets.get(normalizeKey(rawKey));
+  return !entry || entry.resetAt <= Date.now() || entry.count < limit;
+}
+
 export function checkRateLimit(
   rawKey: string,
   { limit, windowMs }: RateLimitOptions,

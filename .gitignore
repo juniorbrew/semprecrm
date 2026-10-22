@@ -46,3 +46,5 @@ next-env.d.ts
 .playwright-cli/
 # Agent skills (installed via skills CLI / playwright; only skills-lock.json is versioned)
 .claude/skills/
+
+__pycache__/

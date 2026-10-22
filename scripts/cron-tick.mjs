@@ -13,8 +13,9 @@
 // drained on every tick too, and so are the SLA warnings / breaches
 // (GET /api/support/sla/cron, migration 072) and the satisfaction surveys
 // (GET /api/support/csat/cron, migration 074) and the snoozed conversations
-// whose time is up (GET /api/inbox/snooze/cron, migration 079) and the scheduled messages
-// that are due (GET /api/inbox/scheduled/cron, migration 092).
+// whose time is up (GET /api/inbox/snooze/cron, migration 079), the scheduled messages
+// that are due (GET /api/inbox/scheduled/cron, migration 092) and the outbound webhooks
+// that are due (GET /api/webhooks/cron, migration 093).
 //
 // The calendar sync (Google / Outlook, POST /api/integrations/calendar/sync)
 // rides on the same loop but on its own, slower interval
@@ -61,6 +62,7 @@ const ENDPOINTS = [
   { path: '/api/ai/auto-reply/cron', method: 'GET', everyMs: null },
   { path: '/api/support/sla/cron', method: 'GET', everyMs: null },
   { path: '/api/support/csat/cron', method: 'GET', everyMs: null },
+  { path: '/api/webhooks/cron', method: 'GET', everyMs: null },
   { path: '/api/integrations/calendar/sync', method: 'POST', everyMs: CALENDAR_SYNC_INTERVAL_MS },
   { path: '/api/billing/cron', method: 'GET', everyMs: 60 * 60_000 },
 ]
@@ -91,7 +93,7 @@ function summarise(body) {
     if (i.errors) parts.push(`inactive_errors=${i.errors}`)
   }
   if (body.lead_events_purged != null) parts.push(`lead_events_purged=${body.lead_events_purged}`)
-  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped']) {
+  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped', 'delivered', 'retrying', 'purged']) {
     if (k in body) parts.push(`${k}=${body[k]}`)
   }
   return parts.join(' ')
