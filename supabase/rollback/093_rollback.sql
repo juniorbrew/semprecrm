@@ -20,4 +20,6 @@ DROP FUNCTION IF EXISTS public.api_purge();
 DROP TABLE IF EXISTS public.api_request_log, public.api_idempotency_keys;
 DROP TABLE IF EXISTS public.webhook_delivery_attempts, public.webhook_deliveries,
   public.webhook_events, public.webhook_endpoints, public.api_keys;
+DROP INDEX IF EXISTS public.idx_messages_api_request;
+ALTER TABLE public.messages DROP COLUMN IF EXISTS api_request_id;
 COMMIT;

@@ -6,13 +6,15 @@ const h = vi.hoisted(() => ({
   modulesAsked: [] as string[],
   sendError: null as Error | null,
   sends: 0,
+  lastArgs: null as Record<string, unknown> | null,
 }))
 
 vi.mock('@/lib/plans-server', () => ({
   accountHasModule: async (_db: unknown, _acc: string, module: string) => (h.modulesAsked.push(module), h.hasModule),
 }))
 vi.mock('@/lib/automations/meta-send', () => ({
-  engineSendText: async () => {
+  engineSendText: async (args: Record<string, unknown>) => {
+    h.lastArgs = args
     h.sends++
     if (h.sendError) throw h.sendError
     return { whatsapp_message_id: 'wamid.1' }
@@ -92,6 +94,11 @@ describe('sendTextViaApi plan and failure handling', () => {
     expect(await failure(sendTextViaApi(db, input))).toMatchObject({ status: 502, code: 'send_unknown', maybeSent: true })
   })
 
+  it('hands the idempotency claim id to the engine so it lands on the message row', async () => {
+    await sendTextViaApi(db, { ...input, claimId: 'claim-A' })
+    expect(h.lastArgs).toMatchObject({ origin: 'api', apiRequestId: 'claim-A' })
+  })
+
   it('tells the caller where the message will land, right before the provider call', async () => {
     const seen: unknown[] = []
     await sendTextViaApi(db, { ...input, onBeforeSend: async (i) => void seen.push([i, h.sends]) })
@@ -125,6 +132,12 @@ describe('classifySendFailure', () => {
     ['gateway send_failed', new GatewayRequestError('x', 502, 'send_failed'), 502, 'send_unknown', true],
     ['gateway timeout', new GatewayUnreachableError('tempo esgotado'), 502, 'send_unknown', true],
     ['gateway 5xx', new GatewayUnreachableError('boom', 503), 502, 'send_unknown', true],
+    ['Meta 401', new MetaApiError('token', { httpStatus: 401 }), 502, 'send_failed', false],
+    ['Meta 404', new MetaApiError('nf', { httpStatus: 404 }), 502, 'send_failed', false],
+    ['Meta 422', new MetaApiError('un', { httpStatus: 422 }), 502, 'send_failed', false],
+    ['Meta 408 (timeout from a proxy)', new MetaApiError('to', { httpStatus: 408 }), 502, 'send_unknown', true],
+    ['Meta 429', new MetaApiError('slow down', { httpStatus: 429 }), 502, 'send_unknown', true],
+    ['Meta 409', new MetaApiError('conflict', { httpStatus: 409 }), 502, 'send_unknown', true],
     ['Meta 5xx', new MetaApiError('oops', { httpStatus: 500 }), 502, 'send_unknown', true],
     ['socket reset', new TypeError('fetch failed'), 502, 'send_unknown', true],
     ['unreadable 2xx body', new TypeError("Cannot read properties of undefined (reading '0')"), 502, 'send_unknown', true],

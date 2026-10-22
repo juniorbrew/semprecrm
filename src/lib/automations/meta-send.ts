@@ -46,6 +46,8 @@ interface SendTextArgs {
   text: string
   /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
   origin?: 'automation' | 'ai' | 'csat' | 'api'
+  /** Public API idempotency claim (migration 093), stored on the message row. */
+  apiRequestId?: string
   /** The caller already waited for its QR pacing slot (AI runtime re-checks right before sending). */
   skipPacing?: boolean
 }
@@ -104,6 +106,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     }
     return engineSendViaQr(db, {
       origin: input.origin ?? 'automation',
+      apiRequestId: input.apiRequestId,
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
@@ -225,6 +228,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     conversation_id: input.conversationId,
     sender_type: 'bot',
     origin: (input.kind === 'text' && input.origin) || 'automation',
+    ...(input.kind === 'text' && input.apiRequestId ? { api_request_id: input.apiRequestId } : {}),
     content_type,
     content_text,
     template_name,

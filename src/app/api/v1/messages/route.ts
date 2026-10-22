@@ -9,7 +9,7 @@ import {
   runIdempotent,
   type IdempotentOutcome,
 } from '@/lib/api-keys/idempotency'
-import { recoverApiMessage } from '@/lib/api-keys/recover'
+import { SendTargetNotRecorded, markSendTarget, recoverApiMessage } from '@/lib/api-keys/recover'
 import { ApiSendError, sendTextViaApi } from '@/lib/api-keys/send-message'
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils'
 
@@ -40,23 +40,29 @@ export async function POST(request: Request) {
   }
 
   const db = supabaseAdmin()
-  const run = async (): Promise<IdempotentOutcome> => {
+  const run = async (claimId?: string): Promise<IdempotentOutcome> => {
     try {
       const sent = await sendTextViaApi(db, {
         accountId: ctx.accountId,
         to: body.to,
         text: body.text,
         channel: body.channel,
-        // Remember where the message will land: lets a later retry resolve a crashed send.
-        onBeforeSend: idem.key
-          ? async (info) => {
-              await db
-                .from('api_idempotency_keys')
-                .update({ conversation_id: info.conversationId, contact_id: info.contactId, channel: info.channel })
-                .eq('account_id', ctx.accountId)
-                .eq('key', idem.key as string)
-            }
-          : undefined,
+        claimId,
+        // Remember where the message will land so a later retry can resolve a crashed send.
+        // Fails closed: no record, no send (a retryable 503, the key is released).
+        onBeforeSend:
+          idem.key && claimId
+            ? async (info) => {
+                try {
+                  await markSendTarget(db, { accountId: ctx.accountId, key: idem.key as string, claimId }, info)
+                } catch (err) {
+                  if (err instanceof SendTargetNotRecorded) {
+                    throw new ApiSendError(503, 'temporarily_unavailable', 'Could not start the send safely. Nothing was sent; retry shortly.')
+                  }
+                  throw err
+                }
+              }
+            : undefined,
       })
       return { status: 201, body: { object: 'message', ...sent }, store: true }
     } catch (err) {
@@ -69,7 +75,7 @@ export async function POST(request: Request) {
 
   try {
     if (!idem.key) {
-      const out = await run()
+      const out = await run(undefined)
       return done(NextResponse.json(out.body, { status: out.status }))
     }
     const result = await runIdempotent(
@@ -84,7 +90,7 @@ export async function POST(request: Request) {
         }),
       },
       run,
-      { recover: (claim) => recoverApiMessage(db, claim, body.text) },
+      { recover: (claim) => recoverApiMessage(db, claim) },
     )
     if (result.kind === 'conflict') return done(apiError(result.status, result.code, result.message))
     return done(

@@ -108,6 +108,8 @@ export interface EngineQrSendInput {
   preview?: string
   /** Which engine sent it — drives the bubble's sender label (migration 059). */
   origin?: 'automation' | 'flow' | 'ai' | 'csat' | 'api'
+  /** Public API idempotency claim (migration 093): lets a crashed send be matched to its message. */
+  apiRequestId?: string
 }
 
 /**
@@ -156,6 +158,7 @@ export async function engineSendViaQr(
     message_id,
     status: 'sent',
     channel: 'qr',
+    ...(input.apiRequestId ? { api_request_id: input.apiRequestId } : {}),
   }
   const { error: msgErr } = await db.from('messages').insert(row)
   // The phone echo of this very id got stored first (should not happen:

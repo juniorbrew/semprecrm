@@ -43,6 +43,10 @@ Boas práticas:
 - **IPs permitidos** (opcional, até 10 endereços ou faixas CIDR, ex.: `203.0.113.7`, `198.51.100.0/24`):
   com a lista preenchida, a chave só funciona a partir desses endereços (`403 ip_not_allowed` nos demais).
   Vazio = qualquer endereço. A rotação copia a lista.
+  **Como o IP é obtido:** o app lê o endereço do cabeçalho `X-Real-IP` que o Nginx define a partir da conexão real.
+  Isso só é confiável se o app for alcançável **exclusivamente pelo proxy**: na VPS padrão o Next escuta apenas em
+  `127.0.0.1` (`next start -H 127.0.0.1`, ver `deploy/contabo/README.md`). Se você expuser a porta do app
+  diretamente, qualquer um pode forjar `X-Real-IP` e burlar a lista.
 - **Requisições**: em cada chave, o botão *Requisições* mostra as últimas 50 chamadas autenticadas dos
   últimos 7 dias (horário, rota, status HTTP e IP). Chamadas recusadas antes de identificar a chave
   (chave inválida) não aparecem aí; as recusas de uma chave conhecida (IP não permitido, conta bloqueada, sem
@@ -52,7 +56,8 @@ Boas práticas:
 ### Limites e erros
 
 - 120 requisições por minuto **por chave** e 300 por minuto **por conta** (somando todas as chaves).
-  Ao estourar: `429` com `Retry-After`. Os limites são contados por processo do servidor.
+  Ao estourar: `429` com `Retry-After`. **Os limites são contados na memória de cada processo do servidor**: com uma
+  única instância (o padrão) valem exatamente isso; com várias instâncias cada uma teria o seu próprio orçamento.
 - Erros seguem sempre o formato `{ "error": { "code": "...", "message": "..." } }`.
 
 | HTTP | `code` | Significado |
@@ -116,12 +121,13 @@ Falhas de envio, e o que cada uma garante:
 | HTTP | `code` | A mensagem saiu? | O que fazer |
 |---|---|---|---|
 | 422 | `channel_not_configured`, `channel_not_connected`, `not_on_whatsapp`, `send_rejected` | **Não** | Corrija (conecte o canal, confira o número) e tente de novo |
-| 502 | `send_failed` | **Não**: o WhatsApp/Meta recusou (4xx) | Pode tentar de novo |
+| 502 | `send_failed` | **Não**: o WhatsApp/Meta recusou com 400, 401, 403, 404 ou 422 | Pode tentar de novo (depois de corrigir a causa) |
+| 503 | `temporarily_unavailable` | **Não**: não foi possível registrar o envio com segurança e ele nem começou | Tente de novo com a mesma chave |
 | 502 | `send_unknown` | **Não se sabe**: timeout, conexão caiu ou erro do provedor depois que o envio começou | **Não reenvie às cegas.** Veja a conversa no Atendimento |
 | 502 | `send_unconfirmed` | **Sim**, mas não foi possível registrá-la | **Não reenvie** |
 
-Só `send_failed` e os `422` garantem que nada foi enviado. Qualquer outro erro depois do início do envio
-é tratado como "talvez tenha saído".
+Só `send_failed`, `temporarily_unavailable` e os `422` garantem que nada foi enviado. Qualquer outro erro depois
+do início do envio (inclusive respostas 408, 409, 429 e 5xx do provedor) é tratado como "talvez tenha saído".
 
 #### Evite envio duplicado: `Idempotency-Key`
 
@@ -147,10 +153,14 @@ curl -X POST https://api.semprecrm.com.br/api/v1/messages \
 - Se o resultado é **ambíguo** (`send_unknown`, `send_unconfirmed`: timeout, conexão caiu depois do envio), ele
   é guardado e **repetido** nas próximas tentativas com a mesma chave (`Idempotent-Replayed: true`): a API nunca
   reenvia no escuro. Para mandar de novo de propósito, use uma chave nova.
-- Se o servidor cair no meio, a requisição fica "em processamento" (`409`) por **3 minutos**. Depois disso, a
-  próxima tentativa com a mesma chave resolve o caso: se a mensagem aparece na conversa, a resposta de sucesso
-  original é devolvida; se o envio nem chegou a começar, a requisição é executada; se não dá para saber, vem
-  `502 send_unknown`. Nunca fica travada por 24 h e nunca duplica.
+- Se o servidor cair no meio, a requisição fica "em processamento" (`409`) por **10 minutos** (mais que o pior
+  caso de um envio: fila anti-banimento do canal QR + timeout do provedor). Depois disso, a próxima tentativa com
+  a mesma chave resolve o caso: cada pedido tem um identificador próprio gravado na mensagem que ele envia, então
+  só a mensagem **daquele** pedido conta (outra chamada com o mesmo texto não é confundida com ela). Se a
+  mensagem existe, a resposta de sucesso original é devolvida; se o envio nem chegou a começar, **uma** das
+  tentativas assume a chave e executa; se não dá para saber, vem `502 send_unknown`. Nunca fica travada por 24 h e
+  nunca duplica. Se o pedido original terminar depois, o resultado verdadeiro substitui um `send_unknown`
+  guardado, mas nunca um sucesso.
 - As chaves de idempotência valem por conta (não por chave de API) e são apagadas após 24 h.
 - No n8n, ative *Retry On Fail* no nó *HTTP Request* e use um valor estável no cabeçalho (ex.:
   `{{ $execution.id }}-{{ $itemIndex }}`), nunca algo que muda a cada tentativa.

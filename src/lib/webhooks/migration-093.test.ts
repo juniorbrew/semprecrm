@@ -62,6 +62,9 @@ describe('migration 093 contract', () => {
     expect(sql).toContain('contact_id UUID REFERENCES public.contacts(id) ON DELETE CASCADE')
     expect(sql).toContain('PRIMARY KEY (account_id, key)')
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS conversation_id UUID')
+    // the claim is bound to the message it sent
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_id        UUID')
+    expect(sql).toContain('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS api_request_id UUID;')
     expect(sql).toContain('REVOKE ALL ON FUNCTION public.api_purge() FROM PUBLIC, anon, authenticated')
     expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.api_purge() TO service_role')
     expect(sql).toMatch(/REVOKE ALL ON TABLE public\.api_idempotency_keys, public\.api_request_log\s+FROM PUBLIC, anon, authenticated/)

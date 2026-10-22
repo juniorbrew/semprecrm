@@ -7,6 +7,7 @@ import {
   parseIdempotencyKey,
   requestHash,
   runIdempotent,
+  type IdempotencyDeps,
   type IdempotentOutcome,
   type RecoverResult,
 } from './idempotency'
@@ -16,6 +17,7 @@ type Row = {
   key: string
   request_hash: string
   status: string
+  claim_id: string | null
   created_at: string
   response_status?: number
   response?: unknown
@@ -27,8 +29,8 @@ type Row = {
 const T0 = new Date('2026-10-01T12:00:00Z')
 
 /**
- * In-memory api_idempotency_keys with the primary key (account_id, key) semantics of the
- * migration, a controllable clock and injectable update failures.
+ * In-memory api_idempotency_keys: primary key (account_id, key), filters (eq / is / or),
+ * delete ... select returning the removed rows, a controllable clock and injectable update failures.
  */
 function fakeDb(opts: { failUpdates?: number } = {}) {
   const rows = new Map<string, Row>()
@@ -37,25 +39,36 @@ function fakeDb(opts: { failUpdates?: number } = {}) {
   const id = (a: string, k: string) => `${a}|${k}`
 
   function query(op: 'select' | 'update' | 'delete', patch?: Partial<Row>) {
-    const f: Record<string, string> = {}
+    const preds: ((r: Row) => boolean)[] = []
+    const b: Record<string, unknown> = {}
+    const matches = () => [...rows.values()].filter((r) => preds.every((p) => p(r)))
     const apply = () => {
-      const row = rows.get(id(f.account_id, f.key))
-      const match = row && (!f.status || row.status === f.status)
+      const hit = matches()
       if (op === 'update') {
         if (failUpdates > 0) {
           failUpdates -= 1
-          return { error: { message: 'db down' } }
+          return { data: null, error: { message: 'db down' } }
         }
-        if (match) Object.assign(row, patch)
+        for (const r of hit) Object.assign(r, patch)
+        return { data: hit.map((r) => ({ key: r.key })), error: null }
       }
-      if (op === 'delete' && match) rows.delete(id(f.account_id, f.key))
-      return { error: null }
+      if (op === 'delete') {
+        for (const r of hit) rows.delete(id(r.account_id, r.key))
+        return { data: hit.map((r) => ({ key: r.key })), error: null }
+      }
+      return { data: hit[0] ?? null, error: null }
     }
-    const b: Record<string, unknown> = {
-      eq: (c: string, v: string) => ((f[c] = v), b),
-      maybeSingle: async () => ({ data: rows.get(id(f.account_id, f.key)) ?? null, error: null }),
-      then: (resolve: (v: unknown) => unknown) => resolve(apply()),
+    b.eq = (c: string, v: unknown) => (preds.push((r) => (r as unknown as Record<string, unknown>)[c] === v), b)
+    b.is = (c: string, v: null) => (preds.push((r) => ((r as unknown as Record<string, unknown>)[c] ?? null) === v), b)
+    b.or = (expr: string) => {
+      // only the shape the code uses: "status.eq.in_progress,response_status.gte.300"
+      expect(expr).toBe('status.eq.in_progress,response_status.gte.300')
+      preds.push((r) => r.status === 'in_progress' || (r.response_status ?? 0) >= 300)
+      return b
     }
+    b.select = () => b
+    b.maybeSingle = async () => ({ data: matches()[0] ?? null, error: null })
+    b.then = (resolve: (v: unknown) => unknown) => resolve(apply())
     return b
   }
 
@@ -79,6 +92,8 @@ function fakeDb(opts: { failUpdates?: number } = {}) {
 const input = { accountId: 'acc', key: 'k1', hash: requestHash({ to: '5511999990000', text: 'oi' }) }
 const sent = (): IdempotentOutcome => ({ status: 201, body: { object: 'message', id: 'm1' }, store: true })
 const noSleep = async () => undefined
+let seq = 0
+const ids = (): IdempotencyDeps => ({ sleep: noSleep, newClaimId: () => `claim-${++seq}` })
 
 describe('Idempotency-Key header', () => {
   it('accepts printable ASCII up to 255 chars, rejects the rest', () => {
@@ -96,15 +111,15 @@ describe('Idempotency-Key header', () => {
 })
 
 describe('runIdempotent', () => {
-  it('runs once, stores the response and replays it for the same key and body', async () => {
+  it('runs once, hands the claim id to the run, stores the response and replays it', async () => {
     const { db } = fakeDb()
-    let runs = 0
-    const run = async () => (runs++, sent())
-    const first = await runIdempotent(db, input, run)
+    const seen: string[] = []
+    const run = async (claimId: string) => (seen.push(claimId), sent())
+    const first = await runIdempotent(db, input, run, { newClaimId: () => 'claim-X' })
     expect(first).toEqual({ kind: 'fresh', status: 201, body: { object: 'message', id: 'm1' } })
     const again = await runIdempotent(db, input, run)
     expect(again).toEqual({ kind: 'replay', status: 201, body: { object: 'message', id: 'm1' } })
-    expect(runs).toBe(1)
+    expect(seen).toEqual(['claim-X'])
   })
 
   it('422 when the key is reused with a different body', async () => {
@@ -170,9 +185,7 @@ describe('runIdempotent', () => {
   it('stores an ambiguous failure (message may have left) and replays it instead of re-sending', async () => {
     const { db } = fakeDb()
     let runs = 0
-    const run = async (): Promise<IdempotentOutcome> => (
-      runs++, { status: 502, body: SEND_UNKNOWN_BODY, store: true }
-    )
+    const run = async (): Promise<IdempotentOutcome> => (runs++, { status: 502, body: SEND_UNKNOWN_BODY, store: true })
     await runIdempotent(db, input, run)
     const again = await runIdempotent(db, input, run)
     expect(again).toMatchObject({ kind: 'replay', status: 502, body: SEND_UNKNOWN_BODY })
@@ -205,12 +218,13 @@ describe('runIdempotent', () => {
 })
 
 describe('crash recovery (stale in_progress claim)', () => {
-  function stale(db: ReturnType<typeof fakeDb>, over: Partial<Row> = {}) {
-    db.rows.set('acc|k1', {
+  function stale(f: ReturnType<typeof fakeDb>, over: Partial<Row> = {}) {
+    f.rows.set('acc|k1', {
       account_id: 'acc',
       key: 'k1',
       request_hash: input.hash,
       status: 'in_progress',
+      claim_id: 'claim-old',
       created_at: T0.toISOString(),
       conversation_id: 'conv1',
       contact_id: 'c1',
@@ -219,6 +233,11 @@ describe('crash recovery (stale in_progress claim)', () => {
     })
   }
   const later = (ms: number) => () => new Date(T0.getTime() + ms)
+  const pastLease = later(IDEMPOTENCY_LEASE_MS + 1)
+
+  it('the lease comfortably exceeds the worst send path (pacing queue + provider timeout)', () => {
+    expect(IDEMPOTENCY_LEASE_MS).toBeGreaterThanOrEqual(10 * 60_000)
+  })
 
   it('within the lease a retry gets 409 and nothing is resolved', async () => {
     const f = fakeDb()
@@ -231,18 +250,17 @@ describe('crash recovery (stale in_progress claim)', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('after the lease, a message found in the conversation is replayed as a success (no re-send)', async () => {
+  it('after the lease, a message found for this claim is replayed as a success (no re-send)', async () => {
     const f = fakeDb()
     stale(f)
     const body = { object: 'message', message_id: 'm9' }
     const recover = vi.fn(async (): Promise<RecoverResult> => ({ kind: 'sent', status: 201, body }))
     const run = vi.fn(async () => sent())
-    const r = await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 1), recover, sleep: noSleep })
+    const r = await runIdempotent(f.db, input, run, { ...ids(), now: pastLease, recover })
     expect(r).toEqual({ kind: 'replay', status: 201, body })
     expect(run).not.toHaveBeenCalled()
     expect(f.rows.get('acc|k1')).toMatchObject({ status: 'done', response_status: 201 })
-    // and the next retry is a plain replay
-    expect(await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 5), recover })).toMatchObject({ kind: 'replay', status: 201 })
+    expect(await runIdempotent(f.db, input, run, { ...ids(), now: later(IDEMPOTENCY_LEASE_MS + 5), recover })).toMatchObject({ kind: 'replay', status: 201 })
     expect(recover).toHaveBeenCalledTimes(1)
   })
 
@@ -251,10 +269,10 @@ describe('crash recovery (stale in_progress claim)', () => {
     stale(f)
     const run = vi.fn(async () => sent())
     const recover = async (): Promise<RecoverResult> => ({ kind: 'unknown' })
-    const r = await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 1), recover, sleep: noSleep })
+    const r = await runIdempotent(f.db, input, run, { ...ids(), now: pastLease, recover })
     expect(r).toEqual({ kind: 'replay', status: 502, body: SEND_UNKNOWN_BODY })
     expect(run).not.toHaveBeenCalled()
-    expect(await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 9) })).toMatchObject({ kind: 'replay', status: 502 })
+    expect(await runIdempotent(f.db, input, run, { ...ids(), now: later(IDEMPOTENCY_LEASE_MS + 9) })).toMatchObject({ kind: 'replay', status: 502 })
     expect(run).not.toHaveBeenCalled()
   })
 
@@ -262,7 +280,7 @@ describe('crash recovery (stale in_progress claim)', () => {
     const f = fakeDb()
     stale(f)
     const run = vi.fn(async () => sent())
-    const r = await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 1), sleep: noSleep })
+    const r = await runIdempotent(f.db, input, run, { ...ids(), now: pastLease })
     expect(r).toMatchObject({ kind: 'replay', status: 502 })
     expect(run).not.toHaveBeenCalled()
   })
@@ -273,19 +291,92 @@ describe('crash recovery (stale in_progress claim)', () => {
     let runs = 0
     const run = async () => (runs++, sent())
     const recover = async (): Promise<RecoverResult> => ({ kind: 'unsent' })
-    const r = await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 1), recover, sleep: noSleep })
+    const r = await runIdempotent(f.db, input, run, { ...ids(), now: pastLease, recover })
     expect(r).toMatchObject({ kind: 'fresh', status: 201 })
     expect(runs).toBe(1)
     expect(f.rows.get('acc|k1')).toMatchObject({ status: 'done', response_status: 201 })
   })
 
-  it('does not loop forever if recovery keeps answering "unsent"', async () => {
+  it('two concurrent retries of a stale never-started claim: exactly one takes over and sends', async () => {
     const f = fakeDb()
-    stale(f, { conversation_id: null })
-    const run = async () => sent()
+    stale(f, { conversation_id: null, contact_id: null, channel: null })
+    let runs = 0
+    const run = async () => {
+      runs++
+      await new Promise((r) => setTimeout(r, 10))
+      return sent()
+    }
     const recover = async (): Promise<RecoverResult> => ({ kind: 'unsent' })
-    // the first pass takes over and runs: the key is then fresh and done
-    await runIdempotent(f.db, input, run, { now: later(IDEMPOTENCY_LEASE_MS + 1), recover, sleep: noSleep })
-    expect(f.rows.get('acc|k1')?.status).toBe('done')
+    const results = await Promise.all(Array.from({ length: 5 }, () => runIdempotent(f.db, input, run, { ...ids(), now: pastLease, recover })))
+    expect(runs).toBe(1)
+    expect(results.filter((r) => r.kind === 'fresh')).toHaveLength(1)
+    expect(results.filter((r) => r.kind === 'conflict')).toHaveLength(4)
+    expect(f.rows.get('acc|k1')).toMatchObject({ status: 'done', response_status: 201 })
+  })
+
+  it('the original, slow request cannot clobber the takeover that replaced its claim', async () => {
+    const f = fakeDb()
+    let releaseA!: () => void
+    const gateA = new Promise<void>((r) => (releaseA = r))
+    const a = runIdempotent(f.db, input, async () => (await gateA, { status: 502, body: SEND_UNKNOWN_BODY, store: true }), { sleep: noSleep, newClaimId: () => 'claim-A' })
+    await new Promise((r) => setTimeout(r, 5))
+    // A never recorded a send target (conversation_id NULL): B takes over after the lease.
+    const farFuture = () => new Date(Date.now() + IDEMPOTENCY_LEASE_MS + 60_000)
+    const b = await runIdempotent(f.db, input, async () => sent(), {
+      sleep: noSleep,
+      newClaimId: () => 'claim-B',
+      now: farFuture,
+      recover: async () => ({ kind: 'unsent' }),
+    })
+    expect(b).toMatchObject({ kind: 'fresh', status: 201 })
+    releaseA()
+    await a
+    expect(f.rows.get('acc|k1')).toMatchObject({ claim_id: 'claim-B', status: 'done', response_status: 201 })
+  })
+
+  it('a late result of the original replaces a stored send_unknown, but never a stored success', async () => {
+    // original finishes AFTER a recovery already resolved the claim
+    for (const [recovered, finalStatus] of [
+      [{ kind: 'unknown' } as RecoverResult, 201],
+      [{ kind: 'sent', status: 201, body: { object: 'message', message_id: 'm9' } } as RecoverResult, 201],
+    ] as const) {
+      const f = fakeDb()
+      let release!: () => void
+      const gate = new Promise<void>((r) => (release = r))
+      const original = runIdempotent(f.db, input, async () => (await gate, { status: 502, body: SEND_UNKNOWN_BODY, store: true }), { sleep: noSleep, newClaimId: () => 'claim-A' })
+      await new Promise((r) => setTimeout(r, 5))
+      await runIdempotent(f.db, input, async () => sent(), {
+        sleep: noSleep,
+        now: () => new Date(Date.now() + IDEMPOTENCY_LEASE_MS + 60_000),
+        recover: async () => recovered,
+      })
+      release()
+      await original
+      const row = f.rows.get('acc|k1')!
+      if (recovered.kind === 'sent') {
+        // the stored success survives the original's later failure
+        expect(row.response_status).toBe(finalStatus)
+      } else {
+        // send_unknown (502) may be replaced by the original's own (502 here): still done
+        expect(row.status).toBe('done')
+      }
+    }
+  })
+
+  it('a late success of the original overwrites a stored send_unknown', async () => {
+    const f = fakeDb()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const original = runIdempotent(f.db, input, async () => (await gate, sent()), { sleep: noSleep, newClaimId: () => 'claim-A' })
+    await new Promise((r) => setTimeout(r, 5))
+    await runIdempotent(f.db, input, async () => sent(), {
+      sleep: noSleep,
+      now: () => new Date(Date.now() + IDEMPOTENCY_LEASE_MS + 60_000),
+      recover: async () => ({ kind: 'unknown' }),
+    })
+    expect(f.rows.get('acc|k1')).toMatchObject({ response_status: 502 })
+    release()
+    await original
+    expect(f.rows.get('acc|k1')).toMatchObject({ claim_id: 'claim-A', response_status: 201 })
   })
 })

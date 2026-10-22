@@ -486,9 +486,12 @@ CREATE TABLE IF NOT EXISTS public.api_idempotency_keys (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (account_id, key)
 );
--- Recovery of a request that crashed mid-send: where the message would be (set right
--- before the send starts; NULL = the send never began, so it is safe to run again).
+-- Recovery of a request that crashed mid-send: claim_id is a random id per claim, also stored
+-- on the message row (messages.api_request_id) so "did this claim send?" is an exact match;
+-- conversation_id/contact_id/channel say where the message would be (set right before the send
+-- starts; NULL = the send never began, so it is safe to run again).
 ALTER TABLE public.api_idempotency_keys
+  ADD COLUMN IF NOT EXISTS claim_id        UUID,
   ADD COLUMN IF NOT EXISTS conversation_id UUID,
   ADD COLUMN IF NOT EXISTS contact_id      UUID,
   ADD COLUMN IF NOT EXISTS channel         TEXT;
@@ -537,6 +540,11 @@ REVOKE ALL ON FUNCTION public.api_purge() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.api_purge() TO service_role;
 
 -- ---- 7. messages.origin + 'api' ----------------------------------------------------
+-- The idempotency claim that created an API message (NULL for every other message). Nullable,
+-- no default: a metadata-only change. Partial index = only the rare API rows are indexed.
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS api_request_id UUID;
+CREATE INDEX IF NOT EXISTS idx_messages_api_request ON public.messages (api_request_id) WHERE api_request_id IS NOT NULL;
+
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_origin_check;
 ALTER TABLE public.messages ADD CONSTRAINT messages_origin_check
   CHECK (origin IS NULL OR origin IN ('phone', 'automation', 'flow', 'system', 'ai', 'csat', 'api')) NOT VALID;

@@ -14,6 +14,7 @@ import { isValidE164, sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils'
 import type { WhatsAppChannel } from '@/types'
 
 export const MAX_TEXT_LENGTH = 4096
+const REFUSAL_STATUSES = new Set([400, 401, 403, 404, 422])
 
 export class ApiSendError extends Error {
   constructor(
@@ -33,6 +34,8 @@ export interface ApiSendInput {
   to: unknown
   text: unknown
   channel?: unknown
+  /** Idempotency claim id: stored on the message row so a crashed send can be matched exactly. */
+  claimId?: string
   /**
    * Called right before the provider request starts, with where the message will land.
    * Idempotent requests persist it so a crash mid-send can be resolved later.
@@ -124,6 +127,7 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
       contactId: outcome.contact.id,
       text: input.text,
       origin: 'api',
+      apiRequestId: input.claimId,
     })
     waId = sent.whatsapp_message_id
   } catch (err) {
@@ -177,7 +181,9 @@ export function classifySendFailure(err: unknown): ApiSendError {
   if (err instanceof GatewayUnreachableError && (err.status === 401 || err.status === 403)) {
     return new ApiSendError(502, 'send_failed', 'The message could not be delivered to WhatsApp.')
   }
-  if (err instanceof MetaApiError && err.httpStatus >= 400 && err.httpStatus < 500) {
+  // Only the statuses Meta uses for a validated refusal count as "not sent"; 408, 429 and the
+  // rest may be raised by a proxy or after partial processing, so they stay ambiguous.
+  if (err instanceof MetaApiError && REFUSAL_STATUSES.has(err.httpStatus)) {
     return new ApiSendError(502, 'send_failed', 'WhatsApp refused the message. Nothing was sent.')
   }
   if (/^(contact not found|contact phone invalid|conversation not found)/i.test(msg)) {
