@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -32,13 +32,24 @@ import { SettingsChip } from './settings-chip';
 interface ApiKeyRow {
   id: string;
   name: string;
+  note: string | null;
   key_prefix: string;
   key_last4: string;
   scopes: string[];
+  allowed_cidrs: string[] | null;
   created_at: string;
   last_used_at: string | null;
+  last_used_ip: string | null;
   expires_at: string | null;
   state: 'active' | 'revoked' | 'expired';
+}
+
+interface RequestLogRow {
+  at: string;
+  method: string;
+  route: string;
+  status: number;
+  ip: string | null;
 }
 
 const GRACE_OPTIONS = [0, 1, 24, 72, 168];
@@ -57,6 +68,23 @@ export function ApiKeysGroup() {
   const [rotating, setRotating] = useState<ApiKeyRow | null>(null);
   const [grace, setGrace] = useState(DEFAULT_GRACE_HOURS);
   const [revoking, setRevoking] = useState<ApiKeyRow | null>(null);
+  const [note, setNote] = useState('');
+  const [cidrs, setCidrs] = useState('');
+  const [logFor, setLogFor] = useState<string | null>(null);
+  const [log, setLog] = useState<RequestLogRow[] | null>(null);
+
+  async function toggleLog(id: string) {
+    if (logFor === id) return setLogFor(null);
+    setLogFor(id);
+    setLog(null);
+    try {
+      const res = await apiJson<{ requests: RequestLogRow[] }>(`/api/api-keys/${id}/requests`);
+      setLog(res.requests);
+    } catch (err) {
+      toast.error(t(err instanceof Error ? err.message : 'Failed to load the request log'));
+      setLogFor(null);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -78,10 +106,12 @@ export function ApiKeysGroup() {
     try {
       const res = await apiJson<{ secret: string }>('/api/api-keys', {
         method: 'POST',
-        body: JSON.stringify({ name, scopes }),
+        body: JSON.stringify({ name, scopes, note, allowed_cidrs: cidrs }),
       });
       setCreating(false);
       setName('');
+      setNote('');
+      setCidrs('');
       setReveal({ secret: res.secret, title: t('API key created') });
       await load();
     } catch (err) {
@@ -176,8 +206,17 @@ export function ApiKeysGroup() {
             </thead>
             <tbody className="divide-y divide-border border-t border-border">
               {keys.map((k) => (
-                <tr key={k.id} className={k.state === 'active' ? '' : 'opacity-60'}>
-                  <td className="px-3 py-2.5 font-medium text-foreground">{k.name}</td>
+                <Fragment key={k.id}>
+                <tr className={k.state === 'active' ? '' : 'opacity-60'}>
+                  <td className="px-3 py-2.5 font-medium text-foreground">
+                    {k.name}
+                    {k.note ? <span className="block text-xs font-normal text-muted-foreground">{k.note}</span> : null}
+                    {k.allowed_cidrs?.length ? (
+                      <span className="block text-[11px] font-normal text-muted-foreground">
+                        {t('Only from')} {k.allowed_cidrs.join(', ')}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
                     {k.key_prefix}…{k.key_last4}
                   </td>
@@ -189,9 +228,13 @@ export function ApiKeysGroup() {
                   </td>
                   <td className="px-3 py-2.5 text-xs text-muted-foreground">
                     {formatRelative(k.last_used_at, language)}
+                    {k.last_used_ip ? <span className="block font-mono text-[11px]">{k.last_used_ip}</span> : null}
                   </td>
                   <td className="px-3 py-2.5">{stateChip(k)}</td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    <Button variant="ghost" size="sm" aria-expanded={logFor === k.id} onClick={() => void toggleLog(k.id)}>
+                      {t('Requests')}
+                    </Button>
                     {k.state === 'active' ? (
                       <>
                         <Button
@@ -217,6 +260,34 @@ export function ApiKeysGroup() {
                     ) : null}
                   </td>
                 </tr>
+                {logFor === k.id ? (
+                  <tr>
+                    <td colSpan={7} className="bg-muted/30 px-3 py-3">
+                      {!log ? (
+                        <div className="h-8 animate-pulse rounded bg-muted/60" />
+                      ) : log.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">{t('No requests recorded yet.')}</p>
+                      ) : (
+                        <ul className="space-y-1 text-xs">
+                          {log.map((r, i) => (
+                            <li key={`${r.at}-${i}`} className="flex flex-wrap gap-x-3">
+                              <span className="text-muted-foreground">{new Date(r.at).toLocaleString(language)}</span>
+                              <span className="font-mono">
+                                {r.method} {r.route}
+                              </span>
+                              <span className={r.status >= 400 ? 'font-mono text-destructive' : 'font-mono'}>{r.status}</span>
+                              {r.ip ? <span className="font-mono text-muted-foreground">{r.ip}</span> : null}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        {t('Shows the last 50 requests of the past 7 days.')}
+                      </p>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -242,6 +313,24 @@ export function ApiKeysGroup() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="n8n"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="api-key-note">{t('Note (optional)')}</Label>
+              <Input id="api-key-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="api-key-cidrs">{t('Allowed IP addresses (optional)')}</Label>
+              <textarea
+                id="api-key-cidrs"
+                value={cidrs}
+                onChange={(e) => setCidrs(e.target.value)}
+                rows={2}
+                placeholder="203.0.113.7, 198.51.100.0/24"
+                className="w-full rounded-md border border-border bg-muted px-2 py-1.5 font-mono text-xs text-foreground focus:border-primary focus:outline-none"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('Leave empty to accept any address. Separate entries with commas or new lines (up to 10).')}
+              </p>
             </div>
             <fieldset className="space-y-2">
               <legend className="mb-1 text-sm font-medium text-foreground">{t('Permissions')}</legend>

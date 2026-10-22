@@ -132,5 +132,22 @@ export const DICT_API_WEBHOOKS: Record<string, string> = {
   'This address is not reachable from the internet': 'Este endereço não é acessível pela internet',
   'Pick at least one event': 'Escolha pelo menos um evento',
   'Endpoint limit reached. Delete one first': 'Limite de endpoints atingido. Exclua um primeiro',
-  'The overlap must be between 0 and 24 hours': 'A sobreposição deve ficar entre 0 e 24 horas',
+  'The overlap must be between 0 and 168 hours': 'A sobreposição deve ficar entre 0 e 168 horas',
+  'The note can have up to 200 characters': 'A observação pode ter até 200 caracteres',
+  'Enter valid IP addresses or CIDR ranges (up to 10)': 'Informe endereços IP ou faixas CIDR válidos (até 10)',
+  'The URL must use the default https port (443)': 'A URL deve usar a porta padrão do https (443)',
+  'Enable the endpoint first': 'Ative o endpoint primeiro',
+  'Failed to load the request log': 'Não foi possível carregar o histórico de requisições',
+
+  // ---- API key note, allowlist, request log; secret overlap ----------------
+  'Only from': 'Somente de',
+  Requests: 'Requisições',
+  'No requests recorded yet.': 'Nenhuma requisição registrada ainda.',
+  'Shows the last 50 requests of the past 7 days.': 'Mostra as últimas 50 requisições dos últimos 7 dias.',
+  'Note (optional)': 'Observação (opcional)',
+  'Allowed IP addresses (optional)': 'Endereços IP permitidos (opcional)',
+  'Leave empty to accept any address. Separate entries with commas or new lines (up to 10).':
+    'Deixe em branco para aceitar qualquer endereço. Separe os itens por vírgula ou quebra de linha (até 10).',
+  'Keep the old secret valid for': 'Manter o segredo antigo válido por',
+  'Switch immediately': 'Trocar imediatamente',
 }

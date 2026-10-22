@@ -382,6 +382,7 @@ function EndpointDetail({
 }) {
   const { t, language } = useLanguage();
   const [secret, setSecret] = useState<string | null>(null);
+  const [overlap, setOverlap] = useState(24);
   const [working, setWorking] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -436,7 +437,7 @@ function EndpointDetail({
     const res = await run('rotate', () =>
       apiJson<{ secret: string }>(`/api/webhooks/endpoints/${endpoint.id}/secret`, {
         method: 'POST',
-        body: JSON.stringify({ overlap_hours: 24 }),
+        body: JSON.stringify({ overlap_hours: overlap }),
       }),
     );
     if (res) {
@@ -518,6 +519,18 @@ function EndpointDetail({
             {secret ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
             {secret ? t('Hide') : t('Reveal')}
           </Button>
+          <select
+            aria-label={t('Keep the old secret valid for')}
+            value={overlap}
+            onChange={(e) => setOverlap(Number(e.target.value))}
+            className="rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground focus:border-primary focus:outline-none"
+          >
+            {[0, 1, 24, 72, 168].map((h) => (
+              <option key={h} value={h}>
+                {h === 0 ? t('Switch immediately') : h < 24 ? `${h} h` : `${h / 24} ${h === 24 ? t('day') : t('days')}`}
+              </option>
+            ))}
+          </select>
           <Button variant="ghost" size="sm" onClick={rotate} disabled={working === 'rotate'}>
             <RefreshCw className="size-3.5" />
             {t('Rotate secret')}

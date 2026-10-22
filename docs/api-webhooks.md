@@ -35,12 +35,21 @@ Boas práticas:
   funcionando pelo período de transição escolhido (padrão 24 h, até 7 dias). Troque a chave na integração e
   pronto; ao fim do prazo a antiga para de valer sozinha.
 - **Revogar** derruba a chave imediatamente.
-- A tela mostra o prefixo, os 4 últimos caracteres e quando a chave foi usada pela última vez.
+- A tela mostra o prefixo, os 4 últimos caracteres, a observação, quando e **de qual IP** a chave foi usada
+  pela última vez.
+- **Observação** (opcional): anote para que serve a chave.
+- **IPs permitidos** (opcional, até 10 endereços ou faixas CIDR, ex.: `203.0.113.7`, `198.51.100.0/24`):
+  com a lista preenchida, a chave só funciona a partir desses endereços (`403 ip_not_allowed` nos demais).
+  Vazio = qualquer endereço. A rotação copia a lista.
+- **Requisições**: em cada chave, o botão *Requisições* mostra as últimas 50 chamadas autenticadas dos
+  últimos 7 dias (horário, rota, status HTTP e IP). Chamadas recusadas antes de identificar a chave
+  (chave inválida) não aparecem aí.
 - Nunca coloque a chave em código de navegador ou repositório público.
 
 ### Limites e erros
 
-- 120 requisições por minuto **por chave**. Ao estourar: `429` com `Retry-After`.
+- 120 requisições por minuto **por chave** e 300 por minuto **por conta** (somando todas as chaves).
+  Ao estourar: `429` com `Retry-After`. Os limites são contados por processo do servidor.
 - Erros seguem sempre o formato `{ "error": { "code": "...", "message": "..." } }`.
 
 | HTTP | `code` | Significado |
@@ -48,6 +57,8 @@ Boas práticas:
 | 401 | `missing_api_key` | Faltou `Authorization: Bearer ...` ou o formato é inválido |
 | 401 | `invalid_api_key` / `api_key_revoked` / `api_key_expired` | Chave desconhecida, revogada ou fora do prazo de transição |
 | 403 | `insufficient_scope` | A chave não tem a permissão exigida |
+| 403 | `ip_not_allowed` | A chave tem lista de IPs e a chamada veio de outro endereço |
+| 403 | `account_blocked` | A conta está suspensa ou o plano não está ativo |
 | 429 | `rate_limited` | Limite por minuto atingido |
 
 ---
@@ -94,8 +105,36 @@ Resposta `201`:
 ```
 
 Erros específicos: `400 invalid_phone | invalid_text | invalid_channel | invalid_json`,
-`403 contact_opted_out` (o contato pediu para não receber mensagens), `409 channel_conflict`,
-`422 channel_not_configured`, `502 send_failed`.
+`403 contact_opted_out` (o contato pediu para não receber mensagens), `403 module_not_included` (o canal usado
+não faz parte do plano), `409 channel_conflict`, `422 channel_not_configured`, `502 send_failed`
+(nada foi enviado, pode tentar de novo) e `502 send_unconfirmed` (a mensagem **saiu**, mas não foi possível
+registrá-la: **não reenvie**).
+
+#### Evite envio duplicado: `Idempotency-Key`
+
+Se a requisição der timeout, você não sabe se a mensagem saiu. Mande um cabeçalho `Idempotency-Key` (1 a 255
+caracteres ASCII, ex.: um UUID ou o id do pedido) e repita a **mesma** requisição com a **mesma** chave:
+
+```bash
+curl -X POST https://api.semprecrm.com.br/api/v1/messages \
+  -H "Authorization: Bearer $SEMPRECRM_KEY" \
+  -H "Idempotency-Key: pedido-8841-saiu-para-entrega" \
+  -H "Content-Type: application/json" \
+  -d '{ "to": "5511999990000", "text": "Seu pedido saiu para entrega." }'
+```
+
+- Mesma chave e mesmo corpo depois de concluída: a resposta guardada volta com o cabeçalho
+  `Idempotent-Replayed: true`, **sem enviar de novo**.
+- Mesma chave com corpo diferente (`to`, `text` ou `channel`): `422 idempotency_key_reused`.
+- Mesma chave enquanto a primeira ainda está sendo processada: `409 idempotency_in_progress`; tente de novo em
+  instantes.
+- Se a requisição falhou **antes** de qualquer envio (validação, canal indisponível, a Meta recusou), a chave é
+  liberada e você pode corrigir e tentar de novo com a mesma chave.
+- Se o servidor cair no meio, a chave fica como "em processamento" por até 24 h (`409`): preferimos recusar a
+  arriscar uma mensagem duplicada ao cliente.
+- As chaves de idempotência valem por conta (não por chave de API) e são apagadas após 24 h.
+- No n8n, ative *Retry On Fail* no nó *HTTP Request* e use um valor estável no cabeçalho (ex.:
+  `{{ $execution.id }}-{{ $itemIndex }}`), nunca algo que muda a cada tentativa.
 
 Observações do canal oficial: texto livre só chega dentro da janela de 24 h aberta pela última mensagem do
 cliente (regra do WhatsApp); fora dela a Meta recusa e a API responde `502 send_failed`. No canal QR os envios
@@ -115,7 +154,8 @@ Retorna o contato ou `404 not_found`.
 
 Em **Webhooks → Adicionar endpoint** informe:
 
-- **URL** `https` pública (endereços internos/privados são recusados, também no momento do envio);
+- **URL** `https` pública na porta padrão (443). Endereços internos/privados, `http` e portas diferentes são
+  recusados, no cadastro e a cada envio;
 - **Eventos**: escolha só os que interessam (ou "Todos os eventos");
 - uma descrição opcional.
 
@@ -192,8 +232,8 @@ Cabeçalhos úteis em toda entrega:
 
 ### Responda rápido, processe depois
 
-Responda com **2xx em até 10 segundos**. Qualquer outra coisa (inclusive timeout ou redirecionamento sem
-destino público) conta como falha e a entrega é repetida. Grave o evento e processe de forma assíncrona.
+Responda com **2xx em até 10 segundos**. Qualquer outra coisa conta como falha e a entrega é repetida:
+timeout, erro de conexão e também **redirecionamentos (3xx), que não são seguidos**: cadastre a URL final. Grave o evento e processe de forma assíncrona.
 
 ### Verificando a assinatura
 
@@ -248,8 +288,99 @@ app.post('/webhooks/semprecrm', express.raw({ type: 'application/json' }), (req,
 app.listen(3000)
 ```
 
-No **n8n**, use o nó *Webhook* (método POST, "Raw Body" ligado) e valide a assinatura em um nó *Code* com a
-função acima.
+### Receitas prontas
+
+**Funções de verificação sem dependências** (copie e cole; testadas contra a assinatura real do servidor):
+[`docs/examples/verify-webhook.mjs`](examples/verify-webhook.mjs) (Node),
+[`docs/examples/verify_webhook.py`](examples/verify_webhook.py) (Python) e
+[`docs/examples/verify-webhook.php`](examples/verify-webhook.php) (PHP). Todas recebem o corpo bruto, o cabeçalho
+`SempreCRM-Signature` e a lista de segredos aceitos (o novo e, durante a rotação, o antigo).
+Os exemplos em Node e Python são executados nos testes do projeto; o de PHP segue o mesmo algoritmo, mas não é
+executado pela nossa suíte.
+
+#### n8n (receita que funciona de primeira)
+
+1. **Nó Webhook**: método `POST`, em *Options* ligue **Raw Body**, *Respond* = `Immediately` (assim você
+   responde 200 na hora, sem esperar o resto do fluxo). Copie a *Production URL* (https) para o endpoint no
+   SempreCRM. A URL de produção só recebe com o workflow **ativado**.
+   Com *Raw Body* o corpo chega como arquivo binário na propriedade `data`, e os cabeçalhos chegam em minúsculas:
+   `$json.headers['semprecrm-signature']`.
+2. **Nó Code** (*Run Once for All Items*, JavaScript), ligado ao Webhook:
+
+   ```js
+   const crypto = require('crypto') // precisa de NODE_FUNCTION_ALLOW_BUILTIN=crypto (veja abaixo)
+
+   const SECRETS = ['whsec_COLE_AQUI'] // inclua o antigo durante uma rotação
+   const item = $input.first()
+   const raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8')
+   const header = item.json.headers['semprecrm-signature'] || ''
+
+   let t = NaN
+   const sigs = []
+   for (const part of header.split(',')) {
+     const i = part.indexOf('=')
+     if (i < 0) continue
+     const k = part.slice(0, i).trim(), v = part.slice(i + 1).trim()
+     if (k === 't') t = Number(v)
+     if (k === 'v1') sigs.push(v)
+   }
+   const fresh = Number.isInteger(t) && Math.abs(Date.now() / 1000 - t) <= 300
+   const valid = fresh && SECRETS.some((s) => {
+     const exp = crypto.createHmac('sha256', s).update(`${t}.${raw}`).digest()
+     return sigs.some((g) => {
+       const b = Buffer.from(g, 'hex')
+       return b.length === exp.length && crypto.timingSafeEqual(b, exp)
+     })
+   })
+
+   return [{ json: { valid, event: valid ? JSON.parse(raw) : null } }]
+   ```
+
+3. **Nó IF**: `{{ $json.valid }}` é verdadeiro. No ramo *true* use `{{ $json.event.type }}` e
+   `{{ $json.event.data.object }}`. Descarte o ramo *false*.
+4. **Deduplique** por `{{ $json.event.id }}` (ex.: nó *Remove Duplicates*, ou uma tabela com o id).
+
+`require('crypto')` no nó Code **só funciona** se o n8n for iniciado com a variável de ambiente
+`NODE_FUNCTION_ALLOW_BUILTIN=crypto` (no Docker: `-e NODE_FUNCTION_ALLOW_BUILTIN=crypto`). Sem ela o nó acusa
+"Module 'crypto' is disallowed". No **n8n Cloud** módulos nativos não são liberados; use o caminho com o nó
+**Crypto** abaixo.
+
+*Sem `require`, só com nós nativos:*
+
+1. Webhook com *Raw Body*, como acima.
+2. **Extract From File** (operação *Extract From Text File*, *Input Binary Field* = `data`): o corpo bruto vira o
+   texto `{{ $json.data }}`.
+3. **Edit Fields (Set)**: crie `signed` =
+   `{{ $('Webhook').item.json.headers['semprecrm-signature'].match(/t=(\d+)/)[1] + '.' + $json.data }}`.
+4. **Crypto**: *Action* `Hmac`, *Type* `SHA256`, *Value* = `{{ $json.signed }}`, *Secret* = seu `whsec_...`,
+   *Encoding* `hex`, *Property Name* `hmac`.
+5. **IF**: `{{ $('Webhook').item.json.headers['semprecrm-signature'].includes('v1=' + $json.hmac) }}` é
+   verdadeiro (e confira também que `t` está a menos de 5 minutos de `{{ Math.floor($now.toSeconds()) }}`).
+   Aqui a comparação não é em tempo constante; é aceitável dentro do n8n, mas prefira o nó Code quando puder.
+
+Os nomes exatos das opções podem variar um pouco entre versões do n8n; o que não muda é: corpo **bruto**, texto
+assinado `t.corpo`, HMAC-SHA256 em hexadecimal.
+
+**Nunca** monte o texto assinado com `JSON.stringify($json.body)`: o corpo reencodado muda espaços e a assinatura
+não confere.
+
+Para **enviar mensagens** pelo n8n use o nó *HTTP Request*: `POST https://api.semprecrm.com.br/api/v1/messages`,
+autenticação *Generic Credential Type → Header Auth* (nome `Authorization`, valor `Bearer scrm_live_...`),
+corpo JSON `{ "to": "...", "text": "..." }` e o cabeçalho `Idempotency-Key`.
+
+#### Make (Integromat)
+
+O módulo *Webhooks → Custom webhook* entrega o corpo **já interpretado** e não expõe os bytes originais, então
+não dá para recalcular o HMAC dentro do Make. Opções:
+
+- Ative **Get request headers** no módulo e proteja o endpoint com um token longo e aleatório na própria URL
+  (`https://hook.make.com/xxxx?token=<32+ caracteres>`) conferido por um filtro; combine com a lista de eventos
+  mínima. É menos forte que a assinatura (o token pode vazar em logs), mas suficiente para muitos casos.
+- Para validar a assinatura de verdade, receba o webhook em um serviço seu pequeno (Cloudflare Worker, Cloud
+  Function, Express com `docs/examples/verify-webhook.mjs`) e repasse só os eventos válidos para o Make.
+- Deduplique por `id` com um *Data store* (*Add/replace record* usando o id do evento como chave).
+- Para enviar mensagens use *HTTP → Make a request* com o cabeçalho `Authorization: Bearer scrm_live_...` e o
+  cabeçalho `Idempotency-Key`.
 
 ### Entrega, tentativas e ordem
 
@@ -263,7 +394,13 @@ função acima.
 - Se o endpoint ficar **48 horas sem nenhuma entrega com sucesso**, ele é **desativado automaticamente**
   (aparece o aviso na tela). Corrija a URL e ative de novo.
 - A cada tentativa a assinatura recebe um `t` novo; o corpo é o mesmo.
-- Eventos e histórico ficam guardados por 30 dias.
+- **Janela de duplicidade**: se o servidor cair exatamente entre o envio e o registro do resultado, o evento é
+  reenviado depois (mesmo `id`). Por isso o receptor deve ser idempotente.
+- Contas suspensas ou com plano inativo não enviam webhooks: as entregas ficam retidas e são tentadas de novo a
+  cada hora, expirando após 72 h.
+- Eventos e histórico ficam guardados por 30 dias. Quando um contato é anonimizado ou excluído (LGPD), os
+  eventos sobre ele são apagados, inclusive os pendentes.
+- No histórico, a resposta do seu servidor aparece só se for texto/JSON, truncada em 256 bytes.
 
 ### Painel de entregas
 
@@ -274,14 +411,16 @@ código, erro e o começo da resposta do seu servidor). **Reenviar** cria uma no
 
 ### Rotacionar o segredo
 
-**Rotacionar segredo** gera um segredo novo; por 24 horas as entregas levam duas assinaturas (a nova e a
-antiga). Atualize o segredo no seu receptor dentro desse prazo e nada se perde.
+**Rotacionar segredo** gera um segredo novo; durante o período de sobreposição (padrão 24 h, escolha até 7
+dias, ou 0 para trocar na hora) as entregas levam duas assinaturas (a nova e a antiga). Atualize o segredo no
+seu receptor dentro desse prazo e nada se perde.
 
 ---
 
 ## 4. Limites e observações
 
-- Até 20 chaves ativas e 10 endpoints por conta.
+- Até 20 chaves ativas (as que ainda autenticam, incluindo antigas em período de transição) e 10 endpoints por
+  conta.
 - O limite de 120 req/min por chave é contado por processo do servidor.
 - Os eventos incluem texto de mensagens e telefones: trate o endpoint como dado sensível (LGPD) e use sempre
   `https`.
