@@ -123,6 +123,8 @@ export interface EngineQrSendInput {
    * they leave at once, exactly as before the queue existed.
    */
   priority?: GatewaySendPriority
+  /** A human's scheduled message (092): stored as that agent's own reply, not a bot's. */
+  agentId?: string
 }
 
 /**
@@ -177,7 +179,8 @@ export async function engineSendViaQr(
 
   const row = {
     conversation_id: input.conversationId,
-    sender_type: 'bot',
+    sender_type: input.agentId ? 'agent' : 'bot',
+    ...(input.agentId ? { sender_id: input.agentId } : {}),
     origin: input.origin ?? null,
     content_type: input.contentType,
     content_text: input.text ?? input.media?.caption ?? null,

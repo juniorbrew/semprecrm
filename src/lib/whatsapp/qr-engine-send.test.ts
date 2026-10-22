@@ -146,6 +146,25 @@ describe('engineSendViaQr', () => {
     expect(state.updates[0].__filters).toContainEqual(['account_id', 'acct-1'])
   })
 
+  it('a scheduled agent message is persisted as that agent, not as a bot', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ message_id: 'B-2' }), { status: 200 }))
+    const state = {
+      channel: 'qr',
+      contact: { id: 'c-1', phone: '5511999990000' },
+      inserted: [] as Record<string, unknown>[],
+      updates: [] as Record<string, unknown>[],
+    }
+    await engineSendViaQr(makeDb(state), {
+      accountId: 'acct-1',
+      conversationId: 'conv-1',
+      contactId: 'c-1',
+      text: 'Agendada',
+      contentType: 'text',
+      agentId: 'user-9',
+    })
+    expect(state.inserted[0]).toMatchObject({ sender_type: 'agent', sender_id: 'user-9', origin: null, channel: 'qr' })
+  })
+
   it('refuses a conversation outside the account/contact before sending', async () => {
     // No conversation row matches id + account_id + contact_id.
     const state = { contact: { id: 'c-1', phone: '5511999990000' }, inserted: [], updates: [] }

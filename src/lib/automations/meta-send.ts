@@ -51,6 +51,12 @@ interface SendTextArgs {
    * Default: `bulk` (paced).
    */
   priority?: 'interactive' | 'bulk'
+  /**
+   * A human agent's message sent later (scheduled messages, migration 092):
+   * persisted as `sender_type='agent'` authored by this user, exactly like a
+   * manual reply, and never paced like an automation.
+   */
+  agentId?: string
 }
 
 interface SendTemplateArgs {
@@ -106,13 +112,17 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
     }
     return engineSendViaQr(db, {
-      origin: input.origin ?? 'automation',
+      origin: input.agentId ? undefined : (input.origin ?? 'automation'),
+      agentId: input.agentId,
       accountId: input.accountId,
       conversationId: input.conversationId,
       contactId: input.contactId,
       text: input.text,
       contentType: 'text',
-      ...(input.kind === 'text' && input.priority ? { priority: input.priority } : {}),
+      // A scheduled human message (agentId) is never paced, like a manual reply.
+      ...(input.kind === 'text' && (input.priority || input.agentId)
+        ? { priority: input.priority ?? 'interactive' }
+        : {}),
     })
   }
 
@@ -225,10 +235,12 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       : templateContentText(templateRow, input.params ?? [])
   const template_name = input.kind === 'template' ? input.templateName : null
 
+  const agentId = input.kind === 'text' ? input.agentId : undefined
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
-    sender_type: 'bot',
-    origin: (input.kind === 'text' && input.origin) || 'automation',
+    sender_type: agentId ? 'agent' : 'bot',
+    ...(agentId ? { sender_id: agentId } : {}),
+    origin: agentId ? null : (input.kind === 'text' && input.origin) || 'automation',
     content_type,
     content_text,
     template_name,

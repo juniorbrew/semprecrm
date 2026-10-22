@@ -162,4 +162,14 @@ describe('engineSendText — QR priority', () => {
     await engineSendText(TEXT)
     expect(vi.mocked(engineSendViaQr).mock.calls.at(-1)?.[1]).not.toHaveProperty('priority')
   })
+
+  it('sends a scheduled human message (agentId) as interactive — never paced like an automation', async () => {
+    vi.mocked(conversationChannel).mockResolvedValueOnce('qr')
+    vi.mocked(engineSendViaQr).mockResolvedValueOnce({ whatsapp_message_id: 'w' })
+    await engineSendText({ ...TEXT, agentId: 'agent-1' })
+    expect(engineSendViaQr).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ priority: 'interactive', agentId: 'agent-1' }),
+    )
+  })
 })
