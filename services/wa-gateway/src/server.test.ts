@@ -13,6 +13,8 @@ function makeApp() {
     send: vi.fn(async (_id: string, _req: unknown) => ({ message_id: "M1" })),
     markRead: vi.fn(async (_id: string, _req: unknown) => ({ read: 1 })),
     fetchAvatar: vi.fn(async (_id: string, _req: unknown) => ({ url: "https://x/y?v=1" as string | null })),
+    react: vi.fn(async (_id: string, _req: unknown) => {}),
+    presence: vi.fn(async (_id: string, _req: unknown) => {}),
     listAccountIds: vi.fn(() => ["a"]),
   };
   const app = createApp({ secret: SECRET, sessions, logger: pino({ level: "silent" }) });
@@ -110,6 +112,42 @@ describe("HTTP", () => {
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ read: 1 });
     expect(sessions.markRead).toHaveBeenCalledWith("acc-1", { to: "5511999999999", message_ids: ["A"] });
+  });
+
+  it("POST react valida o corpo e repassa para react", async () => {
+    const { app, sessions } = makeApp();
+    const post = (body: unknown) =>
+      app.request("/sessions/acc-1/react", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const valid = { to: "5511999999999", message_id: "M1", from_me: false, emoji: "👍" };
+    expect((await post({ ...valid, to: "" })).status).toBe(400);
+    expect((await post({ ...valid, message_id: "" })).status).toBe(400);
+    expect((await post({ ...valid, from_me: "no" })).status).toBe(400);
+    expect((await post({ ...valid, emoji: "x".repeat(33) })).status).toBe(400);
+    expect((await post({ ...valid, chat_jid: "1-2@g.us" })).status).toBe(400); // grupo não
+    expect(sessions.react).not.toHaveBeenCalled();
+    expect((await post({ ...valid, chat_jid: "123456789@lid" })).status).toBe(200);
+
+    expect((await post(valid)).status).toBe(200);
+    expect((await post({ ...valid, emoji: "" })).status).toBe(200); // remover
+    expect(sessions.react).toHaveBeenCalledWith("acc-1", valid);
+  });
+
+  it("POST presence aceita só composing/paused", async () => {
+    const { app, sessions } = makeApp();
+    const post = (body: unknown) =>
+      app.request("/sessions/acc-1/presence", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ to: "5511999999999", state: "available" })).status).toBe(400);
+    expect((await post({ state: "composing" })).status).toBe(400);
+    expect((await post({ to: "5511999999999", state: "composing" })).status).toBe(200);
+    expect(sessions.presence).toHaveBeenCalledWith("acc-1", { to: "5511999999999", state: "composing" });
   });
 
   it("rejeita accountId com caracteres estranhos", async () => {

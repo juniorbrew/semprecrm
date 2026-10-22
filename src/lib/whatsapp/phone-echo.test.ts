@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
     conversations: [] as Record<string, unknown>[],
     messages: [] as Record<string, unknown>[],
     flowRuns: [] as Record<string, unknown>[],
+    reactions: [] as Record<string, unknown>[],
     updates: [] as { table: string; payload: Record<string, unknown> }[],
     /** Simulates the race: the next messages insert loses to the unique index. */
     raceOnInsert: null as Record<string, unknown> | null,
@@ -44,6 +45,7 @@ vi.mock('@/lib/push/send', () => ({ isPushConfigured: () => true }))
 vi.mock('@/lib/assignment/round-robin', () => ({ pickRoundRobinAssignee: vi.fn() }))
 
 import {
+  applyCustomerReaction,
   claimEchoedRow,
   ingestPhoneEcho,
   markMessageRevoked,
@@ -58,7 +60,7 @@ function makeDb() {
   function builder(table: string) {
     const filters: Filter[] = []
     const ops = {
-      type: 'select' as 'select' | 'insert' | 'update',
+      type: 'select' as 'select' | 'insert' | 'update' | 'upsert' | 'delete',
       payload: undefined as R | undefined,
       returning: false,
     }
@@ -71,7 +73,9 @@ function makeDb() {
             ? h.state.messages
             : table === 'flow_runs'
               ? h.state.flowRuns
-              : []
+              : table === 'message_reactions'
+                ? h.state.reactions
+                : []
     const rows = () => src().filter((r) => filters.every((f) => f(r)))
     function resolve(): { data: unknown; error: unknown } {
       if (ops.type === 'select' && h.state.failRead === table) {
@@ -94,6 +98,21 @@ function makeDb() {
         src().push(row)
         return { data: row, error: null }
       }
+      if (ops.type === 'upsert') {
+        // onConflict message_id,actor_type,actor_id (message_reactions)
+        const p = ops.payload ?? {}
+        const same = (r: R) =>
+          r.message_id === p.message_id && r.actor_type === p.actor_type && r.actor_id === p.actor_id
+        const existing = src().find(same)
+        if (existing) Object.assign(existing, p)
+        else src().push({ id: `${table}-${++idSeq}`, ...p })
+        return { data: null, error: null }
+      }
+      if (ops.type === 'delete') {
+        const keep = src().filter((r) => !filters.every((f) => f(r)))
+        src().splice(0, src().length, ...keep)
+        return { data: null, error: null }
+      }
       if (ops.type === 'update') {
         h.state.updates.push({ table, payload: ops.payload ?? {} })
         const hit = rows()
@@ -109,6 +128,8 @@ function makeDb() {
       },
       insert: (p: R) => ((ops.type = 'insert'), (ops.payload = p), b),
       update: (p: R) => ((ops.type = 'update'), (ops.payload = p), b),
+      upsert: (p: R) => ((ops.type = 'upsert'), (ops.payload = p), b),
+      delete: () => ((ops.type = 'delete'), b),
       eq: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) === v), b),
       neq: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) !== v), b),
       is: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) === v), b),
@@ -180,6 +201,7 @@ beforeEach(() => {
   h.state.conversations = []
   h.state.messages = []
   h.state.flowRuns = []
+  h.state.reactions = []
   h.state.updates = []
   h.state.raceOnInsert = null
   h.state.failRead = null
@@ -516,5 +538,53 @@ describe('markMessageRevoked', () => {
     h.state.failRead = 'conversations'
     expect(await markMessageRevoked(REVOKE, makeDb())).toEqual({ ok: false, found: false })
     expect(h.state.messages[0].revoked_at).toBeNull()
+  })
+})
+
+describe('applyCustomerReaction', () => {
+  const REACTION = { accountId: 'acct-1', messageId: 'MSG1', from: '5511999990000', emoji: '❤️' }
+
+  function seedTarget() {
+    seedConversation()
+    h.state.messages.push({ id: 'm-1', conversation_id: 'conv-1', message_id: 'MSG1', sender_type: 'agent' })
+  }
+
+  it('stores the reaction as the customer, then swaps the emoji in place', async () => {
+    seedTarget()
+    expect(await applyCustomerReaction(REACTION, makeDb())).toEqual({ ok: true, found: true })
+    expect(await applyCustomerReaction({ ...REACTION, emoji: '👍' }, makeDb())).toEqual({ ok: true, found: true })
+    expect(h.state.reactions).toEqual([
+      expect.objectContaining({
+        message_id: 'm-1',
+        conversation_id: 'conv-1',
+        actor_type: 'customer',
+        actor_id: 'c-1',
+        emoji: '👍',
+      }),
+    ])
+  })
+
+  it('empty emoji removes only the customer reaction', async () => {
+    seedTarget()
+    h.state.reactions.push({ message_id: 'm-1', actor_type: 'agent', actor_id: 'u-1', emoji: '🙏' })
+    await applyCustomerReaction(REACTION, makeDb())
+    await applyCustomerReaction({ ...REACTION, emoji: '' }, makeDb())
+    expect(h.state.reactions).toEqual([expect.objectContaining({ actor_type: 'agent', emoji: '🙏' })])
+  })
+
+  it('unknown message / other tenant → found false, nothing written', async () => {
+    seedTarget()
+    expect(await applyCustomerReaction({ ...REACTION, messageId: 'NOPE' }, makeDb())).toEqual({
+      ok: true,
+      found: false,
+    })
+    expect((await applyCustomerReaction({ ...REACTION, accountId: 'acct-2' }, makeDb())).found).toBe(false)
+    expect(h.state.reactions).toEqual([])
+  })
+
+  it('a DB failure on the target lookup is ok:false (retry)', async () => {
+    seedTarget()
+    h.state.failRead = 'messages'
+    expect(await applyCustomerReaction(REACTION, makeDb())).toEqual({ ok: false, found: false })
   })
 })

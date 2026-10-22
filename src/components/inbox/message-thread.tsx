@@ -2643,6 +2643,7 @@ export function MessageThread({
         restoreDraft={restoreDraft}
         sessionExpired={isOfficial && sessionInfo.expired}
         templatesEnabled={isOfficial}
+        typingIndicator={!isOfficial}
         contactName={contact?.name ?? conversation.contact?.name ?? null}
         onSend={handleSend}
         onSendMedia={handleSendMedia}

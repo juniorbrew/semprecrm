@@ -1,5 +1,5 @@
 import type { Logger } from "./logger.js";
-import type { AckPayload, InboundPayload, RevokePayload, StatusEventPayload } from "./types.js";
+import type { AckPayload, InboundPayload, ReactionPayload, RevokePayload, StatusEventPayload } from "./types.js";
 
 export const HEADER_SECRET = "x-gateway-secret";
 
@@ -73,6 +73,10 @@ export class AppClient {
 
   sendRevoke(payload: RevokePayload): Promise<boolean> {
     return this.enqueue("/api/channels/qr/revoke", payload);
+  }
+
+  sendReaction(payload: ReactionPayload): Promise<boolean> {
+    return this.enqueue("/api/channels/qr/reaction", payload);
   }
 
   sendStatus(payload: StatusEventPayload): Promise<boolean> {

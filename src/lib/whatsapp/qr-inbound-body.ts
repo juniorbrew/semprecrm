@@ -22,6 +22,8 @@ export interface QrMessageBody {
   mediaUrl: string | null
   mimeType: string | null
   quotedMessageId: string | null
+  /** Chat jid as Baileys addressed it (`…@s.whatsapp.net` / `…@lid`). */
+  chatJid: string | null
   timestamp: number | string | null
 }
 
@@ -51,6 +53,10 @@ export function parseQrMessageBody(body: unknown): QrMessageBody | null {
     mediaUrl: typeof media?.url === 'string' ? media.url : null,
     mimeType: typeof media?.mimetype === 'string' ? media.mimetype : null,
     quotedMessageId: typeof b.quoted_message_id === 'string' ? b.quoted_message_id : null,
+    chatJid:
+      typeof b.chat_jid === 'string' && /^\d{5,20}(:\d+)?@(s\.whatsapp\.net|lid)$/.test(b.chat_jid)
+        ? b.chat_jid
+        : null,
     timestamp:
       typeof b.timestamp === 'number' || typeof b.timestamp === 'string' ? b.timestamp : null,
   }
