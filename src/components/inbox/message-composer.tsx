@@ -73,6 +73,7 @@ import {
 } from "@/lib/storage/upload-media";
 import { resolvePastedImage } from "@/lib/inbox/paste-image";
 import { ReplyQuote } from "./reply-quote";
+import { useTypingIndicator } from "./typing-indicator";
 import {
   PendingSuggestionStrip,
   SuggestReplyButton,
@@ -145,6 +146,11 @@ interface MessageComposerProps {
    * feature. Defaults to true.
    */
   templatesEnabled?: boolean;
+  /**
+   * Show "digitando..." on the customer's phone while the agent types a
+   * reply. QR-channel conversations only. Defaults to false.
+   */
+  typingIndicator?: boolean;
   /**
    * Contact display name — fills `{{contato.nome}}` /
    * `{{contato.primeiro_nome}}` when a quick reply is inserted.
@@ -387,6 +393,7 @@ export function MessageComposer({
   conversationId,
   sessionExpired,
   templatesEnabled = true,
+  typingIndicator = false,
   contactName,
   onSend,
   onSendMedia,
@@ -509,6 +516,8 @@ export function MessageComposer({
   const readOnly = !canSend || contactAnonymized;
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
+  // Notes never reach WhatsApp, so they never show "digitando...".
+  useTypingIndicator(conversationId, isNote ? "" : text, typingIndicator && !inputsDisabled);
 
   // ---- "Sugerir resposta" (AI) ----------------------------------------
   // Asks the server for a suggestion built from this conversation; it

@@ -306,6 +306,7 @@ describe("SessionManager — mensagens", () => {
       timestamp: 1_757_700_100,
       type: "text",
       text: "Bom dia",
+      chat_jid: "5511988887777@s.whatsapp.net",
     });
   });
 
@@ -330,6 +331,45 @@ describe("SessionManager — mensagens", () => {
       { remoteJid: "123456789@lid", id: "LID1", fromMe: false },
       // desconhecido (ex.: gateway reiniciado): cai no jid do telefone
       { remoteJid: "5511988887777@s.whatsapp.net", id: "OLD9", fromMe: false },
+    ]);
+  });
+
+  it("reação usa a chave original: cache, depois o chat_jid guardado pelo app, depois o telefone", async () => {
+    const { manager, appClient, sock } = await connected();
+    sock.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "123456789@lid", remoteJidAlt: "5511988887777@s.whatsapp.net", fromMe: false, id: "LID1" },
+          messageTimestamp: 1,
+          message: { conversation: "oi" },
+        },
+      ],
+    });
+    await until(() => appClient.sendInbound.mock.calls.length === 1);
+    const reacted = () => sock.sendMessage.mock.calls.at(-1);
+
+    await manager.react(ACCOUNT, { to: "5511988887777", message_id: "LID1", from_me: false, emoji: "👍" });
+    expect(reacted()).toEqual([
+      "123456789@lid",
+      { react: { text: "👍", key: { remoteJid: "123456789@lid", id: "LID1", fromMe: false } } },
+    ]);
+
+    // gateway reiniciado: o chat_jid que o app guardou na linha resolve o @lid
+    await manager.react(ACCOUNT, {
+      to: "5511988887777",
+      message_id: "OLD9",
+      from_me: false,
+      emoji: "❤️",
+      chat_jid: "987654321@lid",
+    });
+    expect(reacted()?.[0]).toBe("987654321@lid");
+
+    // sem nenhum dos dois: melhor-esforço no jid do telefone
+    await manager.react(ACCOUNT, { to: "5511988887777", message_id: "OLD8", from_me: false, emoji: "" });
+    expect(reacted()).toEqual([
+      "5511988887777@s.whatsapp.net",
+      { react: { text: "", key: { remoteJid: "5511988887777@s.whatsapp.net", id: "OLD8", fromMe: false } } },
     ]);
   });
 

@@ -13,7 +13,8 @@ import { scheduleTriageIfDue } from '@/lib/support/triage-trigger'
  * POST /api/channels/qr/inbound  (gateway → app)
  *
  * Body: `{ account_id, message_id, from, push_name, timestamp, type,
- * text?, media?: { url, mimetype, filename? }, quoted_message_id? }`.
+ * text?, media?: { url, mimetype, filename? }, quoted_message_id?,
+ * chat_jid? }`.
  * Media is already in the `chat-media` bucket — `media.url` is public.
  *
  * Runs the shared ingestion pipeline with `channel: 'qr'`. After the
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
       mediaUrl: parsed.mediaUrl,
       mimeType: parsed.mimeType,
       quotedMessageId: parsed.quotedMessageId,
+      chatJid: parsed.chatJid,
       timestamp: parsed.timestamp,
     },
     supabaseAdmin(),

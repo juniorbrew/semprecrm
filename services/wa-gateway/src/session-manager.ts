@@ -34,6 +34,8 @@ import type {
   AckStatus,
   AvatarRequest,
   AvatarResponse,
+  PresenceRequest,
+  ReactRequest,
   ReadRequest,
   ReadResponse,
   SendRequest,
@@ -169,7 +171,7 @@ const READ_MAX_IDS = 100;
 export interface SessionManagerOptions {
   dataDir: string;
   appClient: Pick<AppClient, "sendInbound" | "sendStatus" | "sendAck"> &
-    Partial<Pick<AppClient, "sendEcho" | "sendRevoke">>;
+    Partial<Pick<AppClient, "sendEcho" | "sendRevoke" | "sendReaction">>;
   mediaStore: Pick<MediaStore, "storeInbound"> & Partial<Pick<MediaStore, "storeAvatar" | "removeAvatar">>;
   logger: Logger;
   /** Fila das consultas de foto de perfil (injeção para testes). */
@@ -799,6 +801,11 @@ export class SessionManager {
         await sendRevoke.call(this.opts.appClient, mapped.payload);
         return;
       }
+      if (mapped.kind === "reaction") {
+        const { sendReaction } = this.opts.appClient;
+        if (sendReaction) await sendReaction.call(this.opts.appClient, mapped.payload);
+        return;
+      }
       const { payload, media } = mapped;
       const isEcho = mapped.kind === "echo";
       if (isEcho && !this.opts.appClient.sendEcho) return;
@@ -882,6 +889,56 @@ export class SessionManager {
       throw new GatewayError(`falha ao marcar como lida: ${(err as Error).message}`, "send_failed", 502);
     }
     return { read: keys.length };
+  }
+
+  /**
+   * Reação do atendente (`emoji: ""` remove). O chat da mensagem reagida
+   * vem do cache das recebidas, depois do `chat_jid` que o app guardou na
+   * linha (sobrevive a reinício). Sem nenhum dos dois é melhor-esforço: o
+   * jid do telefone discado — num chat `@lid` o WhatsApp pode aceitar e
+   * não exibir, por isso o aviso no log.
+   */
+  async react(accountId: string, req: ReactRequest): Promise<void> {
+    const sock = this.connectedSocket(accountId);
+    const dialed = toJid(req.to);
+    const known = req.from_me ? undefined : this.sessions.get(accountId)?.inboundKeys.get(req.message_id);
+    if (!req.from_me && !known && !req.chat_jid) {
+      this.log.warn({ accountId, id: req.message_id }, "reação sem a chave original; usando o jid do telefone");
+    }
+    const key = {
+      remoteJid:
+        known?.remoteJid ?? req.chat_jid ?? this.sessions.get(accountId)?.jidCache.get(dialed) ?? dialed,
+      id: req.message_id,
+      fromMe: req.from_me,
+      ...(known?.participant ? { participant: known.participant } : {}),
+    };
+    try {
+      await sock.sendMessage(key.remoteJid, { react: { text: req.emoji, key } });
+    } catch (err) {
+      this.log.warn({ accountId, err: (err as Error).message }, "reação falhou");
+      throw new GatewayError(`falha ao reagir: ${(err as Error).message}`, "send_failed", 502);
+    }
+  }
+
+  /** "digitando..." / parou de digitar no chat do cliente. */
+  async presence(accountId: string, req: PresenceRequest): Promise<void> {
+    const sock = this.connectedSocket(accountId);
+    const dialed = toJid(req.to);
+    const jid = this.sessions.get(accountId)?.jidCache.get(dialed) ?? dialed;
+    try {
+      await sock.sendPresenceUpdate(req.state, jid);
+    } catch (err) {
+      throw new GatewayError(`falha ao enviar presença: ${(err as Error).message}`, "send_failed", 502);
+    }
+  }
+
+  /** Socket da sessão `connected`, sem esperar reconexão (409 na hora). */
+  private connectedSocket(accountId: string): WASocket {
+    const s = this.sessions.get(accountId);
+    if (!s || !s.sock || s.status !== "connected") {
+      throw new GatewayError("sessão não conectada", "not_connected", 409);
+    }
+    return s.sock;
   }
 
   /**

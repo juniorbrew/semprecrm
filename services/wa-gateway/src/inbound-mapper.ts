@@ -1,5 +1,5 @@
 import type { proto, WAMessage } from "@whiskeysockets/baileys";
-import type { InboundPayload, InboundType, RevokePayload } from "./types.js";
+import type { InboundPayload, InboundType, ReactionPayload, RevokePayload } from "./types.js";
 
 /**
  * Mídia que o gateway ainda precisa baixar/subir antes de entregar ao app.
@@ -29,11 +29,13 @@ export type SkipReason =
  *   `POST /api/channels/qr/echo`. `from` é o telefone do CLIENTE (a
  *   conversa), não o nosso; `push_name` vai vazio (seria o nosso nome).
  * - `revoke`: "apagar para todos" → `POST /api/channels/qr/revoke`.
+ * - `reaction`: o cliente reagiu a uma mensagem → `POST /api/channels/qr/reaction`.
  */
 export type MappedInbound =
   | { kind: "message"; payload: InboundPayload; media?: PendingMedia }
   | { kind: "echo"; payload: InboundPayload; media?: PendingMedia }
   | { kind: "revoke"; payload: RevokePayload }
+  | { kind: "reaction"; payload: ReactionPayload }
   | { kind: "skip"; reason: SkipReason };
 
 const PN_SUFFIX = "@s.whatsapp.net";
@@ -297,6 +299,26 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
     };
   }
 
+  // Reação do cliente. As feitas pelo nosso celular continuam ignoradas:
+  // não há atendente a quem atribuí-las.
+  const reaction = content.reactionMessage;
+  if (reaction) {
+    const targetId = reaction.key?.id;
+    if (fromMe || !targetId) return { kind: "skip", reason: "protocol" };
+    const from = resolveChatPhone(key, fromMe, opts);
+    if (!from) return { kind: "skip", reason: "no-phone" };
+    return {
+      kind: "reaction",
+      payload: {
+        account_id: accountId,
+        message_id: targetId,
+        from,
+        emoji: reaction.text ?? "",
+        timestamp: toUnixSeconds(msg.messageTimestamp),
+      },
+    };
+  }
+
   const extracted = extract(content);
   if ("skip" in extracted) return { kind: "skip", reason: extracted.skip };
 
@@ -316,6 +338,7 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
   if (extracted.text != null && extracted.text !== "") payload.text = extracted.text;
   const quoted = extracted.contextInfo?.stanzaId;
   if (quoted) payload.quoted_message_id = quoted;
+  if (!fromMe && key.remoteJid) payload.chat_jid = key.remoteJid;
 
   const kind = fromMe ? "echo" : "message";
   return extracted.media ? { kind, payload, media: extracted.media } : { kind, payload };

@@ -206,12 +206,10 @@ export const DICT_API: Record<string, string> = {
   'message_id and emoji are required': 'Informe a mensagem e o emoji',
   'Cannot react to a message that has not been sent to WhatsApp':
     'Não é possível reagir a uma mensagem que ainda não foi enviada ao WhatsApp',
-  'Reactions are not available in QR channel conversations yet.':
-    'Reações ainda não estão disponíveis em conversas do canal QR.',
-  'Reaction sent to Meta but DB delete failed':
-    'A reação foi removida na Meta, mas não foi possível atualizá-la aqui',
-  'Reaction sent to Meta but DB upsert failed':
-    'A reação foi enviada à Meta, mas não foi possível salvá-la aqui',
+  'Reaction sent but DB delete failed':
+    'A reação foi removida no WhatsApp, mas não foi possível atualizá-la aqui',
+  'Reaction sent but DB upsert failed':
+    'A reação foi enviada ao WhatsApp, mas não foi possível salvá-la aqui',
   'Failed to react to message': 'Não foi possível reagir à mensagem',
 
   // ---- WhatsApp: broadcast ----------------------------------------------

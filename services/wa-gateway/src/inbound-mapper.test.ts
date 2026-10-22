@@ -66,6 +66,7 @@ describe("mapInboundMessage", () => {
         timestamp: 1_757_700_000,
         type: "text",
         text: "Olá!",
+        chat_jid: "5511999999999@s.whatsapp.net",
       },
     });
   });
@@ -335,6 +336,30 @@ describe("mapInboundMessage — apagar para todos (REVOKE)", () => {
       fixture({ key: { remoteJid: "1-2@g.us", fromMe: false, id: "G" }, message: { protocolMessage: { type: 0, key: { id: "X" } } } }),
     );
     expect(out).toEqual({ kind: "skip", reason: "group" });
+  });
+
+  it("reação do cliente vira `reaction` com o id da mensagem REAGIDA", () => {
+    const react = (fromMe: boolean, text: string | null) =>
+      fixture({
+        key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe, id: "RX1" },
+        message: { reactionMessage: { key: { id: "ORIG1", fromMe: true }, text } },
+      });
+    expect(mapInboundMessage(ACCOUNT, react(false, "❤️"))).toEqual({
+      kind: "reaction",
+      payload: { account_id: ACCOUNT, message_id: "ORIG1", from: "5511988887777", emoji: "❤️", timestamp: 1_757_700_000 },
+    });
+    // reação removida: emoji vazio
+    const removed = mapInboundMessage(ACCOUNT, react(false, ""));
+    expect(removed.kind === "reaction" && removed.payload.emoji).toBe("");
+    // reação feita pelo nosso celular: ignorada
+    expect(mapInboundMessage(ACCOUNT, react(true, "👍"))).toEqual({ kind: "skip", reason: "protocol" });
+    // dentro de mensagem temporária (efêmera) também
+    const ephemeral = fixture({
+      key: { remoteJid: "5511988887777@s.whatsapp.net", fromMe: false, id: "RX2" },
+      message: { ephemeralMessage: { message: { reactionMessage: { key: { id: "ORIG2" }, text: "😂" } } } },
+    });
+    const out = mapInboundMessage(ACCOUNT, ephemeral);
+    expect(out.kind === "reaction" && out.payload.message_id).toBe("ORIG2");
   });
 
   it("revokedMessageId só reconhece o tipo REVOKE", () => {

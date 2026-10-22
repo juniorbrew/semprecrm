@@ -5,6 +5,8 @@ import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
+import { reactViaGateway } from '@/lib/whatsapp/qr-gateway';
+import { qrErrorResponse } from '@/lib/whatsapp/qr-session';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -16,9 +18,11 @@ import {
  *
  * Body: { message_id: <internal UUID>, emoji: <single emoji or "" to remove> }
  *
- * Sends the reaction to Meta and mirrors it into `message_reactions`
- * (delete on empty emoji). Customer-side reactions are handled by the
- * webhook — this route only writes `actor_type = 'agent'` rows.
+ * Sends the reaction to Meta (QR-channel conversations: through the
+ * Baileys gateway) and mirrors it into `message_reactions` (delete on
+ * empty emoji). Customer-side reactions are handled by the webhook /
+ * `/api/channels/qr/reaction` — this route only writes `actor_type =
+ * 'agent'` rows.
  */
 export async function POST(request: Request) {
   try {
@@ -79,7 +83,7 @@ export async function POST(request: Request) {
     // Resolve target message + its conversation; verify ownership.
     const { data: targetMessage, error: msgError } = await supabase
       .from('messages')
-      .select('id, message_id, conversation_id')
+      .select('id, message_id, conversation_id, sender_type, wa_chat_jid')
       .eq('id', message_id)
       .maybeSingle();
 
@@ -110,19 +114,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Reactions over the QR channel are out of scope for this version
-    // (spec: "reações via QR" fora de escopo) — say so instead of
-    // trying Meta with a Baileys message id.
-    if (conversation.channel === 'qr') {
-      return NextResponse.json(
-        {
-          error: 'Reactions are not available in QR channel conversations yet.',
-          code: 'unsupported_on_qr',
-        },
-        { status: 400 },
-      );
-    }
-
     const contact = Array.isArray(conversation.contact)
       ? conversation.contact[0]
       : conversation.contact;
@@ -132,41 +123,58 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-
-    // WhatsApp config + access token. Account-scoped post-multi-user;
-    // service role because the token is server-only (migration 076).
-    const { data: config, error: configError } = await supabaseAdmin()
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token')
-      .eq('account_id', accountId)
-      .single();
-
-    if (configError || !config) {
-      return NextResponse.json(
-        { error: 'WhatsApp not configured.' },
-        { status: 400 },
-      );
-    }
-
-    const accessToken = decrypt(config.access_token);
     const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
 
-    try {
-      await sendReactionMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: sanitizedPhone,
-        targetMessageId: targetMessage.message_id,
-        emoji,
-      });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Unknown Meta API error';
-      console.error('[whatsapp/react] Meta send failed:', message);
-      return NextResponse.json(
-        { error: `Meta API error: ${message}` },
-        { status: 502 },
-      );
+    if (conversation.channel === 'qr') {
+      // QR channel: the Baileys gateway sends it. `fromMe` = the reacted
+      // message is ours (agent / bot / phone echo), not the customer's.
+      try {
+        await reactViaGateway({
+          accountId,
+          to: sanitizedPhone,
+          messageId: targetMessage.message_id,
+          fromMe: targetMessage.sender_type !== 'customer',
+          emoji,
+          chatJid: targetMessage.wa_chat_jid,
+        });
+      } catch (err) {
+        return qrErrorResponse(err);
+      }
+    } else {
+      // WhatsApp config + access token. Account-scoped post-multi-user;
+      // service role because the token is server-only (migration 076).
+      const { data: config, error: configError } = await supabaseAdmin()
+        .from('whatsapp_config')
+        .select('phone_number_id, access_token')
+        .eq('account_id', accountId)
+        .single();
+
+      if (configError || !config) {
+        return NextResponse.json(
+          { error: 'WhatsApp not configured.' },
+          { status: 400 },
+        );
+      }
+
+      const accessToken = decrypt(config.access_token);
+
+      try {
+        await sendReactionMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: sanitizedPhone,
+          targetMessageId: targetMessage.message_id,
+          emoji,
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Unknown Meta API error';
+        console.error('[whatsapp/react] Meta send failed:', message);
+        return NextResponse.json(
+          { error: `Meta API error: ${message}` },
+          { status: 502 },
+        );
+      }
     }
 
     // Mirror into DB. Empty emoji = removal.
@@ -181,7 +189,7 @@ export async function POST(request: Request) {
       if (delError) {
         console.error('[whatsapp/react] DB delete failed:', delError.message);
         return NextResponse.json(
-          { error: 'Reaction sent to Meta but DB delete failed' },
+          { error: 'Reaction sent but DB delete failed' },
           { status: 500 },
         );
       }
@@ -202,7 +210,7 @@ export async function POST(request: Request) {
       if (upsertError) {
         console.error('[whatsapp/react] DB upsert failed:', upsertError.message);
         return NextResponse.json(
-          { error: 'Reaction sent to Meta but DB upsert failed' },
+          { error: 'Reaction sent but DB upsert failed' },
           { status: 500 },
         );
       }
