@@ -160,6 +160,9 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
 - O mesmo script chama `POST /api/integrations/calendar/sync` (sincronização Google Agenda /
   Outlook, até 20 conexões por chamada, as mais antigas primeiro) a cada `CALENDAR_SYNC_INTERVAL_MS`
   (padrão 300000 = 5 min). Sem conexões ativas a chamada responde `connections=0` e não custa nada.
+- Mensagens agendadas na conversa (migration 092): o mesmo loop chama `GET /api/inbox/scheduled/cron`
+  a cada tick; o envio pode atrasar até ~1 minuto depois do horário escolhido. O endpoint também é
+  bloqueado no `nginx.conf` pelo domínio público.
 - Também chama `GET /api/webhooks/cron` (migration 093): entrega os webhooks de saída pendentes (até 40 por
   lote, repetindo enquanto houver fila e tempo) e apaga o histórico com mais de 30 dias. Com 2 ticks
   sobrepostos nada é entregue em dobro (as linhas são reservadas com `FOR UPDATE SKIP LOCKED`).

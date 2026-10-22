@@ -110,6 +110,8 @@ export interface EngineQrSendInput {
   origin?: 'automation' | 'flow' | 'ai' | 'csat' | 'api'
   /** Public API idempotency claim (migration 093): lets a crashed send be matched to its message. */
   apiRequestId?: string
+  /** A human's scheduled message (092): stored as that agent's own reply, not a bot's. */
+  agentId?: string
 }
 
 /**
@@ -149,7 +151,8 @@ export async function engineSendViaQr(
 
   const row = {
     conversation_id: input.conversationId,
-    sender_type: 'bot',
+    sender_type: input.agentId ? 'agent' : 'bot',
+    ...(input.agentId ? { sender_id: input.agentId } : {}),
     origin: input.origin ?? null,
     content_type: input.contentType,
     content_text: input.text ?? input.media?.caption ?? null,

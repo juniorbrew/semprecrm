@@ -73,6 +73,9 @@ import {
 } from "@/lib/storage/upload-media";
 import { resolvePastedImage } from "@/lib/inbox/paste-image";
 import { ReplyQuote } from "./reply-quote";
+import { ScheduleMessageMenu } from "./schedule-message-menu";
+import { SCHEDULED_COPY } from "./scheduled-copy";
+import { formatScheduledAt } from "@/lib/scheduled-messages/schedule";
 import { useTypingIndicator } from "./typing-indicator";
 import {
   PendingSuggestionStrip,
@@ -173,6 +176,10 @@ interface MessageComposerProps {
    * is no person left to annotate.
    */
   contactAnonymized?: boolean;
+  /** A message was scheduled (migration 092): the thread refreshes its pending list. */
+  onScheduled?: () => void;
+  /** Text handed back (a cancelled scheduled message). `key` changes on every hand-back. */
+  restoreDraft?: { key: number; text: string } | null;
 }
 
 /**
@@ -402,6 +409,8 @@ export function MessageComposer({
   replyTo,
   onClearReply,
   contactAnonymized = false,
+  onScheduled,
+  restoreDraft,
 }: MessageComposerProps) {
   const { language, t } = useLanguage();
   const copy = COMPOSER_COPY[language] ?? COMPOSER_COPY["pt-BR"];
@@ -424,6 +433,19 @@ export function MessageComposer({
     setQuickOpen(false);
   }, [conversationId]);
   const isNote = mode === "note" && !!onSendNote;
+
+  // A cancelled scheduled message returns its text here, never over a draft:
+  // appended after what is already typed.
+  const restoredKey = useRef<number | null>(null);
+  useEffect(() => {
+    if (!restoreDraft || restoredKey.current === restoreDraft.key) return;
+    restoredKey.current = restoreDraft.key;
+    setMode("reply");
+    setText((prev) => (prev.trim() ? `${prev}
+
+${restoreDraft.text}` : restoreDraft.text));
+    textareaRef.current?.focus();
+  }, [restoreDraft]);
 
   // ---- Quick replies ("/atalho") -------------------------------------
   // The account's library is loaded once per account and refreshed each
@@ -688,6 +710,34 @@ export function MessageComposer({
       setSending(false);
     }
   }, [text, sending, sessionExpired, isNote, onSendNote, onSend, replyTo?.id]);
+
+  // "Agendar" (migration 092): the server queues the text; on success the box
+  // is emptied and the thread lists it as pending until it is sent.
+  const handleSchedule = useCallback(
+    async (at: Date) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const res = await fetch("/api/inbox/scheduled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          content_text: trimmed,
+          scheduled_for: at.toISOString(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string; warning?: string | null };
+      if (!res.ok) throw new Error(body.error || SCHEDULED_COPY[language].genericError);
+      const sc = SCHEDULED_COPY[language] ?? SCHEDULED_COPY["pt-BR"];
+      toast.success(sc.scheduled(formatScheduledAt(at, new Date(), language)));
+      if (body.warning === "outside_window") toast.warning(sc.outsideWindow);
+      setText("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      onScheduled?.();
+    },
+    [text, conversationId, language, onScheduled],
+  );
 
   // Drop an emoji at the caret (or append) and keep focus in the box.
   const insertEmoji = useCallback(
@@ -1439,6 +1489,17 @@ export function MessageComposer({
             )}
 
             <span className="flex-1" />
+
+            {!isNote && (
+              <ScheduleMessageMenu
+                language={language}
+                disabled={!text.trim() || textDisabled || sending || !!draft}
+                disabledReason={
+                  readOnly ? copy.readOnlyTitle : !text.trim() ? SCHEDULED_COPY[language].scheduleNeedsText : undefined
+                }
+                onSchedule={handleSchedule}
+              />
+            )}
 
             <GatedButton
               size="sm"

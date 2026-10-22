@@ -13,7 +13,8 @@
 // drained on every tick too, and so are the SLA warnings / breaches
 // (GET /api/support/sla/cron, migration 072) and the satisfaction surveys
 // (GET /api/support/csat/cron, migration 074) and the snoozed conversations
-// whose time is up (GET /api/inbox/snooze/cron, migration 079) and the outbound webhooks
+// whose time is up (GET /api/inbox/snooze/cron, migration 079), the scheduled messages
+// that are due (GET /api/inbox/scheduled/cron, migration 092) and the outbound webhooks
 // that are due (GET /api/webhooks/cron, migration 093).
 //
 // The calendar sync (Google / Outlook, POST /api/integrations/calendar/sync)
@@ -57,6 +58,7 @@ const ENDPOINTS = [
   { path: '/api/automations/cron', method: 'GET', everyMs: null },
   { path: '/api/flows/cron', method: 'GET', everyMs: null },
   { path: '/api/inbox/snooze/cron', method: 'GET', everyMs: null },
+  { path: '/api/inbox/scheduled/cron', method: 'GET', everyMs: null },
   { path: '/api/ai/auto-reply/cron', method: 'GET', everyMs: null },
   { path: '/api/support/sla/cron', method: 'GET', everyMs: null },
   { path: '/api/support/csat/cron', method: 'GET', everyMs: null },
