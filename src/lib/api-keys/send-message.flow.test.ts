@@ -25,7 +25,10 @@ vi.mock('@/lib/whatsapp/inbound', () => ({
   findOrCreateConversation: async () => ({ conversation: { id: 'conv1' }, created: false, previous: null }),
 }))
 
-import { ApiSendError, sendTextViaApi } from './send-message'
+import { MetaApiError } from '@/lib/whatsapp/meta-api'
+import { GatewayNotConfiguredError, GatewayRequestError, GatewayUnreachableError } from '@/lib/whatsapp/qr-gateway'
+
+import { ApiSendError, classifySendFailure, sendTextViaApi } from './send-message'
 
 const db = {
   from: (table: string) => ({
@@ -79,13 +82,58 @@ describe('sendTextViaApi plan and failure handling', () => {
     expect(h.sends).toBe(0)
   })
 
-  it('a provider refusal is retryable: not marked as possibly sent', async () => {
-    h.sendError = new Error('Meta rejected the message')
+  it('a Meta 4xx is a confirmed refusal: retryable, not marked as possibly sent', async () => {
+    h.sendError = new MetaApiError('(#131030) recipient not allowed', { httpStatus: 400 })
     expect(await failure(sendTextViaApi(db, input))).toMatchObject({ status: 502, code: 'send_failed', maybeSent: false })
+  })
+
+  it('any other failure after the send started is "unknown" and flagged as possibly sent', async () => {
+    h.sendError = new Error('fetch failed')
+    expect(await failure(sendTextViaApi(db, input))).toMatchObject({ status: 502, code: 'send_unknown', maybeSent: true })
+  })
+
+  it('tells the caller where the message will land, right before the provider call', async () => {
+    const seen: unknown[] = []
+    await sendTextViaApi(db, { ...input, onBeforeSend: async (i) => void seen.push([i, h.sends]) })
+    expect(seen).toEqual([[{ conversationId: 'conv1', contactId: 'c1', channel: 'official' }, 0]])
+  })
+
+  it('does not record anything when the plan gate refuses (nothing can have been sent)', async () => {
+    h.hasModule = false
+    const seen: unknown[] = []
+    await failure(sendTextViaApi(db, { ...input, onBeforeSend: async (i) => void seen.push(i) }))
+    expect(seen).toEqual([])
   })
 
   it('"sent but DB insert failed" is marked as possibly sent so an idempotent retry is not re-sent', async () => {
     h.sendError = new Error('sent to Meta but DB insert failed: x')
     expect(await failure(sendTextViaApi(db, input))).toMatchObject({ status: 502, code: 'send_unconfirmed', maybeSent: true })
+  })
+})
+
+describe('classifySendFailure', () => {
+  const cases: [string, unknown, number, string, boolean][] = [
+    ['gateway not configured', new GatewayNotConfiguredError(), 422, 'channel_not_configured', false],
+    ['Meta not configured', new Error('WhatsApp not configured for this account'), 422, 'channel_not_configured', false],
+    ['gateway not_connected', new GatewayRequestError('x', 409, 'not_connected'), 422, 'channel_not_connected', false],
+    ['gateway not_on_whatsapp', new GatewayRequestError('x', 422, 'not_on_whatsapp'), 422, 'not_on_whatsapp', false],
+    ['gateway invalid_request', new GatewayRequestError('x', 400, 'invalid_request'), 422, 'send_rejected', false],
+    ['gateway rejects our secret (401)', new GatewayUnreachableError('x', 401), 502, 'send_failed', false],
+    ['Meta 4xx', new MetaApiError('bad', { httpStatus: 400 }), 502, 'send_failed', false],
+    ['contact lookup failure before sending', new Error('contact not found for this account'), 500, 'internal_error', false],
+    // ambiguous: the provider may have taken the message
+    ['gateway send_failed', new GatewayRequestError('x', 502, 'send_failed'), 502, 'send_unknown', true],
+    ['gateway timeout', new GatewayUnreachableError('tempo esgotado'), 502, 'send_unknown', true],
+    ['gateway 5xx', new GatewayUnreachableError('boom', 503), 502, 'send_unknown', true],
+    ['Meta 5xx', new MetaApiError('oops', { httpStatus: 500 }), 502, 'send_unknown', true],
+    ['socket reset', new TypeError('fetch failed'), 502, 'send_unknown', true],
+    ['unreadable 2xx body', new TypeError("Cannot read properties of undefined (reading '0')"), 502, 'send_unknown', true],
+    ['sent but not recorded', new Error('sent via gateway but DB insert failed: x'), 502, 'send_unconfirmed', true],
+    ['non-error throw', 'weird', 502, 'send_unknown', true],
+  ]
+  it.each(cases)('%s', (_name, err, status, code, maybeSent) => {
+    const e = classifySendFailure(err)
+    expect(e).toBeInstanceOf(ApiSendError)
+    expect([e.status, e.code, e.maybeSent]).toEqual([status, code, maybeSent])
   })
 })

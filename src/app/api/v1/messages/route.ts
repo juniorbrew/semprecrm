@@ -9,6 +9,7 @@ import {
   runIdempotent,
   type IdempotentOutcome,
 } from '@/lib/api-keys/idempotency'
+import { recoverApiMessage } from '@/lib/api-keys/recover'
 import { ApiSendError, sendTextViaApi } from '@/lib/api-keys/send-message'
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils'
 
@@ -46,6 +47,16 @@ export async function POST(request: Request) {
         to: body.to,
         text: body.text,
         channel: body.channel,
+        // Remember where the message will land: lets a later retry resolve a crashed send.
+        onBeforeSend: idem.key
+          ? async (info) => {
+              await db
+                .from('api_idempotency_keys')
+                .update({ conversation_id: info.conversationId, contact_id: info.contactId, channel: info.channel })
+                .eq('account_id', ctx.accountId)
+                .eq('key', idem.key as string)
+            }
+          : undefined,
       })
       return { status: 201, body: { object: 'message', ...sent }, store: true }
     } catch (err) {
@@ -73,6 +84,7 @@ export async function POST(request: Request) {
         }),
       },
       run,
+      { recover: (claim) => recoverApiMessage(db, claim, body.text) },
     )
     if (result.kind === 'conflict') return done(apiError(result.status, result.code, result.message))
     return done(

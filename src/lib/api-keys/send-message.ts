@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
+import { MetaApiError } from '@/lib/whatsapp/meta-api'
+import { GatewayNotConfiguredError, GatewayRequestError, GatewayUnreachableError } from '@/lib/whatsapp/qr-gateway'
 import { accountHasModule } from '@/lib/plans-server'
 import {
   findOrCreateContact,
@@ -31,6 +33,11 @@ export interface ApiSendInput {
   to: unknown
   text: unknown
   channel?: unknown
+  /**
+   * Called right before the provider request starts, with where the message will land.
+   * Idempotent requests persist it so a crash mid-send can be resolved later.
+   */
+  onBeforeSend?: (info: { conversationId: string; contactId: string; channel: WhatsAppChannel }) => Promise<void>
 }
 
 export interface ApiSendResult {
@@ -104,6 +111,10 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
   const conv = await findOrCreateConversation(db, input.accountId, owner, outcome.contact.id, channel, rows)
   if (!conv) throw new ApiSendError(500, 'internal_error', 'Could not open the conversation.')
 
+  await input.onBeforeSend?.({ conversationId: conv.conversation.id, contactId: outcome.contact.id, channel })
+
+  // From here on the provider may already have the message. Only errors that are KNOWN to
+  // happen before anything left are "not sent" (retryable); everything else is "unknown".
   let waId: string
   try {
     const sent = await engineSendText({
@@ -116,16 +127,8 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
     })
     waId = sent.whatsapp_message_id
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('[api-v1] send failed:', msg)
-    // "sent to Meta / via gateway but DB insert failed": the customer got it.
-    if (/but DB insert failed/i.test(msg)) {
-      throw new ApiSendError(502, 'send_unconfirmed', 'The message was sent but could not be recorded. Do not resend it.', true)
-    }
-    if (/not configured/i.test(msg)) {
-      throw new ApiSendError(422, 'channel_not_configured', 'WhatsApp is not connected on this channel.')
-    }
-    throw new ApiSendError(502, 'send_failed', 'The message could not be delivered to WhatsApp.')
+    console.error('[api-v1] send failed:', err instanceof Error ? err.message : err)
+    throw classifySendFailure(err)
   }
 
   const { data: row } = await db
@@ -142,4 +145,48 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
     channel,
     whatsapp_message_id: waId,
   }
+}
+
+/**
+ * Sorts a failure raised by the engine sender. Retryable ("not sent") only when the
+ * failure is known to precede the provider accepting anything: our own validation, a
+ * missing / disconnected channel, a gateway 4xx the gateway documents as pre-send, or
+ * a Meta 4xx (a confirmed rejection). A timeout, socket reset, 5xx, unreadable 2xx or
+ * a failure while recording the message may all happen AFTER the provider took the
+ * message, so they are `send_unknown` / `send_unconfirmed` and flagged maybeSent.
+ */
+export function classifySendFailure(err: unknown): ApiSendError {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/but DB insert failed/i.test(msg)) {
+    return new ApiSendError(502, 'send_unconfirmed', 'The message was sent but could not be recorded. Do not resend it.', true)
+  }
+  if (err instanceof GatewayNotConfiguredError || /^WhatsApp not configured/i.test(msg)) {
+    return new ApiSendError(422, 'channel_not_configured', 'WhatsApp is not connected on this channel.')
+  }
+  if (err instanceof GatewayRequestError) {
+    if (err.code === 'not_connected') {
+      return new ApiSendError(422, 'channel_not_connected', 'The WhatsApp QR session is disconnected. Reconnect it in Settings.')
+    }
+    if (err.code === 'not_on_whatsapp') {
+      return new ApiSendError(422, 'not_on_whatsapp', 'This number is not on WhatsApp.')
+    }
+    if (err.code === 'invalid_request') {
+      return new ApiSendError(422, 'send_rejected', 'The WhatsApp gateway rejected the request.')
+    }
+  }
+  if (err instanceof GatewayUnreachableError && (err.status === 401 || err.status === 403)) {
+    return new ApiSendError(502, 'send_failed', 'The message could not be delivered to WhatsApp.')
+  }
+  if (err instanceof MetaApiError && err.httpStatus >= 400 && err.httpStatus < 500) {
+    return new ApiSendError(502, 'send_failed', 'WhatsApp refused the message. Nothing was sent.')
+  }
+  if (/^(contact not found|contact phone invalid|conversation not found)/i.test(msg)) {
+    return new ApiSendError(500, 'internal_error', 'Could not prepare the message. Nothing was sent.')
+  }
+  return new ApiSendError(
+    502,
+    'send_unknown',
+    'The outcome is unknown: the message may have been delivered. Check the conversation before sending it again.',
+    true,
+  )
 }
