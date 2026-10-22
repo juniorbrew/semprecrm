@@ -45,6 +45,12 @@ interface SendTextArgs {
   text: string
   /** Which engine sent it (migrations 059/066) — the bubble's sender label. Default 'automation'. */
   origin?: 'automation' | 'ai' | 'csat'
+  /**
+   * QR channel only. Immediate replies to a customer who just wrote (out-of-hours
+   * notice, survey thanks) pass `interactive` so the gateway queue never refuses them.
+   * Default: `bulk` (paced).
+   */
+  priority?: 'interactive' | 'bulk'
 }
 
 interface SendTemplateArgs {
@@ -106,6 +112,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       contactId: input.contactId,
       text: input.text,
       contentType: 'text',
+      ...(input.kind === 'text' && input.priority ? { priority: input.priority } : {}),
     })
   }
 

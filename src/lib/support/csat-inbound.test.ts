@@ -71,7 +71,7 @@ describe('tryConsumeCsat: the score', () => {
     expect(stored()).toEqual([expect.objectContaining({ conversation_id: 'conv-1', origin: 'csat', content_text: '5', status: 'delivered' })])
     expect(state.tables.conversation_events).toEqual([expect.objectContaining({ event_type: 'csat_answered', payload: { score: 5 } })])
     await flush()
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conv-1', origin: 'csat', text: `Valeu!\n\n${CSAT_COMMENT_PROMPT}` }))
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conv-1', origin: 'csat', priority: 'interactive', text: `Valeu!\n\n${CSAT_COMMENT_PROMPT}` }))
     expect(drain).toHaveBeenCalledWith({ accountId: 'acc' })
   })
 

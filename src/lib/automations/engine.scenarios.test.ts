@@ -829,6 +829,22 @@ describe('gateway throttled (anti-ban queue full)', () => {
     expect(pending.status).toBe('done');
   });
 
+  it('a step that goes through resets the throttle streak for the rest of the run', async () => {
+    const a = automation();
+    step(a.id, 'send_message', { text: 'primeira' }, 0);
+    step(a.id, 'send_message', { text: 'segunda' }, 1);
+    vi.mocked(engineSendText)
+      .mockRejectedValueOnce(throttled()) // primeira: parked (streak 1)
+      .mockResolvedValueOnce({ whatsapp_message_id: 'w' }) // primeira on resume: ok, streak -> 0
+      .mockRejectedValueOnce(throttled()); // segunda: parked again
+    await message();
+    const first = h.db.automation_pending_executions[0] as Row;
+    await resumePendingExecution(first as never);
+    const second = h.db.automation_pending_executions[1] as Row;
+    expect(second).toMatchObject({ status: 'pending', next_step_position: 1 });
+    expect((second.context as Row).throttle_retries).toBe(1);
+  });
+
   it('gives up with a failed log once the retries are spent', async () => {
     const a = automation();
     step(a.id, 'send_message', { text: 'oi' }, 0);

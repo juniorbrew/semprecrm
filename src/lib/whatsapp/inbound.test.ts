@@ -916,6 +916,7 @@ describe('ingestInboundMessage — out-of-hours reply', () => {
       userId: 'owner-1',
       conversationId: h.state.conversations[0].id,
       text: 'Voltamos segunda!',
+      priority: 'interactive', // immediate reply to the customer: never queued behind bulk sends
     })
     expect(h.state.conversations[0].out_of_hours_replied_at).toBe(SATURDAY.toISOString())
   })

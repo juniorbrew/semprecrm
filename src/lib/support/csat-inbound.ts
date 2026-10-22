@@ -219,6 +219,8 @@ async function recordScore(
       contactId: input.contactId,
       text: reply,
       origin: 'csat',
+      // Answers the score the customer just sent: leaves at once, never refused by the bulk queue.
+      priority: 'interactive',
     })
       .then(async () => {
         if (askComment) await db.rpc('csat_request_comment', { p_response_id: row.id, p_now: new Date().toISOString() })

@@ -566,6 +566,8 @@ interface RunState {
   parked: boolean
   failed: boolean
   error: string | null
+  /** Consecutive throttled parks of this run (shared by every scope; reset by a step that goes through). */
+  throttleRetries?: number
   /** Lazily loaded account preferences (timezone, business hours). */
   prefs?: Promise<AccountPreferences>
 }
@@ -812,7 +814,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         parent_step_id: args.parentStepId,
         branch: args.branch,
         next_step_position: step.position + 1,
-        context: { ...args.context, chain_depth: args.depth },
+        context: { ...args.context, chain_depth: args.depth, throttle_retries: 0 },
         run_at: new Date(Date.now() + ms).toISOString(),
         status: 'pending',
         conversation_id: conversationId,
@@ -878,6 +880,8 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         detail,
       })
       run.actions += 1
+      // A step that went through ends the throttle streak for the rest of the run.
+      run.throttleRetries = 0
     } catch (err) {
       // The gateway's anti-ban queue refused the message (nothing was sent):
       // park THIS step and let the cron resume it, instead of failing the run.
@@ -914,7 +918,7 @@ const THROTTLE_RETRY_MS = 60_000
  * (or parking failed) and the step must fail as before.
  */
 async function parkThrottledStep(step: AutomationStep, args: ExecuteArgs): Promise<string | null> {
-  const tries = (args.context.throttle_retries ?? 0) + 1
+  const tries = (args.run.throttleRetries ?? args.context.throttle_retries ?? 0) + 1
   if (tries > THROTTLE_MAX_RETRIES) return null
   let conversationId: string | null = null
   try {
