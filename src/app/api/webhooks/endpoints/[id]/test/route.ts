@@ -16,11 +16,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   const { data: endpoint } = await db
     .from('webhook_endpoints')
-    .select('id')
+    .select('id, enabled')
     .eq('id', id)
     .eq('account_id', gate.ctx.accountId)
     .maybeSingle()
   if (!endpoint) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!endpoint.enabled) return NextResponse.json({ error: 'Enable the endpoint first' }, { status: 409 })
 
   const deliveryId = await queueDelivery(db, {
     accountId: gate.ctx.accountId,

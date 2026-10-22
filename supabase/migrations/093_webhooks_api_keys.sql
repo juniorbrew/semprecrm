@@ -22,7 +22,9 @@
 --   5. webhook_claim_deliveries: service-role RPC that leases due
 --      deliveries with FOR UPDATE SKIP LOCKED, so overlapping cron ticks
 --      never deliver the same row twice.
---   6. messages.origin gains 'api' (messages sent through the public API).
+--   6. api_idempotency_keys (Idempotency-Key on POST /api/v1/messages) and
+--      api_request_log (bounded per-key request log); api_purge() trims both.
+--   7. messages.origin gains 'api' (messages sent through the public API).
 --
 -- Rule from 076: new functions are closed by default. Trigger functions
 -- are SECURITY DEFINER (they write tables the invoking role cannot) and
@@ -50,6 +52,11 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
   expires_at   TIMESTAMPTZ,
   revoked_at   TIMESTAMPTZ
 );
+-- Added after the first draft: ADD COLUMN IF NOT EXISTS keeps a re-apply idempotent.
+ALTER TABLE public.api_keys
+  ADD COLUMN IF NOT EXISTS note         TEXT CHECK (note IS NULL OR char_length(note) <= 200),
+  ADD COLUMN IF NOT EXISTS last_used_ip TEXT,
+  ADD COLUMN IF NOT EXISTS allowed_cidrs TEXT[] CHECK (allowed_cidrs IS NULL OR cardinality(allowed_cidrs) <= 10);
 CREATE INDEX IF NOT EXISTS idx_api_keys_account ON public.api_keys (account_id, created_at DESC);
 
 ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
@@ -57,7 +64,7 @@ DROP POLICY IF EXISTS api_keys_select ON public.api_keys;
 CREATE POLICY api_keys_select ON public.api_keys FOR SELECT
   USING (is_account_member(account_id, 'admin'));
 REVOKE ALL ON TABLE public.api_keys FROM PUBLIC, anon, authenticated;
-GRANT SELECT (id, account_id, name, key_prefix, key_last4, scopes, created_by, created_at, last_used_at, expires_at, revoked_at)
+GRANT SELECT (id, account_id, name, key_prefix, key_last4, scopes, created_by, created_at, last_used_at, expires_at, revoked_at, note, last_used_ip, allowed_cidrs)
   ON public.api_keys TO authenticated;
 GRANT ALL ON TABLE public.api_keys TO service_role;
 
@@ -97,7 +104,12 @@ CREATE TABLE IF NOT EXISTS public.webhook_events (
   data       JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- contact_id lets the LGPD scrub (lib/lgpd/anonymize.ts) delete a contact's events by
+-- index; the FK also removes them on a hard contact delete.
+ALTER TABLE public.webhook_events
+  ADD COLUMN IF NOT EXISTS contact_id UUID REFERENCES public.contacts(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON public.webhook_events (created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_contact ON public.webhook_events (contact_id) WHERE contact_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.webhook_deliveries (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -168,7 +180,9 @@ $$;
 
 -- One event row + one delivery per enabled endpoint listening for p_type
 -- ('*' = everything). Called only from the trigger functions below.
-CREATE OR REPLACE FUNCTION public.webhook_emit(p_account UUID, p_type TEXT, p_data JSONB)
+-- Earlier draft signatures (re-apply on a database that already ran it):
+DROP FUNCTION IF EXISTS public.webhook_emit(UUID, TEXT, JSONB);
+CREATE OR REPLACE FUNCTION public.webhook_emit(p_account UUID, p_type TEXT, p_data JSONB, p_contact UUID DEFAULT NULL)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -180,7 +194,7 @@ BEGIN
   IF NOT public.webhook_has_listener(p_account, p_type) THEN
     RETURN;
   END IF;
-  INSERT INTO webhook_events (account_id, type, data) VALUES (p_account, p_type, p_data)
+  INSERT INTO webhook_events (account_id, type, data, contact_id) VALUES (p_account, p_type, p_data, p_contact)
     RETURNING id INTO v_event;
   INSERT INTO webhook_deliveries (event_id, endpoint_id, account_id)
     SELECT v_event, e.id, e.account_id
@@ -189,8 +203,12 @@ BEGIN
        AND ('*' = ANY (e.events) OR p_type = ANY (e.events));
 END;
 $$;
-REVOKE ALL ON FUNCTION public.webhook_emit(UUID, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.webhook_emit(UUID, TEXT, JSONB, UUID) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.webhook_has_listener(UUID, TEXT) FROM PUBLIC, anon, authenticated;
+
+-- Every trigger below keeps ALL webhook work inside BEGIN ... EXCEPTION: nothing on
+-- the webhook side (lookups, listener check, outbox insert) can abort the write of
+-- the message / conversation / contact that fired it.
 
 -- messages: INSERT -> message.received (customer) / message.sent (agent, bot)
 CREATE OR REPLACE FUNCTION public.webhook_trg_message_insert()
@@ -206,12 +224,12 @@ DECLARE
   v_phone   TEXT;
   v_name    TEXT;
 BEGIN
-  SELECT c.account_id, c.contact_id INTO v_account, v_contact
-    FROM conversations c WHERE c.id = NEW.conversation_id;
-  IF v_account IS NULL OR NOT public.webhook_has_listener(v_account, v_type) THEN
-    RETURN NULL;
-  END IF;
   BEGIN
+    SELECT c.account_id, c.contact_id INTO v_account, v_contact
+      FROM conversations c WHERE c.id = NEW.conversation_id;
+    IF v_account IS NULL OR NOT public.webhook_has_listener(v_account, v_type) THEN
+      RETURN NULL;
+    END IF;
     SELECT ct.phone, ct.name INTO v_phone, v_name FROM contacts ct WHERE ct.id = v_contact;
     PERFORM public.webhook_emit(v_account, v_type, jsonb_build_object(
       'id', NEW.id,
@@ -228,7 +246,7 @@ BEGIN
       'whatsapp_message_id', NEW.message_id,
       'status', NEW.status,
       'created_at', NEW.created_at
-    ));
+    ), v_contact);
   EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'webhook emit (message insert) failed: %', SQLERRM;
   END;
@@ -251,12 +269,12 @@ DECLARE
   v_account UUID;
   v_contact UUID;
 BEGIN
-  SELECT c.account_id, c.contact_id INTO v_account, v_contact
-    FROM conversations c WHERE c.id = NEW.conversation_id;
-  IF v_account IS NULL OR NOT public.webhook_has_listener(v_account, 'message.status') THEN
-    RETURN NULL;
-  END IF;
   BEGIN
+    SELECT c.account_id, c.contact_id INTO v_account, v_contact
+      FROM conversations c WHERE c.id = NEW.conversation_id;
+    IF v_account IS NULL OR NOT public.webhook_has_listener(v_account, 'message.status') THEN
+      RETURN NULL;
+    END IF;
     PERFORM public.webhook_emit(v_account, 'message.status', jsonb_build_object(
       'id', NEW.id,
       'conversation_id', NEW.conversation_id,
@@ -268,7 +286,7 @@ BEGIN
       'error_code', NEW.error_code,
       'error_title', NEW.error_title,
       'error_details', NEW.error_details
-    ));
+    ), v_contact);
   EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'webhook emit (message status) failed: %', SQLERRM;
   END;
@@ -291,19 +309,19 @@ AS $$
 DECLARE
   v_type TEXT;
 BEGIN
-  IF TG_OP = 'INSERT' THEN
-    v_type := 'conversation.created';
-  ELSIF NEW.status = 'closed' AND OLD.status <> 'closed' THEN
-    v_type := 'conversation.closed';
-  ELSIF OLD.status = 'closed' AND NEW.status <> 'closed' THEN
-    v_type := 'conversation.reopened';
-  ELSE
-    RETURN NULL;
-  END IF;
-  IF NOT public.webhook_has_listener(NEW.account_id, v_type) THEN
-    RETURN NULL;
-  END IF;
   BEGIN
+    IF TG_OP = 'INSERT' THEN
+      v_type := 'conversation.created';
+    ELSIF NEW.status = 'closed' AND OLD.status <> 'closed' THEN
+      v_type := 'conversation.closed';
+    ELSIF OLD.status = 'closed' AND NEW.status <> 'closed' THEN
+      v_type := 'conversation.reopened';
+    ELSE
+      RETURN NULL;
+    END IF;
+    IF NOT public.webhook_has_listener(NEW.account_id, v_type) THEN
+      RETURN NULL;
+    END IF;
     PERFORM public.webhook_emit(NEW.account_id, v_type, jsonb_build_object(
       'id', NEW.id,
       'contact_id', NEW.contact_id,
@@ -313,7 +331,7 @@ BEGIN
       'resolution', NEW.resolution,
       'created_at', NEW.created_at,
       'resolved_at', NEW.resolved_at
-    ));
+    ), NEW.contact_id);
   EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'webhook emit (conversation) failed: %', SQLERRM;
   END;
@@ -337,10 +355,10 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF NEW.account_id IS NULL OR NOT public.webhook_has_listener(NEW.account_id, 'contact.created') THEN
-    RETURN NULL;
-  END IF;
   BEGIN
+    IF NEW.account_id IS NULL OR NOT public.webhook_has_listener(NEW.account_id, 'contact.created') THEN
+      RETURN NULL;
+    END IF;
     PERFORM public.webhook_emit(NEW.account_id, 'contact.created', jsonb_build_object(
       'id', NEW.id,
       'phone', NEW.phone,
@@ -348,7 +366,7 @@ BEGIN
       'email', NEW.email,
       'company', NEW.company,
       'created_at', NEW.created_at
-    ));
+    ), NEW.id);
   EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'webhook emit (contact) failed: %', SQLERRM;
   END;
@@ -365,10 +383,14 @@ CREATE TRIGGER webhook_contact_insert AFTER INSERT ON public.contacts
 -- p_lease_seconds and returns them with their endpoint + event. A lease that
 -- is not released (crashed worker) simply expires and the row becomes due
 -- again. FOR UPDATE SKIP LOCKED: two ticks claiming at once get disjoint rows.
+-- Fairness: at most p_per_account rows per account per call, so one tenant with
+-- hanging endpoints cannot fill a batch and starve the others.
+DROP FUNCTION IF EXISTS public.webhook_claim_deliveries(INTEGER, INTEGER, UUID);
 CREATE OR REPLACE FUNCTION public.webhook_claim_deliveries(
   p_limit         INTEGER,
   p_lease_seconds INTEGER DEFAULT 120,
-  p_delivery_id   UUID DEFAULT NULL
+  p_delivery_id   UUID DEFAULT NULL,
+  p_per_account   INTEGER DEFAULT 10
 )
 RETURNS TABLE (
   delivery_id UUID, attempts INTEGER, delivery_created_at TIMESTAMPTZ,
@@ -381,16 +403,29 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  WITH due AS (
+  WITH cand AS (
+    SELECT s.id, s.next_attempt_at,
+           row_number() OVER (PARTITION BY s.account_id ORDER BY s.next_attempt_at, s.id) AS rn
+      FROM (
+        SELECT d.id, d.account_id, d.next_attempt_at
+          FROM webhook_deliveries d
+          JOIN webhook_endpoints e ON e.id = d.endpoint_id
+         WHERE d.status = 'pending'
+           AND d.next_attempt_at <= now()
+           AND (d.claimed_until IS NULL OR d.claimed_until < now())
+           AND e.enabled
+           AND (p_delivery_id IS NULL OR d.id = p_delivery_id)
+         ORDER BY d.next_attempt_at
+         LIMIT GREATEST(p_limit, 1) * 20
+      ) s
+  ), due AS (
     SELECT d.id
       FROM webhook_deliveries d
-      JOIN webhook_endpoints e ON e.id = d.endpoint_id
-     WHERE d.status = 'pending'
-       AND d.next_attempt_at <= now()
+      JOIN cand c ON c.id = d.id
+     WHERE c.rn <= GREATEST(p_per_account, 1)
+       AND d.status = 'pending'
        AND (d.claimed_until IS NULL OR d.claimed_until < now())
-       AND (e.enabled OR p_delivery_id IS NOT NULL)
-       AND (p_delivery_id IS NULL OR d.id = p_delivery_id)
-     ORDER BY d.next_attempt_at
+     ORDER BY c.next_attempt_at
      LIMIT GREATEST(p_limit, 1)
      FOR UPDATE OF d SKIP LOCKED
   ), leased AS (
@@ -426,12 +461,70 @@ AS $$
   SELECT COUNT(*)::INTEGER FROM gone;
 $$;
 
-REVOKE ALL ON FUNCTION public.webhook_claim_deliveries(INTEGER, INTEGER, UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.webhook_claim_deliveries(INTEGER, INTEGER, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.webhook_purge(INTEGER, INTEGER) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.webhook_claim_deliveries(INTEGER, INTEGER, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.webhook_claim_deliveries(INTEGER, INTEGER, UUID, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.webhook_purge(INTEGER, INTEGER) TO service_role;
 
--- ---- 6. messages.origin + 'api' ----------------------------------------------------
+
+-- ---- 6. idempotency + request log -----------------------------------------------
+-- Idempotency-Key: the row is inserted BEFORE the send (unique per account+key), so
+-- two concurrent requests with the same key can never both send.
+CREATE TABLE IF NOT EXISTS public.api_idempotency_keys (
+  account_id      UUID NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+  key             TEXT NOT NULL CHECK (char_length(key) BETWEEN 1 AND 255),
+  request_hash    TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'done')),
+  response_status INTEGER,
+  response        JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (account_id, key)
+);
+CREATE INDEX IF NOT EXISTS idx_api_idempotency_created ON public.api_idempotency_keys (created_at);
+
+CREATE TABLE IF NOT EXISTS public.api_request_log (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  account_id UUID NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+  key_id     UUID NOT NULL REFERENCES public.api_keys(id) ON DELETE CASCADE,
+  at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  method     TEXT NOT NULL,
+  route      TEXT NOT NULL,
+  status     INTEGER NOT NULL,
+  ip         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_request_log_key ON public.api_request_log (key_id, at DESC);
+
+ALTER TABLE public.api_idempotency_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.api_request_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS api_request_log_select ON public.api_request_log;
+CREATE POLICY api_request_log_select ON public.api_request_log FOR SELECT
+  USING (is_account_member(account_id, 'admin'));
+REVOKE ALL ON TABLE public.api_idempotency_keys, public.api_request_log FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON TABLE public.api_request_log TO authenticated;
+GRANT ALL ON TABLE public.api_idempotency_keys, public.api_request_log TO service_role;
+
+-- Idempotency rows live 24h; the request log keeps 7 days and at most 200 rows per key.
+CREATE OR REPLACE FUNCTION public.api_purge()
+RETURNS INTEGER
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $
+  WITH idem AS (
+    DELETE FROM api_idempotency_keys WHERE created_at < now() - interval '24 hours' RETURNING 1
+  ), old AS (
+    DELETE FROM api_request_log WHERE at < now() - interval '7 days' RETURNING 1
+  ), over AS (
+    DELETE FROM api_request_log l USING (
+      SELECT id, row_number() OVER (PARTITION BY key_id ORDER BY at DESC, id DESC) AS rn FROM api_request_log
+    ) r WHERE l.id = r.id AND r.rn > 200 RETURNING 1
+  )
+  SELECT ((SELECT COUNT(*) FROM idem) + (SELECT COUNT(*) FROM old) + (SELECT COUNT(*) FROM over))::INTEGER;
+$;
+REVOKE ALL ON FUNCTION public.api_purge() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.api_purge() TO service_role;
+
+-- ---- 7. messages.origin + 'api' ----------------------------------------------------
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_origin_check;
 ALTER TABLE public.messages ADD CONSTRAINT messages_origin_check
   CHECK (origin IS NULL OR origin IN ('phone', 'automation', 'flow', 'system', 'ai', 'csat', 'api')) NOT VALID;

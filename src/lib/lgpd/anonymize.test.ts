@@ -76,6 +76,10 @@ function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Ro
     flow_runs: [{ id: 'fr1', account_id: ACC, contact_id: C1, vars: { cpf: '123' } }],
     flow_run_events: [{ id: 'fre1', flow_run_id: 'fr1', payload: { text: '123' } }],
     lead_source_events: [{ id: 'l1', account_id: ACC, contact_id: C1, payload: { name: 'Ana' } }],
+    webhook_events: [
+      { id: 'we1', account_id: ACC, contact_id: C1, type: 'message.received', data: { text: 'oi Ana' } },
+      { id: 'we2', account_id: ACC, contact_id: 'other', type: 'message.received', data: { text: 'outro' } },
+    ],
     broadcast_recipients: [{ id: 'br1', contact_id: C1, template_params: ['Ana'] }],
     automation_pending_executions: [{ id: 'ape1', account_id: ACC, contact_id: C1, status: 'pending', context: { message_text: 'oi' } }],
     automation_logs: [{ id: 'al1', account_id: ACC, contact_id: C1, error_message: 'falha para Ana' }],
@@ -178,6 +182,8 @@ describe('anonymizeContact', () => {
     expect(tables.flow_runs[0].vars).toEqual({})
     expect(tables.flow_run_events[0].payload).toEqual({})
     expect(tables.lead_source_events[0].payload).toEqual({})
+    // Webhook payloads about the contact are gone; other contacts' events stay.
+    expect(tables.webhook_events.map((e) => e.id)).toEqual(['we2'])
     expect(tables.broadcast_recipients[0].template_params).toBeNull()
     expect(tables.automation_pending_executions[0]).toMatchObject({ status: 'cancelled', context: {} })
     expect(tables.automation_logs[0].error_message).toBeNull()

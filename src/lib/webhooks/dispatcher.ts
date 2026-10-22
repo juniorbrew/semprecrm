@@ -3,7 +3,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 import { WEBHOOK_API_VERSION, WEBHOOK_TEST_EVENT, eventPublicId } from './events'
-import { planAfterFailure, shouldAutoDisable } from './retry'
+import { loadAccountEntitlements } from '@/lib/plans-server'
+
+import { MAX_DELIVERY_AGE_MS, planAfterFailure, shouldAutoDisable } from './retry'
 import { buildSignatureHeader, SIGNATURE_HEADER } from './signing'
 import { DestinoNaoPermitido, fetchSeguro } from './ssrf'
 
@@ -39,11 +41,19 @@ export type SendFn = (
 ) => Promise<SendResult>
 
 export const REQUEST_TIMEOUT_MS = 10_000
-const SNIPPET_BYTES = 1024
+const SNIPPET_BYTES = 256
 
-/** Reads at most SNIPPET_BYTES of the response and drops the rest. */
+/**
+ * Up to SNIPPET_BYTES of a text / JSON response, for the delivery log. Anything
+ * else (HTML pages, binaries) is not kept: the log must not become a way to read
+ * what an internal or third-party service answers.
+ */
 async function readSnippet(res: Response): Promise<string | null> {
   if (!res.body) return null
+  if (!/^(application\/(.+\+)?json|text\/)/i.test(res.headers.get('content-type') ?? '')) {
+    await res.body.cancel().catch(() => undefined)
+    return null
+  }
   const reader = res.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
@@ -66,10 +76,22 @@ async function readSnippet(res: Response): Promise<string | null> {
 /** The only place a webhook leaves the server: always through the SSRF guard. */
 export const sendWebhookRequest: SendFn = async (url, body, headers) => {
   const started = Date.now()
+  // Re-checked on every send (the URL was validated at save time, but rows can predate a rule).
+  let target: URL | null = null
+  try {
+    target = new URL(url)
+  } catch {
+    // handled below
+  }
+  if (!target || target.protocol !== 'https:' || target.port !== '') {
+    return { statusCode: null, error: 'Destination not allowed (https on port 443 only)', snippet: null, durationMs: 0 }
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    const res = await fetchSeguro(url, { method: 'POST', headers, body, signal: controller.signal })
+    // maxRedirects 0: a 3xx is a failed delivery (like Stripe), never followed. A redirect
+    // could otherwise lead to http, another port or the server itself.
+    const res = await fetchSeguro(url, { method: 'POST', headers, body, signal: controller.signal }, 0)
     const snippet = await readSnippet(res)
     return { statusCode: res.status, error: null, snippet, durationMs: Date.now() - started }
   } catch (err) {
@@ -102,9 +124,12 @@ export interface DispatchDeps {
   rand?: () => number
   send?: SendFn
   decryptSecret?: (stored: string) => string
+  /** False for blocked / suspended accounts (runDispatch fills in a cached plan check). */
+  accountActive?: (accountId: string) => Promise<boolean>
 }
 
-export type DeliveryOutcome = 'delivered' | 'retrying' | 'failed'
+export type DeliveryOutcome = 'delivered' | 'retrying' | 'failed' | 'held'
+const HOLD_MS = 3600_000
 
 /** Attempts one claimed delivery and records the outcome. */
 export async function deliverClaimed(deps: DispatchDeps, row: ClaimedDelivery): Promise<DeliveryOutcome> {
@@ -115,6 +140,21 @@ export async function deliverClaimed(deps: DispatchDeps, row: ClaimedDelivery): 
 
   const startedAt = now()
   const attemptNo = row.attempts + 1
+
+  // Blocked / suspended accounts (paywall, kill switch) send nothing: hold the delivery
+  // and look again in an hour; once it is older than the retry horizon it fails.
+  if (deps.accountActive && !(await deps.accountActive(row.account_id))) {
+    const tooOld = startedAt.getTime() - new Date(row.delivery_created_at).getTime() > MAX_DELIVERY_AGE_MS
+    await db
+      .from('webhook_deliveries')
+      .update(
+        tooOld
+          ? { status: 'failed', claimed_until: null, last_error: 'Account blocked' }
+          : { claimed_until: null, next_attempt_at: new Date(startedAt.getTime() + HOLD_MS).toISOString() },
+      )
+      .eq('id', row.delivery_id)
+    return 'held'
+  }
 
   const secrets = [dec(row.secret_enc)]
   if (
@@ -139,6 +179,11 @@ export async function deliverClaimed(deps: DispatchDeps, row: ClaimedDelivery): 
   const ok = result.statusCode !== null && result.statusCode >= 200 && result.statusCode < 300
   const error = ok ? null : (result.error ?? `HTTP ${result.statusCode}`)
 
+  // At-least-once window: the receiver has already processed this POST, but the
+  // attempt row and the delivery update below are separate statements. A crash (or a
+  // DB error) between the request and the delivery update leaves the row leased and
+  // `pending` with the old attempt count; when the lease expires it is sent again with
+  // the SAME event id. Receivers must dedupe on `id` (documented in docs/api-webhooks.md).
   await db.from('webhook_delivery_attempts').insert({
     delivery_id: row.delivery_id,
     account_id: row.account_id,
@@ -175,6 +220,7 @@ export async function deliverClaimed(deps: DispatchDeps, row: ClaimedDelivery): 
     deliveryCreatedAt: new Date(row.delivery_created_at),
     now: finishedAt,
     eventType: row.event_type,
+    endpointFailingMs: row.failing_since ? finishedAt.getTime() - new Date(row.failing_since).getTime() : 0,
     rand: deps.rand,
   })
   await db
@@ -205,6 +251,7 @@ export interface DispatchSummary {
   delivered: number
   retrying: number
   failed: number
+  held: number
   errors: number
 }
 
@@ -222,13 +269,28 @@ export async function runDispatch(
   const concurrency = opts.concurrency ?? 10
   const now = deps.now ?? (() => new Date())
   const deadline = now().getTime() + (opts.budgetMs ?? 40_000)
-  const summary: DispatchSummary = { claimed: 0, delivered: 0, retrying: 0, failed: 0, errors: 0 }
+  const summary: DispatchSummary = { claimed: 0, delivered: 0, retrying: 0, failed: 0, held: 0, errors: 0 }
+
+  // One plan lookup per account per pass. Unreadable plan = fail closed (hold).
+  const planCache = new Map<string, Promise<boolean>>()
+  const accountActive =
+    deps.accountActive ??
+    ((accountId: string) => {
+      let hit = planCache.get(accountId)
+      if (!hit) {
+        hit = loadAccountEntitlements(deps.db, accountId).then((ent) => !!ent && !ent.blocked)
+        planCache.set(accountId, hit)
+      }
+      return hit
+    })
+  deps = { ...deps, accountActive }
 
   for (;;) {
     const { data, error } = await deps.db.rpc('webhook_claim_deliveries', {
       p_limit: batchSize,
       p_lease_seconds: 120,
       p_delivery_id: opts.deliveryId ?? null,
+      p_per_account: 10,
     })
     if (error) throw new Error(`claim failed: ${error.message}`)
     const rows = (data ?? []) as ClaimedDelivery[]
@@ -247,7 +309,9 @@ export async function runDispatch(
         }),
       )
     }
-    if (opts.deliveryId || rows.length < batchSize || now().getTime() >= deadline) break
+    // Rows capped per account can leave a batch short while work remains: keep going until
+    // nothing is claimable (failed / held rows are rescheduled into the future, so this ends).
+    if (opts.deliveryId || rows.length === 0 || now().getTime() >= deadline) break
   }
   return summary
 }

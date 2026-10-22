@@ -12,10 +12,12 @@ DROP FUNCTION IF EXISTS public.webhook_trg_message_insert();
 DROP FUNCTION IF EXISTS public.webhook_trg_message_status();
 DROP FUNCTION IF EXISTS public.webhook_trg_conversation();
 DROP FUNCTION IF EXISTS public.webhook_trg_contact_insert();
-DROP FUNCTION IF EXISTS public.webhook_claim_deliveries(integer, integer, uuid);
+DROP FUNCTION IF EXISTS public.webhook_claim_deliveries(integer, integer, uuid, integer);
 DROP FUNCTION IF EXISTS public.webhook_purge(integer, integer);
-DROP FUNCTION IF EXISTS public.webhook_emit(uuid, text, jsonb);
+DROP FUNCTION IF EXISTS public.webhook_emit(uuid, text, jsonb, uuid);
 DROP FUNCTION IF EXISTS public.webhook_has_listener(uuid, text);
+DROP FUNCTION IF EXISTS public.api_purge();
+DROP TABLE IF EXISTS public.api_request_log, public.api_idempotency_keys;
 DROP TABLE IF EXISTS public.webhook_delivery_attempts, public.webhook_deliveries,
   public.webhook_events, public.webhook_endpoints, public.api_keys;
 COMMIT;

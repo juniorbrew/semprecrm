@@ -18,6 +18,13 @@ describe('validateEndpointUrl', () => {
     expect(r.ok).toBe(false)
   })
 
+  it('accepts only the default https port', async () => {
+    expect(await validateEndpointUrl('https://hooks.example.com:443/x', publicResolver)).toMatchObject({ ok: true })
+    for (const u of ['https://hooks.example.com:8443/x', 'https://hooks.example.com:22/', 'https://hooks.example.com:80/']) {
+      expect(await validateEndpointUrl(u, publicResolver)).toEqual({ ok: false, error: 'The URL must use the default https port (443)' })
+    }
+  })
+
   it('rejects credentials in the URL', async () => {
     expect(await validateEndpointUrl('https://u:p@hooks.example.com/', publicResolver)).toMatchObject({ ok: false })
   })

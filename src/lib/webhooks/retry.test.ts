@@ -56,6 +56,11 @@ describe('retry schedule', () => {
     expect(plan(1, late)).toEqual({ status: 'failed' })
   })
 
+  it('retries an endpoint that has been failing for an hour half as often', () => {
+    expect(plan(1, T0, { endpointFailingMs: 3600_000 - 1 })).toEqual({ status: 'pending', nextAttemptAt: new Date(T0.getTime() + 60_000) })
+    expect(plan(1, T0, { endpointFailingMs: 3600_000 })).toEqual({ status: 'pending', nextAttemptAt: new Date(T0.getTime() + 120_000) })
+  })
+
   it('never retries test events', () => {
     expect(plan(1, T0, { eventType: WEBHOOK_TEST_EVENT })).toEqual({ status: 'failed' })
   })

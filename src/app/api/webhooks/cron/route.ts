@@ -24,7 +24,9 @@ export async function GET(request: Request) {
     const db = supabaseAdmin()
     const summary = await runDispatch({ db })
     const { data: purged } = await db.rpc('webhook_purge', { p_days: 30, p_limit: 5000 })
-    return NextResponse.json({ ...summary, purged: purged ?? 0 })
+    // Idempotency keys (24 h) and the per-key request log (7 days / 200 rows).
+    const { data: apiPurged } = await db.rpc('api_purge')
+    return NextResponse.json({ ...summary, purged: (purged ?? 0) + (apiPurged ?? 0) })
   } catch (err) {
     console.error('[webhooks] cron failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ error: 'webhook dispatch failed' }, { status: 500 })

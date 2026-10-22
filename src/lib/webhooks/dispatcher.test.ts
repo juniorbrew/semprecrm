@@ -208,7 +208,7 @@ describe('runDispatch claim', () => {
       await new Promise((r) => setTimeout(r, 5))
       return ok(u, b, h)
     }
-    const deps = { db, now, send, decryptSecret: identity }
+    const deps = { db, now, send, decryptSecret: identity, accountActive: async () => true }
     const [a, b] = await Promise.all([
       runDispatch(deps, { batchSize: 3, concurrency: 2 }),
       runDispatch(deps, { batchSize: 3, concurrency: 2 }),
@@ -218,11 +218,11 @@ describe('runDispatch claim', () => {
     expect(a.claimed + b.claimed).toBe(7)
   })
 
-  it('leaves a leased (in-flight) delivery alone', async () => {
+  it('does not claim a delivery that is already done', async () => {
     const { db } = fakeDb([claimed()])
-    const first = await runDispatch({ db, now, send: ok, decryptSecret: identity }, { deliveryId: 'd1' })
+    const first = await runDispatch({ db, now, send: ok, decryptSecret: identity, accountActive: async () => true }, { deliveryId: 'd1' })
     expect(first.delivered).toBe(1)
-    const again = await runDispatch({ db, now, send: ok, decryptSecret: identity })
+    const again = await runDispatch({ db, now, send: ok, decryptSecret: identity, accountActive: async () => true })
     expect(again.claimed).toBe(0)
   })
 
@@ -232,8 +232,47 @@ describe('runDispatch claim', () => {
       if (s === 'whsec_current') throw new Error('bad key')
       return s
     }
-    const out = await runDispatch({ db, now, send: ok, decryptSecret: boom })
+    const out = await runDispatch({ db, now, send: ok, decryptSecret: boom, accountActive: async () => true })
     expect(out.errors).toBe(2)
+  })
+})
+
+describe('blocked accounts', () => {
+  it('holds the delivery for an hour without sending or counting an attempt', async () => {
+    const { db, writes } = fakeDb([])
+    let sends = 0
+    const send: SendFn = async (u, b, h) => (sends++, ok(u, b, h))
+    const out = await deliverClaimed({ db, now, send, decryptSecret: identity, accountActive: async () => false }, claimed())
+    expect(out).toBe('held')
+    expect(sends).toBe(0)
+    expect(writes.attempts).toHaveLength(0)
+    expect(writes.deliveries[0].patch).toEqual({ claimed_until: null, next_attempt_at: new Date(NOW.getTime() + 3600_000).toISOString() })
+  })
+
+  it('fails a held delivery once it is past the 72h horizon', async () => {
+    const { db, writes } = fakeDb([])
+    const old = claimed({ delivery_created_at: new Date(NOW.getTime() - 73 * 3600_000).toISOString() })
+    expect(await deliverClaimed({ db, now, send: ok, decryptSecret: identity, accountActive: async () => false }, old)).toBe('held')
+    expect(writes.deliveries[0].patch).toMatchObject({ status: 'failed' })
+  })
+
+  it('runDispatch looks the plan up once per account and treats an unreadable plan as blocked', async () => {
+    const rows = [claimed({ delivery_id: 'a' }), claimed({ delivery_id: 'b' })]
+    const { db } = fakeDb(rows)
+    let sends = 0
+    const send: SendFn = async (u, b, h) => (sends++, ok(u, b, h))
+    // the fake client has no accounts table: the real check fails closed
+    const out = await runDispatch({ db, now, send, decryptSecret: identity })
+    expect(sends).toBe(0)
+    expect(out.errors + out.held).toBe(2)
+  })
+})
+
+describe('delivery destination rules', () => {
+  it.each(['https://hooks.example.com:8443/x', 'http://hooks.example.com/x', 'not a url'])('refuses %s without connecting', async (url) => {
+    const r = await sendWebhookRequest(url, '{}', {})
+    expect(r.statusCode).toBeNull()
+    expect(r.error).toMatch(/not allowed/i)
   })
 })
 

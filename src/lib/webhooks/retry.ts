@@ -11,6 +11,7 @@ export const MAX_ATTEMPTS = RETRY_DELAYS_SECONDS.length + 1
 export const MAX_DELIVERY_AGE_MS = 72 * 3600 * 1000
 /** An endpoint with no success for this long is disabled automatically. */
 export const AUTO_DISABLE_AFTER_MS = 48 * 3600 * 1000
+export const SLOW_DOWN_AFTER_MS = 3600 * 1000
 
 export type FailurePlan = { status: 'pending'; nextAttemptAt: Date } | { status: 'failed' }
 
@@ -20,12 +21,16 @@ export function planAfterFailure(opts: {
   deliveryCreatedAt: Date
   now: Date
   eventType?: string
+  /** How long the endpoint has been failing (0 = healthy / unknown). */
+  endpointFailingMs?: number
   rand?: () => number
 }): FailurePlan {
   // Test events are one-shot: the admin is watching and can click again.
   if (opts.eventType === WEBHOOK_TEST_EVENT) return { status: 'failed' }
-  const base = RETRY_DELAYS_SECONDS[opts.attemptsDone - 1]
-  if (base === undefined) return { status: 'failed' }
+  const step = RETRY_DELAYS_SECONDS[opts.attemptsDone - 1]
+  if (step === undefined) return { status: 'failed' }
+  // An endpoint that has been failing for an hour or more is retried half as often.
+  const base = (opts.endpointFailingMs ?? 0) >= SLOW_DOWN_AFTER_MS ? step * 2 : step
   const jitter = 0.9 + (opts.rand ?? Math.random)() * 0.2
   const next = new Date(opts.now.getTime() + Math.round(base * jitter) * 1000)
   if (next.getTime() - opts.deliveryCreatedAt.getTime() > MAX_DELIVERY_AGE_MS) return { status: 'failed' }

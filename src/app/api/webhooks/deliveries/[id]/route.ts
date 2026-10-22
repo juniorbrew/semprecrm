@@ -25,7 +25,12 @@ export async function GET(_request: Request, { params }: Ctx) {
   if (!delivery) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const [{ data: event }, { data: attempts }] = await Promise.all([
-    db.from('webhook_events').select('id, type, data, created_at, account_id').eq('id', delivery.event_id).single(),
+    db
+      .from('webhook_events')
+      .select('id, type, data, created_at, account_id')
+      .eq('id', delivery.event_id)
+      .eq('account_id', gate.ctx.accountId)
+      .single(),
     db
       .from('webhook_delivery_attempts')
       .select('attempt_no, started_at, duration_ms, status_code, error, response_snippet')
@@ -64,6 +69,13 @@ export async function POST(_request: Request, { params }: Ctx) {
     .eq('account_id', gate.ctx.accountId)
     .maybeSingle()
   if (!source) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const { data: target } = await db
+    .from('webhook_endpoints')
+    .select('enabled')
+    .eq('id', source.endpoint_id)
+    .eq('account_id', gate.ctx.accountId)
+    .maybeSingle()
+  if (!target?.enabled) return NextResponse.json({ error: 'Enable the endpoint first' }, { status: 409 })
 
   const deliveryId = await queueDelivery(db, {
     accountId: gate.ctx.accountId,
