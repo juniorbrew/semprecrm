@@ -20,6 +20,9 @@
 // (CALENDAR_SYNC_INTERVAL_MS, default 5 min): it is called on the first
 // tick and then whenever that much time has passed since its last call.
 //
+// The billing expiry sweep (GET /api/billing/cron, migration 090) runs
+// hourly: a paid period that ended without a new payment turns past_due.
+//
 //   APP_URL                    base URL of the app  (default http://127.0.0.1:3100)
 //   AUTOMATION_CRON_SECRET     must match the app's value (required)
 //   CRON_INTERVAL_MS           tick interval in ms  (default 60000, min 5000)
@@ -57,6 +60,7 @@ const ENDPOINTS = [
   { path: '/api/support/sla/cron', method: 'GET', everyMs: null },
   { path: '/api/support/csat/cron', method: 'GET', everyMs: null },
   { path: '/api/integrations/calendar/sync', method: 'POST', everyMs: CALENDAR_SYNC_INTERVAL_MS },
+  { path: '/api/billing/cron', method: 'GET', everyMs: 60 * 60_000 },
 ]
 
 function log(line) {
