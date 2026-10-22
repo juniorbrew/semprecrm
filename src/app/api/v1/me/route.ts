@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { authenticateApiKey } from '@/lib/api-keys/auth'
+import { authenticateApiKey, respondLogged } from '@/lib/api-keys/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,9 +8,13 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   const auth = await authenticateApiKey(request, null)
   if (!auth.ok) return auth.response
-  return NextResponse.json({
-    account_id: auth.ctx.accountId,
-    api_key_id: auth.ctx.keyId,
-    scopes: auth.ctx.scopes,
-  })
+  return respondLogged(
+    auth.ctx,
+    request,
+    NextResponse.json({
+      account_id: auth.ctx.accountId,
+      api_key_id: auth.ctx.keyId,
+      scopes: auth.ctx.scopes,
+    }),
+  )
 }

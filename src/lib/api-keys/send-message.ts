@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
+import { accountHasModule } from '@/lib/plans-server'
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -17,6 +18,8 @@ export class ApiSendError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** True when the message may already have left (idempotent replays must not re-send it). */
+    public maybeSent = false,
   ) {
     super(message)
     this.name = 'ApiSendError'
@@ -93,6 +96,11 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
     channel = cfg ? 'official' : 'qr'
   }
 
+  // Plan gate (also false for blocked accounts): the channel used must be part of the plan.
+  if (!(await accountHasModule(db, input.accountId, channel === 'qr' ? 'channel_qr' : 'channel_official'))) {
+    throw new ApiSendError(403, 'module_not_included', 'The WhatsApp channel used for this message is not available on this account plan.')
+  }
+
   const conv = await findOrCreateConversation(db, input.accountId, owner, outcome.contact.id, channel, rows)
   if (!conv) throw new ApiSendError(500, 'internal_error', 'Could not open the conversation.')
 
@@ -110,6 +118,10 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[api-v1] send failed:', msg)
+    // "sent to Meta / via gateway but DB insert failed": the customer got it.
+    if (/but DB insert failed/i.test(msg)) {
+      throw new ApiSendError(502, 'send_unconfirmed', 'The message was sent but could not be recorded. Do not resend it.', true)
+    }
     if (/not configured/i.test(msg)) {
       throw new ApiSendError(422, 'channel_not_configured', 'WhatsApp is not connected on this channel.')
     }

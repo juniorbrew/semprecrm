@@ -2,14 +2,19 @@ import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { DEFAULT_GRACE_HOURS, MAX_GRACE_HOURS, generateApiKey, keyState } from '@/lib/api-keys/keys'
+import { KEY_COLUMNS, MAX_ACTIVE_KEYS, countActiveKeys } from '@/lib/api-keys/store'
 import { requireAdmin } from '@/lib/webhooks/admin-guard'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Rotation: issues a new key with the same name and permissions and lets
- * the old one keep working for `grace_hours` (default 24, 0 = revoke now),
+ * Rotation: issues a new key with the same name, note, permissions and IP allowlist
+ * and lets the old one keep working for `grace_hours` (default 24, 0 = revoke now),
  * so integrations can switch without downtime. The new plaintext is shown once.
+ *
+ * With a grace period the old and the new key are both active for a while, so the
+ * active-key limit applies (grace 0 is a swap and never grows the count). If the
+ * old key cannot be updated the new one is removed again: no half-rotated state.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireAdmin()
@@ -26,13 +31,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const db = supabaseAdmin()
   const { data: old } = await db
     .from('api_keys')
-    .select('id, name, scopes, revoked_at, expires_at')
+    .select('id, name, note, scopes, allowed_cidrs, revoked_at, expires_at')
     .eq('id', id)
     .eq('account_id', ctx.accountId)
     .maybeSingle()
   if (!old) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (keyState(old, new Date()) !== 'active') {
     return NextResponse.json({ error: 'This API key is no longer active' }, { status: 409 })
+  }
+  if (grace > 0 && (await countActiveKeys(db, ctx.accountId)) >= MAX_ACTIVE_KEYS) {
+    return NextResponse.json({ error: 'API key limit reached. Revoke a key first' }, { status: 409 })
   }
 
   const gen = generateApiKey()
@@ -41,13 +49,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .insert({
       account_id: ctx.accountId,
       name: old.name,
+      note: old.note,
       key_prefix: gen.prefix,
       key_last4: gen.last4,
       key_hash: gen.hash,
       scopes: old.scopes,
+      allowed_cidrs: old.allowed_cidrs,
       created_by: ctx.userId,
     })
-    .select('id, name, key_prefix, key_last4, scopes, created_at, last_used_at, expires_at, revoked_at')
+    .select(KEY_COLUMNS)
     .single()
   if (error || !created) {
     console.error('[api-keys] rotate failed:', error?.message)
@@ -59,7 +69,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     grace === 0
       ? { revoked_at: now.toISOString() }
       : { expires_at: new Date(now.getTime() + grace * 3600_000).toISOString() }
-  await db.from('api_keys').update(patch).eq('id', old.id).eq('account_id', ctx.accountId)
+  const { data: updated, error: updateError } = await db
+    .from('api_keys')
+    .update(patch)
+    .eq('id', old.id)
+    .eq('account_id', ctx.accountId)
+    .select('id')
+    .maybeSingle()
+  if (updateError || !updated) {
+    console.error('[api-keys] rotate: old key update failed:', updateError?.message)
+    // Undo: never leave a surprise extra live key behind.
+    await db.from('api_keys').delete().eq('id', created.id).eq('account_id', ctx.accountId)
+    return NextResponse.json({ error: 'Failed to rotate the API key' }, { status: 500 })
+  }
 
-  return NextResponse.json({ key: { ...created, state: 'active' }, secret: gen.key }, { status: 201 })
+  return NextResponse.json(
+    { key: { ...created, state: 'active' }, secret: gen.key },
+    { status: 201, headers: { 'Cache-Control': 'no-store' } },
+  )
 }
