@@ -509,7 +509,7 @@ RETURNS INTEGER
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $
+AS $$
   WITH idem AS (
     DELETE FROM api_idempotency_keys WHERE created_at < now() - interval '24 hours' RETURNING 1
   ), old AS (
@@ -520,7 +520,7 @@ AS $
     ) r WHERE l.id = r.id AND r.rn > 200 RETURNING 1
   )
   SELECT ((SELECT COUNT(*) FROM idem) + (SELECT COUNT(*) FROM old) + (SELECT COUNT(*) FROM over))::INTEGER;
-$;
+$$;
 REVOKE ALL ON FUNCTION public.api_purge() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.api_purge() TO service_role;
 

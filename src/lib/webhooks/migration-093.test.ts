@@ -9,6 +9,12 @@ import { WEBHOOK_EVENTS } from './events'
 const sql = readFileSync(join(process.cwd(), 'supabase/migrations/093_webhooks_api_keys.sql'), 'utf8')
 
 describe('migration 093 contract', () => {
+  it('opens and closes every function body with $$ (a lone $ does not parse)', () => {
+    expect(sql).not.toMatch(/^AS \$\s*$/m)
+    expect(sql).not.toMatch(/^\$;\s*$/m)
+    expect(sql.match(/^AS \$\$$/gm)?.length).toBe(sql.match(/^\$\$;$/gm)?.length)
+  })
+
   it('claims deliveries with a lease and SKIP LOCKED (no double delivery across ticks)', () => {
     const claim = sql.slice(sql.indexOf('FUNCTION public.webhook_claim_deliveries'))
     expect(claim).toContain('FOR UPDATE OF d SKIP LOCKED')
