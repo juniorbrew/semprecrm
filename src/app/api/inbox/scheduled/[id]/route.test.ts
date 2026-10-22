@@ -160,14 +160,19 @@ describe('a stuck `sending` row (swept by the claim) cannot be re-sent without c
     expect(h.rows[0]).toMatchObject({ status: 'failed', error_code: 'maybe_sent' })
   })
 
-  it('with confirm the guard is lifted before the claim', async () => {
+  it('with confirm the claim itself is told (p_confirm), the route does not clear the marker first', async () => {
     h.ctx = { userId: 'u-author', role: 'agent', accountId: 'a1' }
     h.rows = [row({ status: 'failed', error_code: 'maybe_sent' })]
-    h.dispatch.mockImplementationOnce(async () => {
-      expect(h.rows[0].error_code).toBeNull() // the claim would skip a maybe_sent row
-      return { claimed: 1, sent: 1, failed: 0 }
-    })
     expect((await SEND(json({ confirm: true }), params)).status).toBe(200)
+    expect(h.dispatch).toHaveBeenCalledWith(expect.anything(), { id: 's1', confirm: true })
+    expect(h.rows[0].error_code).toBe('maybe_sent') // cleared atomically by the SQL claim, not here
+  })
+
+  it('a plain retry never asks the claim to confirm', async () => {
+    h.ctx = { userId: 'u-author', role: 'agent', accountId: 'a1' }
+    h.rows = [row({ status: 'failed', error_code: 'send_failed' })]
+    await SEND(json({ confirm: true }), params)
+    expect(h.dispatch).toHaveBeenCalledWith(expect.anything(), { id: 's1', confirm: false })
   })
 })
 

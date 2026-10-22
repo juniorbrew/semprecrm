@@ -3,7 +3,7 @@
 -- Destroys every queued message. Afterwards delete 092 from
 -- supabase_migrations.schema_migrations so a later `db push` re-applies it.
 BEGIN;
-DROP FUNCTION IF EXISTS public.scheduled_messages_claim(timestamptz, integer, uuid);
+DROP FUNCTION IF EXISTS public.scheduled_messages_claim(timestamptz, integer, uuid, boolean);
 DROP TABLE IF EXISTS public.scheduled_messages;   -- drops the cap trigger with it
 DROP FUNCTION IF EXISTS public.scheduled_messages_cap();
 COMMIT;

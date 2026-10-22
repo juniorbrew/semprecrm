@@ -71,13 +71,18 @@ function makeDb(seed: {
       if (seed.claimError) return { data: null, error: seed.claimError }
       const limit = args.p_limit as number
       const id = args.p_id as string | null
+      const confirm = args.p_confirm === true
       const now = new Date(args.p_now as string).getTime()
       const rows = t.scheduled_messages
         .filter((r) =>
-          id ? r.id === id && ['pending', 'failed'].includes(r.status as string) : r.status === 'pending' && new Date(r.scheduled_for as string).getTime() <= now,
+          id
+            ? r.id === id &&
+              (r.status === 'pending' || (r.status === 'failed' && (confirm || r.error_code !== 'maybe_sent')))
+            : r.status === 'pending' && new Date(r.scheduled_for as string).getTime() <= now,
         )
         .slice(0, limit)
       rows.forEach((r) => {
+        r.error_code = null
         r.status = 'sending'
         r.attempts = ((r.attempts as number) ?? 0) + 1
       })
@@ -157,6 +162,22 @@ describe('runScheduledDispatch', () => {
     const send = okSend()
     expect((await runScheduledDispatch(db, { now: NOW, id: 's1', send })).claimed).toBe(0)
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('a maybe_sent row is claimed only with confirm, and the claim clears the marker', async () => {
+    const { db, t } = makeDb({ scheduled: [sched({ status: 'failed', error_code: 'maybe_sent' })] })
+    const send = okSend()
+    expect((await runScheduledDispatch(db, { now: NOW, id: 's1', send, findOtherActive: noOther })).claimed).toBe(0)
+    expect(send).not.toHaveBeenCalled()
+    const out = await runScheduledDispatch(db, { now: NOW, id: 's1', confirm: true, send, findOtherActive: noOther })
+    expect(out.sent).toBe(1)
+    expect(t.scheduled_messages[0]).toMatchObject({ status: 'sent', error_code: null })
+  })
+
+  it('confirm has no effect on the cron claim (no id)', async () => {
+    const { db, rpcCalls } = makeDb({ scheduled: [] })
+    await runScheduledDispatch(db, { now: NOW, confirm: true })
+    expect(rpcCalls[0]).toMatchObject({ p_confirm: false })
   })
 
   it('"enviar agora" sends a pending row before its time, and retry re-sends a failed one', async () => {

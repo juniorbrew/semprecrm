@@ -84,11 +84,14 @@ CREATE TRIGGER scheduled_messages_cap
 
 -- ---- 3. atomic claim -------------------------------------------------------
 -- p_id set = "enviar agora" for that one row (only if still pending/failed,
--- ignoring its time); otherwise every pending row due at p_now.
+-- ignoring its time); otherwise every pending row due at p_now. A failed row
+-- parked as maybe_sent is taken only with p_confirm = true, and the code is
+-- cleared in the same UPDATE (confirm + claim are one atomic step).
 CREATE OR REPLACE FUNCTION public.scheduled_messages_claim(
   p_now   timestamptz DEFAULT clock_timestamp(),
   p_limit integer     DEFAULT 25,
-  p_id    uuid        DEFAULT NULL
+  p_id    uuid        DEFAULT NULL,
+  p_confirm boolean   DEFAULT false   -- with p_id: also take a failed/maybe_sent row (confirmed retry)
 ) RETURNS SETOF public.scheduled_messages
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -110,10 +113,11 @@ BEGIN
      WHERE CASE WHEN p_id IS NULL
                 THEN s.status = 'pending' AND s.scheduled_for <= p_now
                 -- "enviar agora"/retry: never a row the sweep just parked as maybe_sent
-                -- (that one needs the API's explicit confirmation, which clears the code first)
+                -- (that one needs the API's explicit confirmation: p_confirm)
                 ELSE s.id = p_id
                      AND (s.status = 'pending'
-                          OR (s.status = 'failed' AND s.error_code IS DISTINCT FROM 'maybe_sent')) END
+                          OR (s.status = 'failed'
+                              AND (p_confirm OR s.error_code IS DISTINCT FROM 'maybe_sent'))) END
      ORDER BY s.scheduled_for
      LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 25), 200))
      FOR UPDATE SKIP LOCKED
@@ -126,10 +130,10 @@ BEGIN
   RETURNING m.*;
 END;
 $$;
-ALTER FUNCTION public.scheduled_messages_claim(timestamptz, integer, uuid) OWNER TO postgres;
+ALTER FUNCTION public.scheduled_messages_claim(timestamptz, integer, uuid, boolean) OWNER TO postgres;
 -- 076: new functions are closed by default; only the cron / API (service role) call it.
-REVOKE EXECUTE ON FUNCTION public.scheduled_messages_claim(timestamptz, integer, uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.scheduled_messages_claim(timestamptz, integer, uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.scheduled_messages_claim(timestamptz, integer, uuid, boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.scheduled_messages_claim(timestamptz, integer, uuid, boolean) TO service_role;
 
 -- ---- 4. RLS ----------------------------------------------------------------
 ALTER TABLE public.scheduled_messages ENABLE ROW LEVEL SECURITY;

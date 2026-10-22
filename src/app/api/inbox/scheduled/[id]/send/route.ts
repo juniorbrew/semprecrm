@@ -52,18 +52,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
   }
 
-  if (owned.error_code === MAYBE_SENT) {
-    // Confirmed: lift the guard so the claim may take it (the claim itself never takes maybe_sent rows).
-    await admin
-      .from('scheduled_messages')
-      .update({ error_code: null })
-      .eq('id', id)
-      .eq('account_id', ctx.accountId)
-      .eq('status', 'failed')
-      .eq('error_code', MAYBE_SENT)
-  }
-
-  const result = await runScheduledDispatch(admin, { id })
+  // confirm is only ever true here for a maybe_sent row (checked above); the SQL claim
+  // takes such a row only with p_confirm and clears its code in the same UPDATE.
+  const result = await runScheduledDispatch(admin, { id, confirm: owned.error_code === MAYBE_SENT })
   if (result.claimed === 0) {
     // The claim's sweep may have just parked a stuck `sending` row: same confirmation applies.
     const { data: after } = await admin

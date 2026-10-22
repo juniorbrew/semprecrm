@@ -205,7 +205,7 @@ async function dispatchRow(db: SupabaseClient, row: ScheduledRow, now: Date, dep
  */
 export async function runScheduledDispatch(
   db: SupabaseClient,
-  opts: { now?: Date; id?: string } & DispatchDeps = {},
+  opts: { now?: Date; id?: string; confirm?: boolean } & DispatchDeps = {},
 ): Promise<DispatchResult> {
   const now = opts.now ?? new Date()
   const out: DispatchResult = { claimed: 0, sent: 0, failed: 0 }
@@ -214,6 +214,7 @@ export async function runScheduledDispatch(
       p_now: now.toISOString(),
       p_limit: DISPATCH_BATCH,
       p_id: opts.id ?? null,
+      p_confirm: !!opts.id && opts.confirm === true,
     })
     if (error) {
       // Migration 092 not applied yet reads as nothing to do.
