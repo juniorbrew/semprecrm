@@ -143,6 +143,9 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
 - O mesmo script chama `POST /api/integrations/calendar/sync` (sincronização Google Agenda /
   Outlook, até 20 conexões por chamada, as mais antigas primeiro) a cada `CALENDAR_SYNC_INTERVAL_MS`
   (padrão 300000 = 5 min). Sem conexões ativas a chamada responde `connections=0` e não custa nada.
+- Mensagens agendadas na conversa (migration 092): o mesmo loop chama `GET /api/inbox/scheduled/cron`
+  a cada tick; o envio pode atrasar até ~1 minuto depois do horário escolhido. O endpoint também é
+  bloqueado no `nginx.conf` pelo domínio público.
 - Logs: `pm2 logs semprecrm-cron` ou `/var/log/semprecrm/cron.*.log` — uma linha por chamada
   (`GET /api/automations/cron 200 85ms processed=0 inactive_fired=2`).
 - Se preferir um crontab com `curl -H "x-cron-secret: …"`, chame `http://127.0.0.1:3000/...` na própria

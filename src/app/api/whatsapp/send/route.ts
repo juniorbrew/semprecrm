@@ -9,6 +9,7 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { pauseActiveFlowRuns } from '@/lib/flows/pause-on-agent'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from '@/lib/whatsapp/phone-echo'
 import { findOtherActiveConversation } from '@/lib/conversations/find-by-contact'
@@ -640,37 +641,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: 'Failed to send message' },
       { status: 500 }
-    )
-  }
-}
-
-/**
- * Pause any active Flow run for this contact — the agent stepping in
- * is the strongest "yield, human is here" signal. We pause (not end)
- * to preserve diagnostic state; the agent or the 24h timeout sweep
- * resolves the run later. For accounts with no active runs the UPDATE
- * matches zero rows — cheap and harmless. Best-effort: the message
- * already landed, so a bookkeeping miss is logged, never surfaced.
- */
-async function pauseActiveFlowRuns(accountId: string, contactId: string) {
-  try {
-    const { error: pauseErr } = await supabaseAdmin()
-      .from('flow_runs')
-      .update({
-        status: 'paused_by_agent',
-        ended_at: new Date().toISOString(),
-        end_reason: 'agent_replied',
-      })
-      .eq('account_id', accountId)
-      .eq('contact_id', contactId)
-      .eq('status', 'active')
-    if (pauseErr) {
-      console.error('[flows] pause-on-agent-send failed:', pauseErr.message)
-    }
-  } catch (err) {
-    console.error(
-      '[flows] pause-on-agent-send threw:',
-      err instanceof Error ? err.message : err,
     )
   }
 }
