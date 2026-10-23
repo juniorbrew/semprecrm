@@ -27,12 +27,15 @@ import {
   listSubscriptionPayments,
   type AsaasPayment,
 } from '@/lib/billing/asaas'
-import { asaasCycle, isBillingCycle, isNewPayment, periodPriceCents, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
+import { asaasCycle, isBillingCycle, isNewPayment, periodEnd, periodPriceCents, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { PLANS, type Plan } from '@/lib/plans'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
+
+/** Subscriptions created per account in 24 h (each one is a real object in Asaas). */
+export const MAX_CHECKOUTS_PER_DAY = 10
 
 export const CHECKOUT_ERRORS = {
   notConfigured: 'Online payment is not available yet. Talk to the SempreCRM team.',
@@ -43,6 +46,7 @@ export const CHECKOUT_ERRORS = {
   confirming: 'Your payment is being confirmed. This takes a few minutes.',
   suspended: 'This account is suspended. Talk to the SempreCRM team.',
   busy: 'Another subscription request is in progress. Try again.',
+  tooMany: 'Too many subscription attempts in the last 24 hours. Try again tomorrow or talk to the SempreCRM team.',
   provider: 'Could not reach the payment provider. Try again in a few minutes.',
 } as const
 
@@ -103,17 +107,42 @@ export async function POST(request: Request) {
 
     // pending: the first charge is still to be paid. past_due: a renewal is
     // overdue. Either way the subscription's charges tell what to do.
-    const covered = coveredUntilMs(current)
+    const covered = coveredUntilMs(current, Date.now())
     if ((current?.status === 'pending' || current?.status === 'past_due') && current.asaas_subscription_id) {
       const payments = await syncPayments(db, ctx.accountId, current.asaas_subscription_id)
-      // Paid, webhook not here yet: never drop a paid subscription.
-      if (payments.some((p) => isNewPayment(p, current.cycle as BillingCycle, covered))) {
-        return NextResponse.json({ error: CHECKOUT_ERRORS.confirming }, { status: 409 })
+      // Paid and Asaas confirms it (just re-read above), but our webhook never
+      // landed: apply what the webhook would have, instead of looping on 409.
+      const paid = payments.filter((p) => isNewPayment(p, current.cycle as BillingCycle, covered))
+      if (paid.length > 0) {
+        const end = new Date(Math.max(...paid.map((p) => periodEnd(p.dueDate, current.cycle as BillingCycle).getTime())))
+        const { data: applied, error: actErr } = await db.rpc('billing_activate', {
+          p_account_id: ctx.accountId,
+          p_subscription_id: current.asaas_subscription_id,
+          p_period_end: end.toISOString(),
+        })
+        if (actErr) throw new Error(`billing activation failed: ${actErr.message}`)
+        // false = replaced meanwhile / an older charge: leave it to the webhook.
+        if (applied === false) return NextResponse.json({ error: CHECKOUT_ERRORS.confirming }, { status: 409 })
+        return NextResponse.json({ confirmed: true })
       }
       // Same plan/cycle still unpaid: hand back the same charge.
       const url = openInvoice(payments)
       if (url && current.plan === plan && current.cycle === cycle) return NextResponse.json({ url })
       // A different choice replaces the old subscription (below, once the new one exists).
+    }
+
+    // DB-backed cap (the per-minute limiter is per process): every creation below
+    // leaves a BILLING_CHECKOUT audit row, which is what is counted.
+    const since = new Date(Date.now() - 24 * 3_600_000).toISOString()
+    const { count: recent, error: capErr } = await db
+      .from('audit_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', ctx.accountId)
+      .eq('action', AUDIT_ACTIONS.BILLING_CHECKOUT)
+      .gte('created_at', since)
+    if (capErr) throw new Error(`checkout cap read failed: ${capErr.message}`)
+    if ((recent ?? 0) >= MAX_CHECKOUTS_PER_DAY) {
+      return NextResponse.json({ error: CHECKOUT_ERRORS.tooMany }, { status: 429 })
     }
 
     const customerId =
@@ -229,11 +258,16 @@ async function cancelReplaced(subscriptionId: string, cycle: BillingCycle, cover
   await cancelQuietly(subscriptionId)
 }
 
-/** Access already paid for (past_due keeps its period end); -Infinity = nothing is. */
-function coveredUntilMs(current: BillingRow | null): number {
-  if (current?.status !== 'past_due' || !current.current_period_end) return -Infinity
-  const ms = Date.parse(current.current_period_end)
-  return Number.isFinite(ms) ? ms : -Infinity
+/**
+ * Access already paid for: a past_due row keeps its period end. With no end
+ * recorded nothing is known to be covered, so only a charge that would still
+ * give access from `nowMs` on counts (an old paid charge must not). A pending
+ * row covers nothing: -Infinity, any paid charge counts.
+ */
+function coveredUntilMs(current: BillingRow | null, nowMs: number): number {
+  if (current?.status !== 'past_due') return -Infinity
+  const ms = current.current_period_end ? Date.parse(current.current_period_end) : NaN
+  return Number.isFinite(ms) ? ms : nowMs
 }
 
 /** Stores the subscription's charges (as Asaas has them) and returns them. */

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import {
   SCHEDULE_ACCOUNT_CAP,
@@ -89,7 +89,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireWritable(await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }

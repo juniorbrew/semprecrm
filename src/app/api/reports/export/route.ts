@@ -35,7 +35,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function GET(request: Request) {
   try {
     const ctx = await requireRole('admin')
-    await requireModule(ctx, 'dashboard')
+    await requireModule(ctx, 'dashboard', { allowReadOnly: true })
 
     const limit = checkRateLimit(`admin:reports-export:${ctx.userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)

@@ -79,6 +79,8 @@ export function BlockedScreen({ reason }: { reason: BlockReason }) {
   const { t } = useLanguage();
   const { signOut, account, isOwner } = useAuth();
   const copy = REASON_COPY[reason];
+  // "Assinar" only where subscribing fixes it (not suspension, not an unreadable plan).
+  const canSubscribe = isOwner && (reason === 'canceled' || reason === 'past_due' || reason === 'trial_expired');
 
   return (
     <div className="bg-background flex min-h-screen items-center justify-center p-6">
@@ -114,13 +116,14 @@ export function BlockedScreen({ reason }: { reason: BlockReason }) {
               Tentar novamente
             </Button>
           )}
+          {/* The owner can fix it right here: Settings → Plano stays reachable while blocked. */}
           <Button
-            variant="outline"
+            variant={canSubscribe ? 'default' : 'outline'}
             nativeButton={false}
             render={<Link href="/settings?tab=plan" />}
           >
             <Settings className="size-4" />
-            {t('View plan')}
+            {canSubscribe ? t('Subscribe') : t('View plan')}
           </Button>
           <Button variant="ghost" onClick={signOut}>
             <LogOut className="size-4" />

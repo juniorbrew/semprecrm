@@ -48,6 +48,7 @@
 import type { ComponentProps, ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useReadOnly } from "@/hooks/use-read-only";
 import { cn } from "@/lib/utils";
 
 interface GatedButtonProps extends Omit<ComponentProps<typeof Button>, "title"> {
@@ -74,10 +75,15 @@ export function GatedButton({
   children,
   ...rest
 }: GatedButtonProps) {
+  const { readOnly: planReadOnly } = useReadOnly();
   const effectivelyDisabled = disabled || !canAct;
-  const tooltip = !canAct && gateReason
-    ? `Read-only — your role can't ${gateReason}`
-    : title;
+  // A read-only PLAN (trial ended / payment overdue) is the likelier cause
+  // than the person's role: say so and point to Settings → Plano.
+  const tooltip = !canAct && planReadOnly
+    ? "Read-only account — subscribe in Settings → Plan to use this"
+    : !canAct && gateReason
+      ? `Read-only — your role can't ${gateReason}`
+      : title;
 
   return (
     <span

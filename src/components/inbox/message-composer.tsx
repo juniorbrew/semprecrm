@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
+import { useReadOnly } from "@/hooks/use-read-only";
 import { useLanguage } from "@/hooks/use-language";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 import { invalidateAiStatus, useAiStatus } from "@/hooks/use-ai-status";
@@ -198,6 +199,8 @@ const COMPOSER_COPY: Record<
     notePlaceholder: string;
     expiredPlaceholder: string;
     readOnlyPlaceholder: string;
+    /** Trial ended / payment overdue (billing read-only mode). */
+    planReadOnlyPlaceholder: string;
     anonymizedPlaceholder: string;
     expiredLine: string;
     templates: string;
@@ -258,6 +261,7 @@ const COMPOSER_COPY: Record<
     notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
     expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
     readOnlyPlaceholder: "Somente leitura — seu perfil não pode responder",
+    planReadOnlyPlaceholder: "Conta em modo somente leitura — assine em Configurações → Plano para voltar a enviar",
     anonymizedPlaceholder: "Contato anonimizado — envio bloqueado (LGPD)",
     expiredLine:
       "Janela de 24 h encerrada: o WhatsApp só aceita modelos aprovados até o cliente responder de novo.",
@@ -322,6 +326,7 @@ const COMPOSER_COPY: Record<
     notePlaceholder: "Write a note for your team — the customer won't see it",
     expiredPlaceholder: "24-hour window closed — send a template",
     readOnlyPlaceholder: "Read-only — your role can't reply",
+    planReadOnlyPlaceholder: "Account is read-only — subscribe in Settings → Plan to send again",
     anonymizedPlaceholder: "Contact anonymized — sending is blocked (LGPD)",
     expiredLine:
       "24-hour window closed: WhatsApp only accepts approved templates until the customer replies again.",
@@ -535,6 +540,7 @@ ${restoreDraft.text}` : restoreDraft.text));
   // For solo users this is always true — single-owner accounts pass
   // every capability — so the disabled branch is a no-op there.
   const canSend = useCan("send-messages");
+  const { readOnly: planReadOnly } = useReadOnly();
   const readOnly = !canSend || contactAnonymized;
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
@@ -1055,6 +1061,8 @@ ${restoreDraft.text}` : restoreDraft.text));
   const sendLabel = isNote ? copy.addNote : copy.send;
   const placeholder = contactAnonymized
     ? copy.anonymizedPlaceholder
+    : planReadOnly
+    ? copy.planReadOnlyPlaceholder
     : readOnly
     ? copy.readOnlyPlaceholder
     : isNote

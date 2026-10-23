@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const plan = vi.hoisted(() => ({ checks: [] as boolean[], writable: (n: number): boolean => n >= 0 }));
+vi.mock('@/lib/plans-server', () => ({
+  accountIsWritable: async () => {
+    const ok = plan.writable(plan.checks.length);
+    plan.checks.push(ok);
+    return ok;
+  },
+}));
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain:${v}` }));
 // The WhatsApp token is read with the service role: same fake database.
 
@@ -143,6 +151,38 @@ describe('row claim', () => {
       ['pending', 'failed'],
     );
     expect(claimed.map((r) => r.id)).toEqual(['r3']);
+  });
+});
+
+describe('read-only / blocked account mid-campaign', () => {
+  it('re-checks the plan every 50 rows, stops, and hands the unsent rows back as pending', async () => {
+    plan.checks = [];
+    plan.writable = (n) => n === 0; // fine at row 0, blocked at row 50
+    const db = seed(120);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    const ids = db.table('broadcast_recipients').map((r) => r.id as string);
+
+    const results = await deliverRecipientIds(client, ctx, ids, ['pending']);
+
+    expect(plan.checks).toEqual([true, false]);
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(50);
+    expect(results.filter((r) => r.outcome === 'sent')).toHaveLength(50);
+    expect(results.filter((r) => r.outcome === 'skipped')).toHaveLength(70);
+    expect(rowStatuses(db)).toEqual({ sent: 50, pending: 70 });
+    plan.writable = () => true;
+    plan.checks = [];
+  });
+
+  it('a blocked account sends nothing at all', async () => {
+    plan.writable = () => false;
+    const db = seed(5);
+    const client = db.client();
+    const ctx = await loadDeliveryContext(client, ACCOUNT, BC);
+    await deliverRecipientIds(client, ctx, db.table('broadcast_recipients').map((r) => r.id as string), ['pending']);
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
+    expect(rowStatuses(db)).toEqual({ pending: 5 });
+    plan.writable = () => true;
   });
 });
 

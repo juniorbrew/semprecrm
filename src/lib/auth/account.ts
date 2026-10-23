@@ -37,6 +37,12 @@ import {
 } from '@/lib/plans';
 import { hasMinRole, isAccountRole, type AccountRole } from './roles';
 import { isPersonType, type PersonType } from '@/lib/br/documents';
+import {
+  ACCOUNT_BLOCKED_MESSAGE,
+  READ_ONLY_MESSAGES,
+  readOnlyReason,
+  type ReadOnlyReason,
+} from '@/lib/billing/read-only';
 
 // ------------------------------------------------------------
 // Errors
@@ -82,6 +88,21 @@ export class ModuleNotIncludedError extends ForbiddenError {
 }
 
 /**
+ * The account is in read-only mode (trial ended / payment overdue): the
+ * action starts outbound work. 402 with `code: "read_only"`.
+ */
+export class ReadOnlyError extends Error {
+  readonly status = 402 as const;
+  readonly code = 'read_only' as const;
+  readonly reason: ReadOnlyReason;
+  constructor(reason: ReadOnlyReason) {
+    super(READ_ONLY_MESSAGES[reason]);
+    this.name = 'ReadOnlyError';
+    this.reason = reason;
+  }
+}
+
+/**
  * A plan limit (`max_users`, `max_channels`) would be exceeded. 403
  * with `code: "plan_limit_reached"`.
  */
@@ -107,6 +128,12 @@ export class PlanLimitError extends ForbiddenError {
 export function toErrorResponse(err: unknown): NextResponse {
   if (err instanceof UnauthorizedError) {
     return NextResponse.json({ error: err.message }, { status: err.status });
+  }
+  if (err instanceof ReadOnlyError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code },
+      { status: err.status }
+    );
   }
   if (err instanceof ForbiddenError) {
     return NextResponse.json(
@@ -264,18 +291,46 @@ export async function getEntitlements(
 
 /**
  * Enforce that the caller's plan includes `module` and the account
- * is not blocked. Throws `ModuleNotIncludedError` (403) otherwise.
+ * is not blocked. Throws `ReadOnlyError` (402) for a read-only account
+ * (trial ended / payment overdue) and `ModuleNotIncludedError` (403)
+ * otherwise. Pass `allowReadOnly` on routes that only READ, so a
+ * read-only account can still look at its data.
  *
  *   const ctx = await requireRole("agent");
  *   await requireModule(ctx, "broadcasts");
  */
 export async function requireModule(
   ctx: AccountContext,
-  module: Module
+  module: Module,
+  opts: { allowReadOnly?: boolean } = {}
 ): Promise<Entitlements> {
   const ent = await loadAccountEntitlements(ctx.supabase, ctx.accountId);
+  const readOnly = readOnlyReason(ent);
+  if (readOnly && opts.allowReadOnly) {
+    if (!ent!.modules[module]) throw new ModuleNotIncludedError(module);
+    return ent!;
+  }
+  if (readOnly) throw new ReadOnlyError(readOnly);
   if (!ent || ent.blocked || !ent.modules[module]) {
     throw new ModuleNotIncludedError(module);
   }
   return ent;
+}
+
+/**
+ * Guard for every action that starts OUTBOUND work (WhatsApp send / react /
+ * typing, broadcasts, scheduled messages, AI replies): the account must not
+ * be blocked. Read-only accounts get 402 `read_only`; suspended / canceled /
+ * unreadable ones 403 `account_blocked`. Inbound paths never call this.
+ */
+export async function requireWritable(
+  ctx: AccountContext
+): Promise<AccountContext> {
+  const ent = await getEntitlements(ctx);
+  const readOnly = readOnlyReason(ent);
+  if (readOnly) throw new ReadOnlyError(readOnly);
+  if (ent.blocked) {
+    throw new ForbiddenError(ACCOUNT_BLOCKED_MESSAGE, 'account_blocked');
+  }
+  return ctx;
 }

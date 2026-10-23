@@ -39,7 +39,7 @@ const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 export async function GET() {
   try {
     const ctx = await requireRole('admin');
-    await requireModule(ctx, 'ai');
+    await requireModule(ctx, 'ai', { allowReadOnly: true });
     const { data, error } = await ctx.supabase
       .from('ai_knowledge_items')
       .select(KB_ITEM_SUMMARY_COLUMNS)

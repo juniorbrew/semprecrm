@@ -111,6 +111,7 @@ export function makeFakeDb(tables: Record<string, Row[]>, opts: FakeDbOptions = 
       // SQL semantics: NULL <> x is not true.
       neq: (c: string, v: unknown) => (filters.push((r) => val(r, c) !== null && val(r, c) !== undefined && !same(val(r, c), v)), b),
       gt: (c: string, v: unknown) => (filters.push((r) => String(r[c]) > String(v)), b),
+      gte: (c: string, v: unknown) => (filters.push((r) => String(r[c]) >= String(v)), b),
       lt: (c: string, v: unknown) => (filters.push((r) => String(r[c]) < String(v)), b),
       lte: (c: string, v: unknown) => (filters.push((r) => String(r[c]) <= String(v)), b),
       in: (c: string, vs: unknown[]) => (inSizes.push(vs.length), filters.push((r) => vs.includes(r[c])), b),

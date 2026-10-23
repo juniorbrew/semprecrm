@@ -22,6 +22,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
+import { accountIsWritable } from '@/lib/plans-server'
 import { GatewayRequestError, isGatewayThrottled } from '@/lib/whatsapp/qr-gateway'
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import {
@@ -79,6 +80,7 @@ export async function runCsatCron(
   db: SupabaseClient,
   now: Date = new Date(),
   send: Send = engineSendText,
+  writable: (db: SupabaseClient, accountId: string) => Promise<boolean> = accountIsWritable,
 ): Promise<CsatCronResult> {
   const out: CsatCronResult = { claimed: 0, sent: 0, skipped: 0, errors: 0, expired: 0 }
 
@@ -99,7 +101,7 @@ export async function runCsatCron(
 
   for (const job of jobs) {
     try {
-      const result = await handleJob(db, job, now, send)
+      const result = await handleJob(db, job, now, send, writable)
       if (result === 'sent') out.sent += 1
       else if (result === 'uncertain') out.errors += 1
       else out.skipped += 1
@@ -127,7 +129,18 @@ async function finish(db: SupabaseClient, job: Job, result: string, now: Date) {
   if (error) throw new Error(`cannot finish job: ${error.message}`)
 }
 
-async function handleJob(db: SupabaseClient, job: Job, now: Date, send: Send): Promise<'sent' | CsatSkipReason | 'duplicate' | 'delayed' | 'uncertain'> {
+async function handleJob(
+  db: SupabaseClient,
+  job: Job,
+  now: Date,
+  send: Send,
+  writable: (db: SupabaseClient, accountId: string) => Promise<boolean>,
+): Promise<'sent' | CsatSkipReason | 'duplicate' | 'delayed' | 'uncertain' | 'read_only'> {
+  // Read-only / blocked account (trial ended, payment overdue, suspended): no survey goes out.
+  if (!(await writable(db, job.account_id))) {
+    await finish(db, job, 'account_read_only', now)
+    return 'read_only'
+  }
   const [convRes, settingsRes] = await Promise.all([
     db
       .from('conversations')

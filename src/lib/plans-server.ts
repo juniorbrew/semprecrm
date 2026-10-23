@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeAssignedPlan } from './plan-catalog';
+import { readOnlyReason } from './billing/read-only';
 
 import {
   resolveEntitlements,
@@ -65,12 +66,28 @@ export async function loadAccountEntitlements(
 export async function accountHasModule(
   db: SupabaseClient,
   accountId: string,
-  module: Module
+  module: Module,
+  /** Inbound capture (public lead webhook) keeps working in read-only mode. */
+  opts: { allowReadOnly?: boolean } = {}
 ): Promise<boolean> {
   const ent = await loadAccountEntitlements(db, accountId);
   if (!ent) return false;
-  if (ent.blocked) return false;
+  if (ent.blocked && !(opts.allowReadOnly && readOnlyReason(ent))) return false;
   return ent.modules[module];
+}
+
+/**
+ * `true` iff the account exists and is not blocked (no module needed).
+ * For outbound work that runs without a user: scheduled messages, CSAT.
+ * Trial ended / payment overdue count as blocked here (read-only mode:
+ * nothing is sent on the customer's behalf); unreadable plan fails closed.
+ */
+export async function accountIsWritable(
+  db: SupabaseClient,
+  accountId: string
+): Promise<boolean> {
+  const ent = await loadAccountEntitlements(db, accountId);
+  return !!ent && !ent.blocked;
 }
 
 /**

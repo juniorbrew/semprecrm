@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
     role: 'agent' as string,
     /** The contact's live conversation other than this one (migration 060). */
     activeOther: null as Record<string, unknown> | null,
+    /** Plan block of the account (resolveEntitlements().blocked). */
+    blocked: false as false | { reason: string },
   },
   meta: {
     sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.META' })),
@@ -33,6 +35,9 @@ const h = vi.hoisted(() => ({
   },
 }))
 
+vi.mock('@/lib/plans-server', () => ({
+  loadAccountEntitlements: async () => ({ plan: 'pro', status: 'active', expiresAt: null, modules: {}, limits: {}, blocked: h.state.blocked }),
+}))
 vi.mock('@/lib/whatsapp/meta-api', () => h.meta)
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: () => 'token',
@@ -543,5 +548,25 @@ describe('POST /api/whatsapp/send — opt-out / anonymised contacts', () => {
     const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'Tudo certo, removemos você da lista.' }))
     expect(res.status).toBe(200)
     expect(h.meta.sendTextMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('402 read_only for a trial-expired or past-due account: nothing is sent or stored', async () => {
+    for (const reason of ['trial_expired', 'past_due']) {
+      h.state.blocked = { reason }
+      const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+      expect(res.status).toBe(402)
+      expect(await res.json()).toMatchObject({ code: 'read_only', error: expect.stringContaining('somente leitura') })
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(h.meta.sendTextMessage).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
+  })
+
+  it('403 account_blocked for a suspended account', async () => {
+    h.state.blocked = { reason: 'suspended' }
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toMatchObject({ code: 'account_blocked' })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

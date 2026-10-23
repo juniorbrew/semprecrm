@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // ------------------------------------------------------------
 
 vi.mock('@/lib/automations/meta-send', () => ({ engineSendText: vi.fn() }))
+vi.mock('@/lib/plans-server', () => ({ accountIsWritable: async () => true }))
 vi.mock('@/lib/push/send', () => ({ isPushConfigured: () => false, sendPushToUsers: vi.fn() }))
 const pauseSpy = vi.hoisted(() => vi.fn(async () => {}))
 vi.mock('@/lib/flows/pause-on-agent', () => ({ pauseActiveFlowRuns: pauseSpy }))
@@ -135,6 +136,17 @@ describe('runScheduledDispatch', () => {
     const blocked = makeDb({ scheduled: [sched()], contacts: [{ id: 'k1', account_id: 'a1', anonymized_at: 'x' }] })
     await runScheduledDispatch(blocked.db, { now: NOW, send: okSend(), notifyFailure: notify, findOtherActive: noOther })
     expect(pauseSpy).not.toHaveBeenCalled()
+  })
+
+  it('read-only / blocked account: the due message is NOT sent, it fails with a pt-BR reason and the author is told', async () => {
+    const { db, t } = makeDb({ scheduled: [sched()] })
+    const send = okSend()
+    const out = await runScheduledDispatch(db, { now: NOW, send, notifyFailure: notify, findOtherActive: noOther, writable: async () => false })
+    expect(out).toEqual({ claimed: 1, sent: 0, failed: 1 })
+    expect(send).not.toHaveBeenCalled()
+    expect(t.scheduled_messages[0]).toMatchObject({ status: 'failed', error_code: 'account_read_only' })
+    expect(String(t.scheduled_messages[0].error_text)).toMatch(/somente leitura/)
+    expect(notify).toHaveBeenCalledTimes(1)
   })
 
   it('leaves future messages alone', async () => {

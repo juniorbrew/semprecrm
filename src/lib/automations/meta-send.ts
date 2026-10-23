@@ -7,6 +7,8 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { AccountReadOnlyError } from '@/lib/billing/read-only'
+import { accountIsWritable } from '@/lib/plans-server'
 import {
   resolveTemplateRow,
   templateContentText,
@@ -87,6 +89,10 @@ type SendInput =
 
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Read-only mode (trial ended / payment overdue) or blocked: nothing is
+  // sent on the account's behalf. Inbound never goes through here.
+  if (!(await accountIsWritable(db, input.accountId))) throw new AccountReadOnlyError()
 
   // QR channel (migration 026): the conversation lives on the WhatsApp
   // Web session, so deliver through the gateway. Templates don't exist

@@ -415,6 +415,14 @@ describe('runAutoReplyJob — stay out / hand over', () => {
     expect(db.table('ai_handoffs')).toHaveLength(0);
   });
 
+  it('read-only / blocked account (AI module reads as off) → quiet skip, no model call, nothing sent', async () => {
+    await runAutoReplyJob(job(), deps({ hasAiModule: async () => false }));
+    expect(jobRow().skip_reason).toBe('ai_disabled');
+    expect(prompts).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(db.table('ai_handoffs')).toHaveLength(0);
+  });
+
   it('budget → hand-over with notice', async () => {
     modelText = new AiError('budget_exceeded');
     await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');

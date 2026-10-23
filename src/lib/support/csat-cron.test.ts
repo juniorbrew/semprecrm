@@ -35,7 +35,7 @@ function setup(over: { conv?: Record<string, unknown>; contact?: Record<string, 
     ...over.extra,
   })
   const send = vi.fn(async () => ({ whatsapp_message_id: 'wamid-out' }))
-  const run = (now = NOW) => runCsatCron(db, now, send as never)
+  const run = (now = NOW, writable: () => Promise<boolean> = async () => true) => runCsatCron(db, now, send as never, writable)
   return { state, send, run }
 }
 
@@ -59,6 +59,15 @@ describe('runCsatCron', () => {
     ])
     expect(state.tables.conversation_events).toEqual([expect.objectContaining({ event_type: 'csat_sent', conversation_id: 'conv-1' })])
     expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'sent', processed_at: NOW.toISOString() })
+  })
+
+  it('read-only / blocked account: no survey goes out, the job is finished and no response row is created', async () => {
+    const { state, send, run } = setup()
+    const out = await run(NOW, async () => false)
+    expect(out).toMatchObject({ claimed: 1, sent: 0, skipped: 1, errors: 0 })
+    expect(send).not.toHaveBeenCalled()
+    expect(state.tables.csat_responses ?? []).toHaveLength(0)
+    expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'account_read_only', processed_at: NOW.toISOString() })
   })
 
   it('is idempotent: a repeated tick sends nothing more', async () => {

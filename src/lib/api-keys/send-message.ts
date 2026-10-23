@@ -3,7 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/automations/meta-send'
 import { MetaApiError } from '@/lib/whatsapp/meta-api'
 import { GatewayNotConfiguredError, GatewayRequestError, GatewayUnreachableError } from '@/lib/whatsapp/qr-gateway'
-import { accountHasModule } from '@/lib/plans-server'
+import { accountHasModule, loadAccountEntitlements } from '@/lib/plans-server'
+import { ACCOUNT_BLOCKED_MESSAGE, READ_ONLY_MESSAGES, readOnlyReason } from '@/lib/billing/read-only'
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -83,6 +84,12 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
   const { data: account } = await db.from('accounts').select('owner_user_id').eq('id', input.accountId).maybeSingle()
   const owner = account?.owner_user_id as string | undefined
   if (!owner) throw new ApiSendError(500, 'internal_error', 'Account not found.')
+
+  // Read-only / blocked account: refuse BEFORE any contact or conversation is created.
+  const ent = await loadAccountEntitlements(db, input.accountId)
+  const readOnly = readOnlyReason(ent)
+  if (readOnly) throw new ApiSendError(402, 'read_only', READ_ONLY_MESSAGES[readOnly])
+  if (!ent || ent.blocked) throw new ApiSendError(403, 'account_blocked', ACCOUNT_BLOCKED_MESSAGE)
 
   const outcome = await findOrCreateContact(db, input.accountId, owner, phone, '')
   if (!outcome) throw new ApiSendError(500, 'internal_error', 'Could not resolve the contact.')

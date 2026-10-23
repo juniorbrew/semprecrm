@@ -20,7 +20,7 @@ const MAX_ROWS = 20_000;
 export async function GET() {
   try {
     const ctx = await requireRole('admin');
-    await requireModule(ctx, 'ai');
+    await requireModule(ctx, 'ai', { allowReadOnly: true });
     const now = new Date();
     const since = monthStartInTimeZone(now);
     const { data, error } = await ctx.supabase

@@ -25,7 +25,7 @@ const optionalUuid = (v: unknown): string | null =>
 export async function POST(request: Request) {
   try {
     const ctx = await requireRole('admin')
-    await requireModule(ctx, 'lead_capture')
+    await requireModule(ctx, 'lead_capture', { allowReadOnly: true })
 
     const limit = checkRateLimit(`admin:lead-source-create:${ctx.userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)

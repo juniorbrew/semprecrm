@@ -51,7 +51,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const conv = await loadConversation(ctx, id);
     if (!conv) return notFound();
     try {
-      await requireModule(ctx, 'ai');
+      await requireModule(ctx, 'ai', { allowReadOnly: true });
     } catch (err) {
       if (err instanceof ModuleNotIncludedError) {
         return NextResponse.json({ applies: false, agent: null, paused: false, paused_until: null, handling: false, handoff: null });

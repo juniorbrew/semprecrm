@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   hasModule: true,
+  blocked: false as false | { reason: string },
+  contactsCreated: 0,
   modulesAsked: [] as string[],
   sendError: null as Error | null,
   sends: 0,
@@ -10,6 +12,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/plans-server', () => ({
+  loadAccountEntitlements: async () => ({ blocked: h.blocked }),
   accountHasModule: async (_db: unknown, _acc: string, module: string) => (h.modulesAsked.push(module), h.hasModule),
 }))
 vi.mock('@/lib/automations/meta-send', () => ({
@@ -21,7 +24,7 @@ vi.mock('@/lib/automations/meta-send', () => ({
   },
 }))
 vi.mock('@/lib/whatsapp/inbound', () => ({
-  findOrCreateContact: async () => ({ contact: { id: 'c1', opted_out_at: null }, wasCreated: false }),
+  findOrCreateContact: async () => (h.contactsCreated++, { contact: { id: 'c1', opted_out_at: null }, wasCreated: false }),
   listContactConversations: async () => [],
   pickActiveConversation: () => null,
   findOrCreateConversation: async () => ({ conversation: { id: 'conv1' }, created: false, previous: null }),
@@ -61,6 +64,8 @@ async function failure(promise: Promise<unknown>): Promise<ApiSendError> {
 describe('sendTextViaApi plan and failure handling', () => {
   beforeEach(() => {
     h.hasModule = true
+    h.blocked = false
+    h.contactsCreated = 0
     h.modulesAsked = []
     h.sendError = null
     h.sends = 0
@@ -75,6 +80,21 @@ describe('sendTextViaApi plan and failure handling', () => {
   it('asks for channel_qr when the QR channel is requested', async () => {
     await sendTextViaApi(db, { ...input, channel: 'qr' })
     expect(h.modulesAsked).toEqual(['channel_qr'])
+  })
+
+  it.each(['trial_expired', 'past_due'])('402 read_only while %s: no contact, no conversation, nothing sent', async (reason) => {
+    h.blocked = { reason }
+    const err = await failure(sendTextViaApi(db, input))
+    expect(err).toMatchObject({ status: 402, code: 'read_only', maybeSent: false })
+    expect(err.message).toMatch(/somente leitura/)
+    expect(h.contactsCreated).toBe(0)
+    expect(h.sends).toBe(0)
+  })
+
+  it('403 account_blocked for a suspended account, before any side effect', async () => {
+    h.blocked = { reason: 'suspended' }
+    expect(await failure(sendTextViaApi(db, input))).toMatchObject({ status: 403, code: 'account_blocked' })
+    expect(h.contactsCreated).toBe(0)
   })
 
   it('403 module_not_included (also what a blocked account looks like) and nothing is sent', async () => {

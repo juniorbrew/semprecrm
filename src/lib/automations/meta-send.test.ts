@@ -11,11 +11,13 @@ const h = vi.hoisted(() => ({
   inserts: [] as { table: string; row: Record<string, unknown> }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
   assertConversationOwned: vi.fn(async () => {}),
+  writable: true,
   sendTemplateMessage: vi.fn<(...a: unknown[]) => Promise<{ messageId: string }>>(async () => ({
     messageId: 'wamid.TPL',
   })),
 }))
 
+vi.mock('@/lib/plans-server', () => ({ accountIsWritable: async () => h.writable }))
 vi.mock('@/lib/whatsapp/meta-api', () => ({
   sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.TXT' })),
   sendTemplateMessage: (...a: unknown[]) => h.sendTemplateMessage(...a),
@@ -64,6 +66,7 @@ vi.mock('./admin-client', () => ({
 }))
 
 import { conversationChannel, engineSendViaQr } from '@/lib/whatsapp/qr-engine-send'
+import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { engineSendText, engineSendTemplate } from './meta-send'
 
 const ARGS = {
@@ -77,6 +80,7 @@ const ARGS = {
 }
 
 beforeEach(() => {
+  h.writable = true
   h.templates = []
   h.inserts = []
   h.updates = []
@@ -171,5 +175,16 @@ describe('engineSendText — QR priority', () => {
       expect.anything(),
       expect.objectContaining({ priority: 'interactive', agentId: 'agent-1' }),
     )
+  })
+})
+
+describe('engine senders — read-only / blocked account', () => {
+  it('refuses text and template sends before touching Meta, the channel or the database', async () => {
+    h.writable = false
+    await expect(engineSendText({ accountId: 'acct-1', userId: 'u-1', conversationId: 'conv-1', contactId: 'c-1', text: 'oi' })).rejects.toBeInstanceOf(AccountReadOnlyError)
+    await expect(engineSendTemplate(ARGS)).rejects.toBeInstanceOf(AccountReadOnlyError)
+    expect(conversationChannel).not.toHaveBeenCalled()
+    expect(h.sendTemplateMessage).not.toHaveBeenCalled()
+    expect(h.inserts).toHaveLength(0)
   })
 })

@@ -25,7 +25,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const ctx = await requireRole('agent');
-    await requireModule(ctx, 'ai');
+    await requireModule(ctx, 'ai', { allowReadOnly: true });
     const { data, error } = await ctx.supabase
       .from('ai_agents')
       .select(AGENT_COLUMNS)

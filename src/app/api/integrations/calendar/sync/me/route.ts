@@ -19,7 +19,7 @@ const STALE_AFTER_MS = 2 * 60_000
 export async function POST(request: Request) {
   try {
     const ctx = await getCurrentAccount()
-    await requireModule(ctx, 'calendar')
+    await requireModule(ctx, 'calendar', { allowReadOnly: true })
     const ifStale = new URL(request.url).searchParams.get('ifStale') === '1'
     if (!ifStale) {
       const limit = checkRateLimit(`calendar:sync:${ctx.userId}`, RATE_LIMITS.adminAction)

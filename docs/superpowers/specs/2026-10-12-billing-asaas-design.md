@@ -64,3 +64,15 @@ Só planos com preço no catálogo (`platform_plan_versions.price_monthly_cents`
 ## Variáveis de ambiente
 
 `ASAAS_API_KEY`, `ASAAS_API_URL` (`https://api-sandbox.asaas.com/v3` em testes), `ASAAS_WEBHOOK_TOKEN`.
+
+## Somente leitura (fase 1, entrega 2)
+
+- Uma só regra: `readOnlyReason()` (`src/lib/billing/read-only.ts`) sobre `resolveEntitlements().blocked`. Teste vencido e `past_due` são somente leitura; suspensão da plataforma, cancelamento e plano ilegível continuam bloqueio total (tela de bloqueio, 403).
+- Servidor: `requireWritable` e `requireModule` respondem 402 `read_only` em pt-BR nas rotas que começam envio (WhatsApp enviar/reagir/digitando, disparos, mensagens agendadas, IA). Os remetentes dos motores (`engineSend*`, automações e fluxos) recusam contas bloqueadas; os crons de agendadas e CSAT pulam a conta (a agendada falha com motivo visível). Entrada (mensagens de clientes, webhooks da Meta e do gateway, captura de leads, reconexão do QR) continua funcionando.
+- A API pública v1 continua inteiramente bloqueada para contas somente leitura (decisão do responsável).
+- Troca de plano/ciclo de assinatura **ativa** fica com a equipe (decisão do responsável).
+
+### Lacuna conhecida da fase 1
+
+As gravações de dados do CRM (contatos, tarefas, negócios etc.) feitas com o JWT do próprio usuário só são bloqueadas **na interface**; uma chamada direta ao Supabase de uma conta somente leitura ainda grava. O bloqueio no banco (RLS/gatilhos checando a situação da conta) é a **fase 3**. As rotas de envio e custo (WhatsApp, IA, disparos, automações) já recusam no servidor.
+
