@@ -27,7 +27,7 @@ import {
   listSubscriptionPayments,
   type AsaasPayment,
 } from '@/lib/billing/asaas'
-import { asaasCycle, isBillingCycle, PAID_STATUSES, periodPriceCents, todayInSaoPaulo } from '@/lib/billing/rules'
+import { asaasCycle, isBillingCycle, isNewPayment, periodPriceCents, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { PLANS, type Plan } from '@/lib/plans'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -52,6 +52,7 @@ type BillingRow = {
   plan: string
   cycle: string
   status: string
+  current_period_end: string | null
 }
 
 export async function POST(request: Request) {
@@ -91,22 +92,25 @@ export async function POST(request: Request) {
 
     const { data: existing, error: billErr } = await db
       .from('account_billing')
-      .select('asaas_customer_id, asaas_subscription_id, plan, cycle, status')
+      .select('asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end')
       .eq('account_id', ctx.accountId)
       .maybeSingle()
     if (billErr) throw new Error(`billing read failed: ${billErr.message}`)
     const current = existing as BillingRow | null
-    if (current && (current.status === 'active' || current.status === 'past_due')) {
+    if (current?.status === 'active') {
       return NextResponse.json({ error: CHECKOUT_ERRORS.alreadyActive }, { status: 409 })
     }
 
-    if (current?.status === 'pending' && current.asaas_subscription_id) {
+    // pending: the first charge is still to be paid. past_due: a renewal is
+    // overdue. Either way the subscription's charges tell what to do.
+    const covered = coveredUntilMs(current)
+    if ((current?.status === 'pending' || current?.status === 'past_due') && current.asaas_subscription_id) {
       const payments = await syncPayments(db, ctx.accountId, current.asaas_subscription_id)
       // Paid, webhook not here yet: never drop a paid subscription.
-      if (payments.some((p) => PAID_STATUSES.has(p.status))) {
+      if (payments.some((p) => isNewPayment(p, current.cycle as BillingCycle, covered))) {
         return NextResponse.json({ error: CHECKOUT_ERRORS.confirming }, { status: 409 })
       }
-      // Same plan/cycle still pending: hand back the same charge.
+      // Same plan/cycle still unpaid: hand back the same charge.
       const url = openInvoice(payments)
       if (url && current.plan === plan && current.cycle === cycle) return NextResponse.json({ url })
       // A different choice replaces the old subscription (below, once the new one exists).
@@ -170,7 +174,7 @@ export async function POST(request: Request) {
       if (now?.asaas_subscription_id !== subscription.id) await cancelQuietly(subscription.id)
       throw err
     }
-    if (current?.asaas_subscription_id) await cancelReplaced(current.asaas_subscription_id)
+    if (current?.asaas_subscription_id) await cancelReplaced(current.asaas_subscription_id, current.cycle as BillingCycle, covered)
     const url = openInvoice(await syncPayments(db, ctx.accountId, subscription.id))
 
     await audit({
@@ -206,11 +210,15 @@ async function cancelQuietly(subscriptionId: string): Promise<void> {
   }
 }
 
-/** The replaced subscription may have been paid meanwhile: then keep it and flag it for a refund. */
-async function cancelReplaced(subscriptionId: string): Promise<void> {
+/**
+ * The replaced subscription may have been paid meanwhile: then keep it and flag it for a refund.
+ * Only a payment that extends access beyond `coveredUntilMs` counts: an overdue
+ * subscription has paid history, and replacing it must still cancel it.
+ */
+async function cancelReplaced(subscriptionId: string, cycle: BillingCycle, coveredUntilMs: number): Promise<void> {
   try {
     const payments = await listSubscriptionPayments(subscriptionId)
-    if (payments.some((p) => PAID_STATUSES.has(p.status))) {
+    if (payments.some((p) => isNewPayment(p, cycle, coveredUntilMs))) {
       console.error('[billing/checkout] REPLACED subscription was paid, refund it in Asaas:', subscriptionId)
       return
     }
@@ -219,6 +227,13 @@ async function cancelReplaced(subscriptionId: string): Promise<void> {
     return
   }
   await cancelQuietly(subscriptionId)
+}
+
+/** Access already paid for (past_due keeps its period end); -Infinity = nothing is. */
+function coveredUntilMs(current: BillingRow | null): number {
+  if (current?.status !== 'past_due' || !current.current_period_end) return -Infinity
+  const ms = Date.parse(current.current_period_end)
+  return Number.isFinite(ms) ? ms : -Infinity
 }
 
 /** Stores the subscription's charges (as Asaas has them) and returns them. */

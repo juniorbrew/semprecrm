@@ -178,4 +178,66 @@ describe('billing checkout', () => {
     expect(res.status).toBe(502)
     expect(JSON.stringify(await res.json())).not.toMatch(/CPF inválido/)
   })
+  describe('past_due account (overdue renewal)', () => {
+    // Paid first month (period ended 2026-10-17 with grace) + the overdue renewal.
+    const paidFirst = { id: 'pay_1', subscription: 'sub_0', status: 'RECEIVED', value: 89.9, dueDate: '2026-09-12' }
+    const overdue = { id: 'pay_2', subscription: 'sub_0', status: 'OVERDUE', value: 89.9, dueDate: '2026-10-12', invoiceUrl: 'https://asaas/i/overdue' }
+    beforeEach(() => {
+      h.fake.tables.account_billing.push({
+        account_id: 'acct-1',
+        asaas_customer_id: 'cus_1',
+        asaas_subscription_id: 'sub_0',
+        plan: 'pro',
+        plan_version_id: 'v-pro',
+        cycle: 'monthly',
+        value_cents: 8990,
+        status: 'past_due',
+        current_period_end: '2026-10-17T23:59:59-03:00',
+      })
+      vi.mocked(asaas.listSubscriptionPayments).mockImplementation(async (sub: string) =>
+        sub === 'sub_0'
+          ? [paidFirst, overdue]
+          : [{ id: `pay_${sub}`, subscription: sub, status: 'PENDING', value: 59.9, dueDate: '2026-10-22', invoiceUrl: `https://asaas/i/${sub}` }],
+      )
+    })
+
+    it('returns the overdue charge link for the same plan and cycle, creating nothing', async () => {
+      const res = await checkout({ plan: 'pro', cycle: 'monthly' })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ url: 'https://asaas/i/overdue' })
+      expect(asaas.createSubscription).not.toHaveBeenCalled()
+      expect(asaas.deleteSubscription).not.toHaveBeenCalled()
+    })
+
+    it('a different plan replaces the overdue subscription (compare-and-swap) even though it has paid history', async () => {
+      const res = await checkout({ plan: 'basico', cycle: 'annual' })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ url: 'https://asaas/i/sub_1' })
+      expect(asaas.deleteSubscription).toHaveBeenCalledWith('sub_0')
+      expect(h.fake.tables.account_billing).toEqual([
+        expect.objectContaining({ asaas_subscription_id: 'sub_1', plan: 'basico', cycle: 'annual', status: 'pending' }),
+      ])
+    })
+
+    it('a renewal paid but not yet confirmed by the webhook is a 409, nothing replaced', async () => {
+      vi.mocked(asaas.listSubscriptionPayments).mockResolvedValue([paidFirst, { ...overdue, status: 'RECEIVED' }])
+      expect((await checkout({ plan: 'basico', cycle: 'monthly' })).status).toBe(409)
+      expect((await checkout({ plan: 'pro', cycle: 'monthly' })).status).toBe(409)
+      expect(asaas.createSubscription).not.toHaveBeenCalled()
+      expect(asaas.deleteSubscription).not.toHaveBeenCalled()
+    })
+
+    it('keeps the old subscription if the renewal is paid between the check and the cancel', async () => {
+      vi.mocked(asaas.listSubscriptionPayments)
+        .mockResolvedValueOnce([paidFirst, overdue])
+        .mockResolvedValueOnce([paidFirst, { ...overdue, status: 'RECEIVED' }])
+      expect((await checkout({ plan: 'basico', cycle: 'monthly' })).status).toBe(200)
+      expect(asaas.deleteSubscription).not.toHaveBeenCalledWith('sub_0')
+    })
+
+    it('only the owner reaches this path', async () => {
+      h.role = 'admin'
+      expect((await checkout({ plan: 'pro', cycle: 'monthly' })).status).toBe(403)
+    })
+  })
 })

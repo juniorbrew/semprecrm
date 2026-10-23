@@ -65,3 +65,16 @@ export function eventEffect(event: string): BillingEffect {
 
 /** Payment statuses (from GET /payments/:id) that prove the money came in. */
 export const PAID_STATUSES = new Set(['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'])
+
+/**
+ * A paid charge that would still extend access past `coveredUntilMs` (a
+ * past_due account keeps its old period end; pass -Infinity for "nothing
+ * covered", where any paid charge counts). Same math as the webhook's.
+ */
+export function isNewPayment(
+  payment: { status: string; dueDate: string },
+  cycle: BillingCycle,
+  coveredUntilMs: number,
+): boolean {
+  return PAID_STATUSES.has(payment.status) && periodEnd(payment.dueDate, cycle).getTime() > coveredUntilMs
+}

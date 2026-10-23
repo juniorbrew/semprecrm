@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { asaasCycle, eventEffect, periodEnd, periodPriceCents, todayInSaoPaulo } from './rules'
+import { asaasCycle, eventEffect, isNewPayment, periodEnd, periodPriceCents, todayInSaoPaulo } from './rules'
 
 describe('billing rules', () => {
   it('annual is 10 months (2 free); monthly is the catalog price', () => {
@@ -31,5 +31,17 @@ describe('billing rules', () => {
     expect(eventEffect('PAYMENT_CHARGEBACK_REQUESTED')).toBe('past_due')
     expect(eventEffect('PAYMENT_CREATED')).toBe('record')
     expect(eventEffect('SOMETHING_NEW')).toBe('record')
+  })
+})
+
+describe('isNewPayment', () => {
+  const covered = Date.parse('2026-10-17T23:59:59-03:00')
+  it('a paid charge extending access counts; the already covered one does not', () => {
+    expect(isNewPayment({ status: 'RECEIVED', dueDate: '2026-10-12' }, 'monthly', covered)).toBe(true)
+    expect(isNewPayment({ status: 'RECEIVED', dueDate: '2026-09-12' }, 'monthly', covered)).toBe(false)
+  })
+  it('unpaid never counts; with nothing covered any paid charge counts', () => {
+    expect(isNewPayment({ status: 'OVERDUE', dueDate: '2026-10-12' }, 'monthly', covered)).toBe(false)
+    expect(isNewPayment({ status: 'CONFIRMED', dueDate: '2020-01-01' }, 'monthly', -Infinity)).toBe(true)
   })
 })
