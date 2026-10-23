@@ -74,5 +74,5 @@ Só planos com preço no catálogo (`platform_plan_versions.price_monthly_cents`
 
 ### Lacuna conhecida da fase 1
 
-As gravações de dados do CRM (contatos, tarefas, negócios etc.) feitas com o JWT do próprio usuário só são bloqueadas **na interface**; uma chamada direta ao Supabase de uma conta somente leitura ainda grava. O bloqueio no banco (RLS/gatilhos checando a situação da conta) é a **fase 3**. As rotas de envio e custo (WhatsApp, IA, disparos, automações) já recusam no servidor.
+As gravações de dados do CRM (contatos, tarefas, negócios etc.) feitas com o JWT do próprio usuário só são bloqueadas **na interface**; uma chamada direta ao Supabase de uma conta somente leitura ainda grava. O bloqueio no banco (RLS/gatilhos checando a situação da conta) é a **fase 2 do bloqueio** (entrega 3). As rotas de envio e custo (WhatsApp, IA, disparos, automações) já recusam no servidor.
 
