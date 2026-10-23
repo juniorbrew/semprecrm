@@ -37,6 +37,7 @@ import { triageDueOnInbound } from '@/lib/support/ai-triage'
 import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
+import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import type { AccountPreferences, WhatsAppChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
@@ -666,6 +667,8 @@ async function replyOutOfHoursIfNeeded(
     await stamp()
     return 'sent'
   } catch (err) {
+    // Read-only account: the message was stored, only the automatic notice is skipped.
+    if (err instanceof AccountReadOnlyError) return 'skipped'
     if (isOutsideMetaWindowError(err)) {
       console.warn('[inbound] out-of-hours reply skipped (outside Meta window):', conversation.id)
       await stamp()

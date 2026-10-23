@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth } from "@/hooks/use-auth";
+import { readOnlyReason } from "@/lib/billing/read-only";
 import {
   canDeleteAccount,
   canEditSettings,
@@ -40,7 +41,7 @@ export type CanAction =
  *   <Button disabled={!canEdit} title={canEdit ? "Salvar" : "Read-only"} />
  */
 export function useCan(action: CanAction): boolean {
-  const { profileLoading, accountRole } = useAuth();
+  const { profileLoading, accountRole, entitlements } = useAuth();
   if (profileLoading || !accountRole) return false;
 
   switch (action) {
@@ -49,7 +50,10 @@ export function useCan(action: CanAction): boolean {
     case "edit-settings":
       return canEditSettings(accountRole);
     case "send-messages":
-      return canSendMessages(accountRole);
+      // "send-messages" is the app's write capability (inbox, contacts,
+      // tasks, broadcasts...): off while the plan is read-only (trial ended
+      // or payment overdue). See lib/billing/read-only.ts.
+      return canSendMessages(accountRole) && !readOnlyReason(entitlements);
     case "view-only":
       return canViewOnly(accountRole);
     case "view-reports":

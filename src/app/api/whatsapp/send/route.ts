@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { createClient } from '@/lib/supabase/server'
 import {
   sendTextMessage,
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     // ao cliente pela Meta ANTES de qualquer gravação, então a RLS não segura:
     // exige 'agent' (canSendMessages) aqui.
     try {
-      await requireRole('agent')
+      await requireWritable(await requireRole('agent'))
     } catch (err) {
       return toErrorResponse(err)
     }

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // ------------------------------------------------------------
 
 const h = vi.hoisted(() => ({
+  writable: true,
   state: {
     channel: 'qr' as string,
     inserted: [] as Record<string, unknown>[],
@@ -21,6 +22,7 @@ const h = vi.hoisted(() => ({
   },
 }))
 
+vi.mock('@/lib/plans-server', () => ({ accountIsWritable: async () => h.writable }))
 vi.mock('@/lib/whatsapp/meta-api', () => h.meta)
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
 
@@ -67,6 +69,7 @@ import {
   engineSendMedia,
   engineSendText,
 } from './meta-send'
+import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { engineSendTemplate as automationSendTemplate } from '@/lib/automations/meta-send'
 
 const fetchMock = vi.fn()
@@ -77,6 +80,7 @@ function gatewayBody() {
 }
 
 beforeEach(() => {
+  h.writable = true
   h.state.channel = 'qr'
   h.state.inserted = []
   h.state.templateBody = 'Olá {{1}}, bem-vindo!'
@@ -110,6 +114,19 @@ describe('flows senders on a QR conversation', () => {
     expect(gatewayBody().text).toBe('Escolha:\n\n1. Vendas\n2. Suporte\n\n_Digite o número_')
     expect(h.meta.sendInteractiveButtons).not.toHaveBeenCalled()
     expect(h.state.inserted[0]).toMatchObject({ content_type: 'text', channel: 'qr' })
+  })
+
+  it('read-only / blocked account: no sender (text, interactive, media) reaches the gateway or Meta', async () => {
+    h.writable = false
+    const sends = [
+      () => engineSendText({ ...BASE, text: 'oi' }),
+      () => engineSendInteractiveButtons({ ...BASE, bodyText: 'x', buttons: [{ id: 'a', title: 'A' }] }),
+      () => engineSendInteractiveList({ ...BASE, bodyText: 'x', buttonLabel: 'v', sections: [{ title: 'A', rows: [{ id: '1', title: 'Um' }] }] }),
+      () => engineSendMedia({ ...BASE, kind: 'image', link: 'https://sb.test/x.jpg' }),
+    ]
+    for (const send of sends) await expect(send()).rejects.toBeInstanceOf(AccountReadOnlyError)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(h.state.inserted).toHaveLength(0)
   })
 
   it('lists flatten every section row', async () => {

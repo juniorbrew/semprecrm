@@ -27,7 +27,7 @@ import {
 export async function POST() {
   try {
     const ctx = await requireRole('admin')
-    const ent = await requireModule(ctx, 'channel_qr')
+    const ent = await requireModule(ctx, 'channel_qr', { allowReadOnly: true })
 
     const current = await readQrSession(ctx.supabase, ctx.accountId)
     const holdsSlot = current != null && current.status !== 'disconnected'

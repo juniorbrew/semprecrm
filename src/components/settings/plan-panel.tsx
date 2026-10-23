@@ -4,6 +4,7 @@ import { Check, Minus } from 'lucide-react';
 
 import { useAuth, useEntitlements } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
+import { readOnlyReason } from '@/lib/billing/read-only';
 import {
   LIMIT_KEYS,
   LIMIT_LABELS,
@@ -13,6 +14,7 @@ import {
   daysUntil,
   type PlanStatus,
 } from '@/lib/plans';
+import { BillingPanel } from './billing-panel';
 import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
 import { planStatusLabelKey } from '@/components/platform/plan-status-chip';
@@ -32,14 +34,22 @@ const STATUS_TONE: Record<PlanStatus, 'ok' | 'warn' | 'bad' | 'muted'> = {
  * when the account is blocked (the blocked screen links here) so
  * the owner can see *why* and who to contact.
  *
- * Nothing is editable from the customer side — plan changes go
- * through the platform admin (`/platform`) today and a checkout
- * webhook later.
+ * The subscription itself (plans, checkout, charges) is `BillingPanel`:
+ * the owner subscribes, admins look, everyone else does not see this
+ * section (hidden in the rail; a deep link gets the notice below).
  */
 export function PlanPanel() {
   const { t, language } = useLanguage();
-  const { profileLoading } = useAuth();
+  const { profileLoading, canManageMembers } = useAuth();
   const ent = useEntitlements();
+
+  if (!profileLoading && !canManageMembers) {
+    return (
+      <section className="max-w-2xl space-y-4">
+        <SettingsPanelHead title={t('Plan')} description={t('Only the account owner and administrators can see the plan.')} />
+      </section>
+    );
+  }
 
   if (
     !profileLoading &&
@@ -79,11 +89,13 @@ export function PlanPanel() {
       <SettingsPanelHead
         title={t('Plan')}
         description={t(
-          'What your account includes today. To change the plan or add modules, get in touch with the SempreCRM team.'
+          'Your subscription, payments and what the plan includes. To add modules, get in touch with the SempreCRM team.'
         )}
       />
 
       <div className="space-y-8">
+        <BillingPanel />
+
         <SettingsGroup
           title={t('Current plan')}
           description={t('Plan, status and validity for this account.')}
@@ -127,7 +139,7 @@ export function PlanPanel() {
               </p>
             </div>
           )}
-          {ent.blocked ? (
+          {ent.blocked && !readOnlyReason(ent) ? (
             <p className="text-foreground flex items-center gap-2 text-sm">
               <StatusDot tone="warn" />
               {t(

@@ -97,7 +97,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   company: { id: 'company', label: 'Empresa', icon: Building2, group: 'workspace', adminOnly: true },
   ai: { id: 'ai', label: 'Inteligência Artificial', icon: Sparkles, group: 'workspace', adminOnly: true, module: 'ai' },
   members: { id: 'members', label: 'Membros da equipe', icon: UsersRound, group: 'workspace' },
-  plan: { id: 'plan', label: 'Plano', icon: CreditCard, group: 'workspace' },
+  plan: { id: 'plan', label: 'Plano', icon: CreditCard, group: 'workspace', adminOnly: true },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [

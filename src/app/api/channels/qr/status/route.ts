@@ -24,7 +24,7 @@ import { POST as statusEvent } from '../status-event/route'
 export async function GET() {
   try {
     const ctx = await requireRole('admin')
-    await requireModule(ctx, 'channel_qr')
+    await requireModule(ctx, 'channel_qr', { allowReadOnly: true })
 
     const current = await readQrSession(ctx.supabase, ctx.accountId)
     try {

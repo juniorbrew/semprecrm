@@ -15,6 +15,8 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { AccountReadOnlyError } from '@/lib/billing/read-only'
+import { accountIsWritable } from '@/lib/plans-server'
 import { mediaUrlForPublic } from '@/lib/storage/media-url'
 import {
   conversationChannel,
@@ -68,6 +70,8 @@ export async function engineSendText(
   args: SendTextEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+  // Read-only / blocked account: nothing is sent on its behalf (defence in depth).
+  if (!(await accountIsWritable(db, args.accountId))) throw new AccountReadOnlyError()
 
   // QR channel (migration 026) → gateway.
   if ((await conversationChannel(db, args.conversationId)) === 'qr') {
@@ -191,6 +195,8 @@ export async function engineSendMedia(
   args: SendMediaEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+  // Read-only / blocked account: nothing is sent on its behalf (defence in depth).
+  if (!(await accountIsWritable(db, args.accountId))) throw new AccountReadOnlyError()
 
   // QR channel (migration 026) → gateway media send.
   if ((await conversationChannel(db, args.conversationId)) === 'qr') {
@@ -361,6 +367,8 @@ async function sendInteractiveViaMeta(
   input: SendInput,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+  // Read-only / blocked account: nothing is sent on its behalf (defence in depth).
+  if (!(await accountIsWritable(db, input.accountId))) throw new AccountReadOnlyError()
 
   // QR channel (migration 026): WhatsApp Web has no interactive
   // messages, so the prompt degrades to body + a numbered option list.

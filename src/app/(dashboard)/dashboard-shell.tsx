@@ -7,6 +7,8 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BlockedScreen } from "@/components/plans/blocked-screen";
+import { ReadOnlyBanner } from "@/components/billing/read-only-banner";
+import { readOnlyReason } from "@/lib/billing/read-only";
 import { MfaRequiredNotice } from "@/components/settings/mfa-card";
 import { isMfaEnrollAllowedPath, MFA_ENROLL_PATH, mustEnrollMfa } from "@/lib/auth/mfa";
 import { useBranding } from "@/hooks/use-branding";
@@ -33,6 +35,9 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { ready: entitlementsReady, blocked, modules } = useEntitlements();
+  // Trial ended / payment overdue: the app opens read-only (banner + disabled
+  // writes) instead of the blocked screen. Suspended / canceled keep it.
+  const readOnly = readOnlyReason({ blocked }) !== null;
 
   // White-label (spec round 2 §6): the account's primary colour
   // overrides the theme's --primary / --ring on the shell root only
@@ -107,11 +112,12 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  // Plan block (migration 025): past_due / canceled / suspended, or an
-  // expired trial. Replaces the whole shell so nothing in the app is
-  // reachable — except /settings, where the owner reviews the plan,
-  // and sign-out (a button on the blocked screen itself).
-  if (entitlementsReady && blocked && !pathname.startsWith("/settings")) {
+  // Plan block (migration 025): canceled / suspended / plan unreadable.
+  // Replaces the whole shell so nothing in the app is reachable — except
+  // /settings, where the owner reviews the plan, and sign-out (a button on
+  // the blocked screen itself). Trial ended and past_due are NOT here: they
+  // are read-only mode (banner below), see lib/billing/read-only.ts.
+  if (entitlementsReady && blocked && !readOnly && !pathname.startsWith("/settings")) {
     return <BlockedScreen reason={blocked.reason} />;
   }
 
@@ -126,6 +132,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
         <div className="flex flex-1 flex-col overflow-hidden">
           <Header onOpenSidebar={() => setSidebarOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
           <MfaRequiredNotice compact />
+          {entitlementsReady ? <ReadOnlyBanner /> : null}
           {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
           <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
         </div>

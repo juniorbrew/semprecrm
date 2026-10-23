@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { createClient } from '@/lib/supabase/server'
 import { accountHasModule } from '@/lib/plans-server'
 import { renewDeliveryLock } from '@/lib/broadcast-delivery-lock'
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     // exige 'agent' (canSendMessages) aqui.
     let accountId: string
     try {
-      ;({ accountId } = await requireRole('agent'))
+      ;({ accountId } = await requireWritable(await requireRole('agent')))
     } catch (err) {
       return toErrorResponse(err)
     }

@@ -19,6 +19,7 @@ import {
   isAccountRole,
   type AccountRole,
 } from '@/lib/auth/roles';
+import { readOnlyReason } from '@/lib/billing/read-only';
 import {
   resolveEntitlements,
   type Entitlements,
@@ -541,6 +542,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hasVerifiedMfa: hasVerifiedTotp(mfaFactors),
         refreshMfa: fetchMfaFactors,
         ...derived,
+        // The app's write capability is off while the plan is read-only
+        // (trial ended / payment overdue): lib/billing/read-only.ts.
+        canSendMessages:
+          derived.canSendMessages && !readOnlyReason(entitlements),
       }}
     >
       {children}

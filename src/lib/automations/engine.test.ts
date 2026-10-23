@@ -277,6 +277,26 @@ describe('runAutomationsForTrigger — plan gate (migration 025)', () => {
     expect(h.state.updateCalls).toHaveLength(0);
   });
 
+  it.each([
+    ['past_due', { plan_status: 'past_due' }],
+    ['an expired trial', { plan: 'trial', plan_status: 'trial', plan_expires_at: '2000-01-01T00:00:00.000Z' }],
+  ])('runs nothing for a read-only account (%s)', async (_label, patch) => {
+    h.state.owned = { id: 'c1' };
+    h.state.account = { plan: 'empresa', ...patch };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: {},
+    });
+
+    expect(h.state.fromCalls).not.toContain('automations');
+    expect(h.state.updateCalls).toHaveLength(0);
+  });
+
   it('runs when a per-account override switches the module on', async () => {
     h.state.owned = { id: 'c1' };
     h.state.account = {

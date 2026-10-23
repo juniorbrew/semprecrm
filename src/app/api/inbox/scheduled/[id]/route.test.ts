@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/account', () => ({
   requireRole: async () => h.ctx,
+  requireWritable: async (ctx: unknown) => ctx,
   toErrorResponse: () => new Response(null, { status: 403 }),
 }))
 vi.mock('@/lib/scheduled-messages/dispatch', () => ({ runScheduledDispatch: h.dispatch }))

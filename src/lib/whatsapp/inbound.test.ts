@@ -102,6 +102,7 @@ vi.mock('@/lib/lgpd/suppression', () => ({
   findSuppressedPhones: vi.fn(async () => new Set<string>()),
 }))
 
+import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { ingestInboundMessage, toContentType, toIsoTimestamp } from './inbound'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
@@ -956,6 +957,17 @@ describe('ingestInboundMessage — out-of-hours reply', () => {
     const res = await ingestInboundMessage({ ...BASE, channel: 'official' }, db)
     expect(res.outOfHoursReply).toBe('skipped')
     expect(h.state.conversations[0].out_of_hours_replied_at).toBe(SATURDAY.toISOString())
+  })
+
+  it('read-only account: the customer message is still stored, only the automatic notice is skipped', async () => {
+    vi.useFakeTimers({ now: SATURDAY, toFake: ['Date'] })
+    const db = makeDb()
+    h.state.accountPreferences = { out_of_hours_enabled: true }
+    h.sendError = new AccountReadOnlyError()
+
+    const res = await ingestInboundMessage(BASE, db)
+    expect(res.outOfHoursReply).toBe('skipped')
+    expect(h.state.messages.some((m) => m.sender_type === 'customer')).toBe(true)
   })
 
   it('reports failed and leaves the stamp empty on other send errors', async () => {

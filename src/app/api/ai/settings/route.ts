@@ -86,7 +86,7 @@ async function payload(supabase: SupabaseClient, accountId: string) {
 export async function GET() {
   try {
     const ctx = await requireRole('admin');
-    await requireModule(ctx, 'ai');
+    await requireModule(ctx, 'ai', { allowReadOnly: true });
     return NextResponse.json(await payload(ctx.supabase, ctx.accountId));
   } catch (err) {
     return aiErrorResponse(err);

@@ -25,6 +25,7 @@
 // SempreCRM doesn't have — the wizard creates the campaign.
 // ============================================================
 
+import { accountIsWritable } from '@/lib/plans-server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -223,6 +224,9 @@ function paramsOf(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string') : [];
 }
 
+/** The account's plan is re-checked before the first row and then every this many rows. */
+const WRITABLE_CHECK_EVERY = 50;
+
 /** Send the rows THIS pass claimed and stamp each outcome. */
 export async function sendClaimedRows(
   db: SupabaseClient,
@@ -276,7 +280,20 @@ export async function sendClaimedRows(
   const messageParams = ctx.headerMediaUrl ? { headerMediaUrl: ctx.headerMediaUrl } : undefined;
   const results: RowResult[] = [];
 
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
+    // Read-only / blocked mid-campaign (payment overdue, suspension): stop and
+    // hand the unsent rows back as pending, so a later resume sends them.
+    if (index % WRITABLE_CHECK_EVERY === 0 && !(await accountIsWritable(supabaseAdmin(), ctx.accountId))) {
+      const rest = rows.slice(index);
+      await db
+        .from('broadcast_recipients')
+        .update({ status: 'pending', claimed_at: null })
+        .eq('broadcast_id', ctx.broadcastId)
+        .in('id', rest.map((r) => r.id))
+        .eq('status', 'sending');
+      for (const r of rest) results.push({ id: r.id, outcome: 'skipped' });
+      break;
+    }
     const contact = row.contact_id ? contacts.get(row.contact_id) : undefined;
     const phone = sanitizePhoneForMeta(contact?.phone ?? '');
 

@@ -18,6 +18,7 @@ import { hasMinRole, isAccountRole } from '@/lib/auth/roles'
 import { findOtherActiveConversation } from '@/lib/conversations/find-by-contact'
 import { engineSendText } from '@/lib/automations/meta-send'
 import { pauseActiveFlowRuns } from '@/lib/flows/pause-on-agent'
+import { accountIsWritable } from '@/lib/plans-server'
 import { conversationUrl } from '@/lib/push/notify'
 import { isPushConfigured, sendPushToUsers } from '@/lib/push/send'
 import { isWithinServiceWindow } from './schedule'
@@ -40,6 +41,8 @@ export interface DispatchDeps {
   send?: SendScheduled
   notifyFailure?: (row: ScheduledRow, reason: string) => Promise<void>
   findOtherActive?: typeof findOtherActiveConversation
+  /** Account not blocked (read-only mode sends nothing); defaults to the plan check. */
+  writable?: (db: SupabaseClient, accountId: string) => Promise<boolean>
 }
 
 export interface DispatchResult {
@@ -163,6 +166,12 @@ async function dispatchRow(db: SupabaseClient, row: ScheduledRow, now: Date, dep
   const send = deps.send ?? defaultSend
   const stamp = now.toISOString()
   try {
+    if (!(await (deps.writable ?? accountIsWritable)(db, row.account_id))) {
+      throw new Reject(
+        'account_read_only',
+        'A conta está em modo somente leitura (teste encerrado ou pagamento em atraso), então a mensagem não foi enviada. Regularize em Configurações → Plano e envie de novo.',
+      )
+    }
     await precheck(db, row, now, deps.findOtherActive ?? findOtherActiveConversation)
     const sent = await send(row)
     // It is an agent's message: a running bot flow must yield, like on a manual send.

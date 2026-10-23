@@ -213,9 +213,16 @@ describe('POST', () => {
     expect(h.ingest).not.toHaveBeenCalled();
   });
 
-  it('403 when the account is blocked (expired trial)', async () => {
-    h.state.account.plan_expires_at = '2000-01-01T00:00:00.000Z';
+  it('403 when the account is suspended by the platform', async () => {
+    h.state.account.plan_status = 'suspended';
     expect((await POST(post('phone=5511999990000'), ctx())).status).toBe(403);
+    expect(h.ingest).not.toHaveBeenCalled();
+  });
+
+  it('still captures the lead while the account is read-only (expired trial): inbound data is kept', async () => {
+    h.state.account.plan_expires_at = '2000-01-01T00:00:00.000Z';
+    expect((await POST(post('phone=5511999990000'), ctx())).status).toBe(200);
+    expect(h.ingest).toHaveBeenCalledTimes(1);
   });
 
   it('400 for an unreadable body', async () => {

@@ -84,7 +84,8 @@ export async function POST(request: Request, { params }: RouteContext) {
   if (!source) return notFound()
 
   const db = supabaseAdmin()
-  if (!(await accountHasModule(db, source.account_id, 'lead_capture'))) {
+  // Inbound: a lead is customer data, kept even while the account is read-only.
+  if (!(await accountHasModule(db, source.account_id, 'lead_capture', { allowReadOnly: true }))) {
     return NextResponse.json(
       { ok: false, error: 'Lead capture is not included in this account plan', code: 'module_not_included' },
       { status: 403 },

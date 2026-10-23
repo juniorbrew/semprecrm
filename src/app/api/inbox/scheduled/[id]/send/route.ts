@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { runScheduledDispatch } from '@/lib/scheduled-messages/dispatch'
 import { canManageScheduled, MAYBE_SENT } from '@/lib/scheduled-messages/permissions'
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireWritable(await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }

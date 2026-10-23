@@ -15,7 +15,7 @@ import { qrErrorResponse, readQrSession, upsertQrSession } from '@/lib/whatsapp/
 export async function POST() {
   try {
     const ctx = await requireRole('admin')
-    await requireModule(ctx, 'channel_qr')
+    await requireModule(ctx, 'channel_qr', { allowReadOnly: true })
 
     const current = await readQrSession(ctx.supabase, ctx.accountId)
     try {

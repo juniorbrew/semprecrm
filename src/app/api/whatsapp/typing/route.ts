@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils'
 import { presenceViaGateway } from '@/lib/whatsapp/qr-gateway'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -17,7 +17,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 export async function POST(request: Request) {
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireWritable(await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }
