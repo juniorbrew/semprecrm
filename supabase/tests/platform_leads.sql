@@ -111,6 +111,14 @@ CREATE TEMP TABLE age_claim AS SELECT * FROM public.claim_lead_notifications();
 SELECT pg_temp.assert_true((SELECT count(*)=1 FROM age_claim),'aged fixture claimed once');
 SELECT pg_temp.assert_true(public.complete_lead_notification((SELECT id FROM age_claim),(SELECT notification_claim_token FROM age_claim),false),'aged failure completes');
 SELECT pg_temp.assert_true((SELECT notification_give_up_reason='age: older than 24 hours' FROM public.leads WHERE id=(SELECT id FROM age_claim)),'gives up after 24 hours and records why');
+-- Poison lead: 12th attempt crashed the worker (stale claim, no complete call).
+RESET ROLE;
+INSERT INTO public.leads(id,kind,name,email,notification_attempts,notification_claimed_at,notification_claim_token,notification_next_attempt_at)
+  VALUES ('30000000-0000-4000-8000-000000000001','contato','poison','poison@leads.test',12,now()-interval '10 minutes',gen_random_uuid(),now());
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true((SELECT count(*)=0 FROM public.claim_lead_notifications() WHERE id='30000000-0000-4000-8000-000000000001'),'poison lead not reclaimed');
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT notification_gave_up_at IS NOT NULL AND notified_at IS NULL AND notification_give_up_reason LIKE 'attempts:%' FROM public.leads WHERE id='30000000-0000-4000-8000-000000000001'),'stale claim over the cap is closed out with a reason');
 RESET ROLE;
 ROLLBACK;
 \echo 'PASS platform leads database: triggers, RLS, tenants, CRUD, injection, duplicates, history, nonblocking failures, claims, retry, fencing'

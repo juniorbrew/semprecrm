@@ -2,7 +2,11 @@
 -- was rescheduled every hour for good (backoff capped at 60 min, no limit).
 -- After 12 failed attempts (about 7 hours of backoff) or 24 hours since the
 -- lead arrived, the worker gives up and records why; notified_at stays NULL
--- because nothing was delivered.
+-- because nothing was delivered. The age cap is only evaluated when an attempt
+-- fails or a stale claim is swept, never for a lead that has not been tried.
+-- claim_lead_notifications also closes out stale claims already over a cap, so
+-- a lead that crashes or times out the worker (no complete call) cannot be
+-- reclaimed forever.
 ALTER TABLE public.leads
   ADD COLUMN IF NOT EXISTS notification_gave_up_at timestamptz,
   ADD COLUMN IF NOT EXISTS notification_give_up_reason text;
@@ -21,6 +25,14 @@ RETURNS TABLE(id uuid,kind text,name text,email text,company text,notification_c
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 BEGIN
   IF p_limit IS NULL OR p_limit <> 1 THEN RAISE EXCEPTION 'Claim one lead at a time' USING ERRCODE = '22023'; END IF;
+  UPDATE public.leads l SET notification_gave_up_at = clock_timestamp(),
+    notification_give_up_reason = CASE WHEN l.notification_attempts >= 12
+      THEN 'attempts: ' || l.notification_attempts || ' attempts, worker did not finish'
+      ELSE 'age: older than 24 hours, worker did not finish' END,
+    notification_claimed_at = NULL, notification_claim_token = NULL
+  WHERE l.notified_at IS NULL AND l.notification_gave_up_at IS NULL
+    AND l.notification_claimed_at < clock_timestamp() - interval '5 minutes'
+    AND (l.notification_attempts >= 12 OR l.created_at < clock_timestamp() - interval '24 hours');
   RETURN QUERY
   WITH candidates AS (
     SELECT l.id FROM public.leads l
