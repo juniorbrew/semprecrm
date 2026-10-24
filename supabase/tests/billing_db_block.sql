@@ -14,13 +14,19 @@ CREATE FUNCTION pg_temp.assert_true(ok boolean, label text) RETURNS void LANGUAG
 BEGIN IF ok IS DISTINCT FROM true THEN RAISE EXCEPTION 'FAIL: %', label; END IF; END $$;
 CREATE FUNCTION pg_temp.assert_eq(actual numeric, expected numeric, label text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN IF actual IS DISTINCT FROM expected THEN RAISE EXCEPTION 'FAIL: % (got %, want %)', label, actual, expected; END IF; END $$;
--- The statement must be refused with insufficient_privilege (42501): the RLS /
--- guard refusal. Any other error, or success, fails the test.
+-- The statement must be refused with insufficient_privilege (42501) BY THE BLOCK:
+-- the guard's read_only_account message or an RLS policy violation. A missing
+-- GRANT ("permission denied for ...") is also 42501 but proves nothing, so it
+-- fails the test like any other error or a success.
 CREATE FUNCTION pg_temp.denied(stmt text, label text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   BEGIN
     EXECUTE stmt;
-  EXCEPTION WHEN insufficient_privilege THEN RETURN;
+  EXCEPTION WHEN insufficient_privilege THEN
+    IF SQLERRM LIKE 'read_only_account%' OR SQLERRM LIKE '%row-level security%'
+       -- migration 076's lock on the plan columns ("cannot self-activate")
+       OR SQLERRM LIKE 'Account conditions are managed by the platform%' THEN RETURN; END IF;
+    RAISE EXCEPTION 'FAIL (refused for the wrong reason: %): %', SQLERRM, label;
   END;
   RAISE EXCEPTION 'FAIL (accepted): %', label;
 END $$;
@@ -232,6 +238,9 @@ RESET ROLE;
 CREATE FUNCTION pg_temp.definer_add_agent(p_account uuid) RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
   INSERT INTO public.ai_agents(account_id, name, instructions) VALUES (p_account, 'via rpc', 'x')
 $$;
+-- Default EXECUTE is revoked on new functions (migration 076): grant it, or the
+-- calls below fail with "permission denied for function" instead of testing the block.
+GRANT EXECUTE ON FUNCTION pg_temp.definer_add_agent(uuid) TO authenticated;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'R'), true);
 SELECT pg_temp.denied(format($q$SELECT pg_temp.definer_add_agent(%L)$q$, (SELECT acc FROM t WHERE label = 'R')), 'definer RPC: read-only account');
@@ -242,6 +251,9 @@ SELECT pg_temp.ok(format($q$SELECT pg_temp.definer_add_agent(%L)$q$, (SELECT acc
 RESET ROLE;
 
 -- ---------- the server (service role) is not affected ----------
+-- A service-role request carries no user JWT: clear the sub left by the steps above
+-- (set_config(..., true) lasts until the end of the transaction).
+SELECT set_config('request.jwt.claim.sub', '', true);
 SET ROLE service_role;
 SELECT pg_temp.ok(format($q$INSERT INTO contacts(user_id, account_id, phone) VALUES (%L, %L, '+5511900006666')$q$,
   (SELECT uid FROM t WHERE label = 'R'), (SELECT acc FROM t WHERE label = 'R')), 'service role writes to a read-only account (inbound, crons)');

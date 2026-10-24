@@ -84,7 +84,7 @@ CREATE OR REPLACE FUNCTION public.readonly_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public, pg_temp
-AS $
+AS $$
 DECLARE
   v_account uuid;
   v_allowed text[];
@@ -99,7 +99,12 @@ BEGIN
   END IF;
 
   IF TG_OP = 'UPDATE' AND TG_NARGS > 0 THEN
-    v_allowed := TG_ARGV || ARRAY['updated_at'];
+    -- Generated columns (e.g. contacts.phone_normalized) are not computed yet in a
+    -- BEFORE trigger, so they always look "changed": leave them out of the diff.
+    v_allowed := TG_ARGV || ARRAY['updated_at'] || COALESCE((
+      SELECT array_agg(attname::text) FROM pg_attribute
+       WHERE attrelid = TG_RELID AND attgenerated <> '' AND NOT attisdropped
+    ), ARRAY[]::text[]);
     IF (to_jsonb(NEW) - v_allowed) IS NOT DISTINCT FROM (to_jsonb(OLD) - v_allowed) THEN
       RETURN NEW;
     END IF;

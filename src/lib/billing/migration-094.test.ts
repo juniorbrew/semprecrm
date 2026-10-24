@@ -57,6 +57,16 @@ function writableTables(): Set<string> {
   return new Set([...policies.values()].filter((p) => p.cmd !== 'SELECT').map((p) => p.table))
 }
 
+describe('migration 094 contract: parses', () => {
+  it('opens and closes every function body with $$ (a lone $ does not parse)', () => {
+    expect(sql).not.toMatch(/^AS \$\s*$/m)
+    expect(sql).not.toMatch(/^\$;\s*$/m)
+    const opens = sql.match(/^AS \$\$$/gm)?.length ?? 0
+    const closes = (sql.match(/^(END )?\$\$;$/gm) ?? []).length
+    expect(opens).toBe(closes)
+  })
+})
+
 describe('migration 094 contract: account_is_writable', () => {
   const fn = sql.slice(
     sql.indexOf('CREATE OR REPLACE FUNCTION public.account_is_writable'),
