@@ -92,6 +92,25 @@ SELECT pg_temp.assert_true((SELECT notification_attempts=3 FROM third_claim),'ex
 SELECT pg_temp.assert_true(public.complete_lead_notification((SELECT id FROM third_claim),(SELECT notification_claim_token FROM third_claim),true),'successful delivery finalized');
 SELECT pg_temp.assert_true((SELECT notified_at IS NOT NULL AND notification_claimed_at IS NULL FROM public.leads WHERE id=(SELECT id FROM first_claim)),'success stamp only after delivery');
 SELECT pg_temp.assert_true((SELECT count(*)=0 FROM public.claim_lead_notifications()),'no re-send after success');
+-- Retry cap (095): 12 failed attempts, or a lead older than 24 h, ends the loop.
+RESET ROLE;
+UPDATE public.leads SET notification_attempts=11,notification_next_attempt_at=now() WHERE email='tenant-a@leads.test';
+SET LOCAL ROLE service_role;
+CREATE TEMP TABLE cap_claim AS SELECT * FROM public.claim_lead_notifications();
+SELECT pg_temp.assert_true((SELECT notification_attempts=12 FROM cap_claim),'cap fixture is the 12th attempt');
+SELECT pg_temp.assert_true(public.complete_lead_notification((SELECT id FROM cap_claim),(SELECT notification_claim_token FROM cap_claim),false),'12th failure completes');
+SELECT pg_temp.assert_true((SELECT notification_gave_up_at IS NOT NULL AND notified_at IS NULL AND notification_give_up_reason LIKE 'attempts:%' FROM public.leads WHERE id=(SELECT id FROM cap_claim)),'gives up after 12 attempts and records why');
+RESET ROLE;
+UPDATE public.leads SET notification_next_attempt_at=now() WHERE id=(SELECT id FROM cap_claim);
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true((SELECT count(*)=0 FROM public.claim_lead_notifications()),'given-up lead is never claimed again');
+RESET ROLE;
+UPDATE public.leads SET created_at=now()-interval '2 days',notification_next_attempt_at=now() WHERE email='tenant-b@leads.test' OR email='admin@leads.test';
+SET LOCAL ROLE service_role;
+CREATE TEMP TABLE age_claim AS SELECT * FROM public.claim_lead_notifications();
+SELECT pg_temp.assert_true((SELECT count(*)=1 FROM age_claim),'aged fixture claimed once');
+SELECT pg_temp.assert_true(public.complete_lead_notification((SELECT id FROM age_claim),(SELECT notification_claim_token FROM age_claim),false),'aged failure completes');
+SELECT pg_temp.assert_true((SELECT notification_give_up_reason='age: older than 24 hours' FROM public.leads WHERE id=(SELECT id FROM age_claim)),'gives up after 24 hours and records why');
 RESET ROLE;
 ROLLBACK;
 \echo 'PASS platform leads database: triggers, RLS, tenants, CRUD, injection, duplicates, history, nonblocking failures, claims, retry, fencing'
