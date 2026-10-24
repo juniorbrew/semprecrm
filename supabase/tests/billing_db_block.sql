@@ -269,6 +269,9 @@ SELECT pg_temp.assert_true(NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'ac
 -- ---------- a removed member gets a trial WINDOW, not an open-ended one ----------
 INSERT INTO auth.users(id, email, raw_user_meta_data) VALUES ('94000000-0000-4000-8000-0000000000b1', 'm@block.test', '{"full_name":"M"}');
 UPDATE profiles SET account_id = (SELECT acc FROM t WHERE label = 'A'), account_role = 'agent' WHERE user_id = '94000000-0000-4000-8000-0000000000b1';
+-- Like redeem_invitation (019): joining another account deletes the solo account
+-- handle_new_user created, so the member owns none when removed.
+DELETE FROM accounts WHERE owner_user_id = '94000000-0000-4000-8000-0000000000b1';
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A'), true);
 SELECT public.remove_account_member('94000000-0000-4000-8000-0000000000b1');
