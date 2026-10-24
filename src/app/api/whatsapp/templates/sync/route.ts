@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import {
   ForbiddenError,
+  ReadOnlyError,
   UnauthorizedError,
   requireRole,
+  requireWritable,
   toErrorResponse,
 } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -135,7 +137,7 @@ export async function POST() {
     // settings-class data: `canEditSettings` and the message_templates
     // insert/update RLS policies (migration 017) both require 'admin'.
     // Resolving account_id off the profile only proved membership.
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const { supabase, accountId, userId } = await requireWritable(await requireRole('admin'))
     const limit = checkRateLimit(`wa-templates:sync:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
@@ -306,7 +308,8 @@ export async function POST() {
     // generic 500 below, which surfaces `error.message` as a sync failure.
     if (
       error instanceof UnauthorizedError ||
-      error instanceof ForbiddenError
+      error instanceof ForbiddenError ||
+      error instanceof ReadOnlyError
     ) {
       return toErrorResponse(error)
     }

@@ -1,3 +1,4 @@
+// read-only: allowed (channel connection and reconnect stay available)
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'

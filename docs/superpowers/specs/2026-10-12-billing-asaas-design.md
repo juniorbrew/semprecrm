@@ -81,3 +81,5 @@ Só planos com preço no catálogo (`platform_plan_versions.price_monthly_cents`
 - Continuam graváveis de propósito: `profiles`, `accounts` (dados da empresa; colunas de plano seguem travadas pela 076), `push_subscriptions`, `account_invitations`, `whatsapp_config`, `wa_qr_sessions`, chat interno (`chat_*`) e arquivos do storage.
 - App: a recusa do banco (42501) volta com o texto de somente leitura em pt-BR (`src/lib/billing/read-only-db-error.ts`, ligado ao cliente do navegador).
 - Prova no banco: `supabase/tests/billing_db_block.sql`. Reversão: `supabase/rollback/094_rollback.sql`.
+- Exceções aceitas pelo responsável: uploads no storage e `account_invitations` continuam graváveis em modo somente leitura; chaves de API e endpoints de webhook (configurações) também. A função da regra mora no schema `private` (fora da API REST).
+- Rotas que gravam com o cliente de serviço (ignora o RLS) recusam a conta sozinhas com `requireWritable`; as exceções levam o comentário `// read-only: allowed (motivo)` na primeira linha e um teste varre `src/app/api` para garantir isso.

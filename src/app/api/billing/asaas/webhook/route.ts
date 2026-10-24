@@ -1,3 +1,4 @@
+// read-only: allowed (billing: the way out of read-only)
 // ============================================================
 // POST /api/billing/asaas/webhook — Asaas payment events
 // (docs/superpowers/specs/2026-10-12-billing-asaas-design.md).

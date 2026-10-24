@@ -1,3 +1,4 @@
+// read-only: allowed (internal team chat, not CRM data)
 // ============================================================
 // POST /api/chat/messages/[id]/delete — internal chat, phase 2.
 //

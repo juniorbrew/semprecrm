@@ -1,3 +1,4 @@
+// read-only: allowed (LGPD: anonymize / suppression must stay possible)
 // ============================================================
 // POST /api/contacts/[id]/anonymize — LGPD anonymisation. Admin+.
 //

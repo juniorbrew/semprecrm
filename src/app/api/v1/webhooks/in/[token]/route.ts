@@ -1,3 +1,4 @@
+// read-only: allowed (inbound: lead capture webhook keeps working)
 // ============================================================
 // /api/v1/webhooks/in/[token] — public lead-capture endpoint.
 //

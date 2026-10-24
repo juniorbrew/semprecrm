@@ -1,3 +1,4 @@
+// read-only: allowed (platform admin, gated by the platform gate)
 import { authorizePlatformApi, platformJson } from '@/lib/platform/api';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { isVersionId } from '@/lib/plan-catalog';

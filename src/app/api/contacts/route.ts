@@ -24,7 +24,7 @@ import { NextResponse } from 'next/server'
 
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { auditStrict } from '@/lib/audit-server'
-import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
+import { getCurrentAccount, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { hasMinRole } from '@/lib/auth/roles'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { DeleteContactError, deleteContact } from '@/lib/lgpd/anonymize'
@@ -38,7 +38,7 @@ const ADMIN_REQUIRED_MESSAGE =
 
 export async function DELETE(request: Request) {
   try {
-    const ctx = await getCurrentAccount()
+    const ctx = await requireWritable(await getCurrentAccount())
     if (!hasMinRole(ctx.role, 'admin')) {
       return NextResponse.json({ error: ADMIN_REQUIRED_MESSAGE, code: 'admin_required' }, { status: 403 })
     }

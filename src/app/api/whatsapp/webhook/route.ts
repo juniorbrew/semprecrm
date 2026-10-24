@@ -1,3 +1,4 @@
+// read-only: allowed (inbound: Meta webhook)
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'

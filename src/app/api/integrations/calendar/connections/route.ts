@@ -1,3 +1,4 @@
+// read-only: allowed (calendar connection settings, not CRM data)
 // ============================================================
 // /api/integrations/calendar/connections — Settings → Agenda data.
 //

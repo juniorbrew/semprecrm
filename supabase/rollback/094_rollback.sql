@@ -7,6 +7,8 @@ DROP TRIGGER IF EXISTS _00_readonly_guard ON public.contacts;
 DROP TRIGGER IF EXISTS _00_readonly_guard ON public.ai_knowledge_items;
 DROP TRIGGER IF EXISTS _00_readonly_guard ON public.ai_knowledge_chunks;
 DROP TRIGGER IF EXISTS _00_readonly_guard ON public.ai_agents;
+DROP TRIGGER IF EXISTS _00_readonly_guard ON public.ai_knowledge_item_versions;
+-- remove_account_member keeps the 094 body (trial window for the new account): harmless, not reverted.
 DROP FUNCTION IF EXISTS public.readonly_guard();
 DROP POLICY IF EXISTS contacts_readonly_insert ON public.contacts;
 DROP POLICY IF EXISTS contacts_readonly_delete ON public.contacts;
@@ -129,5 +131,6 @@ DROP POLICY IF EXISTS calendar_event_attendees_readonly_delete ON public.calenda
 DROP POLICY IF EXISTS message_reactions_readonly_insert ON public.message_reactions;
 DROP POLICY IF EXISTS message_reactions_readonly_update ON public.message_reactions;
 DROP POLICY IF EXISTS message_reactions_readonly_delete ON public.message_reactions;
-DROP FUNCTION IF EXISTS public.account_is_writable(uuid);
+DROP FUNCTION IF EXISTS private.account_is_writable(uuid);
+-- schema private is left in place (it may hold other helpers); drop by hand if empty.
 COMMIT;

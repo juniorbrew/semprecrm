@@ -1,3 +1,4 @@
+// read-only: allowed (billing: the way out of read-only)
 // ============================================================
 // POST /api/billing/checkout — start (or resume) the account's paid
 // subscription on Asaas (docs/superpowers/specs/2026-10-12-billing-asaas-design.md).

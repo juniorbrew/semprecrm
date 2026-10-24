@@ -61,6 +61,16 @@ import { POST as broadcastStart } from '@/app/api/whatsapp/broadcast/[id]/start/
 import { POST as scheduledCreate } from '@/app/api/inbox/scheduled/route'
 import { POST as scheduledSendNow } from '@/app/api/inbox/scheduled/[id]/send/route'
 import { POST as aiSuggest } from '@/app/api/conversations/[id]/ai/suggest/route'
+import { POST as automationCreate } from '@/app/api/automations/route'
+import { PATCH as automationPatch, DELETE as automationDelete } from '@/app/api/automations/[id]/route'
+import { POST as automationDuplicate } from '@/app/api/automations/[id]/duplicate/route'
+import { POST as flowCreate } from '@/app/api/flows/route'
+import { PUT as flowPut, DELETE as flowDelete } from '@/app/api/flows/[id]/route'
+import { POST as flowActivate } from '@/app/api/flows/[id]/activate/route'
+import { POST as templateSubmit } from '@/app/api/whatsapp/templates/submit/route'
+import { PATCH as templatePatch, DELETE as templateDelete } from '@/app/api/whatsapp/templates/[id]/route'
+import { POST as templateSync } from '@/app/api/whatsapp/templates/sync/route'
+import { PATCH as scheduledPatch, DELETE as scheduledDelete } from '@/app/api/inbox/scheduled/[id]/route'
 
 const post = (body: unknown = {}) =>
   new Request('http://localhost/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -100,5 +110,42 @@ describe.each(FAMILIES)('%s', (_name, call, okStatus) => {
 
   it('works as before for an active account', async () => {
     expect((await call()).status).toBe(okStatus)
+  })
+})
+
+// Mutating routes that write CRM rows with the service-role client (which
+// bypasses the 094 RLS block): the route itself must refuse a read-only or
+// blocked account before touching anything.
+const uuidParams = { params: Promise.resolve({ id: '11111111-1111-4111-8111-111111111111' }) }
+const SERVICE_ROLE_WRITERS: [string, () => Promise<Response>][] = [
+  ['automation create', () => automationCreate(post({}))],
+  ['automation update', () => automationPatch(post({}), idParams)],
+  ['automation delete', () => automationDelete(post({}), idParams)],
+  ['automation duplicate', () => automationDuplicate(post({}), idParams)],
+  ['flow create', () => flowCreate(post({}))],
+  ['flow update', () => flowPut(post({}), idParams)],
+  ['flow delete', () => flowDelete(post({}), idParams)],
+  ['flow activate', () => flowActivate(post({}), idParams)],
+  ['template submit', () => templateSubmit(post({}))],
+  ['template update', () => templatePatch(post({}), uuidParams)],
+  ['template delete', () => templateDelete(post({}), uuidParams)],
+  ['template sync', () => templateSync()],
+  ['scheduled message update', () => scheduledPatch(post({}), idParams)],
+  ['scheduled message delete', () => scheduledDelete(post({}), idParams)],
+]
+
+describe.each(SERVICE_ROLE_WRITERS)('service-role writer: %s', (_name, call) => {
+  it.each(['trial_expired', 'past_due'])('is refused with 402 read_only while %s', async (reason) => {
+    h.blocked = { reason }
+    const res = await call()
+    expect(res.status).toBe(402)
+    expect(await res.json()).toMatchObject({ code: 'read_only' })
+  })
+
+  it.each(['suspended', 'canceled'])('is refused with 403 account_blocked while %s', async (reason) => {
+    h.blocked = { reason }
+    const res = await call()
+    expect(res.status).toBe(403)
+    expect(await res.json()).toMatchObject({ code: 'account_blocked' })
   })
 })

@@ -94,22 +94,22 @@ BEGIN
 END $$;
 
 -- ---------- the rule itself (mirrors resolveEntitlements().blocked === false) ----------
-SELECT pg_temp.assert_true(NOT public.account_is_writable((SELECT acc FROM t WHERE label = 'R')), 'trial ended: not writable');
-SELECT pg_temp.assert_true(NOT public.account_is_writable((SELECT acc FROM t WHERE label = 'P')), 'past_due: not writable');
-SELECT pg_temp.assert_true(NOT public.account_is_writable((SELECT acc FROM t WHERE label = 'S')), 'suspended: not writable');
-SELECT pg_temp.assert_true(NOT public.account_is_writable((SELECT acc FROM t WHERE label = 'C')), 'canceled: not writable');
-SELECT pg_temp.assert_true(public.account_is_writable((SELECT acc FROM t WHERE label = 'A')), 'active with a past valid-until: still writable');
-SELECT pg_temp.assert_true(public.account_is_writable((SELECT acc FROM t WHERE label = 'T')), 'trial running: writable');
-SELECT pg_temp.assert_true(NOT public.account_is_writable(gen_random_uuid()), 'unknown account: fail closed');
-SELECT pg_temp.assert_true(NOT public.account_is_writable(NULL), 'NULL account: fail closed');
+SELECT pg_temp.assert_true(NOT private.account_is_writable((SELECT acc FROM t WHERE label = 'R')), 'trial ended: not writable');
+SELECT pg_temp.assert_true(NOT private.account_is_writable((SELECT acc FROM t WHERE label = 'P')), 'past_due: not writable');
+SELECT pg_temp.assert_true(NOT private.account_is_writable((SELECT acc FROM t WHERE label = 'S')), 'suspended: not writable');
+SELECT pg_temp.assert_true(NOT private.account_is_writable((SELECT acc FROM t WHERE label = 'C')), 'canceled: not writable');
+SELECT pg_temp.assert_true(private.account_is_writable((SELECT acc FROM t WHERE label = 'A')), 'active with a past valid-until: still writable');
+SELECT pg_temp.assert_true(private.account_is_writable((SELECT acc FROM t WHERE label = 'T')), 'trial running: writable');
+SELECT pg_temp.assert_true(NOT private.account_is_writable(gen_random_uuid()), 'unknown account: fail closed');
+SELECT pg_temp.assert_true(NOT private.account_is_writable(NULL), 'NULL account: fail closed');
 -- a running trial with no expiry date is writable (NULL = no expiry)
 UPDATE accounts SET plan_expires_at = NULL WHERE id = (SELECT acc FROM t WHERE label = 'T');
-SELECT pg_temp.assert_true(public.account_is_writable((SELECT acc FROM t WHERE label = 'T')), 'trial with NULL expiry: writable');
+SELECT pg_temp.assert_true(private.account_is_writable((SELECT acc FROM t WHERE label = 'T')), 'trial with NULL expiry: writable');
 UPDATE accounts SET plan_expires_at = now() + interval '7 days' WHERE id = (SELECT acc FROM t WHERE label = 'T');
 
-SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.account_is_writable(uuid)', 'EXECUTE')
-                           AND has_function_privilege('authenticated', 'public.account_is_writable(uuid)', 'EXECUTE')
-                           AND has_function_privilege('service_role', 'public.account_is_writable(uuid)', 'EXECUTE'),
+SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'private.account_is_writable(uuid)', 'EXECUTE')
+                           AND has_function_privilege('authenticated', 'private.account_is_writable(uuid)', 'EXECUTE')
+                           AND has_function_privilege('service_role', 'private.account_is_writable(uuid)', 'EXECUTE'),
                            'grants of account_is_writable');
 
 -- ---------- read-only accounts R (trial ended) and P (past due) ----------
@@ -249,6 +249,33 @@ SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A'), true);
 SELECT pg_temp.ok(format($q$SELECT pg_temp.definer_add_agent(%L)$q$, (SELECT acc FROM t WHERE label = 'A')), 'definer RPC: active account');
 RESET ROLE;
+
+-- ---------- PostgREST sets request.jwt.claims (JSON), not only claim.sub ----------
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', (SELECT uid FROM t WHERE label = 'R'), 'role', 'authenticated')::text, true);
+SET ROLE authenticated;
+SELECT pg_temp.denied(format($q$INSERT INTO contacts(user_id, account_id, phone) VALUES (%L, %L, '+5511900004444')$q$,
+  (SELECT uid FROM t WHERE label = 'R'), (SELECT acc FROM t WHERE label = 'R')), 'JSON claims: read-only account refused');
+SELECT pg_temp.denied(format($q$SELECT pg_temp.definer_add_agent(%L)$q$, (SELECT acc FROM t WHERE label = 'R')), 'JSON claims: definer RPC refused');
+RESET ROLE;
+SELECT set_config('request.jwt.claims', '', true);
+
+-- ---------- the rule function is not exposed through PostgREST ----------
+SELECT pg_temp.assert_true(NOT has_schema_privilege('anon', 'private', 'USAGE') AND has_schema_privilege('authenticated', 'private', 'USAGE'),
+                           'private schema: no anon, authenticated can run the policies');
+SELECT pg_temp.assert_true(NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'account_is_writable' AND pronamespace = 'public'::regnamespace),
+                           'no public.account_is_writable (no rpc oracle)');
+
+-- ---------- a removed member gets a trial WINDOW, not an open-ended one ----------
+INSERT INTO auth.users(id, email, raw_user_meta_data) VALUES ('94000000-0000-4000-8000-0000000000b1', 'm@block.test', '{"full_name":"M"}');
+UPDATE profiles SET account_id = (SELECT acc FROM t WHERE label = 'A'), account_role = 'agent' WHERE user_id = '94000000-0000-4000-8000-0000000000b1';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A'), true);
+SELECT public.remove_account_member('94000000-0000-4000-8000-0000000000b1');
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT plan_expires_at > now() AND plan_expires_at < now() + interval '15 days' AND plan_status = 'trial'
+                              FROM accounts WHERE id = (SELECT account_id FROM profiles WHERE user_id = '94000000-0000-4000-8000-0000000000b1')),
+                           'remove_account_member: new account has a 14-day trial window');
 
 -- ---------- the server (service role) is not affected ----------
 -- A service-role request carries no user JWT: clear the sub left by the steps above

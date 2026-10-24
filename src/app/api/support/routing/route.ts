@@ -12,7 +12,7 @@
 
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { applyRouting, transferToTeam } from '@/lib/support/routing'
@@ -23,7 +23,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export async function POST(request: Request) {
   try {
-    const ctx = await requireRole('agent')
+    const ctx = await requireWritable(await requireRole('agent'))
     const limit = checkRateLimit(`support:routing:${ctx.userId}`, RATE_LIMITS.react)
     if (!limit.success) return rateLimitResponse(limit)
 

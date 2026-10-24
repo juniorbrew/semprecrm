@@ -69,8 +69,8 @@ describe('migration 094 contract: parses', () => {
 
 describe('migration 094 contract: account_is_writable', () => {
   const fn = sql.slice(
-    sql.indexOf('CREATE OR REPLACE FUNCTION public.account_is_writable'),
-    sql.indexOf('COMMENT ON FUNCTION public.account_is_writable'),
+    sql.indexOf('CREATE OR REPLACE FUNCTION private.account_is_writable'),
+    sql.indexOf('COMMENT ON FUNCTION private.account_is_writable'),
   )
 
   it('is STABLE SECURITY DEFINER with a pinned search_path and returns boolean', () => {
@@ -94,9 +94,9 @@ describe('migration 094 contract: account_is_writable', () => {
   })
 
   it('revokes PUBLIC/anon and grants authenticated + service_role (policies run as the caller)', () => {
-    expect(sql).toContain('REVOKE ALL ON FUNCTION public.account_is_writable(uuid) FROM PUBLIC, anon;')
+    expect(sql).toContain('REVOKE ALL ON FUNCTION private.account_is_writable(uuid) FROM PUBLIC, anon;')
     expect(sql).toContain(
-      'GRANT EXECUTE ON FUNCTION public.account_is_writable(uuid) TO authenticated, service_role;',
+      'GRANT EXECUTE ON FUNCTION private.account_is_writable(uuid) TO authenticated, service_role;',
     )
     expect(sql).toContain('REVOKE ALL ON FUNCTION public.readonly_guard() FROM PUBLIC, anon, authenticated;')
   })
@@ -119,9 +119,9 @@ describe('migration 094 contract: policies', () => {
     const insert = policy(t, 'INSERT')
     const del = policy(t, 'DELETE')
     expect(insert, `${t} insert`).not.toBeNull()
-    expect(insert).toContain('WITH CHECK (public.account_is_writable(')
+    expect(insert).toContain('WITH CHECK (private.account_is_writable(')
     expect(del, `${t} delete`).not.toBeNull()
-    expect(del).toContain('USING (public.account_is_writable(')
+    expect(del).toContain('USING (private.account_is_writable(')
     const update = policy(t, 'UPDATE')
     if (UPDATE_BY_TRIGGER.includes(t)) {
       expect(update, `${t} update is a trigger`).toBeNull()
@@ -130,8 +130,8 @@ describe('migration 094 contract: policies', () => {
       )
     } else {
       expect(update, `${t} update`).not.toBeNull()
-      expect(update).toContain('USING (public.account_is_writable(')
-      expect(update).toContain('WITH CHECK (public.account_is_writable(')
+      expect(update).toContain('USING (private.account_is_writable(')
+      expect(update).toContain('WITH CHECK (private.account_is_writable(')
     }
   })
 
@@ -180,14 +180,44 @@ describe('migration 094 contract: guards', () => {
     expect(sql).toContain('TRIGGER _00_readonly_guard BEFORE UPDATE ON public.conversations')
   })
 
+  it('keeps the rule out of the PostgREST-exposed schema', () => {
+    expect(sql).toContain('CREATE SCHEMA IF NOT EXISTS private;')
+    expect(sql).toContain('GRANT USAGE ON SCHEMA private TO authenticated, service_role;')
+    expect(sql).not.toContain('public.account_is_writable')
+  })
+
+  it('UPDATE also needs the previous account writable (no moving rows out)', () => {
+    expect(sql).toContain("v_old_account := CASE WHEN TG_OP = 'UPDATE'")
+    expect(sql).toContain('private.account_is_writable(v_old_account)')
+  })
+
+  it('guards the versions table written by the definer RPC ai_knowledge_record_version', () => {
+    expect(sql).toContain('TRIGGER _00_readonly_guard BEFORE INSERT ON public.ai_knowledge_item_versions')
+  })
+
+  it('remove_account_member gives the new account the 14-day trial window of handle_new_user', () => {
+    const i = sql.indexOf('CREATE OR REPLACE FUNCTION public.remove_account_member')
+    const fn = sql.slice(i, sql.indexOf('\n$$;', i))
+    expect(fn).toContain('SECURITY DEFINER')
+    expect(fn).toContain('SET search_path = public')
+    expect(fn).toContain('plan_status, plan_expires_at)')
+    expect(fn).toContain("NOW() + INTERVAL '14 days'")
+  })
+
+  it('every function body closes with $$ (a lone $ does not parse)', () => {
+    expect(sql).not.toMatch(/^AS $s*$/m)
+    expect(sql).not.toMatch(/^$;s*$/m)
+    expect(sql.match(/^AS $$$/gm)?.length).toBe(sql.match(/^$$;$/gm)?.length)
+  })
+
   it('rollback drops every policy, trigger and function created', () => {
     for (const m of sql.matchAll(/CREATE POLICY (\w+) ON public\.(\w+)/g)) {
       expect(rollback).toContain(`DROP POLICY IF EXISTS ${m[1]} ON public.${m[2]};`)
     }
-    for (const t of ['conversations', 'contacts', 'ai_knowledge_items', 'ai_knowledge_chunks', 'ai_agents']) {
+    for (const t of ['conversations', 'contacts', 'ai_knowledge_items', 'ai_knowledge_chunks', 'ai_agents', 'ai_knowledge_item_versions']) {
       expect(rollback).toContain(`DROP TRIGGER IF EXISTS _00_readonly_guard ON public.${t};`)
     }
     expect(rollback).toContain('DROP FUNCTION IF EXISTS public.readonly_guard();')
-    expect(rollback).toContain('DROP FUNCTION IF EXISTS public.account_is_writable(uuid);')
+    expect(rollback).toContain('DROP FUNCTION IF EXISTS private.account_is_writable(uuid);')
   })
 })
