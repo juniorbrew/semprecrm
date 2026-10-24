@@ -1,3 +1,4 @@
+// read-only: allowed (LGPD: anonymize / suppression must stay possible)
 // ============================================================
 // POST /api/contacts/suppressions/check — agent+ (whoever can send a
 // broadcast). Side-effect free MEMBERSHIP ORACLE for the account's

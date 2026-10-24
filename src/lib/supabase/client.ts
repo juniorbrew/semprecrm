@@ -1,5 +1,7 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { toast } from 'sonner'
+import { getClientReadOnlyReason, withReadOnlyDbMessage } from '@/lib/billing/read-only-db-error'
 import { SUPABASE_AUTH_COOKIE_NAME, resolveSupabasePublicUrl } from './public-url'
 
 // Singleton instance — one client shared across the whole browser session.
@@ -16,7 +18,18 @@ export function createClient() {
     resolveSupabasePublicUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     // Same cookie name as the server client / middleware (see public-url.ts).
-    { cookieOptions: { name: SUPABASE_AUTH_COOKIE_NAME } }
+    {
+      cookieOptions: { name: SUPABASE_AUTH_COOKIE_NAME },
+      // A read-only account's refused write (migration 094) comes back with
+      // the friendly pt-BR copy instead of a bare RLS error.
+      global: {
+        fetch: withReadOnlyDbMessage(
+          (input, init) => fetch(input, init),
+          getClientReadOnlyReason,
+          (message) => toast.error(message, { id: 'read-only-db' })
+        ),
+      },
+    }
   )
 
   return browserClient

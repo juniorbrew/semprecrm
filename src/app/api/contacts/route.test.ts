@@ -37,6 +37,7 @@ vi.mock('@/lib/auth/account', async (importOriginal) => {
   return {
     ...actual,
     getCurrentAccount: vi.fn(async () => ctx()),
+    requireWritable: vi.fn(async (c: unknown) => c),
     requireRole: vi.fn(async (min: 'admin') => {
       if (!hasMinRole(h.role as 'admin', min)) throw new actual.ForbiddenError('Insufficient role')
       return ctx()

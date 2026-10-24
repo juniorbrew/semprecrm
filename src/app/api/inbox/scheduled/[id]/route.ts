@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { canManageScheduled, MAYBE_SENT } from '@/lib/scheduled-messages/permissions'
 import {
@@ -55,7 +55,7 @@ async function loadRow(accountId: string, id: string): Promise<Row | null> {
 export async function PATCH(request: Request, { params }: Ctx) {
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireWritable(await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -118,7 +118,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
 export async function DELETE(_request: Request, { params }: Ctx) {
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireWritable(await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }

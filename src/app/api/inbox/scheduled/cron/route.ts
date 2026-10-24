@@ -1,3 +1,4 @@
+// read-only: allowed (cron: secret-authenticated tick, no user)
 import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 

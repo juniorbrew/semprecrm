@@ -1,3 +1,4 @@
+// read-only: allowed (internal push to the staff, no CRM write)
 // ============================================================
 // POST /api/push/notify — client-originated push triggers.
 //

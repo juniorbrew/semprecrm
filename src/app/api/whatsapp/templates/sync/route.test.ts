@@ -63,6 +63,8 @@ vi.mock('@/lib/auth/account', () => {
     }),
     toErrorResponse: () => null,
     ForbiddenError: class extends Error {},
+    ReadOnlyError: class extends Error {},
+    requireWritable: async (c: unknown) => c,
     UnauthorizedError: class extends Error {},
   }
 })

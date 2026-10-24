@@ -1,3 +1,4 @@
+// read-only: allowed (public marketing form, no account)
 // ============================================================
 // POST /api/marketing/contact
 //

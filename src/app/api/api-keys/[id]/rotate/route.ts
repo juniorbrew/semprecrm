@@ -1,3 +1,4 @@
+// read-only: allowed (settings: API key management stays available, owner decision)
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'

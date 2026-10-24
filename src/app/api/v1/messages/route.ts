@@ -1,3 +1,4 @@
+// read-only: allowed (public API: authenticateApiKey already refuses read-only and blocked accounts)
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'

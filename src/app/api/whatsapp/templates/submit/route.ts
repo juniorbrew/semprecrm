@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   ForbiddenError,
+  ReadOnlyError,
   UnauthorizedError,
   requireRole,
+  requireWritable,
   toErrorResponse,
 } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -101,7 +103,7 @@ export async function POST(request: Request) {
     // membership, so a viewer or agent could push a template to Meta for
     // approval — an external side effect RLS can't roll back — before the
     // local upsert was refused.
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const { supabase, accountId, userId } = await requireWritable(await requireRole('admin'))
     const limit = checkRateLimit(`wa-templates:submit:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
@@ -250,7 +252,8 @@ export async function POST(request: Request) {
     // user chasing the wrong problem.
     if (
       error instanceof UnauthorizedError ||
-      error instanceof ForbiddenError
+      error instanceof ForbiddenError ||
+      error instanceof ReadOnlyError
     ) {
       return toErrorResponse(error)
     }

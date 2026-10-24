@@ -1,3 +1,4 @@
+// read-only: allowed (platform admin, gated by the platform gate)
 import { revalidatePath } from 'next/cache';
 import { authorizePlatformApi, platformJson } from '@/lib/platform/api';
 import { supabaseAdmin } from '@/lib/automations/admin-client';

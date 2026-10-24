@@ -1,3 +1,4 @@
+// read-only: allowed (cron: secret-authenticated tick, no user)
 // ============================================================
 // POST /api/integrations/calendar/sync — the cron tick for the
 // calendar sync (scripts/cron-tick.mjs every CALENDAR_SYNC_INTERVAL_MS,

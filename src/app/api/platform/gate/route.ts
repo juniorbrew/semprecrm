@@ -1,3 +1,4 @@
+// read-only: allowed (platform admin, gated by the platform gate)
 // ============================================================
 // /api/platform/gate — the platform (master) area's own login.
 //

@@ -1,3 +1,4 @@
+// read-only: allowed (gateway callback: inbound from the QR gateway)
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/flows/admin-client'

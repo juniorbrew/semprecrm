@@ -1,11 +1,13 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { Lock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/hooks/use-language';
 import { useReadOnly } from '@/hooks/use-read-only';
+import { setClientReadOnlyReason } from '@/lib/billing/read-only-db-error';
 import type { ReadOnlyReason } from '@/lib/billing/read-only';
 
 /** English keys; the dictionary (i18n-dict/billing.ts) carries the pt-BR. */
@@ -28,6 +30,11 @@ const COPY: Record<ReadOnlyReason, { text: string; action: string }> = {
 export function ReadOnlyBanner() {
   const { t } = useLanguage();
   const { readOnly, reason, isOwner } = useReadOnly();
+  // Tells the Supabase client to word a database-refused write (094) as read-only.
+  useEffect(() => {
+    setClientReadOnlyReason(reason);
+    return () => setClientReadOnlyReason(null);
+  }, [reason]);
   if (!readOnly || !reason) return null;
   const copy = COPY[reason];
   return (

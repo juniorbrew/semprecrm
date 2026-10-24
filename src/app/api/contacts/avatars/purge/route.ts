@@ -1,3 +1,4 @@
+// read-only: allowed (storage cleanup of contacts that are already deleted)
 // ============================================================
 // POST /api/contacts/avatars/purge — agent+ (whoever can delete contacts).
 //

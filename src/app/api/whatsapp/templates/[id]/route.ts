@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { createClient } from '@/lib/supabase/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -73,7 +73,7 @@ export async function PATCH(
     // segura — um visualizador mexia no template aprovado da conta. Exige admin,
     // como templates/submit e templates/sync.
     try {
-      await requireRole('admin')
+      await requireWritable(await requireRole('admin'))
     } catch (err) {
       return toErrorResponse(err)
     }
@@ -273,7 +273,7 @@ export async function DELETE(
     // segura — um visualizador mexia no template aprovado da conta. Exige admin,
     // como templates/submit e templates/sync.
     try {
-      await requireRole('admin')
+      await requireWritable(await requireRole('admin'))
     } catch (err) {
       return toErrorResponse(err)
     }

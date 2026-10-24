@@ -1,3 +1,4 @@
+// read-only: allowed (mark as read, same as the unread_count RLS allowance)
 import { NextResponse } from 'next/server'
 
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
