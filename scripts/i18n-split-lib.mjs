@@ -217,10 +217,10 @@ export function planChunks(root, enToPt) {
   }
   const used = new Set();
   for (const s of Object.values(chunks)) for (const k of s) used.add(k);
-  // Keys no source file mentions (server-built or dead copy) ride with the
-  // dashboard shell, the only place API messages surface.
+  // Keys no source file mentions (server-built labels, API messages or dead
+  // copy) get their own chunk, loaded by the shell, auth/join and platform.
   const unmatched = keys.filter((k) => !used.has(k));
-  for (const k of unmatched) chunks.shell.add(k);
+  chunks.unmatched = new Set(unmatched);
   return { groups, chunks, unmatched, keys, graph };
 }
 

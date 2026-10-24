@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Regenerates src/lib/i18n-chunks/*.tsx from the full dictionaries.
 //   npm run i18n:split          write the files
-//   npm run i18n:split -- --check   exit 1 if they are stale (CI uses the vitest twin)
+//   npm run i18n:split -- --check   report stale files and exit 1 without writing
+// CI runs the same comparison in src/lib/i18n-chunks.test.ts.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -34,13 +35,14 @@ function load(file) {
 const { EN_TO_PT } = load(path.join(root, 'src/lib/i18n.ts'));
 const plan = planChunks(root, EN_TO_PT);
 const check = process.argv.includes('--check');
+console.log(`${plan.unmatched.length} of ${plan.keys.length} keys match no source file (chunk "unmatched")`);
 let stale = 0;
 const wanted = new Set();
 for (const [name, set] of Object.entries(plan.chunks)) {
   const file = path.join(root, chunkFileName(name));
   wanted.add(file);
   const text = renderChunk(name, set, EN_TO_PT);
-  const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').replaceAll(String.fromCharCode(13), '') : null;
   if (current === text) continue;
   stale++;
   if (!check) {

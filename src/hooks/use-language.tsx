@@ -166,7 +166,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     });
     // A route chunk that lands after first paint (client navigation, lazy
     // component) re-runs the pass so its strings do not stay in English.
-    const unsubscribe = onDictChange(() => translateTree(document.body, language));
+    // Several chunks can land back to back; coalesce into one pass.
+    let queued = false;
+    const unsubscribe = onDictChange(() => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        translateTree(document.body, language);
+      });
+    });
     return () => {
       observer.disconnect();
       unsubscribe();

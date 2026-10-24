@@ -20,7 +20,7 @@ describe('i18n route chunks', () => {
     for (const [name, keys] of Object.entries(plan.chunks)) {
       const file = path.join(root, chunkFileName(name));
       const expected = renderChunk(name, keys, EN_TO_PT);
-      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== expected)
+      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8').replaceAll(String.fromCharCode(13), '') !== expected)
         stale.push(name);
     }
     const dir = path.join(root, 'src/lib/i18n-chunks');
@@ -45,10 +45,27 @@ describe('i18n route chunks', () => {
     expect(offenders).toEqual([]);
   }, 120_000);
 
+  it('every page and route handler entry belongs to a chunk group', () => {
+    const grouped = new Set(Object.values(plan.groups).flat());
+    const app = path.join(root, 'src/app');
+    const pages: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== 'api') walk(p);
+        } else if (e.name === 'page.tsx') pages.push(p);
+      }
+    };
+    walk(app);
+    const orphans = pages.filter((p) => !grouped.has(p)).map((p) => rel(root, p));
+    expect(orphans).toEqual([]);
+  });
+
   it('login and signup ship a small dictionary budget (root + auth)', () => {
     const size = (name: string) =>
       fs.statSync(path.join(root, chunkFileName(name))).size;
     // Whole catalogue is ~260 KB of entries; auth screens need a small slice.
-    expect(size('root') + size('auth')).toBeLessThan(40_000);
+    expect(size('root') + size('auth') + size('unmatched')).toBeLessThan(60_000);
   });
 });

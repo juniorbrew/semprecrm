@@ -4,6 +4,7 @@ import { PlatformHeader } from '@/components/platform/platform-header';
 import { PlatformNavigation } from '@/components/platform/platform-navigation';
 import { getPlatformAdmin } from '@/lib/platform/server';
 import I18nChunk from '@/lib/i18n-chunks/platform';
+import Unmatched from '@/lib/i18n-chunks/unmatched';
 
 // The platform shell is separate from the customer's CRM. The second
 // login renders without the admin navigation; each protected page also
@@ -28,6 +29,7 @@ export default async function PlatformLayout({
   return (
     <div className="bg-background flex min-h-screen flex-col">
       <I18nChunk />
+      <Unmatched />
       <PlatformHeader />
       {ctx?.gateOpen ? (
         <PlatformNavigation initialNewCount={error ? null : (count ?? 0)}>
