@@ -6,10 +6,10 @@
 # Pode perder as linhas escritas no instante da cópia, aceitável para estes logs.
 # su: /var/log/semprecrm pertence ao usuário semprecrm (o logrotate recusa
 # diretório gravável por outro usuário sem isto). backup.log é do root e fica de fora.
+# cron.*.log cobre cron.out.log e cron.err.log (uma linha por chamada, chegou a 12 MB).
 /var/log/semprecrm/out.log
 /var/log/semprecrm/err.log
-/var/log/semprecrm/cron.out.log
-/var/log/semprecrm/cron.err.log
+/var/log/semprecrm/cron.*.log
 /var/log/semprecrm/wa-gateway.out.log
 /var/log/semprecrm/wa-gateway.err.log
 {
