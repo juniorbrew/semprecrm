@@ -1,8 +1,14 @@
 import { ModuleGuard } from "@/components/plans/module-guard";
+import I18nChunk from "@/lib/i18n-chunks/d-flows";
 
 // Plan gate for the `flows` module (see src/lib/plans.ts). Lives in
 // the segment layout so every nested route is covered without
 // touching the feature pages themselves.
 export default function FlowsLayout({ children }: { children: React.ReactNode }) {
-  return <ModuleGuard module="flows">{children}</ModuleGuard>;
+  return (
+    <>
+      <I18nChunk />
+      <ModuleGuard module="flows">{children}</ModuleGuard>
+    </>
+  );
 }

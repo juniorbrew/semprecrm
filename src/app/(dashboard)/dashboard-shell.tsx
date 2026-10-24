@@ -17,6 +17,8 @@ import { usePushRegistration } from "@/hooks/use-push-registration";
 import { ChatPresenceProvider } from "@/components/chat/presence-provider";
 import { brandingCssVars } from "@/lib/branding";
 import { getPageTitle } from "@/components/layout/header";
+import '@/lib/i18n-chunks/shell';
+import '@/lib/i18n-chunks/unmatched';
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —

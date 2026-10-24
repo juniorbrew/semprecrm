@@ -37,7 +37,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "i18n:split": "node scripts/i18n-split.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.65",

@@ -33,6 +33,7 @@ import {
   resolveSection,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
+import '@/lib/i18n-chunks/d-settings';
 
 export default function SettingsPage() {
   const router = useRouter();

@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { useBranding } from "@/hooks/use-branding";
 import { useLanguage } from "@/hooks/use-language";
-import { translateLiteral, type Language } from "@/lib/i18n";
+import type { Language } from "@/lib/i18n-core";
+import { translateLiteral } from "@/lib/i18n-runtime";
 import {
   LogOut,
   Menu,

@@ -30,6 +30,7 @@ import {
   type WhatsAppBanner,
 } from "@/lib/whatsapp/connection-banner";
 import { useContactPanelOpen } from "@/hooks/use-contact-panel-open";
+import '@/lib/i18n-chunks/d-inbox';
 
 export default function InboxPage() {
   const router = useRouter();
