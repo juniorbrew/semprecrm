@@ -5,6 +5,7 @@ import { SearchX } from 'lucide-react';
 
 import { useLanguage } from '@/hooks/use-language';
 import { Button } from '@/components/ui/button';
+import '@/lib/i18n-chunks/notfound';
 
 /**
  * Root 404 — replaces Next's built-in English "This page could not be

@@ -27,6 +27,7 @@
 
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import I18nChunk from '@/lib/i18n-chunks/auth';
 
 export const metadata: Metadata = {
   referrer: 'no-referrer',
@@ -38,6 +39,7 @@ export const metadata: Metadata = {
 export default function JoinLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <I18nChunk />
       {children}
     </div>
   );

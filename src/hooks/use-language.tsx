@@ -10,12 +10,12 @@ import {
 } from 'react';
 import {
   DEFAULT_LANGUAGE,
-  EN_TO_PT,
   LANGUAGE_STORAGE_KEY,
   isLanguage,
-  translateLiteral,
   type Language,
-} from '@/lib/i18n';
+} from '@/lib/i18n-core';
+import { lookupPt, onDictChange, translateLiteral } from '@/lib/i18n-runtime';
+import '@/lib/i18n-chunks/root';
 
 interface LanguageContextValue {
   language: Language;
@@ -139,7 +139,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   const t = useCallback(
     (english: string) =>
-      language === 'pt-BR' ? (EN_TO_PT[english] ?? english) : english,
+      language === 'pt-BR' ? (lookupPt(english) ?? english) : english,
     [language]
   );
 
@@ -164,7 +164,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       attributes: true,
       attributeFilter: TRANSLATED_ATTRIBUTES,
     });
-    return () => observer.disconnect();
+    // A route chunk that lands after first paint (client navigation, lazy
+    // component) re-runs the pass so its strings do not stay in English.
+    const unsubscribe = onDictChange(() => translateTree(document.body, language));
+    return () => {
+      observer.disconnect();
+      unsubscribe();
+    };
   }, [language]);
 
   useEffect(() => {
@@ -189,7 +195,7 @@ export function useLanguage(): LanguageContextValue {
     useContext(LanguageContext) ?? {
       language: DEFAULT_LANGUAGE,
       setLanguage: () => {},
-      t: (english) => EN_TO_PT[english] ?? english,
+      t: (english) => lookupPt(english) ?? english,
     }
   );
 }

@@ -210,7 +210,7 @@ export default function AutomationLogsPage({
   );
 }
 
-type Lang = import('@/lib/i18n').Language;
+type Lang = import('@/lib/i18n-core').Language;
 
 const RUN_STATUS_LABEL: Record<Lang, Record<AutomationLog['status'], string>> = {
   'pt-BR': {

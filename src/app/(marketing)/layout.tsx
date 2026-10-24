@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { SiteHeader } from "./_components/site-header";
 import { SiteFooter } from "./_components/site-footer";
 import { Analytics } from "./_components/analytics";
+import I18nChunk from "@/lib/i18n-chunks/marketing";
 
 // Overrides the root layout's `robots: { index: false, follow: false }`
 // (src/app/layout.tsx:28-31) for every route under this group only.
@@ -19,6 +20,7 @@ export const metadata: Metadata = {
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-full flex-col">
+      <I18nChunk />
       {/* Skip link: first Tab stop on every marketing page, visible only on focus. */}
       <a
         href="#conteudo"

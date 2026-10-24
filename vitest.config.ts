@@ -16,6 +16,7 @@ export default defineConfig({
         "0000000000000000000000000000000000000000000000000000000000000000",
       META_APP_SECRET: "test-meta-app-secret",
     },
+    setupFiles: ["src/test/i18n-setup.ts"],
     clearMocks: true,
   },
 });

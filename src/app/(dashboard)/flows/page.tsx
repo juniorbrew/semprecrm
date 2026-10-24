@@ -28,7 +28,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
-import { translateLiteral } from "@/lib/i18n";
+import { translateLiteral } from "@/lib/i18n-runtime";
 import { getFlowTemplate, localizeFlowTemplate } from "@/lib/flows/templates";
 import {
   FLOWS_COPY,

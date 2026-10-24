@@ -48,6 +48,7 @@ import { useCan } from '@/hooks/use-can';
 import { useLanguage } from '@/hooks/use-language';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
+import '@/lib/i18n-chunks/d-contacts';
 
 const PAGE_SIZE = 25;
 const DELETE_CHUNK = 10;

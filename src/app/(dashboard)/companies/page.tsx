@@ -41,6 +41,7 @@ import {
 } from '@/lib/companies';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
+import '@/lib/i18n-chunks/d-companies';
 
 const PAGE_SIZE = 25;
 const TH = 'h-9 px-2 text-left text-xs font-medium text-muted-foreground';
