@@ -72,7 +72,12 @@ Só planos com preço no catálogo (`platform_plan_versions.price_monthly_cents`
 - A API pública v1 continua inteiramente bloqueada para contas somente leitura (decisão do responsável).
 - Troca de plano/ciclo de assinatura **ativa** fica com a equipe (decisão do responsável).
 
-### Lacuna conhecida da fase 1
 
-As gravações de dados do CRM (contatos, tarefas, negócios etc.) feitas com o JWT do próprio usuário só são bloqueadas **na interface**; uma chamada direta ao Supabase de uma conta somente leitura ainda grava. O bloqueio no banco (RLS/gatilhos checando a situação da conta) é a **fase 2 do bloqueio** (entrega 3). As rotas de envio e custo (WhatsApp, IA, disparos, automações) já recusam no servidor.
+### Fase 2 do bloqueio: no banco (migration 094)
 
+- `account_is_writable(conta)` repete no SQL a regra do app (`resolveEntitlements().blocked === false`): gravável se `plan_status` for `trial` (antes de `plan_expires_at`; sem data = sem prazo) ou `active` (a data de validade de uma conta ativa nunca bloqueia); `past_due`, `canceled`, `suspended`, plano/versão ilegível ou conta inexistente = não gravável.
+- Políticas RESTRICTIVE de INSERT/UPDATE/DELETE para `authenticated` nas tabelas de dados do CRM. Somam-se às políticas atuais; a leitura nunca é restringida; `service_role` não é afetado (webhooks, gateway, crons e rotas com o cliente admin seguem gravando).
+- Gatilho `readonly_guard`: em `conversations` só `unread_count` (marcar como lida) muda; em `contacts` só `consent_status`, `consent_updated_at` e `opted_out_at` (LGPD); em `ai_agents` e `ai_knowledge_*` nada (isso também barra as funções SECURITY DEFINER chamadas com o JWT do usuário).
+- Continuam graváveis de propósito: `profiles`, `accounts` (dados da empresa; colunas de plano seguem travadas pela 076), `push_subscriptions`, `account_invitations`, `whatsapp_config`, `wa_qr_sessions`, chat interno (`chat_*`) e arquivos do storage.
+- App: a recusa do banco (42501) volta com o texto de somente leitura em pt-BR (`src/lib/billing/read-only-db-error.ts`, ligado ao cliente do navegador).
+- Prova no banco: `supabase/tests/billing_db_block.sql`. Reversão: `supabase/rollback/094_rollback.sql`.
