@@ -31,6 +31,9 @@ import type { AgendaConfig, AgendaResource, AgendaService, AppointmentStatus, Bo
 
 const DAY_MS = 86_400_000;
 
+/** Where the booking RPCs run: the server's service-role client (reads use the caller's RLS client). */
+export type RpcWriter = Pick<AgendaDb, 'rpc'>;
+
 function inputFor(config: AgendaConfig, service: AgendaService, now: Date, resources: AgendaResource[], busy: Parameters<typeof toSchedules>[2]): AvailabilityInput {
   return {
     tz: config.timezone,
@@ -125,7 +128,7 @@ function parseStart(iso: string): number {
 }
 
 async function rpcEvent(
-  db: AgendaDb,
+  db: RpcWriter,
   fn: string,
   args: Record<string, unknown>,
 ): Promise<CalendarEvent> {
@@ -135,7 +138,7 @@ async function rpcEvent(
   return res.data as CalendarEvent;
 }
 
-export async function bookAppointment(db: AgendaDb, input: BookInput): Promise<CalendarEvent> {
+export async function bookAppointment(db: AgendaDb, input: BookInput, writer: RpcWriter = db): Promise<CalendarEvent> {
   const startMs = parseStart(input.startsAt);
   const source = input.source ?? 'agent';
 
@@ -169,7 +172,7 @@ export async function bookAppointment(db: AgendaDb, input: BookInput): Promise<C
       continue;
     }
     try {
-      return await rpcEvent(db, 'agenda_book_appointment', {
+      return await rpcEvent(writer, 'agenda_book_appointment', {
         p_account_id: input.accountId,
         p_service_id: input.serviceId,
         p_resource_id: schedule.id,
@@ -214,7 +217,7 @@ export interface RescheduleInput {
   now?: Date;
 }
 
-export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput): Promise<CalendarEvent> {
+export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput, writer: RpcWriter = db): Promise<CalendarEvent> {
   const startMs = parseStart(input.startsAt);
   const found = await db
     .from('calendar_events')
@@ -245,7 +248,7 @@ export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput
   const reason = explainStart(availability, availability.resources[0], startMs);
   if (reason) throw fromUnavailableReason(reason);
 
-  return rpcEvent(db, 'agenda_reschedule_appointment', {
+  return rpcEvent(writer, 'agenda_reschedule_appointment', {
     p_account_id: input.accountId,
     p_event_id: input.eventId,
     p_starts_at: new Date(startMs).toISOString(),
@@ -256,8 +259,9 @@ export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput
 export async function setAppointmentStatus(
   db: AgendaDb,
   input: { accountId: string; eventId: string; status: AppointmentStatus },
+  writer: RpcWriter = db,
 ): Promise<CalendarEvent> {
-  return rpcEvent(db, 'agenda_set_appointment_status', {
+  return rpcEvent(writer, 'agenda_set_appointment_status', {
     p_account_id: input.accountId,
     p_event_id: input.eventId,
     p_status: input.status,

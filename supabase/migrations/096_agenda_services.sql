@@ -19,7 +19,10 @@
 --      (resource_id, tstzrange(block_starts_at, block_ends_at)). O bloco é o
 --      horário + folga antes/depois, calculado por trigger — vale para
 --      qualquer caminho de escrita (RPC, PostgREST, service_role).
---   8. RPCs SECURITY DEFINER (search_path fixo, EXECUTE explícito, regra 076):
+--   8. RPCs SECURITY DEFINER (search_path fixo, EXECUTE só para service_role —
+--      o servidor valida sessão/papel/módulo/horário e chama; usuário logado não
+--      chama direto, então não há como pular as regras de horário e antecedência;
+--      regra 076):
 --      agenda_book_appointment / agenda_reschedule_appointment /
 --      agenda_set_appointment_status. Travam a linha do recurso (FOR UPDATE),
 --      conferem a agenda do profissional (eventos comuns = tempo ocupado) e
@@ -30,8 +33,11 @@
 -- banco garante o que não pode falhar nunca: dois agendamentos no mesmo
 -- recurso e horário.
 --
--- Escritas de usuário com conta somente-leitura (094) são barradas por
--- políticas RESTRICTIVE e, nas RPCs, por private.account_is_writable.
+-- Escritas diretas de usuário com conta somente-leitura (094) são barradas por
+-- políticas RESTRICTIVE; as RPCs conferem private.account_is_writable sempre.
+-- Acesso: agent+ gerencia qualquer agendamento de serviço da conta (política
+-- calendar_events_appointment_update); service_id/booking_source/idempotency_key
+-- ficam reservados às RPCs (trigger calendar_events_agenda_guard).
 -- Verificar num Postgres real: supabase/tests/agenda_booking.sql (termina em
 -- ROLLBACK). Reverter: supabase/rollback/096_rollback.sql.
 -- ============================================================
@@ -228,8 +234,44 @@ $$;
 REVOKE ALL ON FUNCTION public.calendar_events_agenda_block() FROM PUBLIC, anon, authenticated;
 DROP TRIGGER IF EXISTS calendar_events_agenda_block ON public.calendar_events;
 CREATE TRIGGER calendar_events_agenda_block
-  BEFORE INSERT OR UPDATE OF starts_at, ends_at, service_id, resource_id ON public.calendar_events
+  BEFORE INSERT OR UPDATE ON public.calendar_events
   FOR EACH ROW EXECUTE FUNCTION public.calendar_events_agenda_block();
+
+-- block_* e a exclusão valem para qualquer escrita: o trigger roda em TODO
+-- INSERT/UPDATE e sempre recalcula (o que o cliente mandar em block_* é descartado).
+ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_block_check;
+ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_block_check
+  CHECK (resource_id IS NULL OR (block_starts_at IS NOT NULL AND block_ends_at IS NOT NULL));
+
+-- Usuários (PostgREST) não criam nem alteram a marca de agendamento: service_id,
+-- booking_source e idempotency_key só nascem nas RPCs. SECURITY INVOKER de
+-- propósito (current_user precisa ser o chamador); as RPCs rodam como postgres.
+CREATE OR REPLACE FUNCTION public.calendar_events_agenda_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT (current_user IN ('authenticated', 'anon') OR auth.uid() IS NOT NULL) THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.service_id IS NOT NULL OR NEW.booking_source IS NOT NULL OR NEW.idempotency_key IS NOT NULL THEN
+      RAISE EXCEPTION 'agenda_fields_reserved' USING ERRCODE = '42501';
+    END IF;
+  ELSIF NEW.service_id IS DISTINCT FROM OLD.service_id
+     OR NEW.booking_source IS DISTINCT FROM OLD.booking_source
+     OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key THEN
+    RAISE EXCEPTION 'agenda_fields_reserved' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.calendar_events_agenda_guard() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS calendar_events_agenda_guard ON public.calendar_events;
+CREATE TRIGGER calendar_events_agenda_guard
+  BEFORE INSERT OR UPDATE ON public.calendar_events
+  FOR EACH ROW EXECUTE FUNCTION public.calendar_events_agenda_guard();
 
 -- A garantia: no máximo um agendamento ativo por recurso em cada instante.
 ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_resource_no_overlap;
@@ -238,6 +280,19 @@ ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_resource_no_ov
     resource_id WITH =,
     tstzrange(block_starts_at, block_ends_at) WITH &&
   ) WHERE (resource_id IS NOT NULL AND status IN ('scheduled', 'confirmed', 'completed'));
+
+-- ============================================================
+-- Regra de acesso aos agendamentos (decisão: recepção agenda para vários
+-- profissionais): qualquer agent+ da conta remarca / cancela / muda o status de
+-- um agendamento de serviço (linha com service_id), não só o dono ou o criador.
+-- As políticas de 040 continuam valendo para os eventos comuns; a política abaixo
+-- é permissiva e SÓ cobre linhas de serviço. As RESTRICTIVE de 094 (conta
+-- somente-leitura) continuam em AND com ela.
+-- ============================================================
+DROP POLICY IF EXISTS calendar_events_appointment_update ON public.calendar_events;
+CREATE POLICY calendar_events_appointment_update ON public.calendar_events FOR UPDATE
+  USING (service_id IS NOT NULL AND is_account_member(account_id, 'agent'))
+  WITH CHECK (service_id IS NOT NULL AND is_account_member(account_id, 'agent'));
 
 -- ============================================================
 -- Grants + RLS
@@ -308,8 +363,10 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION private.agenda_user_busy(UUID, UUID, TIMESTAMPTZ, TIMESTAMPTZ, UUID) FROM PUBLIC, anon, authenticated;
 
--- Quem chama: usuário logado (agent+ e conta gravável) ou service_role
--- (auth.uid() nulo — a IA / API, que informa p_actor).
+-- Quem chama: as RPCs são executáveis SÓ pelo service_role (o servidor, depois de
+-- autenticar a sessão, checar papel agent+, módulo e conta gravável; e a IA).
+-- A conta tem de estar gravável SEMPRE (inclusive para service_role) e, se algum
+-- dia um usuário logado chegar aqui, precisa ser agent+ da conta.
 CREATE OR REPLACE FUNCTION private.agenda_assert_caller(p_account_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -317,14 +374,12 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF auth.uid() IS NOT NULL THEN
-    IF NOT is_account_member(p_account_id, 'agent') THEN
-      RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
-    END IF;
-    IF NOT private.account_is_writable(p_account_id) THEN
-      RAISE EXCEPTION 'read_only_account: this account is read-only (trial ended or payment overdue)'
-        USING ERRCODE = '42501';
-    END IF;
+  IF auth.uid() IS NOT NULL AND NOT is_account_member(p_account_id, 'agent') THEN
+    RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
+  END IF;
+  IF NOT private.account_is_writable(p_account_id) THEN
+    RAISE EXCEPTION 'read_only_account: this account is read-only (trial ended or payment overdue)'
+      USING ERRCODE = '42501';
   END IF;
 END;
 $$;
@@ -363,6 +418,14 @@ DECLARE
   v_row     public.calendar_events;
 BEGIN
   PERFORM private.agenda_assert_caller(p_account_id);
+
+  -- Chamada de servidor: o ator informado tem de ser membro agent+ da conta.
+  IF auth.uid() IS NULL AND p_actor IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.profiles pr
+     WHERE pr.user_id = p_actor AND pr.account_id = p_account_id AND pr.account_role <> 'viewer'
+  ) THEN
+    RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
+  END IF;
 
   IF p_status NOT IN ('scheduled', 'confirmed') OR p_source NOT IN ('agent', 'ai', 'api') THEN
     RAISE EXCEPTION 'agenda_bad_status' USING ERRCODE = 'AG008';
@@ -575,8 +638,8 @@ BEGIN
     'public.agenda_set_appointment_status(uuid, uuid, text)'
   ] LOOP
     EXECUTE format('ALTER FUNCTION %s OWNER TO postgres', f);
-    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon', f);
-    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO authenticated, service_role', f);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', f);
   END LOOP;
 END;
 $$;

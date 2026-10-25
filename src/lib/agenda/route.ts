@@ -18,7 +18,18 @@ import {
 } from '@/lib/auth/account';
 import type { AccountRole } from '@/lib/auth/roles';
 
+import { supabaseAdmin } from '@/lib/automations/admin-client';
+
 import { AgendaError, isAgendaError } from './errors';
+
+/**
+ * Client for the booking RPCs. They are executable by service_role only (096):
+ * the route has already authenticated the session, checked role / module /
+ * writable account, and takes the account from the session.
+ */
+export function agendaWriter() {
+  return supabaseAdmin();
+}
 
 /** Session + role + `calendar` module. `write` also refuses read-only accounts. */
 export async function agendaContext(min: AccountRole, write: boolean): Promise<AccountContext> {

@@ -1083,6 +1083,7 @@ export function ContactSidebar({
                 <LinkedEvents
                   key={`${contact.id}:${eventsVersion}`}
                   contactId={contact.id}
+                  contact={{ id: contact.id, name: contact.name ?? null, phone: contact.phone ?? "", avatar_url: contact.avatar_url ?? null }}
                   defaults={{ conversation_id: conversationId ?? undefined }}
                   readOnly={!canWrite}
                   headerClassName="px-1"

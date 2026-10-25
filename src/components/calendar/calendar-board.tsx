@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
@@ -33,6 +33,8 @@ import { useDensity } from "@/components/tasks/density";
 import { DensityToggle } from "@/components/tasks/density-toggle";
 import { cn } from "@/lib/utils";
 
+import { AppointmentDialog } from "@/components/agenda/appointment-dialog";
+
 import { EventDrawer } from "./event-drawer";
 import { useCalendarMembers, useCalendarRealtime, useCalendarTimezone } from "./hooks";
 import { MonthView } from "./month-view";
@@ -43,14 +45,16 @@ const VIEW_STORAGE_KEY = "calendar:view";
 
 const VIEW_LABELS: Record<CalendarView, string> = { month: "Month", week: "Week", day: "Day" };
 
-const AGENDA_COPY: Record<Language, { title: string; compact: string; count: (n: number) => string }> = {
+const AGENDA_COPY: Record<Language, { title: string; compact: string; book: string; count: (n: number) => string }> = {
   "pt-BR": {
     title: "Agenda",
+    book: "Agendar serviço",
     compact: "Grade compacta",
     count: (n) => (n === 1 ? "1 compromisso" : `${n} compromissos`),
   },
   "en-US": {
     title: "Calendar",
+    book: "Book a service",
     compact: "Compact grid",
     count: (n) => (n === 1 ? "1 appointment" : `${n} appointments`),
   },
@@ -94,6 +98,7 @@ export function CalendarBoard() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerEvent, setDrawerEvent] = useState<CalendarEvent | null>(null);
   const [drawerDefaults, setDrawerDefaults] = useState<Partial<CalendarEventInput> | undefined>(undefined);
+  const [appointment, setAppointment] = useState<{ event: CalendarEvent | null } | null>(null);
   const [quick, setQuick] = useState<{ draft: QuickCreateDraft; anchor: { x: number; y: number } } | null>(null);
 
   // Tick every minute for the "now" line and the today highlight.
@@ -178,6 +183,11 @@ export function CalendarBoard() {
 
   // ---- handlers ---------------------------------------------------
   const openEvent = useCallback((ev: CalendarEvent) => {
+    // Service appointments (096) have their own manage dialog: reschedule re-checks hours and conflicts.
+    if (ev.service_id) {
+      setAppointment({ event: ev });
+      return;
+    }
     setDrawerEvent(ev);
     setDrawerDefaults(undefined);
     setDrawerOpen(true);
@@ -271,6 +281,15 @@ export function CalendarBoard() {
         )}
         <div className="ml-auto flex items-center gap-1.5">
           <DensityToggle density={density} onToggle={toggleDensity} label={copy.compact} />
+          <GatedButton
+            canAct={canWrite}
+            gateReason="create appointments"
+            variant="outline"
+            onClick={() => setAppointment({ event: null })}
+          >
+            <CalendarCheck className="mr-1 size-4" />
+            {copy.book}
+          </GatedButton>
           <GatedButton
             canAct={canWrite}
             gateReason="create appointments"
@@ -397,6 +416,14 @@ export function CalendarBoard() {
           onCancel={() => setQuick(null)}
         />
       )}
+
+      <AppointmentDialog
+        open={appointment !== null}
+        onOpenChange={(o) => !o && setAppointment(null)}
+        event={appointment?.event ?? null}
+        readOnly={!canWrite}
+        onSaved={upsertLocal}
+      />
 
       <EventDrawer
         open={drawerOpen}

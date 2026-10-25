@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { AgendaError } from '@/lib/agenda/errors';
-import { agendaContext, agendaErrorResponse, parseBody } from '@/lib/agenda/route';
+import { agendaContext, agendaErrorResponse, agendaWriter, parseBody } from '@/lib/agenda/route';
 import { appointmentPatchSchema } from '@/lib/agenda/schemas';
 import { rescheduleAppointment, setAppointmentStatus } from '@/lib/agenda/service';
 
@@ -28,14 +28,14 @@ export async function PATCH(request: Request, { params }: Ctx) {
         eventId: id,
         startsAt: body.starts_at,
         resourceId: body.resource_id ?? null,
-      });
+      }, agendaWriter());
     }
     if (body.status !== undefined) {
       appointment = await setAppointmentStatus(ctx.supabase, {
         accountId: ctx.accountId,
         eventId: id,
         status: body.status,
-      });
+      }, agendaWriter());
     }
     return NextResponse.json({ appointment });
   } catch (err) {

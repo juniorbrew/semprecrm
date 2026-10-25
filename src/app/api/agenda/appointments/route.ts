@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { agendaContext, agendaErrorResponse, parseBody } from '@/lib/agenda/route';
+import { agendaContext, agendaErrorResponse, agendaWriter, parseBody } from '@/lib/agenda/route';
 import { bookSchema } from '@/lib/agenda/schemas';
 import { bookAppointment } from '@/lib/agenda/service';
 
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       status: body.status,
       source: 'agent',
       idempotencyKey: body.idempotency_key,
-    });
+    }, agendaWriter());
     return NextResponse.json({ appointment: event }, { status: 201 });
   } catch (err) {
     return agendaErrorResponse(err);

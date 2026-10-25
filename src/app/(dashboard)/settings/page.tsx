@@ -24,6 +24,7 @@ import { SupportSettings } from '@/components/settings/support-settings';
 import { AuditLogSettings } from '@/components/settings/audit-log-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { CalendarSettings } from '@/components/settings/calendar-settings';
+import { AgendaServicesSettings } from '@/components/settings/agenda-services-settings';
 import { BrandingSettings } from '@/components/settings/branding-settings';
 import { CompanySettings } from '@/components/settings/company-settings';
 import { AiSettings } from '@/components/settings/ai-settings';
@@ -72,6 +73,7 @@ export default function SettingsPage() {
     appearance: <AppearancePanel />,
     notifications: <NotificationsSettings />,
     calendar: <CalendarSettings />,
+    scheduling: <AgendaServicesSettings />,
     whatsapp: <WhatsAppConfig />,
     templates: <TemplateManager />,
     fields: <FieldsAndTagsPanel />,
