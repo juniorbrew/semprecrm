@@ -49,7 +49,7 @@ function memStore(): MemStore {
           e.account_id === accountId &&
           e.owner_user_id === userId &&
           e.external_connection_id === null &&
-          e.status === 'confirmed' &&
+          (e.status === 'confirmed' || e.status === 'scheduled') &&
           e.ends_at >= notBefore,
       )
     },
@@ -61,7 +61,7 @@ function memStore(): MemStore {
           e.account_id === accountId &&
           e.owner_user_id !== userId &&
           e.external_connection_id === null &&
-          e.status === 'confirmed' &&
+          (e.status === 'confirmed' || e.status === 'scheduled') &&
           e.ends_at >= notBefore,
       )
     },
@@ -466,11 +466,26 @@ describe('syncConnection — inbound (Google)', () => {
     expect(http.calls.filter((c) => c.method === 'POST').length).toBe(1)
   })
 
-  it('one failing inbound row does not abort the batch or the cursor', async () => {
+  it('a transient error (DB blip) aborts the run and keeps the cursor, so the change is read again', async () => {
     const orig = store.findByExternalId.bind(store)
     store.findByExternalId = async (c, id) => {
-      if (id === 'g-bad') throw new Error('boom')
+      if (id === 'g-bad') throw new Error('connection reset')
       return orig(c, id)
+    }
+    http.route('GET', GOOGLE_EVENTS, () => ({
+      body: { items: [gEvent('g-bad'), gEvent('g-ok')], nextSyncToken: 'sync-5' },
+    }))
+    const res = await syncConnection(connection({ sync_cursor: 'sync-1' }), deps)
+    expect(res.status).toBe('error')
+    expect(store.connections.get('conn-g')).toMatchObject({ status: 'error' })
+    expect(store.connections.get('conn-g')).not.toHaveProperty('sync_cursor')
+  })
+
+  it('a deterministic per-row refusal (constraint / permission) is skipped, recorded, and does not block the connection', async () => {
+    const orig = store.insertEvent.bind(store)
+    store.insertEvent = async (row) => {
+      if (row.external_id === 'g-bad') throw Object.assign(new Error('violates exclusion constraint'), { code: '23P01' })
+      return orig(row)
     }
     http.route('GET', GOOGLE_EVENTS, () => ({
       body: { items: [gEvent('g-bad'), gEvent('g-ok')], nextSyncToken: 'sync-5' },
@@ -478,6 +493,55 @@ describe('syncConnection — inbound (Google)', () => {
     const res = await syncConnection(connection(), deps)
     expect(res).toMatchObject({ status: 'active', pulled_created: 1 })
     expect(store.events.some((e) => e.external_id === 'g-ok')).toBe(true)
+    expect(store.connections.get('conn-g')).toMatchObject({
+      sync_cursor: 'sync-5',
+      status: 'active',
+      last_error: expect.stringContaining('1 event(s)'),
+    })
+  })
+
+  it('appointment echo: our own push coming back does not trigger another PATCH (two full cycles)', async () => {
+    store.events.push(event({ id: 'ev-appt', service_id: 'svc-1', status: 'scheduled' }))
+    http.route('POST', GOOGLE_EVENTS, () => ({ body: { id: 'g-1', etag: '"e1"', updated: '2026-09-14T12:00:01Z' } }))
+    http.route('PATCH', `${GOOGLE_EVENTS}/g-1`, () => ({ body: { id: 'g-1', etag: '"e2"' } }))
+
+    // Cycle 1: push creates it.
+    expect((await syncConnection(connection(), deps)).pushed_created).toBe(1)
+    const hash = store.events[0].sync_hash
+    expect(hash).toBeTruthy()
+
+    // Cycle 2: the feed echoes the same fields (new etag). Same hash, no write back.
+    http.route('GET', GOOGLE_EVENTS, () => ({
+      body: {
+        items: [gEvent('g-1', { etag: '"e1b"', summary: 'Reunião', start: { dateTime: '2026-09-15T13:00:00.000Z' }, end: { dateTime: '2026-09-15T14:00:00.000Z' } })],
+        nextSyncToken: 'sync-3',
+      },
+    }))
+    const before = http.calls.length
+    const second = await syncConnection(connection({ sync_cursor: 'sync-2', last_sync_at: NOW.toISOString() }), deps)
+    expect(second.pushed_updated + second.pushed_created + second.pushed_deleted).toBe(0)
+    expect(store.events[0].sync_hash).toBe(hash)
+    expect(store.events[0].external_etag).toBe('"e1b"')
+
+    // Cycle 3: nothing new at all.
+    http.route('GET', GOOGLE_EVENTS, () => ({ body: { items: [], nextSyncToken: 'sync-4' } }))
+    await syncConnection(connection({ sync_cursor: 'sync-3', last_sync_at: NOW.toISOString() }), deps)
+    expect(http.calls.slice(before).filter((c) => c.method !== 'GET')).toHaveLength(0)
+  })
+
+  it('remote delete of a closed appointment only unbinds it; an open one is re-created', async () => {
+    store.events.push(
+      event({ id: 'ev-done', service_id: 'svc-1', status: 'completed', external_connection_id: 'conn-g', external_id: 'g-done', sync_hash: 'h' }),
+      event({ id: 'ev-open', service_id: 'svc-1', status: 'confirmed', external_connection_id: 'conn-g', external_id: 'g-open', sync_hash: 'h' }),
+    )
+    http.route('GET', GOOGLE_EVENTS, () => ({
+      body: { items: [{ id: 'g-done', status: 'cancelled' }, { id: 'g-open', status: 'cancelled' }], nextSyncToken: 'sync-6' },
+    }))
+    http.route('POST', GOOGLE_EVENTS, () => ({ body: { id: 'g-new', etag: '"n"' } }))
+    await syncConnection(connection(), deps)
+    expect(store.events.find((e) => e.id === 'ev-done')).toMatchObject({ external_connection_id: null, external_id: null, status: 'completed' })
+    expect(store.events.find((e) => e.id === 'ev-open')).toMatchObject({ external_id: 'g-new', status: 'confirmed' })
+    expect(http.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
   })
 
   it('410 on the sync token → full read (timeMin, no syncToken) and a fresh token', async () => {

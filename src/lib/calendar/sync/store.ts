@@ -76,8 +76,9 @@ export interface SyncStore {
 const CONNECTION_COLUMNS =
   'id, account_id, user_id, provider, email, external_calendar_id, access_token_enc, refresh_token_enc, token_expires_at, sync_cursor, last_sync_at, last_error, status, mirror_attending, created_at, updated_at'
 
-function fail(op: string, error: { message?: string } | null): never {
-  throw new Error(`[calendar sync] ${op}: ${error?.message ?? 'unknown error'}`)
+function fail(op: string, error: { message?: string; code?: string } | null): never {
+  // Keep the SQLSTATE: the engine only skips deterministic per-row errors.
+  throw Object.assign(new Error(`[calendar sync] ${op}: ${error?.message ?? 'unknown error'}`), { code: error?.code })
 }
 
 export function createSyncStore(admin: SupabaseClient): SyncStore {

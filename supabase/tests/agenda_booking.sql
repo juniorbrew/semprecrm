@@ -218,11 +218,25 @@ SELECT pg_temp.fails(format($q$UPDATE calendar_events SET starts_at = '2030-01-0
 SELECT pg_temp.fails(format($q$UPDATE calendar_events SET ends_at = '2030-01-07 15:30+00' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot resize an appointment directly');
 SELECT pg_temp.fails(format($q$UPDATE calendar_events SET status = 'cancelled' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot cancel directly');
 SELECT pg_temp.fails(format($q$UPDATE calendar_events SET owner_user_id = %L WHERE id = %L$q$, (SELECT uid FROM t WHERE label='A2'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot reassign the owner');
-SELECT pg_temp.fails(format($q$UPDATE calendar_events SET contact_id = NULL WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot detach the contact');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET contact_id = %L WHERE id = %L$q$, (SELECT contact FROM t WHERE label='B1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot point an appointment at another contact');
 SELECT pg_temp.fails(format($q$UPDATE calendar_events SET conversation_id = gen_random_uuid() WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot change the conversation');
 SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, resource_id, status, block_starts_at, block_ends_at)
   VALUES (%L, 'x', '2030-01-07 13:10+00', '2030-01-07 13:40+00', %L, 'confirmed', '2040-01-01', '2040-01-02')$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '42501', 'admin: forged resource INSERT is refused');
+
+-- Deleting a conversation / contact from a user session only NULLs the link (FK SET NULL).
+RESET ROLE;
+INSERT INTO conversations(user_id, account_id, contact_id) VALUES ((SELECT uid FROM t WHERE label='A1'), (SELECT acc FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'));
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.ok(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-02-04 13:00+00', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'),
+  (SELECT id FROM conversations WHERE contact_id = (SELECT contact FROM t WHERE label='A1') LIMIT 1)), 'appointment linked to a conversation');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A1'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.ok(format($q$DELETE FROM conversations WHERE id = %L$q$, (SELECT conversation_id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00')), 'user deletes a conversation that has an appointment');
+SELECT pg_temp.assert_true((SELECT conversation_id IS NULL AND status = 'scheduled' FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00'), 'appointment kept, conversation link cleared');
 
 -- Forged block_* alone changes nothing: they are recomputed on every write.
 SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET block_starts_at = '2040-01-01', block_ends_at = '2040-01-02' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 1, 'forged block_* is a harmless write');
@@ -347,6 +361,11 @@ SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.agenda_boo
   AND has_function_privilege('service_role', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid)', 'EXECUTE'),
   'RPC grants: service_role only');
 SELECT pg_temp.assert_true(NOT has_table_privilege('anon', 'public.agenda_services', 'SELECT'), 'anon has no table access');
+
+-- Deleting an account with live appointments works (cascade order does not matter).
+RESET ROLE;
+SELECT pg_temp.ok(format($q$DELETE FROM accounts WHERE id = %L$q$, (SELECT acc FROM t WHERE label='B1')), 'account with appointments can be deleted');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM calendar_events WHERE account_id = (SELECT acc FROM t WHERE label='B1')), 0, 'its appointments went with it');
 
 SELECT 'agenda_booking: ALL OK' AS result;
 ROLLBACK;

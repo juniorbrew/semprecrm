@@ -185,12 +185,14 @@ ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS block_starts_at TIME
 ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS block_ends_at   TIMESTAMPTZ;
 
 -- Mesma conta garantida pela FK composta (MATCH SIMPLE: NULL não confere).
+-- NO ACTION (e não RESTRICT): continua barrando apagar serviço/recurso em uso, mas a
+-- checagem é no fim do comando, então apagar a CONTA (cascata) funciona em qualquer ordem.
 ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_service_fk;
 ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_service_fk
-  FOREIGN KEY (service_id, account_id) REFERENCES public.agenda_services(id, account_id) ON DELETE RESTRICT;
+  FOREIGN KEY (service_id, account_id) REFERENCES public.agenda_services(id, account_id) ON DELETE NO ACTION;
 ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_resource_fk;
 ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_resource_fk
-  FOREIGN KEY (resource_id, account_id) REFERENCES public.agenda_resources(id, account_id) ON DELETE RESTRICT;
+  FOREIGN KEY (resource_id, account_id) REFERENCES public.agenda_resources(id, account_id) ON DELETE NO ACTION;
 
 ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_booking_source_check;
 ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_booking_source_check
@@ -307,8 +309,9 @@ BEGIN
     OR NEW.ends_at IS DISTINCT FROM OLD.ends_at
     OR NEW.status IS DISTINCT FROM OLD.status
     OR NEW.owner_user_id IS DISTINCT FROM OLD.owner_user_id
-    OR NEW.contact_id IS DISTINCT FROM OLD.contact_id
-    OR NEW.conversation_id IS DISTINCT FROM OLD.conversation_id
+    -- Para NULL pode: é o ON DELETE SET NULL de apagar contato / conversa numa sessão de usuário.
+    OR (NEW.contact_id IS NOT NULL AND NEW.contact_id IS DISTINCT FROM OLD.contact_id)
+    OR (NEW.conversation_id IS NOT NULL AND NEW.conversation_id IS DISTINCT FROM OLD.conversation_id)
     OR NEW.block_starts_at IS DISTINCT FROM OLD.block_starts_at
     OR NEW.block_ends_at IS DISTINCT FROM OLD.block_ends_at
   ) THEN
