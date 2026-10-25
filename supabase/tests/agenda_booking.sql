@@ -237,7 +237,7 @@ SELECT set_config('request.jwt.claim.sub', '', true);
 SET LOCAL ROLE service_role;
 SELECT pg_temp.ok(format($q$SELECT agenda_set_appointment_status(%L, %L, 'confirmed')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'RPC: confirm still works');
 SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-01-07 22:00+00')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'RPC: reschedule still works');
-SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-01-07 14:15+00')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'RPC: move it back');
+SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-01-07 14:15+00')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 22:00+00')), 'RPC: move it back');
 -- CHECK: resource time only for appointments, even for the server.
 SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, resource_id) VALUES (%L, 'x', '2031-01-01 10:00+00', '2031-01-01 11:00+00', %L)$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '23514', 'resource_id without service_id violates the CHECK');
