@@ -11,6 +11,7 @@
 
 import type { AgendaDb } from './data';
 import { AgendaError, fromRpcError } from './errors';
+import { DEFAULT_REMINDER_SETTINGS, type ReminderSettings } from './reminders-core';
 import type { AgendaResource, AgendaService, AgendaSettings, DayException, WorkingInterval } from './types';
 
 type Patch = Record<string, unknown>;
@@ -150,4 +151,24 @@ export async function saveSettings(db: AgendaDb, accountId: string, settings: Ag
     .select('min_notice_minutes, max_days_ahead, slot_step_minutes')
     .single();
   return must(res) as AgendaSettings;
+}
+
+// ---------------- WhatsApp reminders (097) ----------------
+
+const REMINDER_COLUMNS = 'enabled, first_offset_minutes, second_offset_minutes, message_text, template_name, template_language';
+
+export async function loadReminderSettings(db: AgendaDb, accountId: string): Promise<ReminderSettings> {
+  const res = await db.from('agenda_reminder_settings').select(REMINDER_COLUMNS).eq('account_id', accountId).maybeSingle();
+  if (res.error) throw fromRpcError(res.error);
+  return (res.data as ReminderSettings | null) ?? DEFAULT_REMINDER_SETTINGS;
+}
+
+/** Saving replans the pending reminders of the account's future appointments (trigger, migration 097). */
+export async function saveReminderSettings(db: AgendaDb, accountId: string, settings: ReminderSettings): Promise<ReminderSettings> {
+  const res = await db
+    .from('agenda_reminder_settings')
+    .upsert({ ...settings, account_id: accountId }, { onConflict: 'account_id' })
+    .select(REMINDER_COLUMNS)
+    .single();
+  return must(res) as ReminderSettings;
 }

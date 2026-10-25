@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   canReschedule,
   formatDuration,
+  formatOffset,
+  joinOffset,
+  splitOffset,
   groupSlotsByDay,
   minutesToTime,
   parsePriceToCents,
@@ -101,5 +104,28 @@ describe('status rules', () => {
     expect(statusActions('completed')).toEqual([]);
     expect(canReschedule('confirmed')).toBe(true);
     expect(canReschedule('cancelled')).toBe(false);
+  });
+});
+
+describe('reminder offsets', () => {
+  it('splits into the largest unit that divides evenly and joins back', () => {
+    expect(splitOffset(1440)).toEqual({ value: 1, unit: 'days' });
+    expect(splitOffset(2880)).toEqual({ value: 2, unit: 'days' });
+    expect(splitOffset(120)).toEqual({ value: 2, unit: 'hours' });
+    expect(splitOffset(90)).toEqual({ value: 90, unit: 'minutes' });
+    expect(splitOffset(5)).toEqual({ value: 5, unit: 'minutes' });
+    for (const m of [5, 90, 120, 1440, 2880, 20160]) {
+      const { value, unit } = splitOffset(m);
+      expect(joinOffset(value, unit)).toBe(m);
+    }
+    expect(joinOffset(1.5, 'hours')).toBe(90);
+  });
+
+  it('labels in both languages', () => {
+    expect(formatOffset(1440, 'pt-BR')).toBe('1 dia antes');
+    expect(formatOffset(2880, 'pt-BR')).toBe('2 dias antes');
+    expect(formatOffset(120, 'pt-BR')).toBe('2 h antes');
+    expect(formatOffset(30, 'en-US')).toBe('30 min before');
+    expect(formatOffset(1440, 'en-US')).toBe('1 day before');
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { useCan } from '@/hooks/use-can';
 import { useLanguage } from '@/hooks/use-language';
 import { useReadOnly } from '@/hooks/use-read-only';
@@ -28,10 +29,23 @@ import type {
 } from '@/lib/agenda/types';
 import { SLOT_STEP_OPTIONS } from '@/lib/agenda/types';
 import {
+  DEFAULT_REMINDER_SETTINGS,
+  PREVIEW_VARS,
+  REMINDER_MAX_OFFSET_MINUTES,
+  REMINDER_MIN_OFFSET_MINUTES,
+  REMINDER_TEXT_MAX,
+  reminderBody,
+  type ReminderSettings,
+} from '@/lib/agenda/reminders-core';
+import { createClient } from '@/lib/supabase/client';
+import {
   emptyWeek,
   formatDuration,
   formatPrice,
+  joinOffset,
+  type OffsetUnit,
   parsePriceToCents,
+  splitOffset,
   summarizeDay,
   WEEKDAY_NAMES,
   WEEKDAY_ORDER,
@@ -108,6 +122,8 @@ export function AgendaServicesSettings() {
       {disabled && <p className="text-sm text-muted-foreground">{copy.readOnly}</p>}
 
       <RulesGroup settings={config.settings} copy={copy} disabled={disabled} onSaved={reload} />
+
+      <RemindersGroup copy={copy} disabled={disabled} />
 
       <SettingsGroup
         title={copy.services}
@@ -255,6 +271,200 @@ function RulesGroup({ settings, copy, disabled, onSaved }: { settings: AgendaSet
         </Field>
         <div className="sm:col-span-3">
           <Button type="submit" size="sm" disabled={disabled || busy}>{copy.save}</Button>
+        </div>
+      </form>
+    </SettingsGroup>
+  );
+}
+
+interface OffsetDraft {
+  on: boolean;
+  value: string;
+  unit: OffsetUnit;
+}
+
+function offsetDraft(minutes: number | null): OffsetDraft {
+  const { value, unit } = splitOffset(minutes ?? 60);
+  return { on: minutes !== null, value: String(value), unit };
+}
+
+/** The draft as stored minutes: null = off, NaN = not a usable number. */
+function offsetMinutes(d: OffsetDraft): number | null {
+  if (!d.on) return null;
+  const n = Number(d.value.replace(',', '.'));
+  return Number.isFinite(n) ? joinOffset(n, d.unit) : Number.NaN;
+}
+
+interface TemplateOption {
+  name: string;
+  language: string;
+}
+
+/** Settings → Lembretes por WhatsApp: on/off, the two lead times, the text (with preview) and the official-channel template. */
+function RemindersGroup({ copy, disabled }: { copy: AgendaCopy; disabled: boolean }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [enabled, setEnabled] = useState(DEFAULT_REMINDER_SETTINGS.enabled);
+  const [first, setFirst] = useState(offsetDraft(DEFAULT_REMINDER_SETTINGS.first_offset_minutes));
+  const [second, setSecond] = useState(offsetDraft(DEFAULT_REMINDER_SETTINGS.second_offset_minutes));
+  const [text, setText] = useState('');
+  const [template, setTemplate] = useState('');
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [busy, setBusy] = useState(false);
+  const textId = useId();
+  const templateId = useId();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await agendaFetch<{ settings: ReminderSettings }>('/api/agenda/reminders/settings');
+        if (cancelled) return;
+        const st = res.settings;
+        setEnabled(st.enabled);
+        setFirst(offsetDraft(st.first_offset_minutes));
+        setSecond(offsetDraft(st.second_offset_minutes));
+        setText(st.message_text ?? '');
+        setTemplate(st.template_name ? JSON.stringify([st.template_name, st.template_language]) : '');
+        setLoaded(true);
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+      // Approved templates only: anything else would be refused by Meta at send time.
+      const { data } = await createClient().from('message_templates').select('name, language').eq('status', 'APPROVED').order('name');
+      if (!cancelled) setTemplates(((data ?? []) as TemplateOption[]).filter((t) => t.name));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const a = offsetMinutes(first);
+    const b = offsetMinutes(second);
+    const bad = (m: number | null) => m !== null && (!Number.isFinite(m) || m < REMINDER_MIN_OFFSET_MINUTES || m > REMINDER_MAX_OFFSET_MINUTES);
+    if (bad(a) || bad(b)) {
+      toast.error(copy.failed);
+      return;
+    }
+    if (a !== null && a === b) {
+      toast.error(copy.reminderOffsetsDiffer);
+      return;
+    }
+    const [templateName, templateLanguage] = template ? (JSON.parse(template) as [string, string]) : [null, DEFAULT_REMINDER_SETTINGS.template_language];
+    setBusy(true);
+    try {
+      await agendaFetch('/api/agenda/reminders/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          enabled,
+          first_offset_minutes: a,
+          second_offset_minutes: b,
+          message_text: text.trim() || null,
+          template_name: templateName,
+          template_language: templateLanguage,
+        }),
+      });
+      toast.success(copy.saved);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : copy.failed);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (failed) {
+    return (
+      <SettingsGroup title={copy.remindersTitle} description={copy.remindersHint}>
+        <p className="text-sm text-destructive" role="alert">{copy.loadFailed}</p>
+      </SettingsGroup>
+    );
+  }
+
+  const offsetRow = (label: string, draft: OffsetDraft, set: (d: OffsetDraft) => void) => (
+    <fieldset className="grid gap-1.5" disabled={disabled || !enabled}>
+      <legend className="text-xs font-medium text-muted-foreground">{label}</legend>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="checkbox"
+          aria-label={`${label}: ${copy.remindersEnabled}`}
+          checked={draft.on}
+          onChange={(e) => set({ ...draft, on: e.target.checked })}
+          className="size-4 accent-primary"
+        />
+        <Input
+          type="number"
+          min={0.5}
+          step="any"
+          inputMode="decimal"
+          aria-label={label}
+          value={draft.value}
+          disabled={!draft.on}
+          onChange={(e) => set({ ...draft, value: e.target.value })}
+          className="w-24"
+        />
+        <select
+          aria-label={`${label}: ${copy.reminderUnits[draft.unit]}`}
+          className={FIELD + ' w-auto'}
+          value={draft.unit}
+          disabled={!draft.on}
+          onChange={(e) => set({ ...draft, unit: e.target.value as OffsetUnit })}
+        >
+          {(['minutes', 'hours', 'days'] as const).map((u) => (
+            <option key={u} value={u}>{copy.reminderUnits[u]}</option>
+          ))}
+        </select>
+        {!draft.on && <span className="text-xs text-muted-foreground">{copy.reminderOff}</span>}
+      </div>
+    </fieldset>
+  );
+
+  return (
+    <SettingsGroup title={copy.remindersTitle} description={copy.remindersHint}>
+      <form onSubmit={save} className="grid gap-4">
+        <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <input type="checkbox" checked={enabled} disabled={disabled || !loaded} onChange={(e) => setEnabled(e.target.checked)} className="size-4 accent-primary" />
+          {copy.remindersEnabled}
+        </label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {offsetRow(copy.reminderFirst, first, setFirst)}
+          {offsetRow(copy.reminderSecond, second, setSecond)}
+        </div>
+        <div className="grid gap-1.5">
+          <label htmlFor={textId} className="text-xs font-medium text-muted-foreground">{copy.reminderText}</label>
+          <Textarea
+            id={textId}
+            rows={3}
+            maxLength={REMINDER_TEXT_MAX}
+            value={text}
+            disabled={disabled || !enabled}
+            placeholder={copy.reminderTextDefault}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground" data-no-translate>{copy.reminderTextHint}</p>
+        </div>
+        <div className="grid gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">{copy.reminderPreview}</span>
+          <pre className="whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-3 font-sans text-sm text-foreground" data-no-translate data-testid="reminder-preview">
+            {reminderBody(text.trim() || null, PREVIEW_VARS)}
+          </pre>
+          <p className="text-xs text-muted-foreground">{copy.reminderOptionsNote}</p>
+        </div>
+        <div className="grid gap-1.5">
+          <label htmlFor={templateId} className="text-xs font-medium text-muted-foreground">{copy.reminderTemplate}</label>
+          <select id={templateId} className={FIELD} value={template} disabled={disabled || !enabled} onChange={(e) => setTemplate(e.target.value)}>
+            <option value="">{copy.reminderTemplateNone}</option>
+            {templates.map((t) => (
+              <option key={`${t.name}|${t.language}`} value={JSON.stringify([t.name, t.language])}>
+                {t.name} ({t.language})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground" data-no-translate>{copy.reminderTemplateHint}</p>
+        </div>
+        <div>
+          <Button type="submit" size="sm" disabled={disabled || busy || !loaded}>{copy.save}</Button>
         </div>
       </form>
     </SettingsGroup>

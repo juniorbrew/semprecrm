@@ -96,6 +96,34 @@ export interface AgendaCopy {
   noFreeDay: string;
   managedElsewhere: string;
   manage: string;
+  // encaixe (walk-in) + customer answer + reminders (migration 097)
+  encaixe: string;
+  encaixeHint: string;
+  encaixeBadge: string;
+  customerConfirmed: string;
+  customerReschedule: string;
+  remindersSection: string;
+  remindersNone: string;
+  reminderStates: Record<string, string>;
+  reminderReasons: Record<string, string>;
+  reminderSentAt: string;
+  reminderAnswered: Record<string, string>;
+  remindersTitle: string;
+  remindersHint: string;
+  remindersEnabled: string;
+  reminderFirst: string;
+  reminderSecond: string;
+  reminderOff: string;
+  reminderUnits: Record<string, string>;
+  reminderText: string;
+  reminderTextHint: string;
+  reminderTextDefault: string;
+  reminderPreview: string;
+  reminderOptionsNote: string;
+  reminderTemplate: string;
+  reminderTemplateNone: string;
+  reminderTemplateHint: string;
+  reminderOffsetsDiffer: string;
 }
 
 const PT: AgendaCopy = {
@@ -188,6 +216,55 @@ const PT: AgendaCopy = {
   nextDay: "Próximo dia",
   nextFreeDay: "Próximo dia com horário",
   noFreeDay: "Sem horários livres nos próximos 30 dias.",
+  encaixe: "Encaixe (ignorar antecedência e limite de dias)",
+  encaixeHint: "O horário de atendimento e os conflitos continuam valendo.",
+  encaixeBadge: "Encaixe",
+  customerConfirmed: "Confirmado pelo cliente",
+  customerReschedule: "Pediu para remarcar",
+  remindersSection: "Lembretes por WhatsApp",
+  remindersNone: "Nenhum lembrete para este agendamento.",
+  reminderStates: { pending: "Agendado", sending: "Enviando", sent: "Enviado", skipped: "Pulado", failed: "Falhou", cancelled: "Cancelado" },
+  reminderReasons: {
+    past: "O horário do lembrete já tinha passado quando o agendamento foi feito",
+    disabled: "Lembretes desligados",
+    appointment_closed: "Agendamento encerrado, cancelado ou já começou",
+    no_phone: "Cliente sem telefone",
+    opted_out: "Cliente pediu para não receber mensagens",
+    anonymized: "Cliente anonimizado (LGPD)",
+    no_conversation: "Cliente sem conversa no WhatsApp",
+    read_only: "Conta somente leitura",
+    window_closed: "Fora da janela de 24 h do WhatsApp e sem modelo aprovado configurado",
+    template_unavailable: "Modelo aprovado indisponível ou não sincronizado",
+    throttled: "Fila do WhatsApp cheia",
+    send_failed: "Falha no envio",
+    maybe_sent: "Pode ter sido enviado; confira a conversa",
+    rescheduled: "Agendamento remarcado",
+    settings_changed: "Configuração dos lembretes alterada",
+    whatsapp_disconnected: "WhatsApp desconectado até o horário do lembrete",
+    channel_not_configured: "Canal oficial do WhatsApp não configurado",
+    daily_limit: "Limite diário de lembretes da conta atingido",
+    late: "O lembrete atrasou demais para ainda ser útil",
+    reschedule_requested: "Cliente pediu para remarcar",
+    customer_confirmed: "Cliente já confirmou",
+  },
+  reminderSentAt: "enviado",
+  reminderAnswered: { confirmed: "Cliente confirmou", reschedule_requested: "Cliente pediu para remarcar" },
+  remindersTitle: "Lembretes por WhatsApp",
+  remindersHint: "Avisa o cliente antes do horário e deixa ele confirmar ou pedir para remarcar respondendo 1 ou 2. Só vale para agendamentos agendados ou confirmados, de clientes com telefone que não pediram para parar.",
+  remindersEnabled: "Enviar lembretes por WhatsApp",
+  reminderFirst: "Primeiro lembrete",
+  reminderSecond: "Segundo lembrete",
+  reminderOff: "Desligado",
+  reminderUnits: { minutes: "minutos antes", hours: "horas antes", days: "dias antes" },
+  reminderText: "Mensagem",
+  reminderTextHint: "Variáveis: {cliente} {servico} {profissional} {data} {hora}",
+  reminderTextDefault: "Usar o texto padrão",
+  reminderPreview: "Prévia",
+  reminderOptionsNote: "A linha com as opções é sempre adicionada ao final.",
+  reminderTemplate: "Modelo aprovado (canal oficial)",
+  reminderTemplateNone: "Nenhum: pular o lembrete fora da janela de 24 h",
+  reminderTemplateHint: "Fora da janela de 24 h, o WhatsApp oficial só aceita modelos aprovados. O corpo do modelo recebe, nesta ordem: {{1}} cliente, {{2}} serviço, {{3}} profissional, {{4}} data, {{5}} hora. O texto do modelo deve avisar o cliente para responder 1 (confirmar) ou 2 (remarcar), ou ter botões de resposta rápida \"Confirmar\" e \"Remarcar\".",
+  reminderOffsetsDiffer: "Os dois lembretes precisam ter antecedências diferentes.",
 };
 
 const EN: AgendaCopy = {
@@ -280,6 +357,55 @@ const EN: AgendaCopy = {
   nextDay: "Next day",
   nextFreeDay: "Next day with a free time",
   noFreeDay: "No free times in the next 30 days.",
+  encaixe: "Walk-in (ignore minimum notice and day limit)",
+  encaixeHint: "Working hours and conflicts still apply.",
+  encaixeBadge: "Walk-in",
+  customerConfirmed: "Confirmed by the customer",
+  customerReschedule: "Asked to reschedule",
+  remindersSection: "WhatsApp reminders",
+  remindersNone: "No reminders for this appointment.",
+  reminderStates: { pending: "Scheduled", sending: "Sending", sent: "Sent", skipped: "Skipped", failed: "Failed", cancelled: "Cancelled" },
+  reminderReasons: {
+    past: "The reminder time had already passed when the appointment was made",
+    disabled: "Reminders are off",
+    appointment_closed: "Appointment closed, cancelled or already started",
+    no_phone: "Customer has no phone number",
+    opted_out: "Customer asked not to receive messages",
+    anonymized: "Customer anonymized (LGPD)",
+    no_conversation: "Customer has no WhatsApp conversation",
+    read_only: "Account is read-only",
+    window_closed: "Outside the 24 h WhatsApp window and no approved template configured",
+    template_unavailable: "Approved template unavailable or not synced",
+    throttled: "WhatsApp queue is full",
+    send_failed: "Sending failed",
+    maybe_sent: "May have been sent; check the conversation",
+    rescheduled: "Appointment rescheduled",
+    settings_changed: "Reminder settings changed",
+    whatsapp_disconnected: "WhatsApp was disconnected until the reminder time",
+    channel_not_configured: "Official WhatsApp channel is not configured",
+    daily_limit: "The account's daily reminder limit was reached",
+    late: "The reminder was too late to still be useful",
+    reschedule_requested: "Customer asked to reschedule",
+    customer_confirmed: "Customer already confirmed",
+  },
+  reminderSentAt: "sent",
+  reminderAnswered: { confirmed: "Customer confirmed", reschedule_requested: "Customer asked to reschedule" },
+  remindersTitle: "WhatsApp reminders",
+  remindersHint: "Warns the customer before the appointment and lets them confirm or ask to reschedule by replying 1 or 2. Only for scheduled or confirmed appointments, for customers with a phone who have not opted out.",
+  remindersEnabled: "Send WhatsApp reminders",
+  reminderFirst: "First reminder",
+  reminderSecond: "Second reminder",
+  reminderOff: "Off",
+  reminderUnits: { minutes: "minutes before", hours: "hours before", days: "days before" },
+  reminderText: "Message",
+  reminderTextHint: "Variables: {cliente} {servico} {profissional} {data} {hora}",
+  reminderTextDefault: "Use the default text",
+  reminderPreview: "Preview",
+  reminderOptionsNote: "The line with the reply options is always added at the end.",
+  reminderTemplate: "Approved template (official channel)",
+  reminderTemplateNone: "None: skip the reminder outside the 24 h window",
+  reminderTemplateHint: "Outside the 24 h window the official WhatsApp only accepts approved templates. The template body receives, in this order: {{1}} customer, {{2}} service, {{3}} professional, {{4}} date, {{5}} time. The template text must tell the customer to reply 1 (confirm) or 2 (reschedule), or have quick-reply buttons \"Confirmar\" and \"Remarcar\".",
+  reminderOffsetsDiffer: "The two reminders need different lead times.",
 };
 
 export function agendaCopy(language: Language): AgendaCopy {

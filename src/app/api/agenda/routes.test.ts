@@ -61,6 +61,9 @@ import { PATCH as patchAppointment } from './appointments/[id]/route';
 import { PUT as putSettings } from './settings/route';
 import { POST as postService } from './services/route';
 import { POST as postResource } from './resources/route';
+import { GET as getAvailabilityRoute } from './availability/route';
+import { GET as getReminderSettings, PUT as putReminderSettings } from './reminders/settings/route';
+import { GET as cronReminders } from './reminders/cron/route';
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const json = (body: unknown) => new Request('http://x/api', { method: 'POST', body: JSON.stringify(body) });
@@ -151,5 +154,54 @@ describe('account scoping', () => {
     const body = await (await getConfig()).json();
     expect(body.settings).toEqual({ min_notice_minutes: 120, max_days_ahead: 60, slot_step_minutes: 30 });
     expect(body.services).toHaveLength(1);
+  });
+});
+
+describe('reminders (097)', () => {
+  const settings = { enabled: true, first_offset_minutes: 1440, second_offset_minutes: 120, message_text: null, template_name: null, template_language: 'pt_BR' };
+
+  it('settings: anyone reads (defaults when never saved), only admin writes, read-only accounts are refused', async () => {
+    h.role = 'viewer';
+    const res = await getReminderSettings();
+    expect(res.status).toBe(200);
+    expect((await res.json()).settings).toMatchObject({ enabled: false, first_offset_minutes: 1440, second_offset_minutes: 120 });
+    h.role = 'agent';
+    expect((await putReminderSettings(json(settings))).status).toBe(403);
+    h.role = 'admin';
+    h.readOnly = true;
+    const ro = await putReminderSettings(json(settings));
+    expect(ro.status).toBe(402);
+    expect((await ro.json()).code).toBe('read_only');
+  });
+
+  it('settings: rejects offsets out of range or equal, an oversized text, and a missing flag', async () => {
+    const bad = async (over: Record<string, unknown>) => (await putReminderSettings(json({ ...settings, ...over }))).status;
+    expect(await bad({ first_offset_minutes: 1 })).toBe(400);
+    expect(await bad({ second_offset_minutes: 99999 })).toBe(400);
+    expect(await bad({ first_offset_minutes: 120 })).toBe(400); // equal to the second
+    expect(await bad({ message_text: 'x'.repeat(1001) })).toBe(400);
+    expect(await bad({ enabled: 'yes' })).toBe(400);
+  });
+
+  it('encaixe: booking with it needs agent; slots for it are not offered to viewers', async () => {
+    h.role = 'viewer';
+    expect((await postAppointment(json({ service_id: UUID, contact_id: UUID, starts_at: '2026-10-26T13:00:00Z', encaixe: true }))).status).toBe(403);
+    const q = 'http://x/api?service_id=' + UUID + '&from=2026-10-26&to=2026-10-26';
+    expect((await getAvailabilityRoute(new Request(q))).status).toBe(200);
+    expect((await getAvailabilityRoute(new Request(q + '&encaixe=1'))).status).toBe(403);
+    h.role = 'agent';
+    expect((await getAvailabilityRoute(new Request(q + '&encaixe=1'))).status).toBe(200);
+  });
+
+  it('cron: refuses calls without the shared secret', async () => {
+    const prev = process.env.AUTOMATION_CRON_SECRET;
+    process.env.AUTOMATION_CRON_SECRET = 'secret-123';
+    try {
+      expect((await cronReminders(new Request('http://x/api'))).status).toBe(401);
+      expect((await cronReminders(new Request('http://x/api', { headers: { 'x-cron-secret': 'wrong-123' } }))).status).toBe(401);
+    } finally {
+      if (prev === undefined) delete process.env.AUTOMATION_CRON_SECRET;
+      else process.env.AUTOMATION_CRON_SECRET = prev;
+    }
   });
 });

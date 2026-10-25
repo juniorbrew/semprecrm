@@ -161,3 +161,30 @@ export function windowFrom(tz: string, now: Date, days: number): { from: string;
   const start = startOfDayIn(now, tz);
   return { from: localDate(start, tz), to: localDate(addDaysIn(start, days - 1, tz), tz) };
 }
+
+// ------------------------------------------------------------
+// Reminder offsets (097): the settings screen edits "value + unit".
+// ------------------------------------------------------------
+
+export type OffsetUnit = 'minutes' | 'hours' | 'days';
+const UNIT_MINUTES: Record<OffsetUnit, number> = { minutes: 1, hours: 60, days: 1440 };
+
+/** 1440 -> 1 day, 120 -> 2 hours, 90 -> 90 minutes (the largest unit that divides evenly). */
+export function splitOffset(minutes: number): { value: number; unit: OffsetUnit } {
+  if (minutes >= 1440 && minutes % 1440 === 0) return { value: minutes / 1440, unit: 'days' };
+  if (minutes >= 60 && minutes % 60 === 0) return { value: minutes / 60, unit: 'hours' };
+  return { value: minutes, unit: 'minutes' };
+}
+
+export function joinOffset(value: number, unit: OffsetUnit): number {
+  return Math.round(value * UNIT_MINUTES[unit]);
+}
+
+/** "1 dia antes", "2 h antes", "30 min antes" / "1 day before", "2 h before", "30 min before". */
+export function formatOffset(minutes: number, lang: 'pt-BR' | 'en-US'): string {
+  const { value, unit } = splitOffset(minutes);
+  const pt = lang === 'pt-BR';
+  const label =
+    unit === 'days' ? (pt ? (value === 1 ? 'dia' : 'dias') : value === 1 ? 'day' : 'days') : unit === 'hours' ? 'h' : 'min';
+  return `${value} ${label} ${pt ? 'antes' : 'before'}`;
+}

@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import { isDateString } from './availability';
+import { REMINDER_MAX_OFFSET_MINUTES, REMINDER_MIN_OFFSET_MINUTES, REMINDER_TEXT_MAX } from './reminders-core';
 import { APPOINTMENT_STATUSES, RESOURCE_KINDS, SLOT_STEP_OPTIONS } from './types';
 
 const uuid = z.string().uuid();
@@ -80,11 +81,26 @@ export const settingsSchema = z.object({
   slot_step_minutes: z.number().int().refine((n) => (SLOT_STEP_OPTIONS as readonly number[]).includes(n)),
 });
 
+export const reminderSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    first_offset_minutes: z.number().int().min(REMINDER_MIN_OFFSET_MINUTES).max(REMINDER_MAX_OFFSET_MINUTES).nullable(),
+    second_offset_minutes: z.number().int().min(REMINDER_MIN_OFFSET_MINUTES).max(REMINDER_MAX_OFFSET_MINUTES).nullable(),
+    message_text: text(REMINDER_TEXT_MAX).nullish().transform((v) => v || null),
+    template_name: text(512).nullish().transform((v) => v || null),
+    template_language: text(16).min(2).default('pt_BR'),
+  })
+  .refine((s) => s.first_offset_minutes === null || s.second_offset_minutes === null || s.first_offset_minutes !== s.second_offset_minutes, {
+    message: 'offsets must differ',
+  });
+
 export const availabilityQuerySchema = z.object({
   service_id: uuid,
   resource_id: uuid.nullish().transform((v) => v ?? null),
   from: z.string().refine(isDateString),
   to: z.string().refine(isDateString),
+  /** Encaixe slots (agent+ only; the route checks the role). */
+  encaixe: z.boolean().default(false),
 });
 
 const isoInstant = z
@@ -100,6 +116,8 @@ export const bookSchema = z.object({
   notes: text(1000).nullish().transform((v) => v || null),
   status: z.enum(['scheduled', 'confirmed']).default('scheduled'),
   idempotency_key: z.string().trim().min(8).max(100).nullish().transform((v) => v ?? null),
+  /** Encaixe: ignore minimum notice and the day horizon. */
+  encaixe: z.boolean().default(false),
 });
 
 export const appointmentPatchSchema = z
@@ -107,6 +125,7 @@ export const appointmentPatchSchema = z
     starts_at: isoInstant.optional(),
     resource_id: uuid.optional(),
     status: z.enum(APPOINTMENT_STATUSES).optional(),
+    encaixe: z.boolean().optional(),
   })
   .refine((v) => v.starts_at !== undefined || v.status !== undefined, {
     message: 'nothing to change',

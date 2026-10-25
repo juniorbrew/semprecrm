@@ -82,6 +82,10 @@ export interface ConversationEvent {
   until?: string
   cause?: SnoozeWakeCause
   note?: string
+  /** `agenda_reply` (097): the customer's answer to an appointment reminder. */
+  action?: 'confirmed' | 'reschedule_requested'
+  starts_at?: string
+  service_name?: string
   /**
    * Baseline pills (derived from the conversation row, not from a logged
    * event) are flagged so the thread can tell them apart.
@@ -155,6 +159,9 @@ export function eventFromRecord(
     until: payload.until,
     cause: payload.cause,
     note: payload.note,
+    action: payload.action,
+    starts_at: payload.starts_at,
+    service_name: payload.service_name,
     reason:
       row.event_type === 'assigned' ? (normalizeTransferReason(payload.reason) ?? undefined) : undefined,
   }
@@ -484,6 +491,18 @@ export function formatConversationEvent(
     }
     case 'unsnoozed':
       return unsnoozedLabel(event, language)
+    case 'agenda_reply': {
+      const when = event.starts_at ? formatEventInstant(event.starts_at, language) : ''
+      const what = [event.service_name, when].filter(Boolean).join(', ')
+      const tail = what ? ` (${what})` : ''
+      return event.action === 'reschedule_requested'
+        ? pt
+          ? `Cliente pediu para remarcar o agendamento${tail}`
+          : `Customer asked to reschedule the appointment${tail}`
+        : pt
+          ? `Cliente confirmou o agendamento${tail}`
+          : `Customer confirmed the appointment${tail}`
+    }
     default:
       return ''
   }

@@ -41,13 +41,38 @@ const DAY_MS = 86_400_000;
 /** Where the booking RPCs run: the server's service-role client (reads use the caller's RLS client). */
 export type RpcWriter = Pick<AgendaDb, 'rpc'>;
 
-function inputFor(config: AgendaConfig, service: AgendaService, now: Date, resources: AgendaResource[], busy: Parameters<typeof toSchedules>[2]): AvailabilityInput {
+/** Encaixe: a start up to this long ago still counts (a walk-in whose slot began minutes ago). */
+export const ENCAIXE_PAST_GRACE_MINUTES = 60;
+const ENCAIXE_MAX_DAYS_AHEAD = 3650;
+
+/**
+ * Encaixe (walk-in / override, owner decision 2026-10-25): minimum notice and the
+ * max-days-ahead limit are ignored; working hours, exceptions and conflicts still
+ * apply. Only a person (source 'agent') may ask for it: the AI and the public API
+ * get a 'forbidden' error, so delivery C cannot reach it even by mistake.
+ */
+export function allowEncaixe(encaixe: boolean | undefined, source: BookingSource | undefined): boolean {
+  if (!encaixe) return false;
+  if (source !== 'agent') throw new AgendaError('forbidden', 'Encaixe é exclusivo de atendentes.');
+  return true;
+}
+
+function inputFor(
+  config: AgendaConfig,
+  service: AgendaService,
+  now: Date,
+  resources: AgendaResource[],
+  busy: Parameters<typeof toSchedules>[2],
+  encaixe = false,
+): AvailabilityInput {
   return {
     tz: config.timezone,
-    now,
+    now: encaixe ? new Date(now.getTime() - ENCAIXE_PAST_GRACE_MINUTES * 60_000) : now,
     service,
     resources: toSchedules(config, resources, busy),
-    rules: config.settings,
+    rules: encaixe
+      ? { ...config.settings, min_notice_minutes: 0, max_days_ahead: ENCAIXE_MAX_DAYS_AHEAD }
+      : config.settings,
   };
 }
 
@@ -75,6 +100,9 @@ export interface AvailabilityQuery {
   from: string;
   to: string;
   now?: Date;
+  /** Encaixe slots (ignore notice and horizon). Needs source 'agent'. */
+  encaixe?: boolean;
+  source?: BookingSource;
 }
 
 export interface AvailabilityResult {
@@ -86,6 +114,7 @@ export async function getAvailability(db: AgendaDb, q: AvailabilityQuery): Promi
   if (!isDateString(q.from) || !isDateString(q.to) || q.to < q.from) {
     throw new AgendaError('validation', 'Período inválido.');
   }
+  const encaixe = allowEncaixe(q.encaixe, q.source);
   const dates = datesBetween(q.from, q.to);
   if (dates.length > MAX_RANGE_DAYS || Date.parse(q.to) - Date.parse(q.from) > (MAX_RANGE_DAYS - 1) * DAY_MS) {
     throw new AgendaError('validation', `Consulte no máximo ${MAX_RANGE_DAYS} dias por vez.`);
@@ -102,7 +131,7 @@ export async function getAvailability(db: AgendaDb, q: AvailabilityQuery): Promi
   const busy = await loadBusy(db, q.accountId, candidates, from, to);
   return {
     timezone: config.timezone,
-    slots: computeSlots(inputFor(config, service, now, candidates, busy), dates),
+    slots: computeSlots(inputFor(config, service, now, candidates, busy, encaixe), dates),
   };
 }
 
@@ -125,6 +154,8 @@ export interface BookInput {
   status?: Extract<AppointmentStatus, 'scheduled' | 'confirmed'>;
   /** Same key = same appointment (retries, double clicks, webhook replays). */
   idempotencyKey?: string | null;
+  /** Encaixe: ignore minimum notice and the day horizon (hours and conflicts still apply). Only source 'agent'. */
+  encaixe?: boolean;
   now?: Date;
 }
 
@@ -154,6 +185,7 @@ async function rpcEvent(
 export async function bookAppointment(db: AgendaDb, input: BookInput, writer: RpcWriter = db): Promise<CalendarEvent> {
   const startMs = parseStart(input.startsAt);
   const source = input.source ?? 'agent';
+  const encaixe = allowEncaixe(input.encaixe, source);
 
   // A retry with the same key returns the original even though its own slot is now busy.
   if (input.idempotencyKey) {
@@ -181,7 +213,7 @@ export async function bookAppointment(db: AgendaDb, input: BookInput, writer: Rp
   const now = input.now ?? new Date();
   const around = new Date(startMs);
   const busy = await loadBusy(db, input.accountId, candidates, around, new Date(startMs + service.duration_minutes * 60_000));
-  const availability = inputFor(config, service, now, candidates, busy);
+  const availability = inputFor(config, service, now, candidates, busy, encaixe);
 
   let lastError: AgendaError | null = null;
   for (const schedule of availability.resources) {
@@ -203,6 +235,7 @@ export async function bookAppointment(db: AgendaDb, input: BookInput, writer: Rp
         p_idempotency_key: input.idempotencyKey ?? null,
         p_status: input.status ?? 'scheduled',
         p_actor: input.actorId ?? null,
+        p_override: encaixe,
       });
     } catch (err) {
       // Lost the race (or the member got busy in between): try the next professional.
@@ -233,10 +266,17 @@ export interface RescheduleInput {
   startsAt: string;
   /** Move to another professional too (optional). */
   resourceId?: string | null;
+  /** Encaixe: ignore minimum notice and the day horizon. Needs source 'agent' (explicit) and an actor. */
+  encaixe?: boolean;
+  source?: BookingSource;
+  /** The person moving it (agent+). Required for an encaixe; the RPC checks the membership. */
+  actorId?: string | null;
   now?: Date;
 }
 
 export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput, writer: RpcWriter = db): Promise<CalendarEvent> {
+  const encaixe = allowEncaixe(input.encaixe, input.source);
+  if (encaixe && !input.actorId) throw new AgendaError('forbidden', 'Encaixe é exclusivo de atendentes.');
   const startMs = parseStart(input.startsAt);
   const found = await db
     .from('calendar_events')
@@ -263,7 +303,7 @@ export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput
     new Date(startMs + service.duration_minutes * 60_000),
     input.eventId,
   );
-  const availability = inputFor(config, service, input.now ?? new Date(), candidates, busy);
+  const availability = inputFor(config, service, input.now ?? new Date(), candidates, busy, encaixe);
   const reason = explainStart(availability, availability.resources[0], startMs);
   if (reason) throw fromUnavailableReason(reason);
 
@@ -272,6 +312,9 @@ export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput
     p_event_id: input.eventId,
     p_starts_at: new Date(startMs).toISOString(),
     p_resource_id: input.resourceId ?? null,
+    p_override: encaixe,
+    p_source: input.source ?? 'agent',
+    p_actor: input.actorId ?? null,
   });
 }
 

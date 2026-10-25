@@ -26,6 +26,7 @@ export async function POST(request: Request) {
       status: body.status,
       source: 'agent',
       idempotencyKey: body.idempotency_key,
+      encaixe: body.encaixe,
     }, agendaWriter());
     return NextResponse.json({ appointment: event }, { status: 201 });
   } catch (err) {
