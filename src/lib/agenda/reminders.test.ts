@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AccountReadOnlyError } from '@/lib/billing/read-only';
 import { makeFakeDb } from '@/lib/lgpd/fake-db.test-helper';
+import { suppressionHash } from '@/lib/lgpd/suppression';
 import { GatewayRequestError } from '@/lib/whatsapp/qr-gateway';
 import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard';
 
@@ -9,6 +10,9 @@ import { pickConversation, runReminderDispatch } from './reminders';
 import { REMINDER_OPTIONS_TEXT } from './reminders-core';
 
 type Row = Record<string, unknown>;
+
+// The suppression list is HMAC-keyed; give the tests a key.
+process.env.ENCRYPTION_KEY = 'ab'.repeat(32);
 
 const ACC = 'acc-1';
 const NOW = new Date('2026-10-30T12:00:00Z');
@@ -223,5 +227,113 @@ describe('plumbing', () => {
     expect(pickConversation([rows[2], c('closed2', 'closed', '2026-10-26T00:00:00Z')], 'closed')?.id).toBe('closed');
     expect(pickConversation([rows[2], c('closed2', 'closed', '2026-10-26T00:00:00Z')], null)?.id).toBe('closed2');
     expect(pickConversation([], 'x')).toBeNull();
+  });
+});
+
+describe('hardening (review + audit)', () => {
+  it('a reminder claimed far too late is skipped as late (max(30 min, half the lead time))', async () => {
+    const stale = world({ reminder: { due_at: iso(NOW.getTime() - 2 * 3_600_000), offset_minutes: 120 } });
+    expect(await stale.run()).toMatchObject({ skipped: 1, sent: 0 });
+    expect(stale.state()).toMatchObject({ state: 'skipped', reason: 'late' });
+    const ok = world({ reminder: { due_at: iso(NOW.getTime() - 59 * 60_000), offset_minutes: 120 } });
+    expect(await ok.run()).toMatchObject({ sent: 1 });
+    const day = world({ reminder: { due_at: iso(NOW.getTime() - 5 * 3_600_000), offset_minutes: 1440 } });
+    expect(await day.run()).toMatchObject({ sent: 1 }); // a 24 h reminder tolerates hours of delay
+  });
+
+  it('daily cap per account: 200 sent in the last 24 h stops further reminders (visible reason)', async () => {
+    const mk = (n: number, hoursAgo: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `s${hoursAgo}-${i}`, account_id: ACC, state: 'sent', sent_at: iso(NOW.getTime() - hoursAgo * 3_600_000) }));
+    const full = world();
+    full.tables.agenda_reminders.push(...mk(200, 2));
+    expect(await full.run()).toMatchObject({ skipped: 1, sent: 0 });
+    expect(full.state()).toMatchObject({ state: 'skipped', reason: 'daily_limit' });
+    const room = world();
+    room.tables.agenda_reminders.push(...mk(199, 2), ...mk(300, 30)); // older than 24 h does not count
+    expect(await room.run()).toMatchObject({ sent: 1 });
+  });
+
+  it('LGPD suppression list: a number that asked to stop gets nothing even without a contact flag', async () => {
+    const w = world();
+    w.tables.contact_suppressions = [{ account_id: ACC, phone_hash: suppressionHash(ACC, '5511999990000') }];
+    expect(await w.run()).toMatchObject({ skipped: 1 });
+    expect(w.state()).toMatchObject({ state: 'skipped', reason: 'opted_out' });
+    expect(w.sendText).not.toHaveBeenCalled();
+    // The same hash in another account does not matter.
+    const other = world();
+    other.tables.contact_suppressions = [{ account_id: 'acc-2', phone_hash: suppressionHash('acc-2', '5511999990000') }];
+    expect(await other.run()).toMatchObject({ sent: 1 });
+  });
+
+  it('QR disconnected: retried with backoff while there is time, then skipped with a clear reason', async () => {
+    const down = vi.fn().mockRejectedValue(new GatewayRequestError('WhatsApp desconectado', 409, 'not_connected'));
+    const w = world();
+    expect(await w.run({ sendText: down })).toMatchObject({ retrying: 1, failed: 0 });
+    expect(w.state()).toMatchObject({ state: 'pending', attempts: 1 });
+    expect(Date.parse(w.state().next_try_at as string)).toBe(NOW.getTime() + 300_000);
+    // Reconnected later: sent.
+    expect(await w.run({}, new Date(NOW.getTime() + 300_001))).toMatchObject({ sent: 1 });
+
+    // The appointment starts before the next try would happen: no point retrying.
+    const soon = world({ event: { starts_at: iso(NOW.getTime() + 180_000) }, reminder: { for_starts_at: iso(NOW.getTime() + 180_000) } });
+    expect(await soon.run({ sendText: down })).toMatchObject({ skipped: 1, failed: 0 });
+    expect(soon.state()).toMatchObject({ state: 'skipped', reason: 'whatsapp_disconnected' });
+    expect(soon.notifyFailure).not.toHaveBeenCalled();
+
+    // Too stale for another try (next try would be past max(30 min, half the lead time)).
+    const stale = world({ reminder: { due_at: iso(NOW.getTime() - 58 * 60_000), offset_minutes: 120 } });
+    expect(await stale.run({ sendText: down })).toMatchObject({ skipped: 1 });
+    expect(stale.state().reason).toBe('whatsapp_disconnected');
+  });
+
+  it('official channel not configured: same retry-then-skip with its own reason', async () => {
+    const none = vi.fn().mockRejectedValue(new Error('WhatsApp not configured for this account'));
+    const w = world({ conv: { channel: 'official', last_customer_message_at: iso(NOW.getTime() - 3_600_000) } });
+    expect(await w.run({ sendText: none })).toMatchObject({ retrying: 1 });
+    const soon = world({
+      conv: { channel: 'official', last_customer_message_at: iso(NOW.getTime() - 3_600_000) },
+      event: { starts_at: iso(NOW.getTime() + 180_000) },
+      reminder: { for_starts_at: iso(NOW.getTime() + 180_000) },
+    });
+    await soon.run({ sendText: none });
+    expect(soon.state()).toMatchObject({ state: 'skipped', reason: 'channel_not_configured' });
+  });
+
+  it('never stores or pushes a phone number from a provider error', async () => {
+    const w = world();
+    const boom = vi.fn().mockRejectedValue(new Error('recipient +55 (11) 99999-0000 / 5511999990000 rejected'));
+    await w.run({ sendText: boom });
+    expect(w.state().state).toBe('failed');
+    expect(String(w.state().error_text)).not.toMatch(/\d{6,}/);
+    expect(String(w.state().error_text)).toContain('***');
+    expect(String(w.notifyFailure.mock.calls[0][2])).not.toMatch(/\d{6,}/);
+  });
+
+  it('a reminder that really went out ends as sent even if the sweep parked it as maybe_sent meanwhile', async () => {
+    const w = world();
+    let claimAt = '';
+    const slow = vi.fn(async () => {
+      claimAt = String(w.state().claimed_at);
+      Object.assign(w.state(), { state: 'failed', reason: 'maybe_sent' }); // the 10-minute sweep fired during the send
+      return { whatsapp_message_id: 'wamid.9' };
+    });
+    expect(await w.run({ sendText: slow })).toMatchObject({ sent: 1 });
+    expect(w.state()).toMatchObject({ state: 'sent', wa_message_id: 'wamid.9' });
+    expect(w.state().reason).toBeNull();
+    // The claim was renewed right before the provider call.
+    expect(claimAt).not.toBe(NOW.toISOString());
+  });
+
+  it('{cliente} is sanitized and template parameters never carry newlines', async () => {
+    const w = world({ contact: { name: 'Maria<b>{{x}} Silva' } });
+    await w.run();
+    expect((w.sendText.mock.calls[0][0] as Row).text).toContain('Olá, Mariabx!');
+    const t = world({
+      conv: { channel: 'official', last_customer_message_at: iso(NOW.getTime() - 30 * 3_600_000) },
+      settings: { template_name: 'tpl' },
+    });
+    t.tables.agenda_services[0].name = 'Corte\n  e   barba';
+    await t.run();
+    expect((t.sendTemplate.mock.calls[0][0] as { params: string[] }).params[1]).toBe('Corte e barba');
   });
 });

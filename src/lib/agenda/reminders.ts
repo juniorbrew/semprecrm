@@ -24,15 +24,22 @@ import { isPushConfigured, sendPushToUsers } from '@/lib/push/send';
 import { conversationUrl } from '@/lib/push/notify';
 import { accountIsWritable } from '@/lib/plans-server';
 import { TEMPLATE_NEEDS_SYNC_ERROR } from '@/lib/whatsapp/template-row-guard';
-import { isGatewayThrottled } from '@/lib/whatsapp/qr-gateway';
+import { findSuppressedPhones } from '@/lib/lgpd/suppression';
+import { GatewayRequestError, isGatewayThrottled } from '@/lib/whatsapp/qr-gateway';
 
 import { loadTimezone } from './data';
 import {
+  canRetry,
+  DAILY_REMINDER_LIMIT,
   formatWhen,
+  isTooLate,
   MAX_SEND_ATTEMPTS,
+  maskDigits,
   planSend,
+  reconnectDelayMs,
   reminderBody,
   retryDelayMs,
+  safeFirstName,
   templateParams,
   type ReminderSettings,
   type ReminderVars,
@@ -157,7 +164,19 @@ async function prepare(
     throw new Skip('appointment_closed');
   }
 
+  // Claimed long after it was due (cron down): a stale "see you tomorrow" is worse than none.
+  if (isTooLate(now, row.due_at, row.offset_minutes)) throw new Skip('late');
+
   if (!(await (deps.writable ?? accountIsWritable)(db, row.account_id))) throw new Skip('read_only');
+
+  // Abuse / runaway guard: reminders sent by the account in the last 24 h.
+  const sentToday = await db
+    .from('agenda_reminders')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', row.account_id)
+    .eq('state', 'sent')
+    .gte('sent_at', new Date(now.getTime() - 86_400_000).toISOString());
+  if (!sentToday.error && (sentToday.count ?? 0) >= DAILY_REMINDER_LIMIT) throw new Skip('daily_limit');
 
   const contact = one<{ name: string | null; phone: string | null; opted_out_at: string | null; anonymized_at: string | null }>(
     await db
@@ -171,6 +190,9 @@ async function prepare(
   if (contact.anonymized_at) throw new Skip('anonymized');
   if (contact.opted_out_at) throw new Skip('opted_out');
   if (!contact.phone || !contact.phone.trim()) throw new Skip('no_phone');
+  // LGPD suppression list (erased / opted-out numbers that no longer have a contact row). A failed
+  // lookup is an error (the row fails visibly), never a send.
+  if ((await findSuppressedPhones(db, row.account_id, [contact.phone])).has(contact.phone)) throw new Skip('opted_out');
 
   const convs = await db
     .from('conversations')
@@ -190,7 +212,7 @@ async function prepare(
   ]);
   const when = formatWhen(event.starts_at, tz);
   const vars: ReminderVars = {
-    cliente: (contact.name ?? '').trim().split(/\s+/)[0] || 'tudo bem',
+    cliente: safeFirstName(contact.name),
     servico: (service?.data as { name?: string } | null)?.name ?? 'atendimento',
     profissional: (resource?.data as { name?: string } | null)?.name ?? 'nossa equipe',
     data: when.data,
@@ -233,6 +255,8 @@ async function send(
     const channel = p.conv.channel === 'qr' ? 'qr' : 'official';
     const base = { accountId: row.account_id, userId: p.userId, conversationId: p.conv.id, contactId: p.event.contact_id as string };
     try {
+      // The send may take a while: keep the claim fresh so the 10-minute sweep cannot park a live row.
+      await db.from('agenda_reminders').update({ claimed_at: new Date().toISOString() }).eq('id', row.id).eq('state', 'sending');
       const sent =
         p.plan.kind === 'template'
           ? await (deps.sendTemplate ?? engineSendTemplate)({
@@ -261,13 +285,32 @@ async function send(
           ? { outcome: { state: 'failed', reason: 'throttled', error_text: 'O WhatsApp está com a fila cheia; não foi possível enviar a tempo.' }, notify }
           : { outcome: { state: 'retry', delayMs: retryDelayMs(row.attempts) }, notify };
       }
-      return { outcome: { state: 'failed', reason: 'send_failed', error_text: `Falha ao enviar: ${raw}`.slice(0, 480) }, notify };
+      const down = disconnectReason(err, raw);
+      if (down) {
+        const delayMs = reconnectDelayMs(row.attempts);
+        return canRetry({ now, delayMs, dueAt: row.due_at, offsetMinutes: row.offset_minutes, startsAt: p.event.starts_at })
+          ? { outcome: { state: 'retry', delayMs }, notify }
+          : { outcome: { state: 'skipped', reason: down }, notify };
+      }
+      return { outcome: { state: 'failed', reason: 'send_failed', error_text: failText(raw) }, notify };
     }
   } catch (err) {
     if (err instanceof Skip) return { outcome: { state: 'skipped', reason: err.reason }, notify };
     const raw = err instanceof Error ? err.message : String(err);
-    return { outcome: { state: 'failed', reason: 'send_failed', error_text: `Falha ao enviar: ${raw}`.slice(0, 480) }, notify };
+    return { outcome: { state: 'failed', reason: 'send_failed', error_text: failText(raw) }, notify };
   }
+}
+
+/** Gateway / provider error text can carry the recipient's number: never store or push it raw. */
+function failText(raw: string): string {
+  return maskDigits(`Falha ao enviar: ${raw}`).slice(0, 480);
+}
+
+/** The QR session is down, or the official channel was never set up: worth retrying while there is time. */
+function disconnectReason(err: unknown, raw: string): SkipReason | null {
+  if (err instanceof GatewayRequestError && err.code === 'not_connected') return 'whatsapp_disconnected';
+  if (/WhatsApp not configured/i.test(raw)) return 'channel_not_configured';
+  return null;
 }
 
 const WRITE_TRIES = 3;
@@ -276,7 +319,14 @@ const WRITE_TRIES = 3;
 async function writeOutcome(db: SupabaseClient, id: string, patch: Record<string, unknown>): Promise<boolean> {
   for (let i = 0; i < WRITE_TRIES; i++) {
     try {
-      const { error } = await db.from('agenda_reminders').update(patch).eq('id', id).eq('state', 'sending');
+      const { data, error } = await db.from('agenda_reminders').update(patch).eq('id', id).eq('state', 'sending').select('id');
+      if (!error && ((data as unknown[] | null) ?? []).length > 0) return true;
+      // The message really went out but the sweep parked the row as maybe_sent meanwhile: it ends as sent,
+      // so the customer's reply can still match it.
+      if (!error && patch.state === 'sent') {
+        const parked = await db.from('agenda_reminders').update(patch).eq('id', id).eq('state', 'failed').eq('reason', 'maybe_sent').select('id');
+        if (!parked.error) return true;
+      }
       if (!error) return true;
       console.error('[agenda-reminders] outcome write failed:', error.message);
     } catch (err) {

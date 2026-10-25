@@ -12,8 +12,13 @@
 //                             AI flow comes in delivery C);
 // then a pill (`agenda_reply`) lands in the conversation and a short
 // acknowledgement goes back to the customer.
-// Anything ambiguous, late, already answered or on a read-only account returns
-// false and the message is just a normal message for the human. Never throws.
+//
+// Vague words ("ok", "certo", 👍...) only count when the customer QUOTED the
+// reminder, or when nothing was written to them after it (otherwise "ok" may be
+// the answer to the agent's last message). Anything ambiguous, late, already
+// answered or on a read-only account returns null and the message is just a
+// normal message for the human. Never throws; once the RPC succeeded the action
+// is always returned, whatever the follow-ups (pill, acknowledgement, push) do.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -23,7 +28,7 @@ import { conversationUrl } from '@/lib/push/notify';
 import { isPushConfigured, sendPushToUsers } from '@/lib/push/send';
 
 import { loadTimezone } from './data';
-import { formatWhen, parseReminderReply, REPLY_WINDOW_MS, type ReminderAction } from './reminders-core';
+import { formatWhen, parseReminderReplyDetailed, REPLY_WINDOW_MS, type ReminderAction } from './reminders-core';
 
 export interface ReminderReplyInput {
   accountId: string;
@@ -34,6 +39,8 @@ export interface ReminderReplyInput {
   userId: string;
   type: string;
   text: string | null;
+  /** Provider id of the message the customer swiped-replied to, if any. */
+  quotedMessageId?: string | null;
   now?: Date;
 }
 
@@ -69,12 +76,23 @@ interface SentReminder {
   event_id: string;
   for_starts_at: string;
   sent_at: string | null;
+  wa_message_id: string | null;
+}
+
+interface OpenEvent {
+  id: string;
+  status: string;
+  starts_at: string;
+  service_id: string | null;
+  owner_user_id: string | null;
+  created_by: string | null;
 }
 
 async function handle(db: SupabaseClient, input: ReminderReplyInput, deps: ReminderReplyDeps): Promise<ReminderAction | null> {
   if (!TEXT_TYPES.has(input.type)) return null;
-  const action = parseReminderReply(input.text);
-  if (!action) return null;
+  const parsed = parseReminderReplyDetailed(input.text);
+  if (!parsed) return null;
+  const { action } = parsed;
   const now = input.now ?? new Date();
 
   // A bot flow waiting for an answer owns the message ("1" may be its menu option).
@@ -87,41 +105,40 @@ async function handle(db: SupabaseClient, input: ReminderReplyInput, deps: Remin
     .limit(1);
   if (flow.error || (flow.data ?? []).length > 0) return null;
 
+  // This contact's open future appointments FIRST, then their reminders: an account-wide "latest
+  // 30 reminders" would lose the contact's in a busy account.
+  const evs = await db
+    .from('calendar_events')
+    .select('id, status, starts_at, service_id, owner_user_id, created_by')
+    .eq('account_id', input.accountId)
+    .eq('contact_id', input.contactId)
+    .in('status', ['scheduled', 'confirmed'])
+    .gt('starts_at', now.toISOString())
+    .limit(50);
+  if (evs.error || !evs.data?.length) return null;
+  const events = new Map((evs.data as OpenEvent[]).map((e) => [e.id, e]));
+
   const rem = await db
     .from('agenda_reminders')
-    .select('id, event_id, for_starts_at, sent_at')
+    .select('id, event_id, for_starts_at, sent_at, wa_message_id')
     .eq('account_id', input.accountId)
     .eq('state', 'sent')
     .is('response', null)
+    .in('event_id', [...events.keys()])
     .gte('sent_at', new Date(now.getTime() - REPLY_WINDOW_MS).toISOString())
     .order('sent_at', { ascending: false })
     .limit(30);
   if (rem.error || !rem.data?.length) return null;
-  const reminders = rem.data as SentReminder[];
 
-  const evs = await db
-    .from('calendar_events')
-    .select('id, status, starts_at, contact_id, service_id, owner_user_id, created_by')
-    .eq('account_id', input.accountId)
-    .eq('contact_id', input.contactId)
-    .in('id', [...new Set(reminders.map((r) => r.event_id))]);
-  if (evs.error || !evs.data?.length) return null;
-  const events = new Map(
-    (evs.data as { id: string; status: string; starts_at: string; service_id: string | null; owner_user_id: string | null; created_by: string | null }[]).map((e) => [e.id, e]),
-  );
-
-  // The latest reminder of THIS contact whose appointment is still open, unmoved and ahead.
-  const target = reminders.find((r) => {
+  // The latest reminder whose appointment is still unmoved.
+  const target = (rem.data as SentReminder[]).find((r) => {
     const e = events.get(r.event_id);
-    return (
-      !!e &&
-      (e.status === 'scheduled' || e.status === 'confirmed') &&
-      Date.parse(e.starts_at) === Date.parse(r.for_starts_at) &&
-      Date.parse(e.starts_at) > now.getTime()
-    );
+    return !!e && Date.parse(e.starts_at) === Date.parse(r.for_starts_at);
   });
   if (!target) return null;
   const event = events.get(target.event_id)!;
+
+  if (parsed.vague && !(await answersReminder(db, input, target))) return null;
 
   const res = await db.rpc('agenda_reminder_respond', {
     p_account_id: input.accountId,
@@ -131,6 +148,41 @@ async function handle(db: SupabaseClient, input: ReminderReplyInput, deps: Remin
   // Lost the race / already answered / read-only account: a normal message.
   if (res.error) return null;
 
+  // From here the appointment IS updated: nothing below may turn the result into "not handled".
+  try {
+    await followUp(db, input, deps, action, event);
+  } catch (err) {
+    console.error('[agenda-reply] follow-up failed:', err instanceof Error ? err.message : err);
+  }
+  return action;
+}
+
+/** Vague words count only if they quote the reminder, or nobody wrote to the customer after it. */
+async function answersReminder(db: SupabaseClient, input: ReminderReplyInput, reminder: SentReminder): Promise<boolean> {
+  if (input.quotedMessageId && reminder.wa_message_id && input.quotedMessageId === reminder.wa_message_id) return true;
+  if (!reminder.sent_at) return false;
+  const convs = await db.from('conversations').select('id').eq('account_id', input.accountId).eq('contact_id', input.contactId);
+  if (convs.error) return false;
+  const ids = ((convs.data ?? []) as { id: string }[]).map((c) => c.id);
+  if (ids.length === 0) return false;
+  const later = await db
+    .from('messages')
+    .select('id')
+    .in('conversation_id', ids)
+    .neq('sender_type', 'customer')
+    .gt('created_at', reminder.sent_at)
+    .limit(1);
+  if (later.error) return false;
+  return (later.data ?? []).length === 0;
+}
+
+async function followUp(
+  db: SupabaseClient,
+  input: ReminderReplyInput,
+  deps: ReminderReplyDeps,
+  action: ReminderAction,
+  event: OpenEvent,
+): Promise<void> {
   const [service, tz, conv] = await Promise.all([
     event.service_id ? db.from('agenda_services').select('name').eq('id', event.service_id).maybeSingle() : null,
     loadTimezone(db, input.accountId),
@@ -167,7 +219,6 @@ async function handle(db: SupabaseClient, input: ReminderReplyInput, deps: Remin
       console.error('[agenda-reply] push failed:', err instanceof Error ? err.message : err),
     );
   }
-  return action;
 }
 
 function defaultNotify(db: SupabaseClient): NonNullable<ReminderReplyDeps['notify']> {

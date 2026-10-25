@@ -31,6 +31,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
         resourceId: body.resource_id ?? null,
         encaixe: body.encaixe,
         source: 'agent',
+        actorId: ctx.userId,
       }, agendaWriter());
     }
     if (body.status !== undefined) {

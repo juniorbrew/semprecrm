@@ -221,7 +221,10 @@ BEGIN
        SET offset_minutes = EXCLUDED.offset_minutes, due_at = EXCLUDED.due_at,
            state = EXCLUDED.state, reason = EXCLUDED.reason,
            attempts = 0, next_try_at = NULL, error_text = NULL, updated_at = v_now
-     WHERE public.agenda_reminders.state IN ('pending', 'cancelled')
+     -- 'customer_confirmed' (cancelled after the customer confirmed) and 'reschedule_requested'
+     -- (skipped) are NOT revived: a confirmed customer is not asked again.
+     WHERE public.agenda_reminders.state = 'pending'
+        OR (public.agenda_reminders.state = 'cancelled' AND public.agenda_reminders.reason IS DISTINCT FROM 'customer_confirmed')
         OR (public.agenda_reminders.state = 'skipped' AND public.agenda_reminders.reason = 'past');
   END LOOP;
 END;
@@ -249,6 +252,9 @@ CREATE TRIGGER calendar_events_agenda_reminders
   EXECUTE FUNCTION private.agenda_reminders_event_trg();
 
 -- Ligar / desligar / mudar antecedências: replaneja os agendamentos futuros da conta.
+-- ponytail: síncrono, dentro do UPDATE da configuração (um plan() por agendamento futuro).
+-- Barato para centenas de agendamentos por conta; se uma conta chegar a dezenas de milhares,
+-- mover para um job (fila de replanejamento) em vez de rodar no trigger.
 CREATE OR REPLACE FUNCTION private.agenda_reminders_settings_trg()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -334,6 +340,7 @@ ALTER TABLE public.conversation_events VALIDATE CONSTRAINT conversation_events_e
 -- As assinaturas antigas saem; só o app novo chama (service_role).
 DROP FUNCTION IF EXISTS public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid);
 DROP FUNCTION IF EXISTS public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid);
+DROP FUNCTION IF EXISTS public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text);
 
 -- agenda_book_appointment — igual a 096 + p_override (encaixe): AG011 se a origem
 -- não for 'agent' (a IA e a API pública nunca fazem encaixe).
@@ -477,7 +484,8 @@ CREATE OR REPLACE FUNCTION public.agenda_reschedule_appointment(
   p_starts_at TIMESTAMPTZ,
   p_resource_id UUID DEFAULT NULL,
   p_override BOOLEAN DEFAULT false,
-  p_source TEXT DEFAULT 'agent'
+  p_source TEXT DEFAULT 'agent',
+  p_actor UUID DEFAULT NULL
 ) RETURNS public.calendar_events
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -492,7 +500,14 @@ DECLARE
 BEGIN
   PERFORM private.agenda_assert_caller(p_account_id);
 
-  IF p_override AND p_source <> 'agent' THEN
+  -- Encaixe: como na reserva, só pessoa (origem 'agent') com ator agent+ da conta.
+  IF p_override AND (
+       p_source <> 'agent'
+    OR COALESCE(auth.uid(), p_actor) IS NULL
+    OR (auth.uid() IS NULL AND NOT EXISTS (
+          SELECT 1 FROM public.profiles pr
+           WHERE pr.user_id = p_actor AND pr.account_id = p_account_id AND pr.account_role <> 'viewer'))
+  ) THEN
     RAISE EXCEPTION 'agenda_override_forbidden' USING ERRCODE = 'AG011';
   END IF;
 
@@ -590,6 +605,18 @@ BEGIN
      SET response = p_action, responded_at = now(), updated_at = now()
    WHERE event_id = v_ev.id AND for_starts_at = v_ev.starts_at AND state = 'sent' AND response IS NULL;
 
+  -- The next reminder of the same time is no longer needed: a confirmed customer is not asked
+  -- "Responda 1" again; a customer who asked to reschedule waits for a human.
+  IF p_action = 'confirmed' THEN
+    UPDATE public.agenda_reminders
+       SET state = 'cancelled', reason = 'customer_confirmed', updated_at = now()
+     WHERE event_id = v_ev.id AND for_starts_at = v_ev.starts_at AND state = 'pending';
+  ELSE
+    UPDATE public.agenda_reminders
+       SET state = 'skipped', reason = 'reschedule_requested', updated_at = now()
+     WHERE event_id = v_ev.id AND for_starts_at = v_ev.starts_at AND state = 'pending';
+  END IF;
+
   UPDATE public.calendar_events
      SET customer_response = p_action, customer_responded_at = now()
    WHERE id = v_ev.id
@@ -619,12 +646,22 @@ BEGIN
    WHERE state = 'sending' AND claimed_at < clock_timestamp() - interval '10 minutes';
 
   RETURN QUERY
-  WITH due AS (
-    SELECT r.id FROM public.agenda_reminders r
+  -- Fairness: at most 10 rows per account per call, oldest first, so one account with a flood
+  -- of reminders cannot starve the others in the same tick. (FOR UPDATE cannot sit on a window
+  -- query, so the rows are ranked first and locked in the second step.)
+  WITH ranked AS (
+    SELECT r.id, r.due_at,
+           row_number() OVER (PARTITION BY r.account_id ORDER BY r.due_at) AS rn
+      FROM public.agenda_reminders r
      WHERE r.state = 'pending' AND COALESCE(r.next_try_at, r.due_at) <= p_now
-     ORDER BY r.due_at
+  ),
+  due AS (
+    SELECT r.id FROM public.agenda_reminders r
+      JOIN ranked k ON k.id = r.id
+     WHERE r.state = 'pending' AND k.rn <= 10
+     ORDER BY k.due_at
      LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 25), 200))
-     FOR UPDATE SKIP LOCKED
+     FOR UPDATE OF r SKIP LOCKED
   )
   UPDATE public.agenda_reminders m
      SET state = 'sending', claimed_at = clock_timestamp(), attempts = m.attempts + 1,
@@ -641,7 +678,7 @@ DECLARE
 BEGIN
   FOREACH f IN ARRAY ARRAY[
     'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean)',
-    'public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text)',
+    'public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text, uuid)',
     'public.agenda_reminder_respond(uuid, uuid, text)',
     'public.agenda_reminders_claim(timestamptz, integer)'
   ] LOOP

@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canRetry,
   DEFAULT_REMINDER_TEXT,
+  isTooLate,
+  lateLimitMs,
+  maskDigits,
+  parseReminderReplyDetailed,
+  reconnectDelayMs,
+  safeFirstName,
+  templateTakesFiveParams,
   formatWhen,
   parseReminderReply,
   planSend,
@@ -101,5 +109,76 @@ describe('reply parsing', () => {
   it('handles missing input', () => {
     expect(parseReminderReply(null)).toBeNull();
     expect(parseReminderReply(undefined)).toBeNull();
+  });
+});
+
+describe('reply parsing: emoji, repeated words, vague vs clear', () => {
+  it.each(['Confirmo 👍', 'Sim 👍', 'Ok 👍', 'sim sim', 'Sim, confirmo!', 'confirmado ✅', 'Sim obrigado', '1 obrigada', '👍👍'])(
+    'confirms: %j',
+    (text) => expect(parseReminderReply(text)).toBe('confirmed'),
+  );
+
+  it('flags the vague ones (they need the reminder quoted or no later message from us)', () => {
+    const vague = (t: string) => parseReminderReplyDetailed(t)?.vague;
+    for (const t of ['ok', 'Ok!', 'ok 👍', 'certo', 'Beleza', 'blz', 'pode ser', 'combinado', 'tudo certo', 's', '👍', '✅']) expect(vague(t), t).toBe(true);
+    for (const t of ['1', 'sim', 'Confirmo', 'Confirmo 👍', 'ok sim', 'pode confirmar', 'estarei lá', '2', 'remarcar']) expect(vague(t), t).toBe(false);
+  });
+
+  it('obrigado alone is neutral, not an answer; mixed word + move is still ambiguous', () => {
+    expect(parseReminderReply('obrigado')).toBeNull();
+    expect(parseReminderReply('ok remarcar')).toBeNull();
+    expect(parseReminderReply('👍 2')).toBeNull();
+  });
+});
+
+describe('sanitizing and masking', () => {
+  it('first name keeps letters, marks, apostrophe and hyphen only, max 30', () => {
+    expect(safeFirstName('Maria Silva')).toBe('Maria');
+    expect(safeFirstName('  João-Pedro  Souza')).toBe('João-Pedro');
+    expect(safeFirstName("D'Ávila")).toBe("D'Ávila");
+    expect(safeFirstName('Ana{{1}} http://x.co')).toBe('Ana');
+    expect(safeFirstName('Ana<script>')).toBe('Anascript');
+    expect(safeFirstName('A'.repeat(80))).toHaveLength(30);
+    for (const bad of ['', '   ', '1234', '😀😀', null, undefined]) expect(safeFirstName(bad)).toBe('tudo bem');
+  });
+
+  it('template params: single spaces, no newlines, never empty', () => {
+    const p = templateParams({ cliente: 'Ana', servico: 'Corte\n  e   barba', profissional: ' \t ', data: 'sábado,\r\n31/10', hora: '14:30' });
+    expect(p).toEqual(['Ana', 'Corte e barba', '-', 'sábado, 31/10', '14:30']);
+  });
+
+  it('masks phone numbers in error text, keeps short numbers and times', () => {
+    expect(maskDigits('send to 5511999990000 failed')).toBe('send to *** failed');
+    expect(maskDigits('número +55 (11) 99999-0000 inválido')).toBe('número *** inválido');
+    expect(maskDigits('HTTP 429 at 14:30, retry in 120 s')).toBe('HTTP 429 at 14:30, retry in 120 s');
+  });
+
+  it('the approved template must take exactly {{1}}..{{5}}', () => {
+    expect(templateTakesFiveParams('Olá {{1}}, {{2}} com {{3}} em {{4}} às {{5}}. Responda 1 ou 2.')).toBe(true);
+    expect(templateTakesFiveParams('{{1}} {{2}} {{3}} {{4}} {{5}} {{5}}')).toBe(true);
+    expect(templateTakesFiveParams('Olá {{1}}, {{2}}')).toBe(false);
+    expect(templateTakesFiveParams('{{1}} {{2}} {{3}} {{4}} {{5}} {{6}}')).toBe(false);
+    expect(templateTakesFiveParams(null)).toBe(false);
+  });
+});
+
+describe('late cron and reconnect retry', () => {
+  const due = '2026-10-30T10:00:00Z';
+  it('stale after max(30 min, half the lead time)', () => {
+    expect(lateLimitMs(120)).toBe(60 * 60_000);
+    expect(lateLimitMs(1440)).toBe(720 * 60_000);
+    expect(lateLimitMs(30)).toBe(30 * 60_000);
+    expect(isTooLate(new Date('2026-10-30T10:59:00Z'), due, 120)).toBe(false);
+    expect(isTooLate(new Date('2026-10-30T11:01:00Z'), due, 120)).toBe(true);
+    expect(isTooLate(new Date('2026-10-30T20:00:00Z'), due, 1440)).toBe(false);
+  });
+
+  it('backoff 5..30 min; retry only while the appointment and freshness allow it', () => {
+    expect(reconnectDelayMs(1)).toBe(300_000);
+    expect(reconnectDelayMs(9)).toBe(1_800_000);
+    const base = { dueAt: due, offsetMinutes: 120, startsAt: '2026-10-30T12:00:00Z', delayMs: 300_000 };
+    expect(canRetry({ ...base, now: new Date('2026-10-30T10:05:00Z') })).toBe(true);
+    expect(canRetry({ ...base, now: new Date('2026-10-30T10:58:00Z') })).toBe(false); // next try is stale
+    expect(canRetry({ ...base, offsetMinutes: 1440, startsAt: '2026-10-30T10:10:00Z', now: new Date('2026-10-30T10:07:00Z') })).toBe(false); // after the appointment
   });
 });

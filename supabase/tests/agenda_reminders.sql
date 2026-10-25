@@ -240,6 +240,32 @@ SET LOCAL ROLE service_role;
 SELECT pg_temp.fails(format($q$SELECT agenda_reminder_respond(%L, %L, 'confirmed')$q$,
   (SELECT acc FROM t WHERE label='C1'), (SELECT id FROM agenda_reminders WHERE account_id = (SELECT acc FROM t WHERE label='C1') LIMIT 1)), '42501', 'read-only account: answer refused');
 
+-- A confirmed customer is not asked again; a reschedule request stops the next reminder too.
+SELECT pg_temp.ok(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-05-06 13:00+00')$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1')), 'book appointment for the 24 h answer');
+SELECT pg_temp.ok(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-05-07 13:00+00')$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1')), 'book appointment for the reschedule request');
+RESET ROLE;
+UPDATE agenda_reminders SET state = 'sent', sent_at = now() WHERE slot = 1 AND event_id IN (SELECT id FROM calendar_events WHERE starts_at IN ('2030-05-06 13:00+00', '2030-05-07 13:00+00'));
+SET LOCAL ROLE service_role;
+SELECT pg_temp.ok(format($q$SELECT agenda_reminder_respond(%L, %L, 'confirmed')$q$, (SELECT acc FROM t WHERE label='A1'),
+  (SELECT r.id FROM agenda_reminders r JOIN calendar_events e ON e.id = r.event_id WHERE e.starts_at = '2030-05-06 13:00+00' AND r.slot = 1)), 'confirm from the 24 h reminder');
+SELECT pg_temp.assert_true((SELECT state = 'cancelled' AND reason = 'customer_confirmed' FROM agenda_reminders r JOIN calendar_events e ON e.id = r.event_id WHERE e.starts_at = '2030-05-06 13:00+00' AND r.slot = 2),
+  'after "confirmo" the 2 h reminder is cancelled (customer_confirmed)');
+SELECT pg_temp.ok(format($q$SELECT agenda_reminder_respond(%L, %L, 'reschedule_requested')$q$, (SELECT acc FROM t WHERE label='A1'),
+  (SELECT r.id FROM agenda_reminders r JOIN calendar_events e ON e.id = r.event_id WHERE e.starts_at = '2030-05-07 13:00+00' AND r.slot = 1)), 'reschedule request from the 24 h reminder');
+SELECT pg_temp.assert_true((SELECT state = 'skipped' AND reason = 'reschedule_requested' FROM agenda_reminders r JOIN calendar_events e ON e.id = r.event_id WHERE e.starts_at = '2030-05-07 13:00+00' AND r.slot = 2),
+  'after "pediu para remarcar" the next reminder is skipped (reschedule_requested)');
+-- Replanning (status change, settings change) must not bring them back.
+SELECT pg_temp.ok(format($q$SELECT agenda_set_appointment_status(%L, %L, 'scheduled')$q$, (SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM calendar_events WHERE starts_at = '2030-05-06 13:00+00')), 'status change replans');
+RESET ROLE;
+UPDATE agenda_reminder_settings SET second_offset_minutes = 90 WHERE account_id = (SELECT acc FROM t WHERE label='A1');
+UPDATE agenda_reminder_settings SET second_offset_minutes = 120 WHERE account_id = (SELECT acc FROM t WHERE label='A1');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders r JOIN calendar_events e ON e.id = r.event_id
+                           WHERE e.starts_at IN ('2030-05-06 13:00+00', '2030-05-07 13:00+00') AND r.slot = 2 AND r.state = 'pending'), 0, 'neither is revived by a replan');
+SET LOCAL ROLE service_role;
+
 -- ---------- (7) encaixe ----------
 SELECT pg_temp.ok(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-04-01 13:00+00', NULL, 'agent', NULL, NULL, 'scheduled', %L, true)$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'), (SELECT uid FROM t WHERE label='A2')),
@@ -260,8 +286,14 @@ SELECT pg_temp.assert_eq((SELECT count(*) FROM calendar_events WHERE starts_at =
 SELECT pg_temp.fails(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-04-03 13:00+00', NULL, true, 'ai')$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00')), 'AG011', 'the AI can never reschedule as encaixe');
 SELECT pg_temp.assert_true((SELECT NOT booking_override FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00'), 'refused reschedule changed nothing');
-SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-04-03 13:00+00', NULL, true, 'agent')$q$,
-  (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00')), 'agent reschedules as encaixe');
+SELECT pg_temp.fails(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-04-03 13:00+00', NULL, true, 'agent')$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00')), 'AG011', 'an encaixe reschedule needs an identified person');
+SELECT pg_temp.fails(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-04-03 13:00+00', NULL, true, 'agent', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00'), (SELECT uid FROM t WHERE label='A3')), 'AG011', 'a viewer cannot be the actor of an encaixe');
+SELECT pg_temp.fails(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-04-03 13:00+00', NULL, true, 'agent', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00'), (SELECT uid FROM t WHERE label='B1')), 'AG011', 'nor a member of another account');
+SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-04-03 13:00+00', NULL, true, 'agent', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-02-04 13:00+00'), (SELECT uid FROM t WHERE label='A2')), 'agent reschedules as encaixe');
 SELECT pg_temp.assert_true((SELECT booking_override FROM calendar_events WHERE starts_at = '2030-04-03 13:00+00'), 'reschedule encaixe recorded');
 -- Encaixe still cannot overlap (the exclusion constraint is the guarantee).
 SELECT pg_temp.fails(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-04-01 13:30+00', NULL, 'agent', NULL, NULL, 'scheduled', %L, true)$q$,
@@ -303,6 +335,19 @@ SET LOCAL ROLE authenticated;
 SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE agenda_reminder_settings SET enabled = false WHERE account_id = %L$q$, (SELECT acc FROM t WHERE label='C1'))), 0, 'read-only account: the owner cannot edit the settings');
 RESET ROLE;
 
+-- ---------- (8b) claim fairness: at most 10 rows per account per call ----------
+INSERT INTO calendar_events(account_id, owner_user_id, title, starts_at, ends_at, status, contact_id, service_id, resource_id, created_by)
+  SELECT (SELECT acc FROM t WHERE label='A1'), (SELECT uid FROM t WHERE label='A1'), 'bulk ' || n,
+         timestamptz '2031-03-01 13:00+00' + (n || ' days')::interval, timestamptz '2031-03-01 14:00+00' + (n || ' days')::interval, 'scheduled',
+         (SELECT contact FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT uid FROM t WHERE label='A1')
+    FROM generate_series(1, 12) AS n;
+UPDATE agenda_reminders SET due_at = now() - interval '1 minute'
+ WHERE state = 'pending' AND event_id IN (SELECT id FROM calendar_events WHERE title LIKE 'bulk %');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders WHERE state = 'pending' AND due_at < now()), 24, '24 reminders due in one account');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders_claim(now(), 25)), 10, 'one account gets at most 10 rows per claim');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders_claim(now(), 25)), 10, 'second claim: the next 10');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders_claim(now(), 25)), 4, 'third claim: the rest');
+
 -- ---------- (9) event type, then LGPD erasure ----------
 INSERT INTO conversations(user_id, account_id, contact_id) VALUES ((SELECT uid FROM t WHERE label='A1'), (SELECT acc FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'));
 SELECT pg_temp.ok(format($q$INSERT INTO conversation_events(account_id, conversation_id, event_type, payload)
@@ -320,7 +365,7 @@ SELECT pg_temp.assert_true(
   AND NOT has_function_privilege('authenticated', 'public.agenda_reminders_claim(timestamptz, integer)', 'EXECUTE')
   AND NOT has_function_privilege('authenticated', 'public.agenda_reminder_respond(uuid, uuid, text)', 'EXECUTE')
   AND NOT has_function_privilege('authenticated', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean)', 'EXECUTE')
-  AND NOT has_function_privilege('authenticated', 'public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text)', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text, uuid)', 'EXECUTE')
   AND has_function_privilege('service_role', 'public.agenda_reminders_claim(timestamptz, integer)', 'EXECUTE')
   AND has_function_privilege('service_role', 'public.agenda_reminder_respond(uuid, uuid, text)', 'EXECUTE')
   AND has_function_privilege('service_role', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean)', 'EXECUTE'),

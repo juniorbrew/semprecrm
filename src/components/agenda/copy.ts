@@ -240,6 +240,12 @@ const PT: AgendaCopy = {
     maybe_sent: "Pode ter sido enviado; confira a conversa",
     rescheduled: "Agendamento remarcado",
     settings_changed: "Configuração dos lembretes alterada",
+    whatsapp_disconnected: "WhatsApp desconectado até o horário do lembrete",
+    channel_not_configured: "Canal oficial do WhatsApp não configurado",
+    daily_limit: "Limite diário de lembretes da conta atingido",
+    late: "O lembrete atrasou demais para ainda ser útil",
+    reschedule_requested: "Cliente pediu para remarcar",
+    customer_confirmed: "Cliente já confirmou",
   },
   reminderSentAt: "enviado",
   reminderAnswered: { confirmed: "Cliente confirmou", reschedule_requested: "Cliente pediu para remarcar" },
@@ -257,7 +263,7 @@ const PT: AgendaCopy = {
   reminderOptionsNote: "A linha com as opções é sempre adicionada ao final.",
   reminderTemplate: "Modelo aprovado (canal oficial)",
   reminderTemplateNone: "Nenhum: pular o lembrete fora da janela de 24 h",
-  reminderTemplateHint: "Fora da janela de 24 h, o WhatsApp oficial só aceita modelos aprovados. O corpo do modelo recebe, nesta ordem: {{1}} cliente, {{2}} serviço, {{3}} profissional, {{4}} data, {{5}} hora. Botões de resposta rápida \"Confirmar\" e \"Remarcar\" funcionam como as respostas 1 e 2.",
+  reminderTemplateHint: "Fora da janela de 24 h, o WhatsApp oficial só aceita modelos aprovados. O corpo do modelo recebe, nesta ordem: {{1}} cliente, {{2}} serviço, {{3}} profissional, {{4}} data, {{5}} hora. O texto do modelo deve avisar o cliente para responder 1 (confirmar) ou 2 (remarcar), ou ter botões de resposta rápida \"Confirmar\" e \"Remarcar\".",
   reminderOffsetsDiffer: "Os dois lembretes precisam ter antecedências diferentes.",
 };
 
@@ -375,6 +381,12 @@ const EN: AgendaCopy = {
     maybe_sent: "May have been sent; check the conversation",
     rescheduled: "Appointment rescheduled",
     settings_changed: "Reminder settings changed",
+    whatsapp_disconnected: "WhatsApp was disconnected until the reminder time",
+    channel_not_configured: "Official WhatsApp channel is not configured",
+    daily_limit: "The account's daily reminder limit was reached",
+    late: "The reminder was too late to still be useful",
+    reschedule_requested: "Customer asked to reschedule",
+    customer_confirmed: "Customer already confirmed",
   },
   reminderSentAt: "sent",
   reminderAnswered: { confirmed: "Customer confirmed", reschedule_requested: "Customer asked to reschedule" },
@@ -392,7 +404,7 @@ const EN: AgendaCopy = {
   reminderOptionsNote: "The line with the reply options is always added at the end.",
   reminderTemplate: "Approved template (official channel)",
   reminderTemplateNone: "None: skip the reminder outside the 24 h window",
-  reminderTemplateHint: "Outside the 24 h window the official WhatsApp only accepts approved templates. The template body receives, in this order: {{1}} customer, {{2}} service, {{3}} professional, {{4}} date, {{5}} time. Quick-reply buttons \"Confirmar\" and \"Remarcar\" work like replies 1 and 2.",
+  reminderTemplateHint: "Outside the 24 h window the official WhatsApp only accepts approved templates. The template body receives, in this order: {{1}} customer, {{2}} service, {{3}} professional, {{4}} date, {{5}} time. The template text must tell the customer to reply 1 (confirm) or 2 (reschedule), or have quick-reply buttons \"Confirmar\" and \"Remarcar\".",
   reminderOffsetsDiffer: "The two reminders need different lead times.",
 };
 

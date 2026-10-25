@@ -460,10 +460,11 @@ describe('encaixe (walk-in / override)', () => {
       rescheduleAppointment(db as never, { accountId: ACC, eventId: a.id, startsAt: '2026-10-26T13:30:00.000Z', now: NEAR, ...over });
     expect(await failCode(move({}))).toBe('min_notice');
     expect(await failCode(move({ encaixe: true }))).toBe('forbidden'); // no source
-    expect(await failCode(move({ encaixe: true, source: 'ai' }))).toBe('forbidden');
-    expect(await failCode(move({ encaixe: true, source: 'agent', startsAt: '2026-10-26T20:00:00.000Z' }))).toBe('outside_hours');
+    expect(await failCode(move({ encaixe: true, source: 'ai', actorId: 'u1' }))).toBe('forbidden');
+    expect(await failCode(move({ encaixe: true, source: 'agent' }))).toBe('forbidden'); // a person must be identified
+    expect(await failCode(move({ encaixe: true, source: 'agent', actorId: 'u1', startsAt: '2026-10-26T20:00:00.000Z' }))).toBe('outside_hours');
     expect(rpcCalls).toHaveLength(0);
-    await move({ encaixe: true, source: 'agent' });
-    expect(rpcCalls[0].args).toMatchObject({ p_override: true, p_source: 'agent' });
+    await move({ encaixe: true, source: 'agent', actorId: 'u1' });
+    expect(rpcCalls[0].args).toMatchObject({ p_override: true, p_source: 'agent', p_actor: 'u1' });
   });
 });

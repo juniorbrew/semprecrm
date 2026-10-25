@@ -1029,6 +1029,7 @@ export async function ingestInboundMessage(
         userId: ownerUserId,
         type: input.type,
         text: contentText,
+        quotedMessageId: input.quotedMessageId ?? null,
       })
   const outOfHoursReply = contactBlocked || agendaReply
     ? undefined

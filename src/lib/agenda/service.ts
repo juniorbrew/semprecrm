@@ -266,14 +266,17 @@ export interface RescheduleInput {
   startsAt: string;
   /** Move to another professional too (optional). */
   resourceId?: string | null;
-  /** Encaixe: ignore minimum notice and the day horizon. Needs source 'agent' (explicit). */
+  /** Encaixe: ignore minimum notice and the day horizon. Needs source 'agent' (explicit) and an actor. */
   encaixe?: boolean;
   source?: BookingSource;
+  /** The person moving it (agent+). Required for an encaixe; the RPC checks the membership. */
+  actorId?: string | null;
   now?: Date;
 }
 
 export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput, writer: RpcWriter = db): Promise<CalendarEvent> {
   const encaixe = allowEncaixe(input.encaixe, input.source);
+  if (encaixe && !input.actorId) throw new AgendaError('forbidden', 'Encaixe é exclusivo de atendentes.');
   const startMs = parseStart(input.startsAt);
   const found = await db
     .from('calendar_events')
@@ -311,6 +314,7 @@ export async function rescheduleAppointment(db: AgendaDb, input: RescheduleInput
     p_resource_id: input.resourceId ?? null,
     p_override: encaixe,
     p_source: input.source ?? 'agent',
+    p_actor: input.actorId ?? null,
   });
 }
 
