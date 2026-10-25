@@ -393,3 +393,77 @@ describe('fromRpcError', () => {
     expect(fromRpcError({ message: 'agenda_slot_taken' }).message).toMatch(/horário/);
   });
 });
+
+describe('encaixe (walk-in / override)', () => {
+  const NEAR = new Date('2026-10-26T12:00:00Z'); // 09:00 local: MON_10 is 1 h away, notice is 2 h
+  const FAR = '2026-12-28T13:00:00.000Z'; // Monday 10:00 local, past the 60-day horizon
+
+  it('ignores minimum notice and the day horizon, and records the override in the RPC', async () => {
+    const { db, rpcCalls } = setup();
+    expect(await failCode(book(db, { now: NEAR }))).toBe('min_notice');
+    expect(await failCode(book(db, { startsAt: FAR }))).toBe('max_ahead');
+    expect(rpcCalls).toHaveLength(0);
+
+    await book(db, { now: NEAR, encaixe: true });
+    await book(db, { startsAt: FAR, resourceId: 'r2', encaixe: true });
+    expect(rpcCalls).toHaveLength(2);
+    expect(rpcCalls.every((c) => c.args.p_override === true && c.args.p_source === 'agent')).toBe(true);
+  });
+
+  it('a normal booking never sets the override', async () => {
+    const { db, rpcCalls } = setup();
+    await book(db);
+    expect(rpcCalls[0].args.p_override).toBe(false);
+  });
+
+  it('still respects working hours and conflicts', async () => {
+    const { db, rpcCalls } = setup((t) => {
+      t.calendar_events.push({ id: 'a', account_id: ACC, resource_id: 'r1', owner_user_id: 'u1', status: 'scheduled', all_day: false, starts_at: MON_10, ends_at: MON_11, block_starts_at: MON_10, block_ends_at: MON_11 });
+    });
+    expect(await failCode(book(db, { startsAt: '2026-10-26T20:00:00.000Z', now: NEAR, encaixe: true }))).toBe('outside_hours');
+    expect(await failCode(book(db, { startsAt: '2026-10-27T13:00:00.000Z', now: NEAR, encaixe: true }))).toBe('outside_hours'); // Tuesday
+    expect(await failCode(book(db, { now: NEAR, encaixe: true }))).toBe('busy'); // r1 already has MON_10
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it('accepts a start that began up to an hour ago, not earlier', async () => {
+    const { db } = setup();
+    const late = new Date('2026-10-26T13:30:00Z'); // 10:30 local
+    await book(db, { now: late, encaixe: true }); // 10:00, 30 min ago
+    expect(await failCode(book(db, { now: new Date('2026-10-26T14:30:00Z'), encaixe: true, resourceId: 'r2' }))).toBe('min_notice'); // 10:00 is 90 min ago
+  });
+
+  it('is refused for the AI and the public API, however it is asked', async () => {
+    const { db, rpcCalls } = setup();
+    expect(await failCode(book(db, { now: NEAR, encaixe: true, source: 'ai' }))).toBe('forbidden');
+    expect(await failCode(book(db, { now: NEAR, encaixe: true, source: 'api' }))).toBe('forbidden');
+    expect(await failCode(getAvailability(db, { accountId: ACC, serviceId: 's1', from: '2026-10-26', to: '2026-10-26', now: NEAR, encaixe: true, source: 'ai' }))).toBe('forbidden');
+    expect(await failCode(getAvailability(db, { accountId: ACC, serviceId: 's1', from: '2026-10-26', to: '2026-10-26', now: NEAR, encaixe: true }))).toBe('forbidden'); // source required
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it('lists slots inside the notice window only for encaixe', async () => {
+    const { db } = setup();
+    const q = { accountId: ACC, serviceId: 's1', from: '2026-10-26', to: '2026-10-26', now: NEAR };
+    const normal = await getAvailability(db, q);
+    const walkIn = await getAvailability(db, { ...q, encaixe: true, source: 'agent' });
+    expect(normal.slots.map((s) => s.starts_at)).not.toContain('2026-10-26T12:00:00.000Z'); // 09:00, inside notice
+    expect(walkIn.slots.map((s) => s.starts_at)).toContain('2026-10-26T12:00:00.000Z');
+    expect(walkIn.slots.length).toBeGreaterThan(normal.slots.length);
+  });
+
+  it('reschedule: needs an explicit human source, passes the override, hours still apply', async () => {
+    const { db, rpcCalls } = setup();
+    const a = await book(db);
+    rpcCalls.length = 0;
+    const move = (over: Record<string, unknown>) =>
+      rescheduleAppointment(db as never, { accountId: ACC, eventId: a.id, startsAt: '2026-10-26T13:30:00.000Z', now: NEAR, ...over });
+    expect(await failCode(move({}))).toBe('min_notice');
+    expect(await failCode(move({ encaixe: true }))).toBe('forbidden'); // no source
+    expect(await failCode(move({ encaixe: true, source: 'ai' }))).toBe('forbidden');
+    expect(await failCode(move({ encaixe: true, source: 'agent', startsAt: '2026-10-26T20:00:00.000Z' }))).toBe('outside_hours');
+    expect(rpcCalls).toHaveLength(0);
+    await move({ encaixe: true, source: 'agent' });
+    expect(rpcCalls[0].args).toMatchObject({ p_override: true, p_source: 'agent' });
+  });
+});

@@ -163,6 +163,8 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
 - Mensagens agendadas na conversa (migration 092): o mesmo loop chama `GET /api/inbox/scheduled/cron`
   a cada tick; o envio pode atrasar até ~1 minuto depois do horário escolhido. O endpoint também é
   bloqueado no `nginx.conf` pelo domínio público.
+- Lembretes de agendamento por WhatsApp (migration 097): o mesmo loop chama `GET /api/agenda/reminders/cron`
+  a cada tick (reserva com `FOR UPDATE SKIP LOCKED`, nunca envia em dobro; bloqueado no `nginx.conf` pelo domínio público).
 - Também chama `GET /api/webhooks/cron` (migration 093): entrega os webhooks de saída pendentes (até 40 por
   lote, repetindo enquanto houver fila e tempo) e apaga o histórico com mais de 30 dias. Com 2 ticks
   sobrepostos nada é entregue em dobro (as linhas são reservadas com `FOR UPDATE SKIP LOCKED`).

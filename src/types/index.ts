@@ -481,7 +481,9 @@ export type ConversationEventType =
   | 'csat_answered'
   /** Snooze (migration 079): written by the guard trigger only. */
   | 'snoozed'
-  | 'unsnoozed';
+  | 'unsnoozed'
+  /** Agenda reminder answered by the customer (migration 097). */
+  | 'agenda_reply';
 
 /** Why a snooze ended (`unsnoozed.payload.cause`). */
 export type SnoozeWakeCause =
@@ -543,6 +545,10 @@ export interface ConversationEventPayload {
   previous_until?: string;
   cause?: SnoozeWakeCause;
   note?: string;
+  /** `agenda_reply` (097): what the customer answered and for which appointment. */
+  action?: 'confirmed' | 'reschedule_requested';
+  starts_at?: string;
+  service_name?: string;
 }
 
 /** Row of `conversation_events` (migration 024). */
@@ -1374,6 +1380,11 @@ export interface CalendarEvent {
   service_id?: string | null;
   resource_id?: string | null;
   booking_source?: 'agent' | 'ai' | 'api' | null;
+  /** Encaixe (097): booked ignoring the minimum notice and the day horizon. */
+  booking_override?: boolean;
+  /** What the customer answered to the WhatsApp reminder (097). */
+  customer_response?: 'confirmed' | 'reschedule_requested' | null;
+  customer_responded_at?: string | null;
   external_connection_id: string | null;
   external_id: string | null;
   external_etag: string | null;

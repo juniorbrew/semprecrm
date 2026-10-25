@@ -1,13 +1,34 @@
 "use client";
 
-import { Ban } from "lucide-react";
+import { Ban, CalendarClock, CircleCheck } from "lucide-react";
 
 import { useLanguage } from "@/hooks/use-language";
 import { formatTime, type CalendarEvent } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 
+import { agendaCopy } from "@/components/agenda/copy";
+
 import { chipStyle, eventColor } from "./colors";
 import { ProviderIcon } from "./provider-icon";
+
+/**
+ * What the customer answered to the WhatsApp reminder (migration 097): a small icon with an
+ * accessible label. Nothing for events without an answer.
+ */
+export function CustomerReplyBadge({ event }: { event: Pick<CalendarEvent, "customer_response"> }) {
+  const { language } = useLanguage();
+  if (event.customer_response !== "confirmed" && event.customer_response !== "reschedule_requested") return null;
+  const copy = agendaCopy(language);
+  const confirmed = event.customer_response === "confirmed";
+  const label = confirmed ? copy.customerConfirmed : copy.customerReschedule;
+  const Icon = confirmed ? CircleCheck : CalendarClock;
+  return (
+    <span title={label} className="shrink-0" data-testid="customer-reply-badge">
+      <Icon className={cn("h-3 w-3", confirmed ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")} aria-hidden />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
 
 /**
  * One-line event chip for the month grid, the all-day strip and the
@@ -58,6 +79,7 @@ export function EventChip({
         <span className="shrink-0 tabular-nums opacity-80">{formatTime(event.starts_at, language, tz)}</span>
       )}
       <span className="min-w-0 flex-1 truncate font-medium">{event.title}</span>
+      <CustomerReplyBadge event={event} />
       {event.source !== "internal" && <ProviderIcon provider={event.source} className="h-2.5 w-2.5 opacity-80" />}
     </div>
   );

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { CalendarCheck, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useCan } from "@/hooks/use-can";
 import { useLanguage } from "@/hooks/use-language";
 import { formatDateTime, formatTime, type CalendarContactRef, type CalendarEvent } from "@/lib/calendar";
 import { localDate } from "@/lib/agenda/availability";
@@ -23,12 +24,14 @@ import type { AgendaConfig, AppointmentStatus, Slot } from "@/lib/agenda/types";
 import {
   canReschedule,
   formatDuration,
+  formatOffset,
   groupSlotsByDay,
   shiftDate,
   STATUS_LABELS,
   statusActions,
   todayIn,
 } from "@/lib/agenda/ui";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 import { agendaCopy } from "./copy";
@@ -60,6 +63,7 @@ function SlotPicker({
   labelId,
   refreshKey = 0,
   initialDate,
+  encaixe = false,
 }: {
   serviceId: string;
   resourceId: string;
@@ -71,6 +75,8 @@ function SlotPicker({
   refreshKey?: number;
   /** First day shown (default: today). */
   initialDate?: string;
+  /** Walk-in slots: minimum notice and the day horizon are ignored (agent+, server-enforced). */
+  encaixe?: boolean;
 }) {
   const { language } = useLanguage();
   const copy = agendaCopy(language);
@@ -85,6 +91,7 @@ function SlotPicker({
     let cancelled = false;
     const q = new URLSearchParams({ service_id: serviceId, from: date, to: date });
     if (resourceId) q.set("resource_id", resourceId);
+    if (encaixe) q.set("encaixe", "1");
     agendaFetch<{ slots: Slot[] }>(`/api/agenda/availability?${q}`)
       .then((res) => {
         if (cancelled) return;
@@ -99,7 +106,7 @@ function SlotPicker({
     return () => {
       cancelled = true;
     };
-  }, [serviceId, resourceId, date, refreshKey]);
+  }, [serviceId, resourceId, date, refreshKey, encaixe]);
 
   async function jumpToNextFreeDay() {
     setSearching(true);
@@ -107,6 +114,7 @@ function SlotPicker({
     try {
       const q = new URLSearchParams({ service_id: serviceId, from: shiftDate(date, 1), to: shiftDate(date, 30) });
       if (resourceId) q.set("resource_id", resourceId);
+      if (encaixe) q.set("encaixe", "1");
       const res = await agendaFetch<{ slots: Slot[] }>(`/api/agenda/availability?${q}`);
       const next = groupSlotsByDay(res.slots, tz)[0];
       if (next) {
@@ -176,6 +184,23 @@ function SlotPicker({
         )}
       </div>
     </div>
+  );
+}
+
+/** "Encaixe" checkbox: only for people who can book (agent+); the server refuses anyone else. */
+function EncaixeToggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  const { language } = useLanguage();
+  const copy = agendaCopy(language);
+  const canBook = useCan("send-messages");
+  if (!canBook) return null;
+  return (
+    <label className="flex items-start gap-2 text-sm text-foreground">
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 size-4 accent-primary" />
+      <span>
+        {copy.encaixe}
+        <span className="block text-xs text-muted-foreground">{copy.encaixeHint}</span>
+      </span>
+    </label>
   );
 }
 
@@ -268,6 +293,7 @@ function BookBody({
   const [contact, setContact] = useState<CalendarContactRef | null>(initialContact);
   const [notes, setNotes] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [encaixe, setEncaixe] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const key = useRef(newKey());
@@ -282,7 +308,7 @@ function BookBody({
   // A new service / professional / time / customer is a different request: new idempotency key.
   useEffect(() => {
     key.current = newKey();
-  }, [serviceId, resourceId, slot?.starts_at, contact?.id]);
+  }, [serviceId, resourceId, slot?.starts_at, contact?.id, encaixe]);
 
   const submit = useCallback(async () => {
     if (!service || !slot || !contact) return;
@@ -299,6 +325,7 @@ function BookBody({
           notes: notes.trim() || null,
           status: confirmed ? "confirmed" : "scheduled",
           idempotency_key: key.current,
+          encaixe,
         }),
       });
       toast.success(copy.booked);
@@ -311,7 +338,7 @@ function BookBody({
     } finally {
       setBusy(false);
     }
-  }, [service, slot, contact, resourceId, conversationId, notes, confirmed, copy, onSaved]);
+  }, [service, slot, contact, resourceId, conversationId, notes, confirmed, encaixe, copy, onSaved]);
 
   if (services.length === 0) {
     return (
@@ -382,6 +409,14 @@ function BookBody({
               onSelect={setSlot}
               labelId={ids.when}
               refreshKey={refreshKey}
+              encaixe={encaixe}
+            />
+            <EncaixeToggle
+              checked={encaixe}
+              onChange={(v) => {
+                setEncaixe(v);
+                setSlot(null);
+              }}
             />
           </div>
 
@@ -434,6 +469,7 @@ function ManageBody({
   const [moving, setMoving] = useState(false);
   const [slot, setSlot] = useState<Slot | null>(null);
   const [resourceId, setResourceId] = useState(event.resource_id ?? "");
+  const [encaixe, setEncaixe] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const whenId = useId();
@@ -455,6 +491,7 @@ function ManageBody({
       setCurrent(merged);
       setMoving(false);
       setSlot(null);
+      setEncaixe(false);
       toast.success(message);
       onSaved?.(merged);
     } catch (err) {
@@ -478,8 +515,13 @@ function ManageBody({
         <dt className="text-muted-foreground">{copy.contact}</dt>
         <dd className="text-foreground" data-no-translate>{current.contact?.name ?? current.contact?.phone ?? "—"}</dd>
         <dt className="text-muted-foreground">{copy.status}</dt>
-        <dd className="font-medium text-foreground">{STATUS_LABELS[language === "en-US" ? "en-US" : "pt-BR"][current.status as AppointmentStatus] ?? current.status}</dd>
+        <dd className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
+          {STATUS_LABELS[language === "en-US" ? "en-US" : "pt-BR"][current.status as AppointmentStatus] ?? current.status}
+          <AppointmentBadges event={current} />
+        </dd>
       </dl>
+
+      <RemindersStatus event={current} tz={tz} />
 
       {!readOnly && (
         <div className="flex flex-wrap gap-2">
@@ -522,7 +564,15 @@ function ManageBody({
             </select>
           </div>
           <span id={whenId} className="text-xs font-medium text-muted-foreground">{copy.time}</span>
-          <SlotPicker serviceId={service.id} resourceId={resourceId} tz={tz} selected={slot?.starts_at ?? null} onSelect={setSlot} labelId={whenId} refreshKey={refreshKey} initialDate={maxDate(todayIn(tz), localDate(new Date(current.starts_at), tz))} />
+          <SlotPicker serviceId={service.id} resourceId={resourceId} tz={tz} selected={slot?.starts_at ?? null} onSelect={setSlot} labelId={whenId} refreshKey={refreshKey} encaixe={encaixe} initialDate={maxDate(todayIn(tz), localDate(new Date(current.starts_at), tz))} />
+          <EncaixeToggle
+            checked={encaixe}
+            disabled={busy}
+            onChange={(v) => {
+              setEncaixe(v);
+              setSlot(null);
+            }}
+          />
           <div className="flex justify-end">
             <Button
               type="button"
@@ -530,7 +580,11 @@ function ManageBody({
               disabled={busy || !slot}
               onClick={() =>
                 void patch(
-                  { starts_at: slot?.starts_at, ...(resourceId && resourceId !== current.resource_id ? { resource_id: resourceId } : {}) },
+                  {
+                    starts_at: slot?.starts_at,
+                    ...(resourceId && resourceId !== current.resource_id ? { resource_id: resourceId } : {}),
+                    ...(encaixe ? { encaixe: true } : {}),
+                  },
                   copy.moved,
                 )
               }
@@ -545,5 +599,88 @@ function ManageBody({
         <Button type="button" variant="outline" onClick={onClose}>{copy.close}</Button>
       </div>
     </div>
+  );
+}
+
+/** Small badges next to the status: walk-in booking and what the customer answered to a reminder. */
+export function AppointmentBadges({ event }: { event: Pick<CalendarEvent, "booking_override" | "customer_response"> }) {
+  const { language } = useLanguage();
+  const copy = agendaCopy(language);
+  const chip = "rounded-full px-2 py-0.5 text-[11px] font-medium";
+  return (
+    <>
+      {event.booking_override && <span className={cn(chip, "bg-muted text-muted-foreground")}>{copy.encaixeBadge}</span>}
+      {event.customer_response === "confirmed" && (
+        <span className={cn(chip, "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400")}>{copy.customerConfirmed}</span>
+      )}
+      {event.customer_response === "reschedule_requested" && (
+        <span className={cn(chip, "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{copy.customerReschedule}</span>
+      )}
+    </>
+  );
+}
+
+interface ReminderRow {
+  id: string;
+  slot: number;
+  offset_minutes: number;
+  state: string;
+  reason: string | null;
+  sent_at: string | null;
+  response: string | null;
+}
+
+/** Per-offset reminder status of the appointment: scheduled / sent / skipped (+ why) / failed, and the customer's answer. */
+function RemindersStatus({ event, tz }: { event: CalendarEvent; tz: string }) {
+  const { language } = useLanguage();
+  const copy = agendaCopy(language);
+  const [rows, setRows] = useState<ReminderRow[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    createClient()
+      .from("agenda_reminders")
+      .select("id, slot, offset_minutes, state, reason, sent_at, response")
+      .eq("event_id", event.id)
+      .eq("for_starts_at", event.starts_at)
+      .neq("state", "cancelled")
+      .order("offset_minutes", { ascending: false })
+      .then(({ data, error }) => {
+        if (!cancelled) setRows(error ? [] : ((data ?? []) as ReminderRow[]));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [event.id, event.starts_at, event.status, event.customer_response]);
+
+  if (rows === null) return null;
+  const lang = language === "en-US" ? "en-US" : "pt-BR";
+  return (
+    <section aria-label={copy.remindersSection} className="grid gap-1.5 rounded-lg border border-border p-3">
+      <h3 className="text-xs font-medium text-muted-foreground">{copy.remindersSection}</h3>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{copy.remindersNone}</p>
+      ) : (
+        <ul className="grid gap-1 text-sm">
+          {rows.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-baseline gap-x-2" data-testid="reminder-row">
+              <span className="font-medium text-foreground">{formatOffset(r.offset_minutes, lang)}</span>
+              <span
+                className={cn(
+                  "text-foreground",
+                  r.state === "failed" && "text-destructive",
+                  (r.state === "skipped" || r.state === "pending") && "text-muted-foreground",
+                )}
+              >
+                {copy.reminderStates[r.state] ?? r.state}
+                {r.state === "sent" && r.sent_at ? ` · ${formatDateTime(r.sent_at, language, tz)}` : ""}
+              </span>
+              {r.reason && <span className="text-xs text-muted-foreground">{copy.reminderReasons[r.reason] ?? r.reason}</span>}
+              {r.response && <span className="text-xs font-medium text-foreground">{copy.reminderAnswered[r.response] ?? r.response}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

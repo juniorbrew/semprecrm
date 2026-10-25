@@ -29,6 +29,8 @@ export async function PATCH(request: Request, { params }: Ctx) {
         eventId: id,
         startsAt: body.starts_at,
         resourceId: body.resource_id ?? null,
+        encaixe: body.encaixe,
+        source: 'agent',
       }, agendaWriter());
     }
     if (body.status !== undefined) {

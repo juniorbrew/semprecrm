@@ -4,6 +4,7 @@ import {
   Ban,
   BellRing,
   Bot,
+  CalendarCheck,
   CheckCheck,
   RotateCcw,
   Tag as TagIcon,
@@ -67,6 +68,8 @@ function EventIcon({ event }: { event: ConversationEvent }) {
     case "snoozed":
     case "unsnoozed":
       return <Hourglass className={cls} />;
+    case "agenda_reply":
+      return <CalendarCheck className={cn(cls, event.action === "confirmed" && "text-emerald-500")} />;
     case "contact_opted_out":
       return <Ban className={cn(cls, "text-red-500")} />;
     case "contact_opted_in":

@@ -23,7 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { chipStyle, eventColor } from "./colors";
-import { EventChip } from "./event-chip";
+import { CustomerReplyBadge, EventChip } from "./event-chip";
 import { ProviderIcon } from "./provider-icon";
 
 /** Pixels per hour on the time grid (comfortable / compact density). */
@@ -343,6 +343,7 @@ export function TimeGridView({ days, events, tz, now, compact, readOnly, onOpenE
                             </span>
                           )}
                           <span className="min-w-0 flex-1 truncate">{p.event.title}</span>
+                          <CustomerReplyBadge event={p.event} />
                           {p.event.source !== "internal" && (
                             <ProviderIcon provider={p.event.source} className="h-2.5 w-2.5 opacity-80" />
                           )}

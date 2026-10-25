@@ -34,6 +34,7 @@ import { plainMessageText, vcardPreview } from '@/lib/inbox/vcard'
 import { notifyInboundMessage } from '@/lib/push/notify'
 import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { triageDueOnInbound } from '@/lib/support/ai-triage'
+import { tryHandleReminderReply } from '@/lib/agenda/reminder-reply'
 import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
@@ -1017,7 +1018,19 @@ export async function ingestInboundMessage(
   // Opted out ("PARAR", now or before) or anonymised: no bot / automatic
   // message goes to this contact — not the out-of-hours notice, not flows.
   const contactBlocked = optedOut || !!contact.opted_out_at || !!contact.anonymized_at
-  const outOfHoursReply = contactBlocked
+  // "1" / "sim" / "2" / "remarcar" answering an appointment reminder we sent (migration
+  // 097): handled here, so the flows, automations, AI and the out-of-hours notice skip it.
+  const agendaReply = contactBlocked
+    ? null
+    : await tryHandleReminderReply(db, {
+        accountId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        userId: ownerUserId,
+        type: input.type,
+        text: contentText,
+      })
+  const outOfHoursReply = contactBlocked || agendaReply
     ? undefined
     : await replyOutOfHoursIfNeeded(
         db,
@@ -1049,7 +1062,9 @@ export async function ingestInboundMessage(
   // still fire. The runner never throws.
   // A shared contact card is third-party data: automations / flows only see a placeholder.
   const inboundText = plainMessageText(contentText)
-  const flowResult: { consumed: boolean } = contactBlocked
+  const flowResult: { consumed: boolean } = agendaReply
+    ? { consumed: true }
+    : contactBlocked
     ? { consumed: false }
     : await dispatchInboundToFlows({
         accountId,

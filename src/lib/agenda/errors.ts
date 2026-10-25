@@ -92,6 +92,7 @@ const BY_MESSAGE: Record<string, AgendaErrorCode> = {
   agenda_not_reschedulable: 'not_reschedulable',
   agenda_appointment_not_found: 'not_found',
   agenda_bad_status: 'validation',
+  agenda_override_forbidden: 'forbidden',
   agenda_idempotency_conflict: 'idempotency_conflict',
   agenda_resource_user_not_member: 'validation',
 };

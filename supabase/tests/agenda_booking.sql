@@ -354,11 +354,12 @@ SELECT pg_temp.assert_true((SELECT count(*) > 0 AND bool_and(title = 'Compromiss
   'appointments of the erased contact were anonymised and kept');
 
 -- ---------- grants ----------
-SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid)', 'EXECUTE')
-  AND NOT has_function_privilege('authenticated', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid)', 'EXECUTE')
-  AND NOT has_function_privilege('authenticated', 'public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid)', 'EXECUTE')
-  AND NOT has_function_privilege('authenticated', 'public.agenda_set_appointment_status(uuid, uuid, text)', 'EXECUTE')
-  AND has_function_privilege('service_role', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid)', 'EXECUTE'),
+-- By name, so it still holds after 097 (which recreates the two booking RPCs with more parameters).
+SELECT pg_temp.assert_true(NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+      AND p.proname IN ('agenda_book_appointment', 'agenda_reschedule_appointment', 'agenda_set_appointment_status')
+      AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+  AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'agenda_book_appointment'
+      AND has_function_privilege('service_role', p.oid, 'EXECUTE')),
   'RPC grants: service_role only');
 SELECT pg_temp.assert_true(NOT has_table_privilege('anon', 'public.agenda_services', 'SELECT'), 'anon has no table access');
 
