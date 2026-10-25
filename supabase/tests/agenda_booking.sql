@@ -184,7 +184,7 @@ SELECT pg_temp.fails(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2
   (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'), (SELECT uid FROM t WHERE label='A3')),
   '42501', 'a viewer cannot be the actor of a booking');
 
--- ---------- users: no direct RPC; an agent manages appointments by RLS ----------
+-- ---------- users: no RPC, no direct writes to appointment fields ----------
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A2'), true);
 SET LOCAL ROLE authenticated;
@@ -196,33 +196,51 @@ SELECT pg_temp.fails(format($q$SELECT agenda_set_appointment_status(%L, %L, 'can
 SELECT pg_temp.fails(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-01-14 13:00+00')$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE service_id IS NOT NULL LIMIT 1)), '42501', 'nor the reschedule RPC');
 
--- Reserved columns: no user can mark / unmark an event as an appointment.
+-- An agent that is neither owner nor creator: RLS (040) hides the row from UPDATE.
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET status = 'cancelled' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 0, 'agent: direct cancel of an appointment is a no-op');
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET starts_at = '2030-01-07 18:00+00', ends_at = '2030-01-07 19:00+00' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 0, 'agent: direct move of an appointment is a no-op');
+-- Creating anything that occupies resource time or looks like an appointment is refused.
+SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, resource_id) VALUES (%L, 'x', '2031-01-01 10:00+00', '2031-01-01 11:00+00', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '42501', 'plain event insert with resource_id is refused');
 SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, service_id) VALUES (%L, 'x', '2031-01-01 10:00+00', '2031-01-01 11:00+00', %L)$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1')), '42501', 'user cannot insert with service_id');
--- The row was booked with source 'agent'; writing the same value is a no-op the guard allows.
-SELECT pg_temp.fails(format($q$UPDATE calendar_events SET booking_source = 'ai' WHERE id = %L$q$,
-  (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'user cannot change booking_source');
-SELECT pg_temp.fails(format($q$UPDATE calendar_events SET idempotency_key = 'hijack-123' WHERE id = %L$q$,
-  (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'user cannot change idempotency_key');
-SELECT pg_temp.fails(format($q$UPDATE calendar_events SET service_id = NULL WHERE id = %L$q$,
-  (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'user cannot detach the service');
 
--- Tampering with block_* cannot dodge the exclusion: recomputed on every write.
-SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET block_starts_at = '2040-01-01', block_ends_at = '2040-01-02' WHERE id = %L$q$,
-  (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 1, 'agent may write the row (any agent+ manages appointments)');
-SELECT pg_temp.assert_true((SELECT block_starts_at = starts_at AND block_ends_at = ends_at + interval '15 minutes'
-                              FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'), 'block_* were recomputed, not taken from the client');
-SELECT pg_temp.fails(format($q$UPDATE calendar_events SET block_starts_at = '2040-01-01', block_ends_at = '2040-01-02',
-    starts_at = '2030-01-07 13:00+00', ends_at = '2030-01-07 14:00+00' WHERE id = %L$q$,
-  (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '23P01', 'moving onto a taken slot with forged block_* still fails');
+-- The owner/admin (A1) passes RLS but the guard still refuses every appointment field.
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A1'), true);
+SET LOCAL ROLE authenticated;
+-- The row was booked with source 'agent'; 'ai' is a real change.
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET booking_source = 'ai' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot change booking_source');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET idempotency_key = 'hijack-123' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot change idempotency_key');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET service_id = NULL WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot detach the service');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET resource_id = NULL WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot change resource_id (even to NULL)');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET starts_at = '2030-01-07 18:00+00', ends_at = '2030-01-07 19:00+00' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot move an appointment directly');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET ends_at = '2030-01-07 15:30+00' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot resize an appointment directly');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET status = 'cancelled' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot cancel directly');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET owner_user_id = %L WHERE id = %L$q$, (SELECT uid FROM t WHERE label='A2'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot reassign the owner');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET contact_id = NULL WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot detach the contact');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET conversation_id = gen_random_uuid() WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'admin cannot change the conversation');
 SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, resource_id, status, block_starts_at, block_ends_at)
   VALUES (%L, 'x', '2030-01-07 13:10+00', '2030-01-07 13:40+00', %L, 'confirmed', '2040-01-01', '2040-01-02')$q$,
-  (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '23P01', 'INSERT with forged block_* still fails');
+  (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '42501', 'admin: forged resource INSERT is refused');
 
--- Reception desk rule (a): an agent that is neither owner nor creator cancels it.
-SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET status = 'cancelled' WHERE id = %L$q$,
-  (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 17:00+00'))), 1, 'any agent+ cancels an appointment');
-UPDATE calendar_events SET status = 'scheduled' WHERE starts_at = '2030-01-07 17:00+00';
+-- Forged block_* alone changes nothing: they are recomputed on every write.
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET block_starts_at = '2040-01-01', block_ends_at = '2040-01-02' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 1, 'forged block_* is a harmless write');
+SELECT pg_temp.assert_true((SELECT block_starts_at = starts_at AND block_ends_at = ends_at + interval '15 minutes'
+                              FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'), 'block_* were recomputed, not taken from the client');
+-- What the admin may still edit: the non-booking fields.
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET title = 'Corte (VIP)', description = 'nota' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 1, 'admin edits title / description');
+
+-- The RPC path keeps working (server side).
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SET LOCAL ROLE service_role;
+SELECT pg_temp.ok(format($q$SELECT agenda_set_appointment_status(%L, %L, 'confirmed')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'RPC: confirm still works');
+SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-01-07 22:00+00')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'RPC: reschedule still works');
+SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-01-07 14:15+00')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'RPC: move it back');
+-- CHECK: resource time only for appointments, even for the server.
+SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, resource_id) VALUES (%L, 'x', '2031-01-01 10:00+00', '2031-01-01 11:00+00', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '23514', 'resource_id without service_id violates the CHECK');
 
 -- A viewer reads but cannot change it.
 RESET ROLE;

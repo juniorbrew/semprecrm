@@ -35,9 +35,11 @@
 --
 -- Escritas diretas de usuário com conta somente-leitura (094) são barradas por
 -- políticas RESTRICTIVE; as RPCs conferem private.account_is_writable sempre.
--- Acesso: agent+ gerencia qualquer agendamento de serviço da conta (política
--- calendar_events_appointment_update); service_id/booking_source/idempotency_key
--- ficam reservados às RPCs (trigger calendar_events_agenda_guard).
+-- Acesso: TODA mudança de agendamento (criar, remarcar, status, cancelar) passa
+-- por /api/agenda/appointments -> RPC service-role (agent+ da conta, validado no
+-- servidor). Usuário não escreve em service_id / resource_id / horário / status
+-- de agendamento (trigger calendar_events_agenda_guard); a política de UPDATE de
+-- 040 (dono/criador/admin) segue valendo só para o resto do evento.
 -- Verificar num Postgres real: supabase/tests/agenda_booking.sql (termina em
 -- ROLLBACK). Reverter: supabase/rollback/096_rollback.sql.
 -- ============================================================
@@ -243,9 +245,22 @@ ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_blo
 ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_block_check
   CHECK (resource_id IS NULL OR (block_starts_at IS NOT NULL AND block_ends_at IS NOT NULL));
 
--- Usuários (PostgREST) não criam nem alteram a marca de agendamento: service_id,
--- booking_source e idempotency_key só nascem nas RPCs. SECURITY INVOKER de
--- propósito (current_user precisa ser o chamador); as RPCs rodam como postgres.
+-- Só agendamento (nasce na RPC) ocupa tempo de recurso.
+ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_resource_needs_service;
+ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_resource_needs_service
+  CHECK (resource_id IS NULL OR service_id IS NOT NULL);
+
+-- Só as RPCs (service_role / postgres) criam e mexem em agendamentos. Para um
+-- usuário (PostgREST): não pode criar evento com service_id / booking_source /
+-- idempotency_key / resource_id, nem alterar essas colunas, nem — em linha que
+-- já é agendamento — horário, status, dono, contato, conversa ou bloco.
+-- Dono / criador / admin continuam editando o que não é agendamento: título,
+-- descrição, local, cor, lembrete, vínculos de negócio/tarefa. Tudo que muda o
+-- tempo ocupado passa por /api/agenda/appointments -> RPC. (Excluir a linha
+-- continua permitido a dono/criador/admin pela política de 040: libera o
+-- horário, não burla nenhuma regra.)
+-- SECURITY INVOKER de propósito (current_user precisa ser o chamador); as RPCs
+-- rodam como postgres.
 CREATE OR REPLACE FUNCTION public.calendar_events_agenda_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -256,13 +271,26 @@ BEGIN
     RETURN NEW;
   END IF;
   IF TG_OP = 'INSERT' THEN
-    IF NEW.service_id IS NOT NULL OR NEW.booking_source IS NOT NULL OR NEW.idempotency_key IS NOT NULL THEN
+    IF NEW.service_id IS NOT NULL OR NEW.resource_id IS NOT NULL
+       OR NEW.booking_source IS NOT NULL OR NEW.idempotency_key IS NOT NULL THEN
       RAISE EXCEPTION 'agenda_fields_reserved' USING ERRCODE = '42501';
     END IF;
   ELSIF NEW.service_id IS DISTINCT FROM OLD.service_id
+     OR NEW.resource_id IS DISTINCT FROM OLD.resource_id
      OR NEW.booking_source IS DISTINCT FROM OLD.booking_source
      OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key THEN
     RAISE EXCEPTION 'agenda_fields_reserved' USING ERRCODE = '42501';
+  ELSIF OLD.service_id IS NOT NULL AND (
+       NEW.starts_at IS DISTINCT FROM OLD.starts_at
+    OR NEW.ends_at IS DISTINCT FROM OLD.ends_at
+    OR NEW.status IS DISTINCT FROM OLD.status
+    OR NEW.owner_user_id IS DISTINCT FROM OLD.owner_user_id
+    OR NEW.contact_id IS DISTINCT FROM OLD.contact_id
+    OR NEW.conversation_id IS DISTINCT FROM OLD.conversation_id
+    OR NEW.block_starts_at IS DISTINCT FROM OLD.block_starts_at
+    OR NEW.block_ends_at IS DISTINCT FROM OLD.block_ends_at
+  ) THEN
+    RAISE EXCEPTION 'agenda_use_booking_api' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;
 END;
@@ -280,19 +308,6 @@ ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_resource_no_ov
     resource_id WITH =,
     tstzrange(block_starts_at, block_ends_at) WITH &&
   ) WHERE (resource_id IS NOT NULL AND status IN ('scheduled', 'confirmed', 'completed'));
-
--- ============================================================
--- Regra de acesso aos agendamentos (decisão: recepção agenda para vários
--- profissionais): qualquer agent+ da conta remarca / cancela / muda o status de
--- um agendamento de serviço (linha com service_id), não só o dono ou o criador.
--- As políticas de 040 continuam valendo para os eventos comuns; a política abaixo
--- é permissiva e SÓ cobre linhas de serviço. As RESTRICTIVE de 094 (conta
--- somente-leitura) continuam em AND com ela.
--- ============================================================
-DROP POLICY IF EXISTS calendar_events_appointment_update ON public.calendar_events;
-CREATE POLICY calendar_events_appointment_update ON public.calendar_events FOR UPDATE
-  USING (service_id IS NOT NULL AND is_account_member(account_id, 'agent'))
-  WITH CHECK (service_id IS NOT NULL AND is_account_member(account_id, 'agent'));
 
 -- ============================================================
 -- Grants + RLS

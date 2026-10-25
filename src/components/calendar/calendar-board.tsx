@@ -34,6 +34,8 @@ import { DensityToggle } from "@/components/tasks/density-toggle";
 import { cn } from "@/lib/utils";
 
 import { AppointmentDialog } from "@/components/agenda/appointment-dialog";
+import { agendaCopy } from "@/components/agenda/copy";
+import { agendaFetch } from "@/components/agenda/use-agenda-config";
 
 import { EventDrawer } from "./event-drawer";
 import { useCalendarMembers, useCalendarRealtime, useCalendarTimezone } from "./hooks";
@@ -59,6 +61,15 @@ const AGENDA_COPY: Record<Language, { title: string; compact: string; book: stri
     count: (n) => (n === 1 ? "1 appointment" : `${n} appointments`),
   },
 };
+
+/** Move a service appointment through the booking API (keeps its length, re-checks every rule). */
+async function moveAppointment(ev: CalendarEvent, startsAt: string): Promise<CalendarEvent> {
+  const { appointment } = await agendaFetch<{ appointment: CalendarEvent }>(`/api/agenda/appointments/${ev.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ starts_at: startsAt }),
+  });
+  return { ...ev, ...appointment };
+}
 
 function readStoredView(): CalendarView {
   if (typeof window === "undefined") return "week";
@@ -171,6 +182,10 @@ export function CalendarBoard() {
         deepLinkApplied.current = deepLinkId;
         setAnchor(new Date(ev.starts_at));
         setScope("team");
+        if (ev.service_id) {
+          setAppointment({ event: ev });
+          return;
+        }
         setDrawerEvent(ev);
         setDrawerDefaults(undefined);
         setDrawerOpen(true);
@@ -211,7 +226,10 @@ export function CalendarBoard() {
     async (ev: CalendarEvent, newRange: { starts_at: string; ends_at: string }) => {
       upsertLocal({ ...ev, ...newRange });
       try {
-        const saved = await moveEvent(supabase, ev, newRange);
+        // Service appointments never take direct writes (096): the booking API re-checks hours and conflicts.
+        const saved = ev.service_id
+          ? await moveAppointment(ev, newRange.starts_at)
+          : await moveEvent(supabase, ev, newRange);
         upsertLocal(saved);
       } catch (err) {
         console.error("[calendar] move:", err);
@@ -224,6 +242,12 @@ export function CalendarBoard() {
 
   const handleResize = useCallback(
     async (ev: CalendarEvent, endsAt: string) => {
+      if (ev.service_id) {
+        // The length comes from the service: nothing to resize.
+        toast.error(agendaCopy(language).resizeBlocked);
+        void load();
+        return;
+      }
       upsertLocal({ ...ev, ends_at: endsAt });
       try {
         const saved = await resizeEvent(supabase, ev, endsAt);

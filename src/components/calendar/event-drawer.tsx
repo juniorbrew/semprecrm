@@ -58,6 +58,8 @@ import {
 } from "@/lib/calendar";
 import { listMyThreads, otherMemberId } from "@/lib/chat";
 import type { ChatThread } from "@/types";
+import { AppointmentDialog } from "@/components/agenda/appointment-dialog";
+import { agendaCopy } from "@/components/agenda/copy";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -196,7 +198,10 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
   const canEdit =
     canSendMessages &&
     (!isEdit || event.owner_user_id === me || event.created_by === me || canManageMembers);
-  const readOnly = !canEdit;
+  // Service appointments (096) take no direct writes: time / status go through the booking API.
+  const isServiceAppointment = !!event?.service_id;
+  const readOnly = !canEdit || isServiceAppointment;
+  const [manageOpen, setManageOpen] = useState(false);
 
   // ---- form state -------------------------------------------------
   const seed = useMemo(() => {
@@ -527,6 +532,15 @@ function EventDrawerBody({ event, defaults, members, offerTaskDue, onClose, onCr
       </SheetHeader>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        {isServiceAppointment && event && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted px-3 py-2">
+            <span className="text-xs text-foreground">{agendaCopy(language).managedElsewhere}</span>
+            <Button type="button" size="sm" onClick={() => setManageOpen(true)}>
+              {agendaCopy(language).manage}
+            </Button>
+            <AppointmentDialog open={manageOpen} onOpenChange={setManageOpen} event={event} onSaved={(ev) => onUpdated?.(ev)} />
+          </div>
+        )}
         {/* My answer — only when I am an attendee of an existing event. */}
         {isEdit && myAttendance && !cancelled && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-primary/10 px-3 py-2">

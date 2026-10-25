@@ -87,6 +87,9 @@ export interface AgendaCopy {
   empty: string;
   weekErrors: Record<string, string>;
   readOnly: string;
+  resizeBlocked: string;
+  managedElsewhere: string;
+  manage: string;
 }
 
 const PT: AgendaCopy = {
@@ -170,6 +173,9 @@ const PT: AgendaCopy = {
   empty: "Nada cadastrado ainda",
   weekErrors: { invalid_time: "Horário inválido", end_before_start: "O fim precisa ser depois do início", overlap: "Intervalos se sobrepõem" },
   readOnly: "Conta somente leitura: não é possível alterar.",
+  resizeBlocked: "A duração vem do serviço. Para mudar o horário, use Remarcar.",
+  managedElsewhere: "Este é um agendamento de serviço: horário e situação são alterados pelo painel de agendamento.",
+  manage: "Gerenciar agendamento",
 };
 
 const EN: AgendaCopy = {
@@ -253,6 +259,9 @@ const EN: AgendaCopy = {
   empty: "Nothing here yet",
   weekErrors: { invalid_time: "Invalid time", end_before_start: "End must be after start", overlap: "Intervals overlap" },
   readOnly: "Read-only account: changes are not possible.",
+  resizeBlocked: "The length comes from the service. To change the time, use Reschedule.",
+  managedElsewhere: "This is a service appointment: time and status are changed from the booking panel.",
+  manage: "Manage appointment",
 };
 
 export function agendaCopy(language: Language): AgendaCopy {
