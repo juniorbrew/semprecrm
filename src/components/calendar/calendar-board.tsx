@@ -259,7 +259,7 @@ export function CalendarBoard() {
         void load();
       }
     },
-    [supabase, upsertLocal, load, t],
+    [supabase, upsertLocal, load, t, language],
   );
 
   const handleCreateSlot = useCallback((draft: QuickCreateDraft, at: { x: number; y: number }) => {
