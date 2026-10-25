@@ -336,6 +336,7 @@ SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE agenda_reminder_settings 
 RESET ROLE;
 
 -- ---------- (8b) claim fairness: at most 10 rows per account per call ----------
+SELECT set_config('request.jwt.claim.sub', '', true);
 INSERT INTO calendar_events(account_id, owner_user_id, title, starts_at, ends_at, status, contact_id, service_id, resource_id, created_by)
   SELECT (SELECT acc FROM t WHERE label='A1'), (SELECT uid FROM t WHERE label='A1'), 'bulk ' || n,
          timestamptz '2031-03-01 13:00+00' + (n || ' days')::interval, timestamptz '2031-03-01 14:00+00' + (n || ' days')::interval, 'scheduled',
@@ -347,6 +348,70 @@ SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders WHERE state = 'p
 SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders_claim(now(), 25)), 10, 'one account gets at most 10 rows per claim');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders_claim(now(), 25)), 10, 'second claim: the next 10');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM agenda_reminders_claim(now(), 25)), 4, 'third claim: the rest');
+
+-- ---------- (8c) atomic rolling-24 h quota reservation ----------
+-- Isolated fixtures: restore the earlier reminder states for the LGPD tests below.
+SAVEPOINT quota_smoke;
+DELETE FROM agenda_reminders WHERE account_id = (SELECT acc FROM t WHERE label='A1');
+INSERT INTO agenda_reminders(account_id, event_id, slot, offset_minutes, for_starts_at, due_at, state, sent_at)
+SELECT (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE account_id = (SELECT acc FROM t WHERE label='A1') LIMIT 1),
+       1, 120, timestamptz '2040-01-01' + n * interval '1 day', now(), 'sent', clock_timestamp() - interval '1 hour'
+  FROM generate_series(1, 199) n;
+INSERT INTO agenda_reminders(account_id, event_id, slot, offset_minutes, for_starts_at, due_at, state, claimed_at)
+SELECT (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE account_id = (SELECT acc FROM t WHERE label='A1') LIMIT 1),
+       2, 120, timestamptz '2040-01-01' + n * interval '1 day', now(), 'sending', clock_timestamp()
+  FROM generate_series(1, 2) n;
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='B1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-02')), 'cross-account reservation refused');
+SELECT pg_temp.fails(format($q$SELECT agenda_reminder_reserve_quota(%L, %L)$q$, (SELECT acc FROM t WHERE label='C1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-02')), '42501', 'read-only quota reservation refused');
+SELECT pg_temp.assert_true(agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-02')), '199 sent plus unreserved claims: last slot reserved');
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-02')), 'same reservation never authorizes a second send');
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-03')), '199 sent plus one active reservation: next worker refused');
+RESET ROLE;
+-- A long-running sender must still consume quota even if reserved over 24 h ago.
+UPDATE agenda_reminders SET quota_reserved_at = clock_timestamp() - interval '25 hours'
+ WHERE account_id = (SELECT acc FROM t WHERE label='A1') AND quota_reserved_at IS NOT NULL;
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-03')), 'old active sending reservation still counts');
+RESET ROLE;
+UPDATE agenda_reminders SET state='failed', reason='maybe_sent', quota_reserved_at=NULL, updated_at=clock_timestamp()
+ WHERE account_id = (SELECT acc FROM t WHERE label='A1') AND quota_reserved_at IS NOT NULL;
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-03')), 'recent maybe_sent conservatively consumes quota');
+RESET ROLE;
+UPDATE agenda_reminders SET updated_at=clock_timestamp() - interval '25 hours'
+ WHERE account_id = (SELECT acc FROM t WHERE label='A1') AND reason='maybe_sent';
+-- Pending/retry rows do not consume quota, even if they have a stale reservation timestamp.
+INSERT INTO agenda_reminders(account_id, event_id, slot, offset_minutes, for_starts_at, due_at, state, quota_reserved_at, sent_at)
+SELECT (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE account_id = (SELECT acc FROM t WHERE label='A1') LIMIT 1),
+       1, 120, timestamptz '2042-01-01' + n * interval '1 day', now(),
+       CASE WHEN n=1 THEN 'sent' ELSE 'pending' END, clock_timestamp(), clock_timestamp() - interval '25 hours'
+  FROM generate_series(1, 3) n;
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-03')), 'recent completion consumes quota even with sent_at over 24 h old');
+RESET ROLE;
+UPDATE agenda_reminders SET quota_reserved_at=clock_timestamp() - interval '25 hours'
+ WHERE account_id = (SELECT acc FROM t WHERE label='A1') AND state='sent' AND for_starts_at='2042-01-02';
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_true(agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='sending' AND for_starts_at='2040-01-03')), 'old sent/maybe_sent and pending reservations do not consume quota');
+SELECT pg_temp.assert_true(NOT agenda_reminder_reserve_quota((SELECT acc FROM t WHERE label='A1'),
+  (SELECT id FROM agenda_reminders WHERE state='pending' AND for_starts_at='2042-01-03')), 'pending row cannot reserve before claim');
+RESET ROLE;
+SELECT pg_temp.assert_true(
+      NOT has_function_privilege('anon', 'public.agenda_reminder_reserve_quota(uuid, uuid)', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.agenda_reminder_reserve_quota(uuid, uuid)', 'EXECUTE')
+  AND has_function_privilege('service_role', 'public.agenda_reminder_reserve_quota(uuid, uuid)', 'EXECUTE'),
+  'quota reservation grants: service_role only');
+ROLLBACK TO SAVEPOINT quota_smoke;
 
 -- ---------- (9) event type, then LGPD erasure ----------
 INSERT INTO conversations(user_id, account_id, contact_id) VALUES ((SELECT uid FROM t WHERE label='A1'), (SELECT acc FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'));

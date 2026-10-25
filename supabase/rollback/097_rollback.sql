@@ -60,6 +60,7 @@ DROP FUNCTION IF EXISTS private.agenda_reminders_settings_trg();
 DROP FUNCTION IF EXISTS private.agenda_reminders_plan(uuid);
 DROP FUNCTION IF EXISTS public.calendar_events_agenda_reset_response();
 DROP FUNCTION IF EXISTS public.agenda_reminders_claim(timestamptz, integer);
+DROP FUNCTION IF EXISTS public.agenda_reminder_reserve_quota(uuid, uuid);
 DROP FUNCTION IF EXISTS public.agenda_reminder_respond(uuid, uuid, text);
 DROP FUNCTION IF EXISTS public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean);
 DROP FUNCTION IF EXISTS public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text);

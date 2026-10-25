@@ -21,6 +21,19 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 /** Postgres twin of agenda_reminders_claim: pending and due -> sending, attempts + 1, in one step. */
 function claimRpc(fn: string, args: Record<string, unknown>, tables: Record<string, Row[]>) {
+  if (fn === 'agenda_reminder_reserve_quota') {
+    const row = tables.agenda_reminders.find((r) => r.id === args.p_reminder_id && r.account_id === args.p_account_id);
+    if (!row || row.state !== 'sending' || row.quota_reserved_at) return { data: false, error: null };
+    const cutoff = NOW.getTime() - 86_400_000;
+    const used = tables.agenda_reminders.filter((r) => r.account_id === args.p_account_id && (
+      (r.state === 'sent' && Date.parse((r.quota_reserved_at ?? r.sent_at) as string) > cutoff) ||
+      (r.state === 'sending' && r.quota_reserved_at) ||
+      (r.state === 'failed' && r.reason === 'maybe_sent' && Date.parse(r.updated_at as string) > cutoff)
+    )).length;
+    if (used >= 200) return { data: false, error: null };
+    Object.assign(row, { quota_reserved_at: NOW.toISOString(), claimed_at: new Date().toISOString() });
+    return { data: true, error: null };
+  }
   if (fn !== 'agenda_reminders_claim') return { data: null, error: { message: `no rpc ${fn}` } };
   const now = Date.parse(args.p_now as string);
   const due = tables.agenda_reminders
@@ -231,6 +244,89 @@ describe('plumbing', () => {
 });
 
 describe('hardening (review + audit)', () => {
+  it('reserves the last quota slot before sending, so another worker cannot also send', async () => {
+    const w = world();
+    w.tables.agenda_reminders.push(...Array.from({ length: 199 }, (_, i) => ({
+      id: `sent-${i}`, account_id: ACC, state: 'sent', sent_at: iso(NOW.getTime() - 3_600_000),
+    })));
+    let other: ReturnType<typeof w.run>;
+    const send = vi.fn(async () => {
+      expect(w.state().quota_reserved_at).toBeTruthy();
+      w.tables.agenda_reminders.push({ ...w.state(), id: 'r2', state: 'pending', quota_reserved_at: null });
+      other = w.run();
+      await other;
+      return { whatsapp_message_id: 'wamid.last' };
+    });
+    expect(await w.run({ sendText: send })).toMatchObject({ sent: 1 });
+    expect(await other!).toMatchObject({ sent: 0, skipped: 1 });
+    expect(w.sendText).not.toHaveBeenCalled();
+    expect(w.tables.agenda_reminders.find((r) => r.id === 'r2')).toMatchObject({ state: 'skipped', reason: 'daily_limit' });
+  });
+
+  it.each([
+    ['error', false], ['throw', false], ['null', false], ['false', false],
+    ['error', true], ['throw', true], ['null', true], ['false', true],
+  ] as const)('never sends when quota reservation returns %s (template: %s)', async (failure, template) => {
+    const w = world(template ? {
+      conv: { channel: 'official', last_customer_message_at: iso(NOW.getTime() - 30 * 3_600_000) },
+      settings: { template_name: 'tpl' },
+    } : {});
+    const rpc = w.db.rpc.bind(w.db);
+    w.db.rpc = (fn: string, args: Record<string, unknown>) => {
+      if (fn !== 'agenda_reminder_reserve_quota') return rpc(fn, args);
+      if (failure === 'throw') throw new Error('quota lookup unavailable');
+      return Promise.resolve({ data: failure === 'false' ? false : null, error: failure === 'error' ? { message: 'quota lookup unavailable' } : null });
+    };
+    expect(await w.run()).toMatchObject(failure === 'false' ? { skipped: 1, sent: 0 } : { failed: 1, sent: 0 });
+    expect(w.sendText).not.toHaveBeenCalled();
+    expect(w.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('releases a reservation on retry, then reserves again before the next send', async () => {
+    const w = world();
+    const throttled = vi.fn(async () => {
+      expect(w.state().quota_reserved_at).toBeTruthy();
+      throw new GatewayRequestError('fila cheia', 429, 'throttled');
+    });
+    expect(await w.run({ sendText: throttled })).toMatchObject({ retrying: 1 });
+    expect(w.state()).toMatchObject({ state: 'pending', quota_reserved_at: null });
+    const send = vi.fn(async () => {
+      expect(w.state().quota_reserved_at).toBeTruthy();
+      return { whatsapp_message_id: 'wamid.retry' };
+    });
+    expect(await w.run({ sendText: send }, new Date(NOW.getTime() + 120_001))).toMatchObject({ sent: 1 });
+  });
+
+  it('releases reservations on known failures and skips before another attempt', async () => {
+    for (const error of [new Error('provider rejected'), new AccountReadOnlyError()]) {
+      const w = world();
+      const send = vi.fn(async () => {
+        expect(w.state().quota_reserved_at).toBeTruthy();
+        throw error;
+      });
+      expect(await w.run({ sendText: send })).toMatchObject({ sent: 0 });
+      expect(w.state().quota_reserved_at).toBeNull();
+    }
+  });
+
+  it('keeps reply ordering at send start and starts the quota window at completion', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(NOW);
+      const w = world();
+      const completed = new Date(NOW.getTime() + 60_000);
+      const send = vi.fn(async () => {
+        vi.setSystemTime(completed);
+        return { whatsapp_message_id: 'wamid.slow' };
+      });
+      expect(await w.run({ sendText: send })).toMatchObject({ sent: 1 });
+      expect(w.state().sent_at).toBe(NOW.toISOString());
+      expect(w.state().quota_reserved_at).toBe(completed.toISOString());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a reminder claimed far too late is skipped as late (max(30 min, half the lead time))', async () => {
     const stale = world({ reminder: { due_at: iso(NOW.getTime() - 2 * 3_600_000), offset_minutes: 120 } });
     expect(await stale.run()).toMatchObject({ skipped: 1, sent: 0 });

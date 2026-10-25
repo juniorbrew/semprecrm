@@ -30,7 +30,6 @@ import { GatewayRequestError, isGatewayThrottled } from '@/lib/whatsapp/qr-gatew
 import { loadTimezone } from './data';
 import {
   canRetry,
-  DAILY_REMINDER_LIMIT,
   formatWhen,
   isTooLate,
   MAX_SEND_ATTEMPTS,
@@ -169,15 +168,6 @@ async function prepare(
 
   if (!(await (deps.writable ?? accountIsWritable)(db, row.account_id))) throw new Skip('read_only');
 
-  // Abuse / runaway guard: reminders sent by the account in the last 24 h.
-  const sentToday = await db
-    .from('agenda_reminders')
-    .select('id', { count: 'exact', head: true })
-    .eq('account_id', row.account_id)
-    .eq('state', 'sent')
-    .gte('sent_at', new Date(now.getTime() - 86_400_000).toISOString());
-  if (!sentToday.error && (sentToday.count ?? 0) >= DAILY_REMINDER_LIMIT) throw new Skip('daily_limit');
-
   const contact = one<{ name: string | null; phone: string | null; opted_out_at: string | null; anonymized_at: string | null }>(
     await db
       .from('contacts')
@@ -254,9 +244,16 @@ async function send(
     };
     const channel = p.conv.channel === 'qr' ? 'qr' : 'official';
     const base = { accountId: row.account_id, userId: p.userId, conversationId: p.conv.id, contactId: p.event.contact_id as string };
+    // Serialize the account's quota across workers; a claim alone does not reserve a send.
+    const reserved = await db.rpc('agenda_reminder_reserve_quota', {
+      p_account_id: row.account_id,
+      p_reminder_id: row.id,
+    });
+    if (reserved.error || (reserved.data !== true && reserved.data !== false)) {
+      throw new Error('Não foi possível reservar a cota de lembretes.');
+    }
+    if (reserved.data === false) throw new Skip('daily_limit');
     try {
-      // The send may take a while: keep the claim fresh so the 10-minute sweep cannot park a live row.
-      await db.from('agenda_reminders').update({ claimed_at: new Date().toISOString() }).eq('id', row.id).eq('state', 'sending');
       const sent =
         p.plan.kind === 'template'
           ? await (deps.sendTemplate ?? engineSendTemplate)({
@@ -347,13 +344,17 @@ async function pushFailure(db: SupabaseClient, userIds: string[], conversationId
 }
 
 async function dispatchRow(db: SupabaseClient, row: ReminderRow, now: Date, deps: ReminderDeps): Promise<keyof Omit<ReminderDispatchResult, 'claimed'>> {
-  const stamp = new Date().toISOString();
+  // Reply ordering stays conservative: an agent may write while the sender finishes.
+  const sentAt = new Date().toISOString();
   const { outcome, notify } = await send(db, row, now, deps);
+  const stamp = new Date().toISOString();
   switch (outcome.state) {
     case 'sent':
       await writeOutcome(db, row.id, {
         state: 'sent',
-        sent_at: stamp,
+        sent_at: sentAt,
+        // Once sent, this column marks completion for the rolling quota window.
+        quota_reserved_at: stamp,
         wa_message_id: outcome.wa_message_id,
         channel: outcome.channel,
         reason: null,
@@ -362,18 +363,19 @@ async function dispatchRow(db: SupabaseClient, row: ReminderRow, now: Date, deps
       });
       return 'sent';
     case 'skipped':
-      await writeOutcome(db, row.id, { state: 'skipped', reason: outcome.reason, updated_at: stamp });
+      await writeOutcome(db, row.id, { state: 'skipped', reason: outcome.reason, quota_reserved_at: null, updated_at: stamp });
       return 'skipped';
     case 'retry':
       await writeOutcome(db, row.id, {
         state: 'pending',
         next_try_at: new Date(now.getTime() + outcome.delayMs).toISOString(),
         claimed_at: null,
+        quota_reserved_at: null,
         updated_at: stamp,
       });
       return 'retrying';
     case 'failed':
-      await writeOutcome(db, row.id, { state: 'failed', reason: outcome.reason, error_text: outcome.error_text, updated_at: stamp });
+      await writeOutcome(db, row.id, { state: 'failed', reason: outcome.reason, error_text: outcome.error_text, quota_reserved_at: null, updated_at: stamp });
       try {
         await (deps.notifyFailure ?? ((u, c, why, id) => pushFailure(db, u, c, why, id)))(notify.userIds, notify.conversationId, outcome.error_text, row.id);
       } catch (err) {

@@ -158,6 +158,12 @@ CREATE TABLE IF NOT EXISTS public.agenda_reminders (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_agenda_reminders_event_slot UNIQUE (event_id, slot, for_starts_at)
 );
+ALTER TABLE public.agenda_reminders ADD COLUMN IF NOT EXISTS quota_reserved_at TIMESTAMPTZ;
+COMMENT ON COLUMN public.agenda_reminders.quota_reserved_at IS
+  'Reservation time while sending; refreshed at successful completion for rolling quota accounting. sent_at stays at send start for conservative reply ordering.';
+CREATE INDEX IF NOT EXISTS idx_agenda_reminders_quota
+  ON public.agenda_reminders (account_id)
+  WHERE state IN ('sent', 'sending') OR (state = 'failed' AND reason = 'maybe_sent');
 CREATE INDEX IF NOT EXISTS idx_agenda_reminders_due
   ON public.agenda_reminders (due_at) WHERE state = 'pending';
 CREATE INDEX IF NOT EXISTS idx_agenda_reminders_sending
@@ -625,6 +631,45 @@ BEGIN
 END;
 $$;
 
+-- Reserve immediately before delivery, independently of claims. Serialize per account so
+-- concurrent workers cannot both take the final slot (200 per rolling 24 h).
+CREATE OR REPLACE FUNCTION public.agenda_reminder_reserve_quota(
+  p_account_id UUID,
+  p_reminder_id UUID
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_rem public.agenda_reminders;
+  v_now TIMESTAMPTZ;
+BEGIN
+  PERFORM private.agenda_assert_caller(p_account_id);
+  PERFORM pg_advisory_xact_lock(hashtextextended('agenda-reminder-quota:' || p_account_id::text, 0));
+  SELECT * INTO v_rem FROM public.agenda_reminders
+   WHERE id = p_reminder_id AND account_id = p_account_id FOR UPDATE;
+  IF NOT FOUND OR v_rem.state <> 'sending' OR v_rem.quota_reserved_at IS NOT NULL THEN
+    RETURN false;
+  END IF;
+  v_now := clock_timestamp();
+  IF (SELECT count(*) FROM public.agenda_reminders r
+       WHERE r.account_id = p_account_id AND (
+            (r.state = 'sent' AND COALESCE(r.quota_reserved_at, r.sent_at) > v_now - interval '24 hours')
+         -- Never expire a live sender's reservation: it may still finish sending.
+         OR (r.state = 'sending' AND r.quota_reserved_at IS NOT NULL)
+         -- The sweep timestamps uncertainty; keep it for 24 h even for legacy sends.
+         OR (r.state = 'failed' AND r.reason = 'maybe_sent' AND r.updated_at > v_now - interval '24 hours')
+       )) >= 200 THEN
+    RETURN false;
+  END IF;
+  UPDATE public.agenda_reminders
+     SET quota_reserved_at = v_now, claimed_at = v_now, updated_at = v_now
+   WHERE id = p_reminder_id;
+  RETURN true;
+END;
+$$;
+
 -- ---- cron: claim atômico -----------------------------------------------------
 -- pending -> sending num único comando (FOR UPDATE SKIP LOCKED): ticks sobrepostos
 -- dividem as linhas e uma linha reivindicada nunca é reivindicada de novo. Linha presa
@@ -680,6 +725,7 @@ BEGIN
     'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean)',
     'public.agenda_reschedule_appointment(uuid, uuid, timestamptz, uuid, boolean, text, uuid)',
     'public.agenda_reminder_respond(uuid, uuid, text)',
+    'public.agenda_reminder_reserve_quota(uuid, uuid)',
     'public.agenda_reminders_claim(timestamptz, integer)'
   ] LOOP
     EXECUTE format('ALTER FUNCTION %s OWNER TO postgres', f);
