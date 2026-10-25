@@ -217,6 +217,17 @@ DECLARE
   v_before INTEGER := 0;
   v_after  INTEGER := 0;
 BEGIN
+  -- Recalcula só quando algo que define o bloco muda. Qualquer outro UPDATE
+  -- (título, LGPD, status) mantém o bloco gravado: subir a folga de um serviço
+  -- depois não pode quebrar agendamentos antigos. Também descarta block_* forjado.
+  IF TG_OP = 'UPDATE'
+     AND NEW.starts_at = OLD.starts_at AND NEW.ends_at = OLD.ends_at
+     AND NEW.resource_id IS NOT DISTINCT FROM OLD.resource_id
+     AND NEW.service_id IS NOT DISTINCT FROM OLD.service_id THEN
+    NEW.block_starts_at := OLD.block_starts_at;
+    NEW.block_ends_at := OLD.block_ends_at;
+    RETURN NEW;
+  END IF;
   IF NEW.resource_id IS NULL THEN
     NEW.block_starts_at := NULL;
     NEW.block_ends_at := NULL;
@@ -268,6 +279,17 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF NOT (current_user IN ('authenticated', 'anon') OR auth.uid() IS NOT NULL) THEN
+    -- Nem o service_role (sync Google/Outlook, jobs) muda tempo / status / recurso
+    -- de um agendamento direto: só as RPCs, que rodam como postgres.
+    IF TG_OP = 'UPDATE' AND current_user <> 'postgres' AND OLD.service_id IS NOT NULL AND (
+         NEW.starts_at IS DISTINCT FROM OLD.starts_at
+      OR NEW.ends_at IS DISTINCT FROM OLD.ends_at
+      OR NEW.status IS DISTINCT FROM OLD.status
+      OR NEW.resource_id IS DISTINCT FROM OLD.resource_id
+      OR NEW.service_id IS DISTINCT FROM OLD.service_id
+    ) THEN
+      RAISE EXCEPTION 'agenda_use_booking_api' USING ERRCODE = '42501';
+    END IF;
     RETURN NEW;
   END IF;
   IF TG_OP = 'INSERT' THEN
@@ -378,6 +400,22 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION private.agenda_user_busy(UUID, UUID, TIMESTAMPTZ, TIMESTAMPTZ, UUID) FROM PUBLIC, anon, authenticated;
 
+-- Dono do agendamento: o membro ligado ao recurso, se ainda for agent+ da conta
+-- (saiu da equipe ou virou viewer = vai para quem agendou).
+CREATE OR REPLACE FUNCTION private.agenda_owner_for(p_account_id UUID, p_resource_user UUID, p_fallback UUID)
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE WHEN p_resource_user IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public.profiles pr
+     WHERE pr.user_id = p_resource_user AND pr.account_id = p_account_id AND pr.account_role <> 'viewer'
+  ) THEN p_resource_user ELSE p_fallback END;
+$$;
+REVOKE ALL ON FUNCTION private.agenda_owner_for(UUID, UUID, UUID) FROM PUBLIC, anon, authenticated;
+
 -- Quem chama: as RPCs são executáveis SÓ pelo service_role (o servidor, depois de
 -- autenticar a sessão, checar papel agent+, módulo e conta gravável; e a IA).
 -- A conta tem de estar gravável SEMPRE (inclusive para service_role) e, se algum
@@ -431,6 +469,7 @@ DECLARE
   v_contact TEXT;
   v_end     TIMESTAMPTZ;
   v_row     public.calendar_events;
+  v_owner   UUID;
 BEGIN
   PERFORM private.agenda_assert_caller(p_account_id);
 
@@ -449,7 +488,15 @@ BEGIN
   IF p_idempotency_key IS NOT NULL THEN
     SELECT * INTO v_row FROM public.calendar_events
      WHERE account_id = p_account_id AND idempotency_key = p_idempotency_key;
-    IF FOUND THEN RETURN v_row; END IF;
+    IF FOUND THEN
+      -- Mesma chave com outro serviço / cliente / horário não é retry: é erro do chamador.
+      IF v_row.service_id IS DISTINCT FROM p_service_id
+         OR v_row.contact_id IS DISTINCT FROM p_contact_id
+         OR v_row.starts_at IS DISTINCT FROM p_starts_at THEN
+        RAISE EXCEPTION 'agenda_idempotency_conflict' USING ERRCODE = 'AG010';
+      END IF;
+      RETURN v_row;
+    END IF;
   END IF;
 
   -- Serializa as reservas do mesmo recurso.
@@ -484,6 +531,7 @@ BEGIN
   END IF;
 
   v_end := p_starts_at + make_interval(mins => v_svc.duration_minutes);
+  v_owner := private.agenda_owner_for(p_account_id, v_res.user_id, v_actor);
 
   IF private.agenda_user_busy(
        p_account_id, v_res.user_id,
@@ -499,7 +547,7 @@ BEGIN
       starts_at, ends_at, status, contact_id, conversation_id,
       created_by, service_id, resource_id, booking_source, idempotency_key
     ) VALUES (
-      p_account_id, COALESCE(v_res.user_id, v_actor),
+      p_account_id, v_owner,
       left(v_svc.name || CASE WHEN v_contact <> '' THEN ' — ' || v_contact ELSE '' END, 200),
       NULLIF(btrim(p_notes), ''), COALESCE(v_svc.color, v_res.color),
       p_starts_at, v_end, p_status, p_contact_id, p_conversation_id,
@@ -513,6 +561,11 @@ BEGIN
       SELECT * INTO v_row FROM public.calendar_events
        WHERE account_id = p_account_id AND idempotency_key = p_idempotency_key;
       IF NOT FOUND THEN RAISE; END IF;
+      IF v_row.service_id IS DISTINCT FROM p_service_id
+         OR v_row.contact_id IS DISTINCT FROM p_contact_id
+         OR v_row.starts_at IS DISTINCT FROM p_starts_at THEN
+        RAISE EXCEPTION 'agenda_idempotency_conflict' USING ERRCODE = 'AG010';
+      END IF;
   END;
 
   RETURN v_row;
@@ -578,7 +631,7 @@ BEGIN
        SET starts_at = p_starts_at,
            ends_at = v_end,
            resource_id = v_res.id,
-           owner_user_id = COALESCE(v_res.user_id, v_ev.owner_user_id)
+           owner_user_id = COALESCE(private.agenda_owner_for(p_account_id, v_res.user_id, NULL), v_ev.owner_user_id)
      WHERE id = p_event_id
      RETURNING * INTO v_row;
   EXCEPTION
@@ -662,5 +715,6 @@ $$;
 -- Os helpers de private.* rodam dentro das RPCs (definer = postgres).
 ALTER FUNCTION private.agenda_user_busy(UUID, UUID, TIMESTAMPTZ, TIMESTAMPTZ, UUID) OWNER TO postgres;
 ALTER FUNCTION private.agenda_assert_caller(UUID) OWNER TO postgres;
+ALTER FUNCTION private.agenda_owner_for(UUID, UUID, UUID) OWNER TO postgres;
 
 COMMIT;

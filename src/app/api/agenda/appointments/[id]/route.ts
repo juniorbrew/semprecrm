@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 
 import { AgendaError } from '@/lib/agenda/errors';
 import { agendaContext, agendaErrorResponse, agendaWriter, parseBody } from '@/lib/agenda/route';
@@ -18,7 +19,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
   try {
     const ctx = await agendaContext('agent', true);
     const id = (await params).id;
-    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new AgendaError('not_found');
+    if (!z.string().uuid().safeParse(id).success) throw new AgendaError('not_found');
     const body = await parseBody(request, appointmentPatchSchema);
 
     let appointment;

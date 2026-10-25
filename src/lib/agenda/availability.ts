@@ -158,8 +158,27 @@ function blockOf(startMs: number, svc: ServiceTiming): [number, number] {
   ];
 }
 
+const busyCache = new WeakMap<readonly BusyInterval[], [number, number][]>();
+
+/** Busy intervals as epoch ms, parsed once per list (wide scans test thousands of starts). */
+function parsedBusy(busy: readonly BusyInterval[]): [number, number][] {
+  let out = busyCache.get(busy);
+  if (!out) {
+    out = busy.map((b) => [Date.parse(b.starts_at), Date.parse(b.ends_at)] as [number, number]);
+    busyCache.set(busy, out);
+  }
+  return out;
+}
+
 function overlapsAny(from: number, to: number, busy: readonly BusyInterval[]): boolean {
-  return busy.some((b) => new Date(b.starts_at).getTime() < to && new Date(b.ends_at).getTime() > from);
+  return parsedBusy(busy).some(([s, e]) => s < to && e > from);
+}
+
+interface Precomputed {
+  /** First start that is too far ahead (ms). */
+  horizon: number;
+  /** Working intervals per local date, as epoch ms. */
+  open: Map<string, [number, number][]>;
 }
 
 /** First start that is too far ahead (exclusive limit). */
@@ -176,16 +195,20 @@ export function explainStart(
   input: AvailabilityInput,
   resource: ResourceSchedule,
   startMs: number,
+  pre?: Precomputed,
 ): UnavailableReason | null {
   const { tz, now, service, rules } = input;
   if (startMs < now.getTime() + rules.min_notice_minutes * MIN_MS) return 'min_notice';
-  if (startMs >= horizonMs(now, tz, rules.max_days_ahead)) return 'max_ahead';
+  if (startMs >= (pre?.horizon ?? horizonMs(now, tz, rules.max_days_ahead))) return 'max_ahead';
 
   const date = localDate(startMs, tz);
   const endMs = startMs + service.duration_minutes * MIN_MS;
-  const inside = intervalsForDate(date, resource.hours, resource.exceptions).some(
-    (r) => startMs >= minuteToInstant(date, r.start, tz).getTime() && endMs <= minuteToInstant(date, r.end, tz).getTime(),
-  );
+  const ranges =
+    pre?.open.get(`${resource.id}|${date}`) ??
+    intervalsForDate(date, resource.hours, resource.exceptions).map(
+      (r) => [minuteToInstant(date, r.start, tz).getTime(), minuteToInstant(date, r.end, tz).getTime()] as [number, number],
+    );
+  const inside = ranges.some(([open, close]) => startMs >= open && endMs <= close);
   if (!inside) return 'outside_hours';
 
   const [from, to] = blockOf(startMs, service);
@@ -217,10 +240,18 @@ function gridStarts(date: string, resource: ResourceSchedule, input: Availabilit
  */
 export function computeSlots(input: AvailabilityInput, dates: readonly string[]): Slot[] {
   const byStart = new Map<number, string[]>();
+  // Hoisted: the horizon is the same for every start; working intervals are per (resource, date).
+  const pre: Precomputed = { horizon: horizonMs(input.now, input.tz, input.rules.max_days_ahead), open: new Map() };
   for (const date of dates) {
     for (const resource of input.resources) {
+      pre.open.set(
+        `${resource.id}|${date}`,
+        intervalsForDate(date, resource.hours, resource.exceptions).map(
+          (r) => [minuteToInstant(date, r.start, input.tz).getTime(), minuteToInstant(date, r.end, input.tz).getTime()] as [number, number],
+        ),
+      );
       for (const start of gridStarts(date, resource, input)) {
-        if (explainStart(input, resource, start) !== null) continue;
+        if (explainStart(input, resource, start, pre) !== null) continue;
         const list = byStart.get(start);
         if (list) list.push(resource.id);
         else byStart.set(start, [resource.id]);

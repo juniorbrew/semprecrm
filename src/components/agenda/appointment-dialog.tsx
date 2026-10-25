@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { useLanguage } from "@/hooks/use-language";
 import { formatDateTime, formatTime, type CalendarContactRef, type CalendarEvent } from "@/lib/calendar";
+import { localDate } from "@/lib/agenda/availability";
 import { useCalendarTimezone } from "@/components/calendar/hooks";
 import { ContactPicker } from "@/components/calendar/contact-picker";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,8 @@ function SlotPicker({
   selected,
   onSelect,
   labelId,
+  refreshKey = 0,
+  initialDate,
 }: {
   serviceId: string;
   resourceId: string;
@@ -64,10 +67,16 @@ function SlotPicker({
   selected: string | null;
   onSelect: (slot: Slot) => void;
   labelId: string;
+  /** Bump to refetch (e.g. after a booking lost the race). */
+  refreshKey?: number;
+  /** First day shown (default: today). */
+  initialDate?: string;
 }) {
   const { language } = useLanguage();
   const copy = agendaCopy(language);
-  const [date, setDate] = useState(() => todayIn(tz));
+  const [date, setDate] = useState(() => initialDate ?? todayIn(tz));
+  const [searching, setSearching] = useState(false);
+  const [none, setNone] = useState(false);
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const dateId = useId();
@@ -90,19 +99,40 @@ function SlotPicker({
     return () => {
       cancelled = true;
     };
-  }, [serviceId, resourceId, date]);
+  }, [serviceId, resourceId, date, refreshKey]);
+
+  async function jumpToNextFreeDay() {
+    setSearching(true);
+    setNone(false);
+    try {
+      const q = new URLSearchParams({ service_id: serviceId, from: shiftDate(date, 1), to: shiftDate(date, 30) });
+      if (resourceId) q.set("resource_id", resourceId);
+      const res = await agendaFetch<{ slots: Slot[] }>(`/api/agenda/availability?${q}`);
+      const next = groupSlotsByDay(res.slots, tz)[0];
+      if (next) {
+        setSlots(null);
+        setDate(next.date);
+      } else {
+        setNone(true);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : copy.failed);
+    } finally {
+      setSearching(false);
+    }
+  }
 
   const day = useMemo(() => groupSlotsByDay(slots ?? [], tz)[0]?.slots ?? [], [slots, tz]);
 
   return (
     <div className="grid gap-2" role="group" aria-labelledby={labelId}>
       <div className="flex items-center gap-1.5">
-        <Button type="button" variant="outline" size="icon-sm" aria-label={language === "en-US" ? "Previous day" : "Dia anterior"} onClick={() => { setSlots(null); setDate((d) => shiftDate(d, -1)); }}>
+        <Button type="button" variant="outline" size="icon-sm" aria-label={copy.prevDay} onClick={() => { setSlots(null); setDate((d) => shiftDate(d, -1)); }}>
           <ChevronLeft className="size-4" />
         </Button>
         <label htmlFor={dateId} className="sr-only">{copy.date}</label>
         <Input id={dateId} type="date" value={date} onChange={(e) => { if (e.target.value) { setSlots(null); setDate(e.target.value); } }} className="h-8 w-40" />
-        <Button type="button" variant="outline" size="icon-sm" aria-label={language === "en-US" ? "Next day" : "Próximo dia"} onClick={() => { setSlots(null); setDate((d) => shiftDate(d, 1)); }}>
+        <Button type="button" variant="outline" size="icon-sm" aria-label={copy.nextDay} onClick={() => { setSlots(null); setDate((d) => shiftDate(d, 1)); }}>
           <ChevronRight className="size-4" />
         </Button>
       </div>
@@ -114,7 +144,15 @@ function SlotPicker({
         ) : error ? (
           <p className="text-xs text-destructive">{error}</p>
         ) : day.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{copy.noSlots}</p>
+          <div className="grid gap-1.5">
+            <p className="text-xs text-muted-foreground">{none ? copy.noFreeDay : copy.noSlots}</p>
+            <div>
+              <Button type="button" variant="outline" size="xs" disabled={searching} onClick={() => void jumpToNextFreeDay()}>
+                {searching ? <Loader2 className="size-3 animate-spin" /> : null}
+                {copy.nextFreeDay}
+              </Button>
+            </div>
+          </div>
         ) : (
           <ul className="flex flex-wrap gap-1.5">
             {day.map((slot) => (
@@ -141,6 +179,10 @@ function SlotPicker({
   );
 }
 
+function maxDate(a: string, b: string): string {
+  return a > b ? a : b;
+}
+
 function newKey(): string {
   try {
     return crypto.randomUUID();
@@ -158,7 +200,7 @@ export function AppointmentDialog({ open, onOpenChange, event, contact, conversa
   const { language } = useLanguage();
   const copy = agendaCopy(language);
   const tz = useCalendarTimezone();
-  const { config, loading } = useAgendaConfig(open);
+  const { config, loading, error, reload } = useAgendaConfig(open);
   const manage = !!event?.service_id;
 
   return (
@@ -166,9 +208,16 @@ export function AppointmentDialog({ open, onOpenChange, event, contact, conversa
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg" data-testid="appointment-dialog">
         <DialogHeader>
           <DialogTitle>{manage ? copy.appointment : copy.scheduleService}</DialogTitle>
-          <DialogDescription>{manage ? event?.title : copy.pickContact}</DialogDescription>
+          <DialogDescription data-no-translate>{manage ? event?.title : contact?.name || contact?.phone || copy.pickContact}</DialogDescription>
         </DialogHeader>
-        {loading || !config ? (
+        {error && !config ? (
+          <div className="grid gap-2 text-sm" role="alert">
+            <p className="text-destructive">{copy.loadFailed}</p>
+            <div>
+              <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>{copy.retry}</Button>
+            </div>
+          </div>
+        ) : loading || !config ? (
           <p className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> {copy.loadingSlots}
           </p>
@@ -220,6 +269,7 @@ function BookBody({
   const [notes, setNotes] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const key = useRef(newKey());
   const ids = { service: useId(), professional: useId(), when: useId(), notes: useId() };
 
@@ -228,6 +278,11 @@ function BookBody({
     return config.resources.filter((r) => r.is_active && offered.has(r.id));
   }, [config, serviceId]);
   const service = services.find((s) => s.id === serviceId);
+
+  // A new service / professional / time / customer is a different request: new idempotency key.
+  useEffect(() => {
+    key.current = newKey();
+  }, [serviceId, resourceId, slot?.starts_at, contact?.id]);
 
   const submit = useCallback(async () => {
     if (!service || !slot || !contact) return;
@@ -252,6 +307,7 @@ function BookBody({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : copy.failed);
       setSlot(null);
+      setRefreshKey((k) => k + 1);
     } finally {
       setBusy(false);
     }
@@ -325,6 +381,7 @@ function BookBody({
               selected={slot?.starts_at ?? null}
               onSelect={setSlot}
               labelId={ids.when}
+              refreshKey={refreshKey}
             />
           </div>
 
@@ -378,6 +435,7 @@ function ManageBody({
   const [slot, setSlot] = useState<Slot | null>(null);
   const [resourceId, setResourceId] = useState(event.resource_id ?? "");
   const [busy, setBusy] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const whenId = useId();
 
   const service = config.services.find((s) => s.id === current.service_id);
@@ -401,6 +459,8 @@ function ManageBody({
       onSaved?.(merged);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : copy.failed);
+      setSlot(null);
+      setRefreshKey((k) => k + 1);
     } finally {
       setBusy(false);
     }
@@ -412,7 +472,7 @@ function ManageBody({
         <dt className="text-muted-foreground">{copy.service}</dt>
         <dd className="text-foreground">{service ? `${service.name} · ${formatDuration(service.duration_minutes)}` : current.title}</dd>
         <dt className="text-muted-foreground">{copy.professional}</dt>
-        <dd className="text-foreground">{resource?.name ?? "—"}</dd>
+        <dd className="text-foreground" data-no-translate>{resource ? `${resource.name}${resource.is_active ? "" : ` (${copy.inactive})`}` : "—"}</dd>
         <dt className="text-muted-foreground">{copy.time}</dt>
         <dd className="text-foreground">{formatDateTime(current.starts_at, language, tz)}</dd>
         <dt className="text-muted-foreground">{copy.contact}</dt>
@@ -462,7 +522,7 @@ function ManageBody({
             </select>
           </div>
           <span id={whenId} className="text-xs font-medium text-muted-foreground">{copy.time}</span>
-          <SlotPicker serviceId={service.id} resourceId={resourceId} tz={tz} selected={slot?.starts_at ?? null} onSelect={setSlot} labelId={whenId} />
+          <SlotPicker serviceId={service.id} resourceId={resourceId} tz={tz} selected={slot?.starts_at ?? null} onSelect={setSlot} labelId={whenId} refreshKey={refreshKey} initialDate={maxDate(todayIn(tz), localDate(new Date(current.starts_at), tz))} />
           <div className="flex justify-end">
             <Button
               type="button"

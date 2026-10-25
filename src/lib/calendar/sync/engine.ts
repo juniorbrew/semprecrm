@@ -201,6 +201,21 @@ async function applyInbound(
 ): Promise<void> {
   const existing = await r.store.findByExternalId(conn.id, item.external_id)
 
+  // Service appointments (096) are outbound-only: the provider can neither move,
+  // cancel nor reopen them (that would skip hours / conflicts). Refresh the stamp
+  // and clear the hash so the next push restores our version; a remote delete
+  // unbinds the row so it is re-created.
+  if (existing?.service_id) {
+    await r.store.updateEvent(
+      existing.id,
+      item.deleted
+        ? { external_id: null, external_etag: null, external_updated_at: null, sync_hash: null }
+        : { external_etag: item.external_etag, external_updated_at: item.external_updated_at, sync_hash: null },
+    )
+    counts.skipped++
+    return
+  }
+
   if (item.deleted) {
     if (!existing) return
     if (existing.status === 'cancelled') return
@@ -293,7 +308,15 @@ async function runInbound(
       cursor = null
       continue
     }
-    for (const item of res.items) await applyInbound(conn, item, counts, r)
+    for (const item of res.items) {
+      // One bad row must not abort the batch (and with it the cursor of this connection).
+      try {
+        await applyInbound(conn, item, counts, r)
+      } catch (err) {
+        console.error('[calendar-sync] inbound item skipped:', conn.provider, errorText(err))
+        counts.skipped++
+      }
+    }
     return { cursor: res.cursor, complete: res.done }
   }
   throw new Error(`${conn.provider}: the change feed reset twice in a row`)

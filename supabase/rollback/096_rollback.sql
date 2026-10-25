@@ -9,6 +9,7 @@ DROP FUNCTION IF EXISTS public.agenda_reschedule_appointment(uuid, uuid, timesta
 DROP FUNCTION IF EXISTS public.agenda_set_appointment_status(uuid, uuid, text);
 DROP FUNCTION IF EXISTS private.agenda_user_busy(uuid, uuid, timestamptz, timestamptz, uuid);
 DROP FUNCTION IF EXISTS private.agenda_assert_caller(uuid);
+DROP FUNCTION IF EXISTS private.agenda_owner_for(uuid, uuid, uuid);
 ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_resource_no_overlap;
 DROP TRIGGER IF EXISTS calendar_events_agenda_guard ON public.calendar_events;
 DROP FUNCTION IF EXISTS public.calendar_events_agenda_guard();

@@ -242,6 +242,33 @@ SELECT pg_temp.ok(format($q$SELECT agenda_reschedule_appointment(%L, %L, '2030-0
 SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, resource_id) VALUES (%L, 'x', '2031-01-01 10:00+00', '2031-01-01 11:00+00', %L)$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1')), '23514', 'resource_id without service_id violates the CHECK');
 
+-- Even the server role cannot move / cancel an appointment with a plain UPDATE (sync, jobs):
+-- only the RPCs (owner postgres) may. Other columns stay writable for it.
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET status = 'cancelled' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'service_role cannot cancel directly');
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET starts_at = '2030-01-07 22:00+00', ends_at = '2030-01-07 23:00+00' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'service_role cannot move directly');
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET external_etag = 'e1' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 1, 'service_role still writes sync metadata');
+
+-- Idempotency key reused with a different payload is an error, not the old appointment.
+SELECT pg_temp.fails(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-01-07 22:30+00', NULL, 'ai', NULL, 'key-12345678')$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1')),
+  'AG010', 'same idempotency key with another time is a conflict');
+
+-- A resource linked to a member who is now a viewer: the booking goes to the actor.
+UPDATE profiles SET account_role = 'viewer' WHERE user_id = (SELECT uid FROM t WHERE label='A1');
+SELECT pg_temp.ok(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2030-01-21 13:00+00', NULL, 'agent', NULL, NULL, 'scheduled', %L)$q$,
+  (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1'), (SELECT res FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1'), (SELECT uid FROM t WHERE label='A2')),
+  'booking with a demoted resource member');
+SELECT pg_temp.assert_true((SELECT owner_user_id = (SELECT uid FROM t WHERE label='A2') FROM calendar_events WHERE starts_at = '2030-01-21 13:00+00'),
+  'owner falls back to the actor when the linked member is no longer agent+');
+UPDATE profiles SET account_role = 'owner' WHERE user_id = (SELECT uid FROM t WHERE label='A1');
+
+-- Raising a service buffer later must not break old appointments (block_* are kept).
+UPDATE agenda_services SET buffer_before_minutes = 90, buffer_after_minutes = 120 WHERE id = (SELECT svc FROM t WHERE label='A1');
+SELECT pg_temp.assert_true((SELECT block_ends_at = ends_at + interval '15 minutes' FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'),
+  'stored block unchanged after the buffer was raised');
+SELECT pg_temp.ok(format($q$SELECT agenda_set_appointment_status(%L, %L, 'completed')$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), 'completing an old appointment still works');
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE calendar_events SET title = 'Anonimizado' WHERE id = %L$q$, (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00'))), 1, 'title edit on an old appointment still works');
+
 -- A viewer reads but cannot change it.
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', (SELECT uid::text FROM t WHERE label = 'A3'), true);
@@ -304,6 +331,13 @@ SELECT pg_temp.fails(format($q$SELECT agenda_book_appointment(%L, %L, %L, %L, '2
   'AG001', 'service_role is held to the same exclusion');
 RESET ROLE;
 SELECT pg_temp.assert_eq((SELECT count(*) FROM calendar_events WHERE booking_source = 'ai'), 2, 'ai bookings recorded (keyed one + this one)');
+
+-- LGPD erasure (077) anonymises appointment titles even after the buffer was raised.
+SET LOCAL ROLE service_role;
+SELECT pg_temp.ok(format($q$SELECT lgpd_delete_contact(%L, %L)$q$, (SELECT acc FROM t WHERE label='A1'), (SELECT contact FROM t WHERE label='A1')), 'lgpd_delete_contact with appointments after a buffer raise');
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT count(*) > 0 AND bool_and(title = 'Compromisso anonimizado') FROM calendar_events WHERE service_id IS NOT NULL AND contact_id IS NULL AND account_id = (SELECT acc FROM t WHERE label='A1')),
+  'appointments of the erased contact were anonymised and kept');
 
 -- ---------- grants ----------
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid)', 'EXECUTE')

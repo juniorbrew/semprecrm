@@ -233,7 +233,8 @@ export function CalendarBoard() {
         upsertLocal(saved);
       } catch (err) {
         console.error("[calendar] move:", err);
-        toast.error(t("Failed to move appointment"));
+        // Appointments answer with the rule that refused the move (pt-BR, from the booking API).
+        toast.error(ev.service_id && err instanceof Error ? err.message : t("Failed to move appointment"));
         void load();
       }
     },

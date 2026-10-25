@@ -88,6 +88,12 @@ export interface AgendaCopy {
   weekErrors: Record<string, string>;
   readOnly: string;
   resizeBlocked: string;
+  loadFailed: string;
+  retry: string;
+  prevDay: string;
+  nextDay: string;
+  nextFreeDay: string;
+  noFreeDay: string;
   managedElsewhere: string;
   manage: string;
 }
@@ -176,6 +182,12 @@ const PT: AgendaCopy = {
   resizeBlocked: "A duração vem do serviço. Para mudar o horário, use Remarcar.",
   managedElsewhere: "Este é um agendamento de serviço: horário e situação são alterados pelo painel de agendamento.",
   manage: "Gerenciar agendamento",
+  loadFailed: "Não foi possível carregar os serviços e horários.",
+  retry: "Tentar de novo",
+  prevDay: "Dia anterior",
+  nextDay: "Próximo dia",
+  nextFreeDay: "Próximo dia com horário",
+  noFreeDay: "Sem horários livres nos próximos 30 dias.",
 };
 
 const EN: AgendaCopy = {
@@ -262,6 +274,12 @@ const EN: AgendaCopy = {
   resizeBlocked: "The length comes from the service. To change the time, use Reschedule.",
   managedElsewhere: "This is a service appointment: time and status are changed from the booking panel.",
   manage: "Manage appointment",
+  loadFailed: "Could not load services and hours.",
+  retry: "Try again",
+  prevDay: "Previous day",
+  nextDay: "Next day",
+  nextFreeDay: "Next day with a free time",
+  noFreeDay: "No free times in the next 30 days.",
 };
 
 export function agendaCopy(language: Language): AgendaCopy {

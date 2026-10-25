@@ -27,6 +27,25 @@ export type AgendaDb = Pick<SupabaseClient, 'from' | 'rpc'>;
 /** Widest buffer a service can have (migration 096 CHECK) — busy windows are fetched this much wider. */
 const MAX_BUFFER_MS = 240 * 60_000;
 
+const PAGE = 1000;
+
+/**
+ * PostgREST caps a response at 1000 rows (max_rows). Read every page so a wide
+ * scan can never silently lose busy time or exceptions.
+ */
+export async function fetchAll<T>(
+  build: () => { range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { code?: string; message: string } | null }> },
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const res = await build().range(from, from + PAGE - 1);
+    if (res.error) throw fromRpcError(res.error);
+    const rows = res.data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
 function check<T>(res: { data: T | null; error: { code?: string; message: string } | null }): T {
   if (res.error) throw fromRpcError(res.error);
   return (res.data ?? ([] as unknown)) as T;
@@ -40,14 +59,26 @@ export async function loadTimezone(db: AgendaDb, accountId: string): Promise<str
   return safeTimezone(prefs?.business_hours?.timezone);
 }
 
-export async function loadConfig(db: AgendaDb, accountId: string): Promise<AgendaConfig> {
+export interface ConfigRange {
+  /** Only exceptions on or after this local date ("YYYY-MM-DD"). Default: two days ago (UTC). */
+  from?: string;
+  /** ... and on or before this one. Default: no upper bound. */
+  to?: string;
+}
+
+export async function loadConfig(db: AgendaDb, accountId: string, range: ConfigRange = {}): Promise<AgendaConfig> {
+  const from = range.from ?? new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
   const [tz, services, resources, links, hours, exceptions, settings] = await Promise.all([
     loadTimezone(db, accountId),
     db.from('agenda_services').select('*').eq('account_id', accountId).order('sort_order').order('name'),
     db.from('agenda_resources').select('*').eq('account_id', accountId).order('sort_order').order('name'),
     db.from('agenda_resource_services').select('resource_id, service_id').eq('account_id', accountId),
     db.from('agenda_working_hours').select('*').eq('account_id', accountId),
-    db.from('agenda_exceptions').select('*').eq('account_id', accountId).order('on_date'),
+    fetchAll<DayException>(() => {
+      let q = db.from('agenda_exceptions').select('*').eq('account_id', accountId).gte('on_date', from);
+      if (range.to) q = q.lte('on_date', range.to);
+      return q.order('on_date').order('id');
+    }),
     db.from('agenda_settings').select('*').eq('account_id', accountId).maybeSingle(),
   ]);
   if (settings.error) throw fromRpcError(settings.error);
@@ -63,7 +94,7 @@ export async function loadConfig(db: AgendaDb, accountId: string): Promise<Agend
     resources: check<AgendaResource[]>(resources),
     resource_services: check<AgendaResourceService[]>(links),
     working_hours: check<WorkingInterval[]>(hours),
-    exceptions: check<DayException[]>(exceptions),
+    exceptions,
   };
 }
 
@@ -95,35 +126,39 @@ export async function loadBusy(
   const lo = new Date(from.getTime() - MAX_BUFFER_MS).toISOString();
   const hi = new Date(to.getTime() + MAX_BUFFER_MS).toISOString();
   const cols = 'id, resource_id, owner_user_id, starts_at, ends_at, block_starts_at, block_ends_at';
+  // 'completed' still holds resource time in the DB constraint, so it is busy here too.
+  const resourceStatuses = [...ACTIVE_APPOINTMENT_STATUSES, 'completed'];
   const statuses = [...ACTIVE_APPOINTMENT_STATUSES];
 
-  const byResource = db
-    .from('calendar_events')
-    .select(cols)
-    .eq('account_id', accountId)
-    .in('resource_id', resources.map((r) => r.id))
-    .in('status', statuses)
-    .lt('starts_at', hi)
-    .gt('ends_at', lo);
-
   const userIds = resources.map((r) => r.user_id).filter((u): u is string => !!u);
-  const byOwner =
+  const [appointments, plain] = await Promise.all([
+    fetchAll<BusyRow>(() =>
+      db
+        .from('calendar_events')
+        .select(cols)
+        .eq('account_id', accountId)
+        .in('resource_id', resources.map((r) => r.id))
+        .in('status', resourceStatuses)
+        .lt('starts_at', hi)
+        .gt('ends_at', lo)
+        .order('id'),
+    ),
     userIds.length > 0
-      ? db
-          .from('calendar_events')
-          .select(cols)
-          .eq('account_id', accountId)
-          .in('owner_user_id', userIds)
-          .is('resource_id', null)
-          .eq('all_day', false)
-          .in('status', statuses)
-          .lt('starts_at', hi)
-          .gt('ends_at', lo)
-      : Promise.resolve({ data: [] as BusyRow[], error: null });
-
-  const [a, b] = await Promise.all([byResource, byOwner]);
-  const appointments = check<BusyRow[]>(a as { data: BusyRow[] | null; error: { message: string } | null });
-  const plain = check<BusyRow[]>(b as { data: BusyRow[] | null; error: { message: string } | null });
+      ? fetchAll<BusyRow>(() =>
+          db
+            .from('calendar_events')
+            .select(cols)
+            .eq('account_id', accountId)
+            .in('owner_user_id', userIds)
+            .is('resource_id', null)
+            .eq('all_day', false)
+            .in('status', statuses)
+            .lt('starts_at', hi)
+            .gt('ends_at', lo)
+            .order('id'),
+        )
+      : Promise.resolve([] as BusyRow[]),
+  ]);
 
   for (const row of appointments) {
     if (row.id === excludeEventId || !row.resource_id) continue;

@@ -19,6 +19,7 @@ export type AgendaErrorCode =
   | 'read_only'
   | 'forbidden'
   | 'conflict'
+  | 'idempotency_conflict'
   | 'internal';
 
 const MESSAGES: Record<AgendaErrorCode, string> = {
@@ -37,6 +38,7 @@ const MESSAGES: Record<AgendaErrorCode, string> = {
   read_only: 'A conta está somente leitura. Regularize o plano para agendar.',
   forbidden: 'Você não tem permissão para isso.',
   conflict: 'Já existe um registro com esses dados.',
+  idempotency_conflict: 'Essa chave de idempotência já foi usada com outros dados.',
   internal: 'Não foi possível concluir. Tente novamente.',
 };
 
@@ -56,6 +58,7 @@ const STATUS: Record<AgendaErrorCode, number> = {
   read_only: 402,
   forbidden: 403,
   conflict: 409,
+  idempotency_conflict: 409,
   internal: 500,
 };
 
@@ -89,6 +92,7 @@ const BY_MESSAGE: Record<string, AgendaErrorCode> = {
   agenda_not_reschedulable: 'not_reschedulable',
   agenda_appointment_not_found: 'not_found',
   agenda_bad_status: 'validation',
+  agenda_idempotency_conflict: 'idempotency_conflict',
   agenda_resource_user_not_member: 'validation',
 };
 

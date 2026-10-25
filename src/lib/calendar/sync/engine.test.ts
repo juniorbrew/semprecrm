@@ -96,6 +96,7 @@ function event(over: Partial<SyncEventRow> & { id: string }): SyncEventRow {
     ends_at: '2026-09-15T14:00:00.000Z',
     all_day: false,
     status: 'confirmed',
+    service_id: null,
     source: 'internal',
     external_connection_id: null,
     external_id: null,
@@ -430,6 +431,53 @@ describe('syncConnection — inbound (Google)', () => {
     expect(store.events.find((e) => e.id === 'ev-x')).toMatchObject({ title: 'Editado aqui', external_etag: '"pushed"' })
     expect(store.events.find((e) => e.id === 'ev-y')).toMatchObject({ title: 'Editado lá depois' })
     expect(http.calls.filter((c) => c.method === 'PATCH').map((c) => c.url)).toEqual([expect.stringContaining('g-x')])
+  })
+
+  it('service appointments are outbound-only: a move / delete on the provider never reaches the row, our version is pushed back', async () => {
+    const appt = event({
+      id: 'ev-appt',
+      service_id: 'svc-1',
+      status: 'scheduled',
+      external_connection_id: 'conn-g',
+      external_id: 'g-appt',
+      sync_hash: 'old-hash',
+    })
+    const gone = event({ id: 'ev-gone', service_id: 'svc-1', status: 'confirmed', external_connection_id: 'conn-g', external_id: 'g-gone', sync_hash: 'old-hash' })
+    store.events.push(appt, gone)
+    http.route('GET', GOOGLE_EVENTS, () => ({
+      body: {
+        items: [
+          gEvent('g-appt', { summary: 'Movido no Google', start: { dateTime: '2026-09-20T03:00:00Z' }, end: { dateTime: '2026-09-20T04:00:00Z' } }),
+          { id: 'g-gone', status: 'cancelled' },
+        ],
+        nextSyncToken: 'sync-4',
+      },
+    }))
+    http.route('PATCH', `${GOOGLE_EVENTS}/g-appt`, () => ({ body: { id: 'g-appt', etag: '"restored"' } }))
+    http.route('POST', GOOGLE_EVENTS, () => ({ body: { id: 'g-new', etag: '"recreated"' } }))
+
+    const res = await syncConnection(connection(), deps)
+    expect(res.status).toBe('active')
+    const a = store.events.find((e) => e.id === 'ev-appt')!
+    expect(a).toMatchObject({ status: 'scheduled', title: 'Reunião', starts_at: '2026-09-15T13:00:00.000Z' })
+    const g = store.events.find((e) => e.id === 'ev-gone')!
+    expect(g.status).toBe('confirmed')
+    expect(http.calls.filter((c) => c.method === 'PATCH').map((c) => c.url)).toEqual([expect.stringContaining('g-appt')]);
+    expect(http.calls.filter((c) => c.method === 'POST').length).toBe(1)
+  })
+
+  it('one failing inbound row does not abort the batch or the cursor', async () => {
+    const orig = store.findByExternalId.bind(store)
+    store.findByExternalId = async (c, id) => {
+      if (id === 'g-bad') throw new Error('boom')
+      return orig(c, id)
+    }
+    http.route('GET', GOOGLE_EVENTS, () => ({
+      body: { items: [gEvent('g-bad'), gEvent('g-ok')], nextSyncToken: 'sync-5' },
+    }))
+    const res = await syncConnection(connection(), deps)
+    expect(res).toMatchObject({ status: 'active', pulled_created: 1 })
+    expect(store.events.some((e) => e.external_id === 'g-ok')).toBe(true)
   })
 
   it('410 on the sync token → full read (timeMin, no syncToken) and a fresh token', async () => {

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { makeFakeDb } from '@/lib/lgpd/fake-db.test-helper';
 
 import { AgendaError, fromRpcError } from './errors';
-import { bookAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus } from './service';
+import { bookAppointment, getAppointment, getAvailability, listUpcomingForContact, rescheduleAppointment, setAppointmentStatus } from './service';
 
 type Row = Record<string, unknown>;
 
@@ -303,6 +303,71 @@ describe('rescheduleAppointment', () => {
     await rescheduleAppointment(db, { accountId: ACC, eventId: a.id, startsAt: MON_10, resourceId: 'r2', now: NOW });
     expect(rpcCalls[1].args.p_resource_id).toBe('r2');
     expect(await failCode(rescheduleAppointment(db, { accountId: ACC, eventId: a.id, startsAt: MON_10, resourceId: 'r3', now: NOW }))).toBe('service_not_offered');
+  });
+});
+
+describe('hardening', () => {
+  it('the same idempotency key with another payload is a conflict, not the old appointment', async () => {
+    const { db, rpcCalls } = setup();
+    await book(db, { idempotencyKey: 'key-12345678' });
+    expect(await failCode(book(db, { idempotencyKey: 'key-12345678', startsAt: MON_11 }))).toBe('idempotency_conflict');
+    expect(await failCode(book(db, { idempotencyKey: 'key-12345678', contactId: 'c2' }))).toBe('idempotency_conflict');
+    await expect(book(db, { idempotencyKey: 'key-12345678' })).resolves.toBeTruthy();
+    expect(rpcCalls).toHaveLength(1);
+  });
+
+  it('completed appointments still hold the professional time', async () => {
+    const { db } = setup((t) => {
+      t.calendar_events.push({ id: 'done', account_id: ACC, resource_id: 'r1', owner_user_id: 'u1', status: 'completed', all_day: false, starts_at: MON_10, ends_at: MON_11, block_starts_at: MON_10, block_ends_at: MON_11 });
+    });
+    expect(await failCode(book(db))).toBe('busy');
+  });
+
+  it('reads busy time past the 1000-row page cap', async () => {
+    const { db, tables } = setup((t) => {
+      for (let i = 0; i < 1200; i += 1) {
+        const at = new Date(Date.parse('2026-10-26T10:00:00.000Z') + i * 1000).toISOString();
+        t.calendar_events.push({ id: `a-${String(i).padStart(4, '0')}`, account_id: ACC, resource_id: 'r1', owner_user_id: 'u1', status: 'scheduled', all_day: false, starts_at: at, ends_at: new Date(Date.parse(at) + 500).toISOString(), block_starts_at: at, block_ends_at: new Date(Date.parse(at) + 500).toISOString() });
+      }
+      // Sorts after the first 1000 rows: lost if only one page is read.
+      t.calendar_events.push({ id: 'zzz', account_id: ACC, resource_id: 'r1', owner_user_id: 'u1', status: 'scheduled', all_day: false, starts_at: MON_10, ends_at: MON_11, block_starts_at: MON_10, block_ends_at: MON_11 });
+    });
+    expect(tables.calendar_events).toHaveLength(1201);
+    expect(await failCode(book(db))).toBe('busy');
+  });
+
+  it('a day-off exception closes that day for booking and slots', async () => {
+    const { db } = setup((t) => {
+      t.agenda_exceptions.push({ account_id: ACC, resource_id: 'r1', on_date: '2026-10-26', kind: 'day_off', start_minute: null, end_minute: null });
+    });
+    expect(await failCode(book(db))).toBe('outside_hours');
+    const res = await getAvailability(db, { accountId: ACC, serviceId: 's1', resourceId: 'r1', from: '2026-10-26', to: '2026-10-26', now: NOW });
+    expect(res.slots).toEqual([]);
+  });
+
+  it('reopening a cancelled appointment re-checks the time', async () => {
+    const { db, tables } = setup();
+    const a = await book(db);
+    await setAppointmentStatus(db, { accountId: ACC, eventId: a.id, status: 'cancelled' });
+    // Somebody else takes the slot meanwhile.
+    await book(db, { contactId: 'c2' });
+    expect(await failCode(setAppointmentStatus(db, { accountId: ACC, eventId: a.id, status: 'scheduled', now: NOW }))).toBe('busy');
+    // Free again but in the past: notice rule applies.
+    tables.calendar_events[1].status = 'cancelled';
+    expect(await failCode(setAppointmentStatus(db, { accountId: ACC, eventId: a.id, status: 'confirmed', now: new Date('2026-10-26T12:30:00Z') }))).toBe('min_notice');
+    const reopened = await setAppointmentStatus(db, { accountId: ACC, eventId: a.id, status: 'confirmed', now: NOW });
+    expect(reopened.status).toBe('confirmed');
+  });
+
+  it('getAppointment and listUpcomingForContact only return service appointments of the account', async () => {
+    const { db, tables } = setup();
+    const a = await book(db);
+    tables.calendar_events.push({ id: 'plain', account_id: ACC, service_id: null, contact_id: 'c1', status: 'confirmed', starts_at: MON_11, ends_at: MON_11 });
+    expect((await getAppointment(db, ACC, a.id))?.id).toBe(a.id);
+    expect(await getAppointment(db, ACC, 'plain')).toBeNull();
+    expect(await getAppointment(db, 'other', a.id)).toBeNull();
+    const list = await listUpcomingForContact(db, { accountId: ACC, contactId: 'c1', now: NOW });
+    expect(list.map((e) => e.id)).toEqual([a.id]);
   });
 });
 

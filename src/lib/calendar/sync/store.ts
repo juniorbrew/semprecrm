@@ -25,6 +25,7 @@ export type SyncEventRow = Pick<
   | 'ends_at'
   | 'all_day'
   | 'status'
+  | 'service_id'
   | 'source'
   | 'external_connection_id'
   | 'external_id'
@@ -36,7 +37,7 @@ export type SyncEventRow = Pick<
 >
 
 export const SYNC_EVENT_COLUMNS =
-  'id, account_id, owner_user_id, title, description, location, starts_at, ends_at, all_day, status, source, external_connection_id, external_id, external_etag, external_updated_at, sync_hash, created_by, updated_at'
+  'id, account_id, owner_user_id, title, description, location, starts_at, ends_at, all_day, status, service_id, source, external_connection_id, external_id, external_etag, external_updated_at, sync_hash, created_by, updated_at'
 
 export type SyncEventInsert = Omit<SyncEventRow, 'id' | 'updated_at'>
 export type SyncEventPatch = Partial<Omit<SyncEventRow, 'id' | 'account_id'>>
@@ -112,7 +113,7 @@ export function createSyncStore(admin: SupabaseClient): SyncStore {
         .eq('account_id', accountId)
         .eq('owner_user_id', userId)
         .is('external_connection_id', null)
-        .eq('status', 'confirmed')
+        .in('status', ['confirmed', 'scheduled'])
         .gte('ends_at', notBefore)
       if (error) fail('unboundOwnedEvents', error)
       return (data ?? []) as SyncEventRow[]
@@ -132,7 +133,7 @@ export function createSyncStore(admin: SupabaseClient): SyncStore {
         .eq('account_id', accountId)
         .in('id', ids)
         .is('external_connection_id', null)
-        .eq('status', 'confirmed')
+        .in('status', ['confirmed', 'scheduled'])
         .gte('ends_at', notBefore)
       if (error) fail('unboundAttendedEvents', error)
       return ((data ?? []) as SyncEventRow[]).filter((r) => r.owner_user_id !== userId)

@@ -81,7 +81,16 @@ export function AgendaServicesSettings() {
       </p>
     );
   }
-  if (!config) return <p className="text-sm text-destructive">{error}</p>;
+  if (!config) {
+    return (
+      <div className="grid gap-2 text-sm" role="alert">
+        <p className="text-destructive">{error ?? copy.loadFailed}</p>
+        <div>
+          <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>{copy.retry}</Button>
+        </div>
+      </div>
+    );
+  }
 
   async function remove(url: string) {
     if (!window.confirm(copy.deleteConfirm)) return;
