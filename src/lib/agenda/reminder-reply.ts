@@ -118,7 +118,7 @@ async function handle(db: SupabaseClient, input: ReminderReplyInput, deps: Remin
   if (evs.error || !evs.data?.length) return null;
   const events = new Map((evs.data as OpenEvent[]).map((e) => [e.id, e]));
 
-  const rem = await db
+  let reminderQuery = db
     .from('agenda_reminders')
     .select('id, event_id, for_starts_at, sent_at, wa_message_id')
     .eq('account_id', input.accountId)
@@ -126,11 +126,12 @@ async function handle(db: SupabaseClient, input: ReminderReplyInput, deps: Remin
     .is('response', null)
     .in('event_id', [...events.keys()])
     .gte('sent_at', new Date(now.getTime() - REPLY_WINDOW_MS).toISOString())
-    .order('sent_at', { ascending: false })
-    .limit(30);
+    .order('sent_at', { ascending: false });
+  if (input.quotedMessageId) reminderQuery = reminderQuery.eq('wa_message_id', input.quotedMessageId);
+  const rem = await reminderQuery.limit(30);
   if (rem.error || !rem.data?.length) return null;
 
-  // The latest reminder whose appointment is still unmoved.
+  // A quoted message must match that reminder; only unquoted replies use the latest one.
   const target = (rem.data as SentReminder[]).find((r) => {
     const e = events.get(r.event_id);
     return !!e && Date.parse(e.starts_at) === Date.parse(r.for_starts_at);
@@ -165,15 +166,21 @@ async function answersReminder(db: SupabaseClient, input: ReminderReplyInput, re
   if (convs.error) return false;
   const ids = ((convs.data ?? []) as { id: string }[]).map((c) => c.id);
   if (ids.length === 0) return false;
-  const later = await db
+  const laterMessages = () => db
     .from('messages')
     .select('id')
     .in('conversation_id', ids)
     .neq('sender_type', 'customer')
-    .gt('created_at', reminder.sent_at)
-    .limit(1);
-  if (later.error) return false;
-  return (later.data ?? []).length === 0;
+    .gt('created_at', reminder.sent_at!);
+  // The sender persists the reminder after its sent_at stamp. Exclude only that message,
+  // keeping local agent messages whose provider id is NULL (SQL <> would omit them).
+  const later = reminder.wa_message_id
+    ? await Promise.all([
+        laterMessages().neq('message_id', reminder.wa_message_id).limit(1),
+        laterMessages().is('message_id', null).limit(1),
+      ])
+    : [await laterMessages().limit(1)];
+  return later.every((result) => !result.error && (result.data ?? []).length === 0);
 }
 
 async function followUp(

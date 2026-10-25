@@ -198,4 +198,49 @@ describe('review fixes', () => {
     expect(w.tables.calendar_events[0].status).toBe('confirmed');
     expect(w.rpcCalls).toHaveLength(1);
   });
+
+  it('quoted replies select that reminder, even when another appointment was reminded more recently', async () => {
+    const events = ['e1', 'e2'].map((id) => ({ id, account_id: ACC, contact_id: 'c1', status: 'scheduled', starts_at: STARTS }));
+    const reminders = [waiting, { ...waiting, id: 'r2', event_id: 'e2', wa_message_id: 'wamid.new', sent_at: iso(NOW.getTime() - 60_000) }];
+    for (const text of ['confirmo', 'ok', '2']) {
+      const w = world({ events, reminders });
+      expect(await w.reply(text, 'text', 'c1', 'wamid.rem')).toBe(text === '2' ? 'reschedule_requested' : 'confirmed');
+      expect(w.rpcCalls[0].args.p_reminder_id).toBe('r1');
+      expect(w.tables.calendar_events[1].customer_response).toBeUndefined();
+    }
+  });
+
+  it('quotes of unrelated, old, moved, or other-contact reminders never fall back to the latest appointment', async () => {
+    for (const quoted of ['wamid.unrelated', 'wamid.old', 'wamid.moved', 'wamid.other-contact']) {
+      const w = world({ reminders: [waiting,
+        { ...waiting, id: 'old', wa_message_id: 'wamid.old', sent_at: iso(NOW.getTime() - 49 * 3_600_000) },
+        { ...waiting, id: 'moved', wa_message_id: 'wamid.moved', for_starts_at: '2026-11-03T17:30:00Z' },
+        { ...waiting, id: 'other', event_id: 'someone-else', wa_message_id: 'wamid.other-contact' },
+      ] });
+      expect(await w.reply('confirmo', 'text', 'c1', quoted)).toBeNull();
+      expect(w.rpcCalls).toHaveLength(0);
+    }
+  });
+
+  it('the persisted reminder itself does not block an unquoted vague reply, but a later agent message does', async () => {
+    const messages = [{ id: 'm-rem', message_id: 'wamid.rem', conversation_id: 'v1', sender_type: 'bot', created_at: iso(NOW.getTime() - 3_600_000 + 1000) }];
+    const quiet = world({ reminders: [waiting], messages });
+    expect(await quiet.reply('Ok 👍')).toBe('confirmed');
+    const busy = world({ reminders: [waiting], messages: [...messages,
+      { id: 'agent', message_id: null, conversation_id: 'v1', sender_type: 'agent', created_at: iso(NOW.getTime() - 60_000) },
+    ] });
+    expect(await busy.reply('ok')).toBeNull();
+  });
+
+  it('an agent message during reminder finalization still blocks a vague reply', async () => {
+    const w = world({
+      reminders: [{ ...waiting, quota_reserved_at: iso(NOW.getTime() - 60_000) }],
+      messages: [
+        { id: 'rem', message_id: 'wamid.rem', conversation_id: 'v1', sender_type: 'bot', created_at: iso(NOW.getTime() - 3_600_000 + 1000) },
+        { id: 'agent', message_id: 'wamid.agent', conversation_id: 'v1', sender_type: 'agent', created_at: iso(NOW.getTime() - 120_000) },
+      ],
+    });
+    expect(await w.reply('ok')).toBeNull();
+    expect(w.rpcCalls).toHaveLength(0);
+  });
 });
