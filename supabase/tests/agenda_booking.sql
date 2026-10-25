@@ -199,7 +199,8 @@ SELECT pg_temp.fails(format($q$SELECT agenda_reschedule_appointment(%L, %L, '203
 -- Reserved columns: no user can mark / unmark an event as an appointment.
 SELECT pg_temp.fails(format($q$INSERT INTO calendar_events(account_id, title, starts_at, ends_at, service_id) VALUES (%L, 'x', '2031-01-01 10:00+00', '2031-01-01 11:00+00', %L)$q$,
   (SELECT acc FROM t WHERE label='A1'), (SELECT svc FROM t WHERE label='A1')), '42501', 'user cannot insert with service_id');
-SELECT pg_temp.fails(format($q$UPDATE calendar_events SET booking_source = 'agent' WHERE id = %L$q$,
+-- The row was booked with source 'agent'; writing the same value is a no-op the guard allows.
+SELECT pg_temp.fails(format($q$UPDATE calendar_events SET booking_source = 'ai' WHERE id = %L$q$,
   (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'user cannot change booking_source');
 SELECT pg_temp.fails(format($q$UPDATE calendar_events SET idempotency_key = 'hijack-123' WHERE id = %L$q$,
   (SELECT id FROM calendar_events WHERE starts_at = '2030-01-07 14:15+00')), '42501', 'user cannot change idempotency_key');
