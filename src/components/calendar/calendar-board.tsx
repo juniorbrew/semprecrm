@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
@@ -33,6 +33,10 @@ import { useDensity } from "@/components/tasks/density";
 import { DensityToggle } from "@/components/tasks/density-toggle";
 import { cn } from "@/lib/utils";
 
+import { AppointmentDialog } from "@/components/agenda/appointment-dialog";
+import { agendaCopy } from "@/components/agenda/copy";
+import { agendaFetch } from "@/components/agenda/use-agenda-config";
+
 import { EventDrawer } from "./event-drawer";
 import { useCalendarMembers, useCalendarRealtime, useCalendarTimezone } from "./hooks";
 import { MonthView } from "./month-view";
@@ -43,18 +47,29 @@ const VIEW_STORAGE_KEY = "calendar:view";
 
 const VIEW_LABELS: Record<CalendarView, string> = { month: "Month", week: "Week", day: "Day" };
 
-const AGENDA_COPY: Record<Language, { title: string; compact: string; count: (n: number) => string }> = {
+const AGENDA_COPY: Record<Language, { title: string; compact: string; book: string; count: (n: number) => string }> = {
   "pt-BR": {
     title: "Agenda",
+    book: "Agendar serviço",
     compact: "Grade compacta",
     count: (n) => (n === 1 ? "1 compromisso" : `${n} compromissos`),
   },
   "en-US": {
     title: "Calendar",
+    book: "Book a service",
     compact: "Compact grid",
     count: (n) => (n === 1 ? "1 appointment" : `${n} appointments`),
   },
 };
+
+/** Move a service appointment through the booking API (keeps its length, re-checks every rule). */
+async function moveAppointment(ev: CalendarEvent, startsAt: string): Promise<CalendarEvent> {
+  const { appointment } = await agendaFetch<{ appointment: CalendarEvent }>(`/api/agenda/appointments/${ev.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ starts_at: startsAt }),
+  });
+  return { ...ev, ...appointment };
+}
 
 function readStoredView(): CalendarView {
   if (typeof window === "undefined") return "week";
@@ -94,6 +109,7 @@ export function CalendarBoard() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerEvent, setDrawerEvent] = useState<CalendarEvent | null>(null);
   const [drawerDefaults, setDrawerDefaults] = useState<Partial<CalendarEventInput> | undefined>(undefined);
+  const [appointment, setAppointment] = useState<{ event: CalendarEvent | null } | null>(null);
   const [quick, setQuick] = useState<{ draft: QuickCreateDraft; anchor: { x: number; y: number } } | null>(null);
 
   // Tick every minute for the "now" line and the today highlight.
@@ -166,6 +182,10 @@ export function CalendarBoard() {
         deepLinkApplied.current = deepLinkId;
         setAnchor(new Date(ev.starts_at));
         setScope("team");
+        if (ev.service_id) {
+          setAppointment({ event: ev });
+          return;
+        }
         setDrawerEvent(ev);
         setDrawerDefaults(undefined);
         setDrawerOpen(true);
@@ -178,6 +198,11 @@ export function CalendarBoard() {
 
   // ---- handlers ---------------------------------------------------
   const openEvent = useCallback((ev: CalendarEvent) => {
+    // Service appointments (096) have their own manage dialog: reschedule re-checks hours and conflicts.
+    if (ev.service_id) {
+      setAppointment({ event: ev });
+      return;
+    }
     setDrawerEvent(ev);
     setDrawerDefaults(undefined);
     setDrawerOpen(true);
@@ -201,11 +226,15 @@ export function CalendarBoard() {
     async (ev: CalendarEvent, newRange: { starts_at: string; ends_at: string }) => {
       upsertLocal({ ...ev, ...newRange });
       try {
-        const saved = await moveEvent(supabase, ev, newRange);
+        // Service appointments never take direct writes (096): the booking API re-checks hours and conflicts.
+        const saved = ev.service_id
+          ? await moveAppointment(ev, newRange.starts_at)
+          : await moveEvent(supabase, ev, newRange);
         upsertLocal(saved);
       } catch (err) {
         console.error("[calendar] move:", err);
-        toast.error(t("Failed to move appointment"));
+        // Appointments answer with the rule that refused the move (pt-BR, from the booking API).
+        toast.error(ev.service_id && err instanceof Error ? err.message : t("Failed to move appointment"));
         void load();
       }
     },
@@ -214,6 +243,12 @@ export function CalendarBoard() {
 
   const handleResize = useCallback(
     async (ev: CalendarEvent, endsAt: string) => {
+      if (ev.service_id) {
+        // The length comes from the service: nothing to resize.
+        toast.error(agendaCopy(language).resizeBlocked);
+        void load();
+        return;
+      }
       upsertLocal({ ...ev, ends_at: endsAt });
       try {
         const saved = await resizeEvent(supabase, ev, endsAt);
@@ -224,7 +259,7 @@ export function CalendarBoard() {
         void load();
       }
     },
-    [supabase, upsertLocal, load, t],
+    [supabase, upsertLocal, load, t, language],
   );
 
   const handleCreateSlot = useCallback((draft: QuickCreateDraft, at: { x: number; y: number }) => {
@@ -271,6 +306,15 @@ export function CalendarBoard() {
         )}
         <div className="ml-auto flex items-center gap-1.5">
           <DensityToggle density={density} onToggle={toggleDensity} label={copy.compact} />
+          <GatedButton
+            canAct={canWrite}
+            gateReason="create appointments"
+            variant="outline"
+            onClick={() => setAppointment({ event: null })}
+          >
+            <CalendarCheck className="mr-1 size-4" />
+            {copy.book}
+          </GatedButton>
           <GatedButton
             canAct={canWrite}
             gateReason="create appointments"
@@ -397,6 +441,14 @@ export function CalendarBoard() {
           onCancel={() => setQuick(null)}
         />
       )}
+
+      <AppointmentDialog
+        open={appointment !== null}
+        onOpenChange={(o) => !o && setAppointment(null)}
+        event={appointment?.event ?? null}
+        readOnly={!canWrite}
+        onSaved={upsertLocal}
+      />
 
       <EventDrawer
         open={drawerOpen}

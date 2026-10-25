@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { CalendarDays, Loader2, Plus } from "lucide-react";
+import { CalendarCheck, CalendarDays, Loader2, Plus } from "lucide-react";
 
 import { useLanguage } from "@/hooks/use-language";
-import { eventHref, formatEventRange, type CalendarEvent, type CalendarEventInput, type EventLinkFilter } from "@/lib/calendar";
+import { eventHref, formatEventRange, type CalendarContactRef, type CalendarEvent, type CalendarEventInput, type EventLinkFilter } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
+
+import { AppointmentDialog } from "@/components/agenda/appointment-dialog";
+import { agendaCopy } from "@/components/agenda/copy";
 
 import { chipStyle, eventColor } from "./colors";
 import { EventDrawer } from "./event-drawer";
@@ -23,6 +26,8 @@ function nextSlot(): QuickCreateDraft {
 export interface LinkedEventsProps extends EventLinkFilter {
   /** Prefill for the inline "+" and the drawer (links + title). */
   defaults?: Partial<CalendarEventInput>;
+  /** Full contact (name shown in the booking dialog); optional. */
+  contact?: CalendarContactRef | null;
   /** Hide the "+" (viewer role, module off for writing, …). */
   readOnly?: boolean;
   /** Render the section header (icon + label + count + "+"). Default true. */
@@ -46,6 +51,7 @@ export interface LinkedEventsProps extends EventLinkFilter {
  */
 export function LinkedEvents({
   contactId,
+  contact,
   conversationId,
   dealId,
   taskId,
@@ -67,6 +73,9 @@ export function LinkedEvents({
   const [drawerEvent, setDrawerEvent] = useState<CalendarEvent | null>(null);
   const [drawerDefaults, setDrawerDefaults] = useState<Partial<CalendarEventInput> | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Service appointments (096): book / manage dialog.
+  const [appt, setAppt] = useState<{ event: CalendarEvent | null } | null>(null);
+  const agenda = agendaCopy(language);
 
   const linkDefaults: Partial<CalendarEventInput> = {
     contact_id: contactId ?? undefined,
@@ -135,6 +144,10 @@ export function LinkedEvents({
                 <button
                   type="button"
                   onClick={() => {
+                    if (ev.service_id) {
+                      setAppt({ event: ev });
+                      return;
+                    }
                     setDrawerEvent(ev);
                     setDrawerDefaults(undefined);
                     setDrawerOpen(true);
@@ -154,6 +167,15 @@ export function LinkedEvents({
             ))}
           </ul>
         )}
+        {!readOnly && contactId && (
+          <button
+            type="button"
+            onClick={() => setAppt({ event: null })}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <CalendarCheck className="size-3" /> {agenda.scheduleService}
+          </button>
+        )}
         {linked.events.length > 0 && (
           <Link
             href={eventHref(linked.events[0].id)}
@@ -163,6 +185,18 @@ export function LinkedEvents({
           </Link>
         )}
       </div>
+      <AppointmentDialog
+        open={appt !== null}
+        onOpenChange={(o) => !o && setAppt(null)}
+        event={appt?.event ?? null}
+        contact={contact ?? (contactId ? { id: contactId, name: null, phone: "", avatar_url: null } : null)}
+        conversationId={conversationId ?? null}
+        readOnly={readOnly}
+        onSaved={(ev) => {
+          linked.patch(ev);
+          onCreated?.(ev);
+        }}
+      />
       <EventDrawer
         open={drawerOpen}
         onOpenChange={setDrawerOpen}

@@ -28,6 +28,13 @@ export type {
   CalendarTaskRef,
 };
 
+/** Statuses that still occupy time on the calendar (upcoming lists, conflicts, the sidebar badge). */
+export const ACTIVE_EVENT_STATUSES: CalendarEventStatus[] = ['confirmed', 'scheduled'];
+
+export function isActiveEventStatus(status: CalendarEventStatus): boolean {
+  return ACTIVE_EVENT_STATUSES.includes(status);
+}
+
 /** Reminder offsets the DB check constraint accepts (minutes). */
 export const REMINDER_OPTIONS = [5, 10, 15, 30, 60, 1440] as const;
 export type ReminderMinutes = (typeof REMINDER_OPTIONS)[number];

@@ -112,6 +112,14 @@ function resolveDeps(deps: SyncDeps) {
 
 type Resolved = ReturnType<typeof resolveDeps>
 
+/** SQLSTATEs that a retry cannot fix: exclusion, check, foreign key, permission. */
+const DETERMINISTIC_ROW_ERRORS = new Set(['23P01', '23514', '23503', '42501'])
+
+function isDeterministicRowError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code
+  return typeof code === 'string' && DETERMINISTIC_ROW_ERRORS.has(code)
+}
+
 function errorText(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   return msg.length > MAX_ERROR_LEN ? `${msg.slice(0, MAX_ERROR_LEN - 1)}…` : msg
@@ -201,6 +209,36 @@ async function applyInbound(
 ): Promise<void> {
   const existing = await r.store.findByExternalId(conn.id, item.external_id)
 
+  // Service appointments (096) are outbound-only: the provider can neither move,
+  // cancel nor reopen them (that would skip hours / conflicts). Refresh the stamp
+  // and clear the hash so the next push restores our version; a remote delete
+  // unbinds the row so it is re-created.
+  if (existing?.service_id) {
+    if (item.deleted) {
+      const open = existing.status === 'scheduled' || existing.status === 'confirmed'
+      // Open appointment: unbind but keep the connection, so the next push re-creates it.
+      // Closed one (cancelled / completed / no-show): unbind completely, nothing to re-create.
+      await r.store.updateEvent(existing.id, {
+        ...(open ? {} : { external_connection_id: null }),
+        external_id: null,
+        external_etag: null,
+        external_updated_at: null,
+        sync_hash: open ? null : syncHash(existing),
+      })
+    } else {
+      // The echo of our own push (same mirrored fields) keeps the hash: nothing to send back.
+      // A real remote change clears it so the next push restores our version.
+      const echo = syncHash(item.fields!) === syncHash(existing)
+      await r.store.updateEvent(existing.id, {
+        external_etag: item.external_etag,
+        external_updated_at: item.external_updated_at,
+        ...(echo ? {} : { sync_hash: null }),
+      })
+    }
+    counts.skipped++
+    return
+  }
+
   if (item.deleted) {
     if (!existing) return
     if (existing.status === 'cancelled') return
@@ -279,8 +317,9 @@ async function runInbound(
   tz: string,
   counts: SyncCounts,
   r: Resolved,
-): Promise<{ cursor: string | null; complete: boolean }> {
+): Promise<{ cursor: string | null; complete: boolean; skipped: string[] }> {
   let cursor = conn.sync_cursor
+  const skipped: string[] = []
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await adapter.listChanges(r.http, {
       accessToken,
@@ -293,8 +332,20 @@ async function runInbound(
       cursor = null
       continue
     }
-    for (const item of res.items) await applyInbound(conn, item, counts, r)
-    return { cursor: res.cursor, complete: res.done }
+    for (const item of res.items) {
+      try {
+        await applyInbound(conn, item, counts, r)
+      } catch (err) {
+        // Only a deterministic per-row refusal (constraint / permission) is skipped: retrying
+        // it can never succeed and must not block the connection. Anything else (a DB blip)
+        // aborts the run so the cursor stays and the change is read again next time.
+        if (!isDeterministicRowError(err)) throw err
+        console.error('[calendar-sync] inbound item skipped:', conn.provider, item.external_id, errorText(err))
+        counts.skipped++
+        skipped.push(item.external_id)
+      }
+    }
+    return { cursor: res.cursor, complete: res.done, skipped }
   }
   throw new Error(`${conn.provider}: the change feed reset twice in a row`)
 }
@@ -411,7 +462,8 @@ export async function syncConnection(conn: CalendarConnection, deps: SyncDeps): 
     await r.store.saveConnection(conn.id, {
       sync_cursor: inbound.cursor,
       last_sync_at: r.now().toISOString(),
-      last_error: null,
+      // Skipped rows are visible to the admin without turning the connection red.
+      last_error: inbound.skipped.length > 0 ? errorText(`${inbound.skipped.length} event(s) from the provider could not be applied`) : null,
       status: 'active',
     })
     return { ...base, ...counts, status: 'active', error: null, complete: inbound.complete }

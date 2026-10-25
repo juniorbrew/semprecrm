@@ -1273,7 +1273,9 @@ export interface ChatMember {
 // Logic in src/lib/calendar/.
 // ============================================================
 
-export type CalendarEventStatus = 'confirmed' | 'cancelled';
+// 'confirmed' / 'cancelled' since 040; the rest are appointments booked through
+// services (096): scheduled = awaiting confirmation, completed, no_show.
+export type CalendarEventStatus = 'scheduled' | 'confirmed' | 'cancelled' | 'no_show' | 'completed';
 
 /** Where an event came from: created here, or imported from a provider (migration 041). */
 export type CalendarEventSource = 'internal' | 'google' | 'microsoft';
@@ -1368,6 +1370,10 @@ export interface CalendarEvent {
   task_id: string | null;
   chat_thread_id: string | null;
   source: CalendarEventSource;
+  /** Agenda inteligente (096): set when the event is a service appointment. */
+  service_id?: string | null;
+  resource_id?: string | null;
+  booking_source?: 'agent' | 'ai' | 'api' | null;
   external_connection_id: string | null;
   external_id: string | null;
   external_etag: string | null;

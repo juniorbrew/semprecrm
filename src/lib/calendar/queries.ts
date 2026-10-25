@@ -7,7 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { eventOverlaps } from './range';
-import type { CalendarEvent, CalendarMember, CalendarScope } from './types';
+import { ACTIVE_EVENT_STATUSES, type CalendarEvent, type CalendarMember, type CalendarScope } from './types';
 
 export type CalendarClient = Pick<SupabaseClient, 'from'>;
 
@@ -109,7 +109,8 @@ export async function listEventsInRange(db: CalendarClient, opts: ListEventsOpti
     .order('starts_at', { ascending: true })
     .order('ends_at', { ascending: false });
   if (opts.accountId) q = q.eq('account_id', opts.accountId);
-  if (!opts.includeCancelled) q = q.eq('status', 'confirmed');
+  // Completed / no-show appointments stay visible (history); only cancelled ones hide.
+  if (!opts.includeCancelled) q = q.neq('status', 'cancelled');
   if (opts.ownerUserId) q = q.eq('owner_user_id', opts.ownerUserId);
   if (opts.limit) q = q.limit(opts.limit);
   const { data, error } = await q;
@@ -154,7 +155,8 @@ export async function listLinkedEvents(db: CalendarClient, opts: ListLinkedEvent
   if (opts.after !== null) {
     q = q.gt('ends_at', new Date(opts.after ?? Date.now()).toISOString());
   }
-  if (!opts.includeCancelled) q = q.eq('status', 'confirmed');
+  // Completed / no-show appointments stay visible (history); only cancelled ones hide.
+  if (!opts.includeCancelled) q = q.neq('status', 'cancelled');
   if (opts.limit) q = q.limit(opts.limit);
   const { data, error } = await q;
   if (error) fail('Failed to load events', error);
@@ -195,7 +197,7 @@ export async function listUpcomingEvents(
   let q = db
     .from('calendar_events')
     .select(EVENT_SELECT)
-    .eq('status', 'confirmed')
+    .in('status', ACTIVE_EVENT_STATUSES)
     .eq('all_day', false)
     .gte('starts_at', now.toISOString())
     .lte('starts_at', to.toISOString())

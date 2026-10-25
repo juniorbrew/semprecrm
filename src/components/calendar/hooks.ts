@@ -146,7 +146,7 @@ export function useLinkedEvents(opts: UseLinkedEventsOptions): LinkedEventsState
     (event: CalendarEvent) => {
       setEvents((prev) => {
         const next = prev.filter((x) => x.id !== event.id);
-        if (event.status !== "confirmed" || new Date(event.ends_at).getTime() <= Date.now()) return next;
+        if (event.status === "cancelled" || new Date(event.ends_at).getTime() <= Date.now()) return next;
         return [...next, event]
           .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
           .slice(0, limit);

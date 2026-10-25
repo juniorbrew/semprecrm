@@ -20,8 +20,10 @@ function routes(dir: string): string[] {
 }
 
 const MUTATING = /^export (?:async )?function (?:POST|PATCH|PUT|DELETE)\b|^export const (?:POST|PATCH|PUT|DELETE)\b/m
-const ADMIN_CLIENT = /supabaseAdmin\b|createAdminClient|admin-client/
-const GUARDED = /requireWritable|requireModule/
+// agendaWriter() = the service-role client of the booking RPCs (src/lib/agenda/route.ts).
+const ADMIN_CLIENT = /supabaseAdmin\b|createAdminClient|admin-client|agendaWriter\b/
+// agendaContext(role, true) = requireRole + requireModule('calendar'), which refuses read-only accounts.
+const GUARDED = /requireWritable|requireModule|agendaContext\([^)]*,\s*true\)/
 const EXEMPT = /^\/\/ read-only: allowed \(.+\)/m
 
 const writers = routes(root)

@@ -6,6 +6,8 @@
 
 import type { CalendarEvent } from '@/types';
 
+import { isActiveEventStatus } from './types';
+
 export interface ConflictCandidate {
   /** Ignored when comparing against the list (the event being edited). */
   id?: string | null;
@@ -36,7 +38,7 @@ export function findConflicts<T extends ConflictRow>(candidate: ConflictCandidat
       (o) =>
         o.id !== candidate.id &&
         o.owner_user_id === candidate.owner_user_id &&
-        o.status === 'confirmed' &&
+        isActiveEventStatus(o.status) &&
         !o.all_day &&
         ms(o.starts_at) < e &&
         ms(o.ends_at) > s,
