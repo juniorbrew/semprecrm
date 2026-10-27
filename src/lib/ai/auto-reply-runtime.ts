@@ -133,6 +133,8 @@ export async function resolveConversationAgent(
   contactId: string,
   channel: string | null,
 ): Promise<AiAgent | null> {
+  // Auto-reply is WhatsApp only until the Instagram / Messenger automation part ships.
+  if (channel === 'instagram' || channel === 'messenger') return null;
   const { data: agents, error } = await db
     .from('ai_agents')
     .select(AGENT_COLUMNS)

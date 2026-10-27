@@ -12,7 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import type { WhatsAppChannel } from '@/types'
+import type { ConversationChannel, WhatsAppChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
 import {
   BULK_MAX_WAIT_MS,
@@ -30,14 +30,15 @@ import { claimEchoedRow } from './phone-echo'
 export async function conversationChannel(
   db: SupabaseClient,
   conversationId: string,
-): Promise<WhatsAppChannel> {
+): Promise<ConversationChannel> {
   const { data, error } = await db
     .from('conversations')
     .select('channel')
     .eq('id', conversationId)
     .maybeSingle()
   if (error || !data) return 'official'
-  return data.channel === 'qr' ? 'qr' : 'official'
+  const channel = data.channel
+  return channel === 'qr' || channel === 'instagram' || channel === 'messenger' ? channel : 'official'
 }
 
 /**

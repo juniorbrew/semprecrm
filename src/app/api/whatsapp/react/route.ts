@@ -114,6 +114,13 @@ export async function POST(request: Request) {
       );
     }
 
+    if (conversation.channel === 'instagram' || conversation.channel === 'messenger') {
+      return NextResponse.json(
+        { error: 'Reactions are not available on Instagram or Messenger conversations' },
+        { status: 400 },
+      );
+    }
+
     const contact = Array.isArray(conversation.contact)
       ? conversation.contact[0]
       : conversation.contact;

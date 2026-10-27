@@ -32,6 +32,7 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   nothing_to_answer: "Nothing to answer",
   outside_hours: "Outside business hours",
   meta_window_closed: "24 h window closed",
+  channel_unsupported: "Channel not supported yet",
   contact_opted_out: "Contact opted out",
   contact_anonymized: "Contact anonymized",
   conversation_closed: "Conversation resolved",

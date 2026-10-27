@@ -214,6 +214,7 @@ export type CsatSkipReason =
   | 'cooldown'
   | 'window_closed'
   | 'no_phone'
+  | 'channel_unsupported'
 
 export const CSAT_JOB_ONLY_REASONS: readonly CsatSkipReason[] = [
   'reopened',
@@ -259,6 +260,8 @@ export function csatSkipReason(i: CsatEligibilityInput): CsatSkipReason | null {
   }
   if (i.contact.opted_out_at || i.contact.anonymized_at) return 'opted_out'
   if (!i.contact.phone) return 'no_phone'
+  // WhatsApp-only until the Instagram / Messenger automation part ships.
+  if (c.channel === 'instagram' || c.channel === 'messenger') return 'channel_unsupported'
   if (!c.last_customer_message_at) return 'no_customer_message'
   if (c.last_agent_message_at === null) return 'no_agent_message'
   if (c.resolved_at) {

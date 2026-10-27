@@ -192,7 +192,11 @@ async function prepare(
     .order('created_at', { ascending: false })
     .limit(10);
   if (convs.error) throw new Error(convs.error.message);
-  const conv = pickConversation((convs.data ?? []) as ConversationRow[], event.conversation_id);
+  // Reminders are WhatsApp-only: an Instagram / Messenger conversation is never a candidate.
+  const whatsappConvs = ((convs.data ?? []) as ConversationRow[]).filter(
+    (c) => c.channel !== 'instagram' && c.channel !== 'messenger',
+  );
+  const conv = pickConversation(whatsappConvs, event.conversation_id);
   if (!conv) throw new Skip('no_conversation');
 
   const [service, resource, tz] = await Promise.all([

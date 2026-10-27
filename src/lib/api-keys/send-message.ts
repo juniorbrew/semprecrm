@@ -103,6 +103,10 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
 
   let channel: WhatsAppChannel
   if (active) {
+    // The API sends by phone, over WhatsApp only: never into an Instagram / Messenger conversation.
+    if (active.channel === 'instagram' || active.channel === 'messenger') {
+      throw new ApiSendError(409, 'channel_conflict', `This contact has an open conversation on the "${active.channel}" channel, which the API cannot send on.`)
+    }
     channel = active.channel === 'qr' ? 'qr' : 'official'
     if (requested && requested !== channel) {
       throw new ApiSendError(409, 'channel_conflict', `This contact has an open conversation on the "${channel}" channel.`)

@@ -72,6 +72,7 @@ export type SkipReason =
   | 'ai_paused'
   | 'group_chat'
   | 'meta_window_closed'
+  | 'channel_unsupported'
   | 'outside_hours'
   | 'daily_cap';
 
@@ -119,6 +120,8 @@ export function checkEligibility(i: EligibilityInput): Eligibility {
   if (c.archived_at) return { ok: false, reason: 'conversation_archived' };
   if (c.status === 'closed') return { ok: false, reason: 'conversation_closed' };
   if (isPausedUntil(c.ai_paused_until, now)) return { ok: false, reason: 'ai_paused' };
+  // WhatsApp only until the Instagram / Messenger automation part ships.
+  if (c.channel === 'instagram' || c.channel === 'messenger') return { ok: false, reason: 'channel_unsupported' };
   if (i.isGroup && agent.ignore_groups) return { ok: false, reason: 'group_chat' };
   if ((c.channel ?? 'official') === 'official') {
     const last = c.last_customer_message_at ? Date.parse(c.last_customer_message_at) : NaN;
