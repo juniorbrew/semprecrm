@@ -12,7 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import type { ConversationChannel, WhatsAppChannel } from '@/types'
+import type { ConversationChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
 import {
   BULK_MAX_WAIT_MS,

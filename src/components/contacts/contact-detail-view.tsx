@@ -168,7 +168,7 @@ export function ContactDetailView({
     if (data) {
       setContact(data);
       setEditName(data.name ?? '');
-      setEditPhone(data.phone);
+      setEditPhone(data.phone ?? '');
       setEditEmail(data.email ?? '');
       setEditCompany(data.company ?? '');
     }
@@ -278,7 +278,7 @@ export function ContactDetailView({
   }
 
   async function copyPhone() {
-    if (!contact) return;
+    if (!contact?.phone) return;
     await navigator.clipboard.writeText(contact.phone);
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
@@ -330,7 +330,7 @@ export function ContactDetailView({
   }
 
   async function saveDetails() {
-    if (!contactId || !editPhone.trim()) {
+    if (!contactId || (!editPhone.trim() && !hasOtherIdentity)) {
       toast.error(t('Phone number is required'));
       return;
     }
@@ -340,7 +340,7 @@ export function ContactDetailView({
       .from('contacts')
       .update({
         name: editName.trim() || null,
-        phone: editPhone.trim(),
+        phone: editPhone.trim() || null,
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
         updated_at: new Date().toISOString(),
@@ -361,7 +361,7 @@ export function ContactDetailView({
   function cancelEdit() {
     if (contact) {
       setEditName(contact.name ?? '');
-      setEditPhone(contact.phone);
+      setEditPhone(contact.phone ?? '');
       setEditEmail(contact.email ?? '');
       setEditCompany(contact.company ?? '');
     }
@@ -493,6 +493,8 @@ export function ContactDetailView({
   }
 
   const hasConversation = conversations.length > 0;
+  // Instagram / Messenger contacts (migration 100) have no phone; the phone stays optional for them.
+  const hasOtherIdentity = !!(contact?.instagram_id || contact?.messenger_id);
   const displayName = contact?.name || contact?.phone || '';
 
   return (
@@ -554,6 +556,7 @@ export function ContactDetailView({
                     </div>
                   )}
                   <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    {contact.phone && (
                     <button
                       type="button"
                       onClick={copyPhone}
@@ -568,6 +571,7 @@ export function ContactDetailView({
                         <Copy className="size-3 shrink-0 opacity-70" />
                       )}
                     </button>
+                    )}
                     {contact.email && (
                       <span className="flex max-w-full items-center gap-1.5">
                         <Mail className="size-3 shrink-0" />
@@ -645,7 +649,7 @@ export function ContactDetailView({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">
-                      {t('Phone')} <span className="text-red-400">*</span>
+                      {t('Phone')} {!hasOtherIdentity && <span className="text-red-400">*</span>}
                     </Label>
                     <Input
                       value={editPhone}

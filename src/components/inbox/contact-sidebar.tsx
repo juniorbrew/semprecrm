@@ -68,6 +68,7 @@ import { PanelDeals } from "./panel-deals";
 import { PanelActivity } from "./panel-activity";
 import { PanelSituation } from "./panel-situation";
 import { PanelHistory, PanelPreviousConversations } from "./panel-history";
+import { contactLabel } from "@/lib/contacts/label";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -698,7 +699,7 @@ export function ContactSidebar({
 
   const panelLoaded = loadedFor === contact.id;
   const activityLabel = language === "pt-BR" ? "Atividade" : "Activity";
-  const displayName = contact.name || contact.phone;
+  const displayName = contactLabel(contact);
   const panelNotes = notes.slice(0, MAX_PANEL_NOTES);
   const hiddenNotes = notes.length - panelNotes.length;
 

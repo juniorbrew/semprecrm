@@ -124,6 +124,8 @@ import {
 } from "@/lib/conversations/timeline";
 import { toast } from "sonner";
 import { renderTemplateBody } from "@/lib/whatsapp/template-body";
+import { contactLabel } from "@/lib/contacts/label";
+import { MESSAGING_LABEL, isMetaMessagingChannel } from "@/lib/meta-messaging/channels";
 import {
   anchoredScrollTop,
   mergeOlder,
@@ -1815,12 +1817,15 @@ export function MessageThread({
     );
   }
 
-  const displayName = contact.name || contact.phone;
+  const displayName = contactLabel(contact);
   const status = conversation.status;
   // Transport this thread lives on. The 24 h window and templates are
   // Cloud API concepts, so both are hidden for QR conversations.
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
-  const isOfficial = channel === "official";
+  // Instagram / Messenger (migration 100): the 24 h window applies, templates and typing do not.
+  const messaging = isMetaMessagingChannel(conversation.channel) ? conversation.channel : null;
+  const isOfficial = channel === "official" && !messaging;
+  const hasWindow = isOfficial || !!messaging;
   const isResolved = status === "closed";
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
@@ -1926,13 +1931,18 @@ export function MessageThread({
                 {isArchived ? statusCopy.archivedLabel : statusCopy.labels[status]}
               </span>
               <span aria-hidden>·</span>
-              {/* Channel — QR vs official (migration 026). */}
+              {/* Channel — QR vs official (migration 026), Instagram, Messenger (100). */}
               <span
                 data-no-translate
-                title={statusCopy.channelTitle[channel]}
-                className={cn("shrink-0", channel === "qr" && "text-amber-600 dark:text-amber-400")}
+                title={messaging ? MESSAGING_LABEL[messaging] : statusCopy.channelTitle[channel]}
+                className={cn(
+                  "shrink-0",
+                  messaging
+                    ? "text-fuchsia-600 dark:text-fuchsia-400"
+                    : channel === "qr" && "text-amber-600 dark:text-amber-400",
+                )}
               >
-                {statusCopy.channelChip[channel]}
+                {messaging ? MESSAGING_LABEL[messaging] : statusCopy.channelChip[channel]}
               </span>
               {contact.company && (
                 <>
@@ -1945,7 +1955,7 @@ export function MessageThread({
               {/* 24 h session window — official channel only, and only
                   when the thread is >= 32rem wide; the composer banner
                   explains an expired window. */}
-              {isOfficial && (
+              {hasWindow && (
                 <Badge
                   variant="outline"
                   title={sessionInfo.remaining}
@@ -1959,14 +1969,18 @@ export function MessageThread({
                   {sessionInfo.short}
                 </Badge>
               )}
-              <span aria-hidden>·</span>
-              <span
-                data-no-translate
-                className="min-w-0 truncate tabular-nums"
-                title={contact.phone}
-              >
-                {contact.phone}
-              </span>
+              {contact.phone && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span
+                    data-no-translate
+                    className="min-w-0 truncate tabular-nums"
+                    title={contact.phone}
+                  >
+                    {contact.phone}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -2641,9 +2655,9 @@ export function MessageThread({
         conversationId={conversation.id}
         onScheduled={() => setScheduledRefresh((n) => n + 1)}
         restoreDraft={restoreDraft}
-        sessionExpired={isOfficial && sessionInfo.expired}
+        sessionExpired={hasWindow && sessionInfo.expired}
         templatesEnabled={isOfficial}
-        typingIndicator={!isOfficial}
+        typingIndicator={!isOfficial && !messaging}
         contactName={contact?.name ?? conversation.contact?.name ?? null}
         onSend={handleSend}
         onSendMedia={handleSendMedia}

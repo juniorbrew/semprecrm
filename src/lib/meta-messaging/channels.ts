@@ -9,6 +9,12 @@
 
 import type { ConversationChannel, MetaMessagingChannel, WhatsAppChannel } from '@/types'
 
+/** Brand names: shown as-is in every language. */
+export const MESSAGING_LABEL: Record<MetaMessagingChannel, string> = {
+  instagram: 'Instagram',
+  messenger: 'Messenger',
+}
+
 export function isMetaMessagingChannel(channel: unknown): channel is MetaMessagingChannel {
   return channel === 'instagram' || channel === 'messenger'
 }

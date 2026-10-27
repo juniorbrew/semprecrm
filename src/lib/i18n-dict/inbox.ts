@@ -128,6 +128,8 @@ export const DICT_INBOX: Record<string, string> = {
   Filters: 'Filtros',
   Tag: 'Etiqueta',
   Both: 'Ambos',
+  Channel: 'Canal',
+  'All channels': 'Todos os canais',
   Official: 'Oficial',
   QR: 'QR',
   'Clear filters': 'Limpar filtros',

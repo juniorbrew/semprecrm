@@ -39,6 +39,8 @@ import {
   sendViaGateway,
 } from '@/lib/whatsapp/qr-gateway'
 import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
+import { isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
+import { sendManualMessagingReply } from '@/lib/meta-messaging/manual-send'
 import {
   MediaUrlNaoPermitida,
   assertAccountMediaUrl,
@@ -246,6 +248,23 @@ export async function POST(request: Request) {
         },
         { status: 409 },
       )
+    }
+
+    // Instagram / Messenger (migration 100): no phone, its own Graph API, 24 h window, no templates.
+    if (isMetaMessagingChannel(conversation.channel)) {
+      const result = await sendManualMessagingReply({
+        db: supabase,
+        admin: supabaseAdmin(),
+        accountId,
+        userId: user.id,
+        conversation: { ...conversation, channel: conversation.channel, contact },
+        messageType: message_type,
+        contentText: content_text || null,
+        mediaUrl: media_url || null,
+        publicMediaUrl: isMediaKind ? storageUrlForPublic(mediaObjectPath) : null,
+        replyToMessageId: reply_to_message_id || null,
+      })
+      return NextResponse.json(result.body, { status: result.status })
     }
 
     if (!contact?.phone) {
