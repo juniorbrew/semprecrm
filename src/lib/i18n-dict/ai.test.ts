@@ -54,6 +54,9 @@ const KEYS = [
   ...LAB_SCENARIOS.flatMap((s) => [s.label, ...s.expect]),
   LAB_LIMITS,
   ...SAFETY_CHECKS.flatMap((c) => [c.title, c.protects]),
+  'What it can do',
+  'Actions the agent takes on its own during the conversation. All start off.',
+  'Your plan does not include the Agenda module.',
   ...[
     { enabled: false, mode: 'suggest', paused_at: null },
     { enabled: true, mode: 'suggest', paused_at: null },

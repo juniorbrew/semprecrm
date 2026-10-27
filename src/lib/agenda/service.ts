@@ -135,6 +135,45 @@ export async function getAvailability(db: AgendaDb, q: AvailabilityQuery): Promi
   };
 }
 
+export interface ServiceAvailability {
+  service: AgendaService;
+  resources: AgendaResource[];
+  slots: Slot[];
+}
+
+/**
+ * Free slots of every active service at once (the AI's offer): one config
+ * read and one busy read for all the resources, instead of one per service.
+ */
+export async function getAvailabilityForServices(
+  db: AgendaDb,
+  q: { accountId: string; from: string; to: string; now?: Date },
+): Promise<{ timezone: string; services: ServiceAvailability[] }> {
+  if (!isDateString(q.from) || !isDateString(q.to) || q.to < q.from) throw new AgendaError('validation', 'Período inválido.');
+  const dates = datesBetween(q.from, q.to);
+  if (dates.length > MAX_RANGE_DAYS) throw new AgendaError('validation', `Consulte no máximo ${MAX_RANGE_DAYS} dias por vez.`);
+  const config = await loadConfig(db, q.accountId, { from: dates[0], to: dates[dates.length - 1] });
+  const offered = config.services
+    .filter((s) => s.is_active)
+    .map((service) => ({ service, resources: resourcesForService(config, service.id) }))
+    .filter((x) => x.resources.length > 0);
+  if (offered.length === 0) return { timezone: config.timezone, services: [] };
+
+  const all = [...new Map(offered.flatMap((x) => x.resources).map((r) => [r.id, r])).values()];
+  const from = new Date(Date.parse(`${dates[0]}T00:00:00Z`) - 14 * 3_600_000);
+  const to = new Date(Date.parse(`${dates[dates.length - 1]}T00:00:00Z`) + DAY_MS + 14 * 3_600_000);
+  const busy = await loadBusy(db, q.accountId, all, from, to);
+  const now = q.now ?? new Date();
+  return {
+    timezone: config.timezone,
+    services: offered.map(({ service, resources }) => ({
+      service,
+      resources,
+      slots: computeSlots(inputFor(config, service, now, resources, busy), dates),
+    })),
+  };
+}
+
 // ------------------------------------------------------------
 // Booking
 // ------------------------------------------------------------

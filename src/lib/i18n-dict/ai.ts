@@ -406,6 +406,10 @@ export const DICT_AI: Record<string, string> = {
   'What it consults': 'O que ele consulta',
   'active items in the knowledge base.': 'itens ativos na base de conhecimento.',
   'Manage knowledge base': 'Gerenciar base de conhecimento',
+  'What it can do': 'O que ele pode fazer',
+  'Actions the agent takes on its own during the conversation. All start off.':
+    'Ações que o agente faz sozinho durante a conversa. Todas começam desligadas.',
+  'Your plan does not include the Agenda module.': 'Seu plano não inclui o módulo Agenda.',
   'When it steps in': 'Quando ele entra em ação',
   'Applies to automatic mode.': 'Vale para o modo automático.',
   'Only within business hours': 'Só dentro do horário de atendimento',

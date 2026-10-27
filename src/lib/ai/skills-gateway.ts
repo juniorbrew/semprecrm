@@ -5,10 +5,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { bookForAi, loadAgendaOffer } from '@/lib/agenda/ai';
 import { accountHasModule } from '@/lib/plans-server';
 import { createTask, dueInHours, listTaskStatuses } from '@/lib/tasks';
 
-import { SKILL_LIMITS, type AgentAction } from './skills';
+import { SKILL_LIMITS, type AgendaOffer, type AgentAction } from './skills';
 import type { ActionStatus, MoveDealResult, SkillGateway } from './skills-exec';
 
 export interface SkillScope {
@@ -49,24 +50,26 @@ async function stagesOf(db: SupabaseClient, pipelineId: string): Promise<{ id: s
   return (must(res, 'stages read') as { id: string; name: string }[] | null) ?? [];
 }
 
-/** What the prompt may offer the model: existing tag names and the open deal's stage names. */
+/** What the prompt may offer the model: tag names, the open deal's stage names, the agenda's free times. */
 export async function loadSkillContext(
   db: SupabaseClient,
   scope: Pick<SkillScope, 'accountId' | 'contactId'>,
-  want: { tags: boolean; stages: boolean },
-): Promise<{ tags: string[]; stages: string[] }> {
+  want: { tags: boolean; stages: boolean; agenda?: boolean },
+): Promise<{ tags: string[]; stages: string[]; agenda: AgendaOffer | null }> {
   const full = scope as SkillScope;
-  const [tags, stages] = await Promise.all([
+  const [tags, stages, agenda] = await Promise.all([
     want.tags
       ? db.from('tags').select('name').eq('account_id', scope.accountId).order('name').limit(SKILL_LIMITS.promptNamesMax)
       : Promise.resolve(null),
     want.stages
       ? openDeal(db, full).then((deal) => (deal ? stagesOf(db, deal.pipeline_id) : []))
       : Promise.resolve([]),
+    want.agenda ? loadAgendaOffer(db, scope.accountId) : Promise.resolve(null),
   ]);
   return {
     tags: tags ? ((must(tags, 'tags read') as { name: string }[] | null) ?? []).map((t) => t.name) : [],
     stages: stages.map((s) => s.name),
+    agenda,
   };
 }
 
@@ -159,6 +162,19 @@ export function supabaseSkillGateway(db: SupabaseClient, scope: SkillScope): Ski
         .eq('account_id', scope.accountId);
       if (error) throw new Error(`deal move failed: ${error.message}`);
       return 'moved';
+    },
+
+    async book(input) {
+      // The runtime only enables the skill with the module on; checked again at the moment of writing.
+      if (!(await accountHasModule(db, scope.accountId, 'calendar'))) throw new Error('calendar module is not enabled for this account');
+      return bookForAi(db, {
+        accountId: scope.accountId,
+        contactId: scope.contactId,
+        conversationId: scope.conversationId,
+        // Per job, not per position: a retry's model output may move or change the action.
+        idempotencyKey: `ai:${scope.jobId}:book`,
+        ...input,
+      });
     },
   };
 }

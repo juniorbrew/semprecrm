@@ -11,10 +11,12 @@
 // Only reversible actions exist; irreversible ones are not built.
 // ============================================================
 
-export const SKILL_IDS = ['internal_note', 'add_tag', 'create_task', 'move_deal_stage'] as const;
+import { isDateString } from '@/lib/agenda/availability';
+
+export const SKILL_IDS =['internal_note', 'add_tag', 'create_task', 'move_deal_stage', 'book_appointment'] as const;
 export type SkillId = (typeof SKILL_IDS)[number];
 
-export type SkillGroup = 'organize' | 'sell';
+export type SkillGroup = 'organize' | 'sell' | 'schedule';
 
 export interface SkillInfo {
   id: SkillId;
@@ -49,10 +51,18 @@ export const SKILLS: readonly SkillInfo[] = [
     label: 'Mover o negócio de etapa',
     description: 'Avança o negócio aberto do contato para outra etapa do mesmo funil.',
   },
+  {
+    id: 'book_appointment',
+    group: 'schedule',
+    label: 'Marcar horários',
+    description:
+      'Oferece os horários livres da agenda e marca o atendimento quando o cliente escolhe. A confirmação ao cliente é enviada pelo sistema, só depois de reservado. Precisa do módulo Agenda.',
+  },
 ];
 
 export const SKILL_GROUPS: readonly { id: SkillGroup; label: string }[] = [
   { id: 'sell', label: 'Vender e mover o funil' },
+  { id: 'schedule', label: 'Agendar' },
   { id: 'organize', label: 'Organizar a operação' },
 ];
 
@@ -74,13 +84,22 @@ export const SKILL_LIMITS = {
   dueMaxHours: 720,
   /** Names offered to the model (tags / stages) — a prompt-size bound. */
   promptNamesMax: 60,
+  /** Agenda offer in the prompt: services, days per service, start times per day. */
+  agendaServicesMax: 8,
+  agendaDaysMax: 5,
+  agendaTimesPerDayMax: 8,
+  agendaDaysAhead: 14,
+  /** Future appointments one contact may hold before the AI stops booking (a person still can). */
+  agendaFutureMaxPerContact: 3,
 } as const;
 
 export type AgentAction =
   | { skill: 'internal_note'; text: string }
   | { skill: 'add_tag'; tag: string }
   | { skill: 'create_task'; title: string; description: string | null; dueInHours: number | null }
-  | { skill: 'move_deal_stage'; stage: string };
+  | { skill: 'move_deal_stage'; stage: string }
+  /** date/time are LOCAL to the account's agenda timezone, as offered in the prompt. */
+  | { skill: 'book_appointment'; service: string; date: string; time: string; professional: string | null };
 
 // Control characters out, whitespace collapsed (keeps newlines out of one-line fields).
 const clean = (s: string) => s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -135,6 +154,18 @@ export function parseActions(raw: unknown, enabled: readonly SkillId[]): AgentAc
         if (t) action = { skill: 'move_deal_stage', stage: t };
         break;
       }
+      case 'book_appointment': {
+        // One booking per reply: a second one is never what the customer asked for.
+        if (out.some((x) => x.skill === 'book_appointment')) break;
+        const service = text(a.service, SKILL_LIMITS.stageMaxChars);
+        // A real calendar date: 2026-02-31 would roll over to another day.
+        const date = isDateString(a.date) ? a.date : null;
+        const time = typeof a.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(a.time) ? a.time : null;
+        if (service && date && time) {
+          action = { skill: 'book_appointment', service, date, time, professional: text(a.professional, SKILL_LIMITS.stageMaxChars) };
+        }
+        break;
+      }
     }
     if (!action) continue;
     const key = JSON.stringify(action);
@@ -151,6 +182,33 @@ export interface SkillsPromptInput {
   tags: readonly string[];
   /** Stage names of the contact's open deal's pipeline (only used when move_deal_stage is on). */
   stages: readonly string[];
+  /** Free times of the agenda (only used when book_appointment is on and the account has the agenda). */
+  agenda?: AgendaOffer | null;
+}
+
+/** What the model may book: services and their free start times, local to `timezone`. */
+export interface AgendaOffer {
+  timezone: string;
+  services: {
+    name: string;
+    minutes: number;
+    professionals: string[];
+    days: { date: string; label: string; times: string[] }[];
+  }[];
+}
+
+/** The offer as prompt lines: one line per service and day. Names are DATA. */
+function agendaLines(offer: AgendaOffer): string[] {
+  const lines: string[] = [];
+  for (const svc of offer.services.slice(0, SKILL_LIMITS.agendaServicesMax)) {
+    const name = clean(svc.name).slice(0, 80);
+    const pros = svc.professionals.map((p) => clean(p).slice(0, 80)).filter(Boolean);
+    lines.push(`- Serviço ${JSON.stringify(name)} (${svc.minutes} min)${pros.length ? `, profissionais: ${JSON.stringify(pros)}` : ''}:`);
+    const days = svc.days.filter((d) => d.times.length > 0).slice(0, SKILL_LIMITS.agendaDaysMax);
+    if (days.length === 0) lines.push('  sem horário livre nos próximos dias');
+    for (const d of days) lines.push(`  ${d.label} (${d.date}): ${d.times.slice(0, SKILL_LIMITS.agendaTimesPerDayMax).join(', ')}`);
+  }
+  return lines;
 }
 
 const names = (list: readonly string[]) =>
@@ -174,6 +232,13 @@ export function skillsPromptLines(input: SkillsPromptInput): string[] {
     } else if (id === 'move_deal_stage' && input.stages.length > 0) {
       shapes.push('{"skill": "move_deal_stage", "stage": "nome exato de uma etapa do funil"}');
       rules.push(`Etapas do funil do negócio deste contato (dados): ${names(input.stages)}. Use só um destes nomes, exatamente.`);
+    } else if (id === 'book_appointment' && input.agenda && input.agenda.services.length > 0) {
+      shapes.push('{"skill": "book_appointment", "service": "nome exato do serviço", "date": "AAAA-MM-DD", "time": "HH:MM", "professional": "nome exato ou null"}');
+      rules.push(
+        `Agenda (dados, fuso ${input.agenda.timezone}). Horários livres:`,
+        ...agendaLines(input.agenda),
+        'Para marcar: ofereça ao cliente só horários desta lista, nunca invente. Use "book_appointment" apenas quando o cliente já escolheu um serviço e um horário exatos desta lista (e o profissional, se ele pediu um). No "reply", não diga que já está marcado: diga que vai reservar; o sistema confirma ao cliente em seguida. Se nenhum horário servir, peça outro dia ou transfira para a equipe.',
+      );
     }
   }
   if (shapes.length === 0) return [];

@@ -8,6 +8,15 @@ vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => ({}) }))
 vi.mock('@/lib/automations/meta-send', () => ({ engineSendText: vi.fn() }));
 const h = vi.hoisted(() => ({ module: true }));
 vi.mock('@/lib/plans-server', () => ({ accountHasModule: async () => h.module }));
+// The agenda itself is tested in src/lib/agenda/ai.test.ts; here only what the runtime does with it.
+const agenda = vi.hoisted(() => ({ offer: null as unknown, booked: [] as { idempotencyKey: string }[] }));
+vi.mock('@/lib/agenda/ai', () => ({
+  loadAgendaOffer: async () => agenda.offer,
+  bookForAi: async (_db: unknown, input: { idempotencyKey: string }) => {
+    agenda.booked.push(input);
+    return { ok: true, service: 'Corte', professional: null, startsAt: '2026-09-30T13:00:00.000Z', timezone: 'America/Sao_Paulo' };
+  },
+}));
 const pushes = vi.hoisted(() => [] as { accountId: string; tag?: string }[]);
 vi.mock('@/lib/push/notify', () => ({
   notifyAccountAdmins: async (_db: unknown, accountId: string, p: { tag?: string }) => {
@@ -55,6 +64,7 @@ function deps(over: Partial<AutoReplyDeps> = {}): AutoReplyDeps {
       return { text: modelText, provider: 'openai', model: 'm', inputTokens: 1, outputTokens: 1, costCents: 0 };
     }) as unknown as AutoReplyDeps['runModel'],
     hasAiModule: async () => true,
+    hasCalendarModule: async () => true,
     sleep: async () => {},
     now: () => NOW,
     random: () => 0,
@@ -831,5 +841,55 @@ describe('skills (migration 080)', () => {
     modelText = JSON.stringify({ reply: null, handoff: true, reason: 'sem info', actions: [{ skill: 'internal_note', text: 'x' }] });
     await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
     expect(db.table('contact_notes') ?? []).toHaveLength(0);
+  });
+});
+
+describe('book_appointment (agenda delivery C)', () => {
+  const offer = {
+    timezone: 'America/Sao_Paulo',
+    services: [{ name: 'Corte', minutes: 60, professionals: [], days: [{ date: '2026-09-30', label: 'qua., 30/09', times: ['10:00'] }] }],
+  };
+  const booking = JSON.stringify({
+    reply: 'Vou reservar para você.',
+    handoff: false,
+    reason: '',
+    actions: [{ skill: 'book_appointment', service: 'Corte', date: '2026-09-30', time: '10:00' }],
+  });
+
+  beforeEach(() => {
+    agenda.offer = offer;
+    agenda.booked = [];
+    agentRow().skills = ['book_appointment'];
+    modelText = booking;
+  });
+
+  it('books once per job and the server confirms after the reply', async () => {
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+    expect(agenda.booked.map((b) => b.idempotencyKey)).toEqual(['ai:job-1:book']);
+    expect(sent).toEqual(['Vou reservar para você.', 'Pronto! Seu horário está reservado: Corte, quarta-feira, 30/09 às 10:00.']);
+    expect(db.table('ai_actions').map((a) => [a.skill, a.status])).toEqual([['book_appointment', 'ok']]);
+  });
+
+  it('no free times shown to the model: nothing is booked', async () => {
+    agenda.offer = { timezone: 'America/Sao_Paulo', services: [] };
+    await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+    expect(agenda.booked).toEqual([]);
+    expect(sent).toEqual(['Vou reservar para você.']);
+  });
+
+  it('without the Agenda module nothing is booked', async () => {
+    await runAutoReplyJob(job(), deps({ hasCalendarModule: async () => false }));
+    expect(agenda.booked).toEqual([]);
+  });
+
+  it('a person took over while the model ran: no booking, nothing sent', async () => {
+    const run = deps().runModel;
+    const closing = (async (input: never) => {
+      db.table('conversations')[0].status = 'closed';
+      return run(input);
+    }) as unknown as AutoReplyDeps['runModel'];
+    await expect(runAutoReplyJob(job(), deps({ runModel: closing }))).resolves.toBe('skipped');
+    expect(agenda.booked).toEqual([]);
+    expect(sent).toEqual([]);
   });
 });

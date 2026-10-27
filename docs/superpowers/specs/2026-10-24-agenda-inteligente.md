@@ -59,7 +59,7 @@ Um horário é livre quando: respeita a antecedência mínima; não passa de hoj
 ## Entregas seguintes
 
 - **B — Lembretes e confirmação por WhatsApp** (migration 097): abaixo.
-- **C — IA agenda no WhatsApp**: ferramenta da IA chama `getAvailability` e `bookAppointment` (`source: 'ai'`, `idempotencyKey` derivada da mensagem) com service-role; escolhe entre os horários devolvidos, nunca inventa.
+- **C — IA agenda no WhatsApp** (migration 098): no fim deste documento.
 - Fora do escopo agora: agendamento público por link, pagamento/sinal, recorrência, buffers recalculados em agendamentos antigos quando o serviço muda.
 
 ## Entrega B — lembretes e confirmação por WhatsApp (migration 097)
@@ -130,3 +130,28 @@ Decisões do dono (2026-10-25): lembrete 1 dia e 2 horas antes, cada um com opç
 - A janela de 24 h do canal oficial usa `conversations.last_customer_message_at` da conversa escolhida.
 - Botões de resposta rápida de modelos só são lidos pelo texto do botão (o envio de modelo não define `payload` de botão).
 - Entre a revalidação e o envio há uma janela de milissegundos em que um cancelamento ainda deixa o lembrete sair (o trigger só cancela `pending`).
+
+## Entrega C — a IA oferece e marca horários (migration 098)
+
+Uma nova habilidade do agente de IA, `book_appointment` ("Marcar horários"), desligada por padrão. A 098 só amplia as listas de habilidades conhecidas (080); a marcação usa a RPC `agenda_book_appointment` (096) com `p_source = 'ai'`.
+
+### Como funciona
+
+- **Ligar**: Configuração do agente → "O que ele pode fazer" (a primeira tela de habilidades; até aqui só a API aceitava `skills`). A chave fica travada para ligar quando o plano não tem o módulo Agenda; quem já tem ligado ainda pode desligar.
+- **Oferta** (`src/lib/agenda/ai.ts` → `loadAgendaOffer`): os horários livres de todos os serviços ativos com profissional, numa leitura de configuração e uma de ocupação (`getAvailabilityForServices`), nos próximos 14 dias. Vão para o prompt como dados: até 8 serviços, 5 dias por serviço e 8 horários por dia, espalhados de manhã a tarde (`spread`), no fuso da agenda.
+- **Marcar** (`bookForAi`): o modelo devolve serviço e profissional pelo **nome** e data/hora **locais**, como foram oferecidos. O servidor resolve os nomes (sem diferença de maiúsculas/acentos) contra o que existe e está ativo, e chama `bookAppointment` com `source: 'ai'` e chave `ai:<job>:book` (uma por job, não por posição): mesmas regras de uma pessoa, nunca encaixe, e a restrição do banco decide a corrida. Uma marcação por resposta; datas impossíveis (31/02) são recusadas no parse. Com profissional escolhido, vale qualquer horário dentro das regras, não só os listados no prompt (a lista é cortada por tamanho).
+- **Confirmação ao cliente**: o modelo nunca diz que está marcado ("vou reservar"). O resultado vira uma bolha a mais, enviada pelo servidor depois da resposta: "Pronto! Seu horário está reservado: …", ou "esse horário acabou de ser ocupado / não consegui reservar, me diga outro", ou, se algo quebrar, "alguém da equipe vai confirmar". Por isso um turno pode ter `max_messages_per_turn + 1` bolhas.
+- **Limite por cliente**: a IA não marca se o contato já tem 3 horários futuros ativos (`SKILL_LIMITS.agendaFutureMaxPerContact`); o cliente ouve que a equipe vai falar com ele. Uma pessoa ainda pode marcar.
+- **Portões**: sem o módulo Agenda a habilidade é tirada antes do prompt (`hasCalendarModule`) e o gateway confere de novo na hora de gravar; sem horário livre para mostrar (ou falha ao carregar a oferta) ela também sai. Antes de marcar, o runtime repete a checagem de última hora (`stillAnswering`): se um atendente assumiu, a conversa fechou ou o contato saiu enquanto o modelo pensava, o job é pulado e nada é marcado. O teste do agente (Laboratório) não executa habilidades, então nunca marca de verdade.
+- **Repetição do job**: se o job cai depois de marcar e antes de guardar a resposta, a nova tentativa chama a marcação de novo. `bookForAi` procura primeiro o agendamento da chave do job e, se existe, devolve esse (mesmo que o modelo agora peça outro horário ou ponha a ação noutra posição) e confirma ao cliente; se ele foi cancelado, não confirma nada. O registro em `ai_actions` não é reescrito. Se o registro falhar depois de marcar, o cliente recebe o resultado real.
+
+### Verificação
+
+`src/lib/agenda/ai.test.ts` (oferta igual à disponibilidade de cada serviço, horário ocupado não é oferecido, marcar por nome/profissional, serviço/profissional fora da oferta, ocupado, fora das regras), `skills.test.ts` (parse e prompt), `skills-exec.test.ts` (mensagens ao cliente, repetição do job, falha do registro), `auto-reply-runtime.test.ts` (marca uma vez por job e confirma, sem oferta não marca, sem módulo não marca, atendente assumiu durante o modelo) e `ai-agents.test.tsx` (seção de habilidades e trava sem o módulo). `ai.test.ts` também cobre a repetição com outro horário, o agendamento cancelado e o limite por cliente.
+
+### Limitações conhecidas
+
+- A IA ainda não remarca nem cancela; o "pedir para remarcar" do lembrete (B) continua indo para um humano.
+- Entre a checagem de última hora e o envio há uma janela pequena: se um atendente assumir nela, o horário fica marcado e a confirmação não sai (a equipe vê na agenda).
+- Nomes de serviço/profissional com mais de 80 caracteres aparecem cortados no prompt e não casam; nomes repetidos pegam o primeiro.
+- As mensagens de confirmação são fixas em pt-BR.

@@ -89,6 +89,8 @@ export interface AutoReplyDeps {
   pace: (accountId: string, channel: string | null) => Promise<void>;
   runModel: typeof runModelCall;
   hasAiModule: (db: SupabaseClient, accountId: string) => Promise<boolean>;
+  /** The agenda module: without it the agent's book_appointment skill is off. */
+  hasCalendarModule: (db: SupabaseClient, accountId: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   random: () => number;
@@ -102,6 +104,7 @@ export function defaultAutoReplyDeps(): AutoReplyDeps {
     pace: async () => {},
     runModel: runModelCall,
     hasAiModule: (db, accountId) => accountHasModule(db, accountId, 'ai'),
+    hasCalendarModule: (db, accountId) => accountHasModule(db, accountId, 'calendar'),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => new Date(),
     random: Math.random,
@@ -489,17 +492,24 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   ]);
   const instructions = suggestionInstructions((settings as { instructions?: string | null } | null)?.instructions ?? null, agentCfg);
   const knowledge = agentCfg.knowledge_enabled ? await loadKnowledge(db, job.account_id, pending) : [];
-  const skills = agentCfg.skills ?? [];
+  let skills = agentCfg.skills ?? [];
+  // Booking needs the agenda in the plan, like a person using the agenda does.
+  if (skills.includes('book_appointment') && !(await deps.hasCalendarModule(db, job.account_id))) {
+    skills = skills.filter((s) => s !== 'book_appointment');
+  }
   const skillCtx =
     skills.length > 0
       ? await loadSkillContext(db, { accountId: job.account_id, contactId: contact.id }, {
           tags: skills.includes('add_tag'),
           stages: skills.includes('move_deal_stage'),
+          agenda: skills.includes('book_appointment'),
         }).catch((err) => {
           console.error('[ai/auto-reply] skill context failed:', errText(err));
-          return { tags: [] as string[], stages: [] as string[] };
+          return { tags: [] as string[], stages: [] as string[], agenda: null };
         })
       : null;
+  // No free times shown to the model = nothing it may book.
+  if (!skillCtx?.agenda?.services.length) skills = skills.filter((s) => s !== 'book_appointment');
   const { system, prompt } = buildAutoReplyPrompt({
     accountName: (account as { name?: string } | null)?.name ?? '',
     contactName: contact.name ?? null,
@@ -567,10 +577,18 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   }
 
   // Skills: only after every guard passed, before the reply goes out. A failure
-  // is recorded per action (ai_actions) and never blocks the reply.
+  // is recorded per action (ai_actions) and never blocks the reply. A booking's
+  // result (confirmation, or why not) goes to the customer as the server's own
+  // bubble after the model's reply — the model never confirms a booking.
   const actions = parseActions(out.rawActions, skills);
+  // A booking is a promise to the customer: if a person took over (or the
+  // conversation closed) while the model ran, nothing would confirm it.
+  if (actions.some((a) => a.skill === 'book_appointment')) {
+    const stop = await stillAnswering(ctx);
+    if (stop) return skip(db, job.id, stop);
+  }
   if (actions.length > 0) {
-    await executeActions(
+    const results = await executeActions(
       actions,
       supabaseSkillGateway(db, {
         accountId: job.account_id,
@@ -580,7 +598,11 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
         jobId: job.id,
         ownerUserId: (conv.user_id as string | null) ?? null,
       }),
-    ).catch((err) => console.error('[ai/auto-reply] skills failed:', errText(err)));
+    ).catch((err) => {
+      console.error('[ai/auto-reply] skills failed:', errText(err));
+      return [];
+    });
+    for (const r of results) if (r.customerMessage) parts.push(r.customerMessage);
   }
 
   await patchJob(db, job.id, { reply_parts: parts, sent_parts: 0, reply_message_ids: job.inbound_message_ids });

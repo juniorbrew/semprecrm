@@ -22,6 +22,11 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }));
 
+const h = vi.hoisted(() => ({ calendar: true }));
+vi.mock('@/hooks/use-auth', () => ({
+  useEntitlements: () => ({ ready: true, modules: { calendar: h.calendar } }),
+}));
+
 const TAG = '11111111-1111-4111-8111-111111111111';
 
 const base: AiAgent = {
@@ -117,10 +122,10 @@ describe('AgentOperationBar', () => {
 });
 
 describe('AgentConfigForm', () => {
-  const form = (canEdit: boolean) =>
+  const form = (canEdit: boolean, agent: AiAgent = base) =>
     renderToString(
       <AgentConfigForm
-        agent={base}
+        agent={agent}
         provider="openai"
         accountModel="gpt-4.1-mini"
         knowledgeItems={3}
@@ -156,6 +161,25 @@ describe('AgentConfigForm', () => {
     expect(html).toContain('Isto não se desliga.');
     expect(html.match(/Isto não se desliga\./g)).toHaveLength(1);
     expect(html).toContain('Salvar');
+  });
+
+  it('skills: one switch per skill, grouped, booking locked without the Agenda module', () => {
+    const html = form(true, { ...base, skills: ['add_tag'] });
+    for (const s of ['O que ele pode fazer', 'Vender e mover o funil', 'Agendar', 'Organizar a operação', 'Aplicar etiqueta', 'Marcar horários']) {
+      expect(html).toContain(s);
+    }
+    expect(html.match(/role="switch"/g)?.length).toBeGreaterThanOrEqual(5);
+    expect(html).not.toContain('Seu plano não inclui o módulo Agenda.');
+
+    h.calendar = false;
+    try {
+      const locked = form(true);
+      expect(locked).toContain('Seu plano não inclui o módulo Agenda.');
+      // Already on: still shown so it can be turned off.
+      expect(form(true, { ...base, skills: ['book_appointment'] })).toContain('Seu plano não inclui o módulo Agenda.');
+    } finally {
+      h.calendar = true;
+    }
   });
 
   it('read-only for non-admins: no Save', () => {
