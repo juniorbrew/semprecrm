@@ -246,6 +246,12 @@ GRANT EXECUTE ON FUNCTION public.platform_update_account_v2(UUID,JSONB,UUID,UUID
 DO $$
 DECLARE v record; mods jsonb; new_id uuid; rev int;
 BEGIN
+  -- Re-run safe: a second run would re-add api/support an admin may have removed since.
+  IF EXISTS (SELECT 1 FROM public.platform_plan_versions WHERE actor_name = 'Sistema (099: módulos novos)') THEN
+    RETURN;
+  END IF;
+  -- No account / subscription may be created against an old version while we repoint.
+  LOCK TABLE public.accounts, public.account_billing IN SHARE ROW EXCLUSIVE MODE;
   CREATE TEMP TABLE version_map(old_id uuid PRIMARY KEY, new_id uuid NOT NULL) ON COMMIT DROP;
   FOR v IN
     SELECT pv.*, (c.current_version_id = pv.id) AS is_current
