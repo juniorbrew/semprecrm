@@ -271,14 +271,14 @@ export async function runDispatch(
   const deadline = now().getTime() + (opts.budgetMs ?? 40_000)
   const summary: DispatchSummary = { claimed: 0, delivered: 0, retrying: 0, failed: 0, held: 0, errors: 0 }
 
-  // One plan lookup per account per pass. Unreadable plan = fail closed (hold).
+  // One plan lookup per account per pass. Unreadable plan or no `api` module = fail closed (hold).
   const planCache = new Map<string, Promise<boolean>>()
   const accountActive =
     deps.accountActive ??
     ((accountId: string) => {
       let hit = planCache.get(accountId)
       if (!hit) {
-        hit = loadAccountEntitlements(deps.db, accountId).then((ent) => !!ent && !ent.blocked)
+        hit = loadAccountEntitlements(deps.db, accountId).then((ent) => !!ent && !ent.blocked && ent.modules.api)
         planCache.set(accountId, hit)
       }
       return hit

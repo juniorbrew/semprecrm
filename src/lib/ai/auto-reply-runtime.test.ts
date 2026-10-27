@@ -64,7 +64,7 @@ function deps(over: Partial<AutoReplyDeps> = {}): AutoReplyDeps {
       return { text: modelText, provider: 'openai', model: 'm', inputTokens: 1, outputTokens: 1, costCents: 0 };
     }) as unknown as AutoReplyDeps['runModel'],
     hasAiModule: async () => true,
-    hasCalendarModule: async () => true,
+    hasModule: async () => true,
     sleep: async () => {},
     now: () => NOW,
     random: () => 0,
@@ -878,7 +878,12 @@ describe('book_appointment (agenda delivery C)', () => {
   });
 
   it('without the Agenda module nothing is booked', async () => {
-    await runAutoReplyJob(job(), deps({ hasCalendarModule: async () => false }));
+    await runAutoReplyJob(job(), deps({ hasModule: async (_db, _id, m) => m !== 'calendar' }));
+    expect(agenda.booked).toEqual([]);
+  });
+
+  it('without the AI actions module the agent only talks', async () => {
+    await expect(runAutoReplyJob(job(), deps({ hasModule: async (_db, _id, m) => m !== 'ai_actions' }))).resolves.toBe('replied');
     expect(agenda.booked).toEqual([]);
   });
 

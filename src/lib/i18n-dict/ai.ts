@@ -410,6 +410,7 @@ export const DICT_AI: Record<string, string> = {
   'Actions the agent takes on its own during the conversation. All start off.':
     'Ações que o agente faz sozinho durante a conversa. Todas começam desligadas.',
   'Your plan does not include the Agenda module.': 'Seu plano não inclui o módulo Agenda.',
+  'Your plan does not include AI actions.': 'Seu plano não inclui ações da IA.',
   'When it steps in': 'Quando ele entra em ação',
   'Applies to automatic mode.': 'Vale para o modo automático.',
   'Only within business hours': 'Só dentro do horário de atendimento',

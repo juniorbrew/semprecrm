@@ -89,8 +89,8 @@ export interface AutoReplyDeps {
   pace: (accountId: string, channel: string | null) => Promise<void>;
   runModel: typeof runModelCall;
   hasAiModule: (db: SupabaseClient, accountId: string) => Promise<boolean>;
-  /** The agenda module: without it the agent's book_appointment skill is off. */
-  hasCalendarModule: (db: SupabaseClient, accountId: string) => Promise<boolean>;
+  /** Plan modules gating skills: `ai_actions` for any of them, `calendar` for booking. */
+  hasModule: (db: SupabaseClient, accountId: string, module: 'ai_actions' | 'calendar') => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   random: () => number;
@@ -104,7 +104,7 @@ export function defaultAutoReplyDeps(): AutoReplyDeps {
     pace: async () => {},
     runModel: runModelCall,
     hasAiModule: (db, accountId) => accountHasModule(db, accountId, 'ai'),
-    hasCalendarModule: (db, accountId) => accountHasModule(db, accountId, 'calendar'),
+    hasModule: (db, accountId, module) => accountHasModule(db, accountId, module),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => new Date(),
     random: Math.random,
@@ -493,8 +493,10 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
   const instructions = suggestionInstructions((settings as { instructions?: string | null } | null)?.instructions ?? null, agentCfg);
   const knowledge = agentCfg.knowledge_enabled ? await loadKnowledge(db, job.account_id, pending) : [];
   let skills = agentCfg.skills ?? [];
+  // Acting at all needs `ai_actions` (099); without it the agent only talks.
+  if (skills.length > 0 && !(await deps.hasModule(db, job.account_id, 'ai_actions'))) skills = [];
   // Booking needs the agenda in the plan, like a person using the agenda does.
-  if (skills.includes('book_appointment') && !(await deps.hasCalendarModule(db, job.account_id))) {
+  if (skills.includes('book_appointment') && !(await deps.hasModule(db, job.account_id, 'calendar'))) {
     skills = skills.filter((s) => s !== 'book_appointment');
   }
   const skillCtx =

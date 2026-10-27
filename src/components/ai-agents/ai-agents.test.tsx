@@ -22,9 +22,9 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }));
 
-const h = vi.hoisted(() => ({ calendar: true }));
+const h = vi.hoisted(() => ({ calendar: true, aiActions: true }));
 vi.mock('@/hooks/use-auth', () => ({
-  useEntitlements: () => ({ ready: true, modules: { calendar: h.calendar } }),
+  useEntitlements: () => ({ ready: true, modules: { calendar: h.calendar, ai_actions: h.aiActions } }),
 }));
 
 const TAG = '11111111-1111-4111-8111-111111111111';
@@ -179,6 +179,15 @@ describe('AgentConfigForm', () => {
       expect(form(true, { ...base, skills: ['book_appointment'] })).toContain('Seu plano não inclui o módulo Agenda.');
     } finally {
       h.calendar = true;
+    }
+
+    h.aiActions = false;
+    try {
+      const html = form(true);
+      expect(html).toContain('Seu plano não inclui ações da IA.');
+      expect(html).not.toContain('Seu plano não inclui o módulo Agenda.');
+    } finally {
+      h.aiActions = true;
     }
   });
 

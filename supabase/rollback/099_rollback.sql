@@ -1,0 +1,12 @@
+-- Rollback of 099_modules_per_account.sql: nothing to run in the database.
+--
+-- Roll back by deploying the previous app build. Since PR #118 the app
+-- ignores module names it does not know, so the new plan revisions (with
+-- reports / api / support / ai_actions) keep working under old code: those
+-- names are simply dropped and the old behaviour (api/support always on,
+-- reports under dashboard, skills under ai) applies.
+--
+-- Do NOT restore the 081 valid_plan_definition: the revisions created by 099
+-- would then fail the platform_plan_versions CHECK on any future write path
+-- that re-validates them.
+SELECT 1;

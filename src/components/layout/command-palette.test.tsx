@@ -61,7 +61,7 @@ beforeEach(() => {
   pathname = "/dashboard";
   modules = {
     dashboard: true, inbox: true, contacts: true, pipelines: true, broadcasts: true, automations: true,
-    flows: true, ai: true, tasks: true, calendar: true, internal_chat: true,
+    flows: true, ai: true, tasks: true, calendar: true, internal_chat: true, reports: true,
   };
   localStorage.clear();
   signals.length = 0;

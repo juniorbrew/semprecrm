@@ -6,10 +6,13 @@ const ok: PushResult = { users: 1, sent: 1, failed: 0, removed: 0, configured: t
 const h = vi.hoisted(() => ({
   notify: vi.fn<(db: unknown, notice: Record<string, unknown>) => Promise<PushResult>>(async () => ({ users: 1, sent: 1, failed: 0, removed: 0, configured: true })),
   configured: true,
+  loadEnt: vi.fn(async (_db: unknown, accountId: string) =>
+    accountId === 'unreadable' ? null : { modules: { support: accountId !== 'no-support' } }),
 }))
 
 vi.mock('@/lib/push/notify', () => ({ notifySlaBreached: h.notify }))
 vi.mock('@/lib/push/send', () => ({ isPushConfigured: () => h.configured }))
+vi.mock('@/lib/plans-server', () => ({ loadAccountEntitlements: h.loadEnt }))
 
 import { PUSH_CONCURRENCY, PUSH_PER_TICK, runSlaTick, type SlaPendingPush, type SlaTickRow } from './sla-cron'
 
@@ -59,6 +62,23 @@ describe('runSlaTick', () => {
     expect(out).toEqual({ warnings: 1, breaches: 2, errors: 1, notified: 2, attempted: 2 })
     expect(h.notify).toHaveBeenNthCalledWith(1, expect.anything(), { accountId: 'acc', conversationId: 'c0', assigneeUserId: null, kind: 'resolution' })
     expect(d.marked).toEqual([['e0', 'e1']])
+  })
+
+  it('closes the alerts of an account without the support module unsent, one plan read per account', async () => {
+    const d = db({ owed: [[...owed(2, { account_id: 'no-support' }), ...owed(1, { event_id: 'ok' })]] })
+    const out = await runSlaTick(d.client)
+    expect(h.notify).toHaveBeenCalledTimes(1)
+    expect(h.notify).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'acc' }))
+    expect(out.notified).toBe(1)
+    expect(d.marked[0].sort()).toEqual(['e0', 'e1', 'ok'])
+    expect(h.loadEnt.mock.calls.filter((c) => c[1] === 'no-support')).toHaveLength(1)
+  })
+
+  it('an unreadable plan keeps the alert owed for the next tick', async () => {
+    const d = db({ owed: [owed(1, { account_id: 'unreadable' })] })
+    await runSlaTick(d.client)
+    expect(h.notify).not.toHaveBeenCalled()
+    expect(d.marked).toEqual([])
   })
 
   it('a repeated tick with nothing new and nothing owed pushes nothing', async () => {
