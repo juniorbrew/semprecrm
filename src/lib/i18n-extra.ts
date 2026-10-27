@@ -2053,6 +2053,11 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
 
   // Calendar (migration 040, module `calendar`)
   'Calendar': 'Agenda',
+  // Modules split out in migration 099
+  'Reports': 'Relatórios',
+  'API & webhooks': 'API e webhooks',
+  'Advanced support': 'Suporte avançado',
+  'AI actions': 'Ações da IA',
   'Month': 'Mês',
   'Week': 'Semana',
   'Day': 'Dia',

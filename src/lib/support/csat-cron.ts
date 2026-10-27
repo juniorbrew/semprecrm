@@ -22,7 +22,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { engineSendText } from '@/lib/automations/meta-send'
-import { accountIsWritable } from '@/lib/plans-server'
+import { accountHasModule } from '@/lib/plans-server'
 import { GatewayRequestError, isGatewayThrottled } from '@/lib/whatsapp/qr-gateway'
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import {
@@ -80,7 +80,8 @@ export async function runCsatCron(
   db: SupabaseClient,
   now: Date = new Date(),
   send: Send = engineSendText,
-  writable: (db: SupabaseClient, accountId: string) => Promise<boolean> = accountIsWritable,
+  // Not blocked/read-only AND the plan has `support` (099). Recorded as account_read_only either way.
+  writable: (db: SupabaseClient, accountId: string) => Promise<boolean> = (db, id) => accountHasModule(db, id, 'support'),
 ): Promise<CsatCronResult> {
   const out: CsatCronResult = { claimed: 0, sent: 0, skipped: 0, errors: 0, expired: 0 }
 

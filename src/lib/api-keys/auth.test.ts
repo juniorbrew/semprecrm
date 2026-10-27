@@ -141,6 +141,13 @@ describe('authenticateApiKey', () => {
     expect(!r.ok && (await body(r.response)).error.code).toBe('account_blocked')
   })
 
+  it('403 module_not_included when the plan lacks the api module', async () => {
+    const t = setup({})
+    const r = await authenticateApiKey(t.req(), null, { db: t.db, accountBlocked: async () => 'module_off', now: () => NOW })
+    expect(!r.ok && r.response.status).toBe(403)
+    expect(!r.ok && (await body(r.response)).error.code).toBe('module_not_included')
+  })
+
   it('enforces the per-key IP allowlist (IPv4 range, exact IPv6)', async () => {
     const inside = setup({ allowed_cidrs: ['203.0.113.0/24'] })
     expect((await authenticateApiKey(inside.req(), null, { db: inside.db, accountBlocked: async () => false, now: () => NOW })).ok).toBe(true)

@@ -44,11 +44,15 @@ describe('PLAN_CATALOG', () => {
       max_channels: 1,
     });
 
+    // 099: reports / api / support were already usable on basico.
     expect(PLAN_CATALOG.basico.modules).toEqual([
       'dashboard',
       'pipelines',
       'tasks',
       'channel_qr',
+      'reports',
+      'api',
+      'support',
     ]);
     expect(PLAN_CATALOG.basico.limits).toEqual({
       max_users: 3,
@@ -81,7 +85,7 @@ describe('resolveEntitlements — each plan', () => {
     expect(e.expiresAt).toBe(FUTURE);
   });
 
-  it('basico: inbox, contacts, dashboard, pipelines, tasks, channel_qr only', () => {
+  it('basico: inbox, contacts, dashboard, pipelines, tasks, channel_qr, reports, api, support only', () => {
     const e = resolveEntitlements(
       { plan: 'basico', plan_status: 'active' },
       NOW
@@ -93,7 +97,11 @@ describe('resolveEntitlements — each plan', () => {
       'pipelines',
       'tasks',
       'channel_qr',
+      'reports',
+      'api',
+      'support',
     ]);
+    expect(e.modules.ai_actions).toBe(false);
     expect(e.modules.broadcasts).toBe(false);
     expect(e.modules.automations).toBe(false);
     expect(e.modules.flows).toBe(false);

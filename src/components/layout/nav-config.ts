@@ -51,8 +51,8 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Painel", icon: LayoutDashboard, module: "dashboard" },
   { href: "/inbox", label: "Caixa de entrada", icon: MessageSquare, module: "inbox", section: "service" },
   { href: "/contacts", label: "Contatos", icon: Users, module: "contacts", section: "service" },
-  // Support reports (migration 075) — owner / admin, same plan module as the dashboard.
-  { href: "/reports", label: "Relatórios", icon: BarChart3, module: "dashboard", adminOnly: true, section: "service" },
+  // Support reports (migration 075) — owner / admin; own plan module since 099.
+  { href: "/reports", label: "Relatórios", icon: BarChart3, module: "reports", adminOnly: true, section: "service" },
   { href: "/pipelines", label: "Funis", icon: GitBranch, module: "pipelines", section: "sales" },
   // Customer companies (migration 054) — part of the always-on CRM core.
   { href: "/companies", label: "Empresas", icon: Building2, module: "contacts", section: "sales" },

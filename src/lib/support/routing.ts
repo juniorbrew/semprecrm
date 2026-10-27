@@ -16,6 +16,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { pickRoundRobinAssignee } from '@/lib/assignment/round-robin'
+import { accountHasModule } from '@/lib/plans-server'
 import { notifyConversationAssigned } from '@/lib/push/notify'
 import type { ConversationPriority } from '@/types'
 import { isPriority } from './model'
@@ -102,7 +103,7 @@ export function decideRouting(
 
 export type RoutingOutcome =
   | { status: 'routed'; teamId: string; assigneeId: string | null; teamChanged: boolean }
-  | { status: 'skipped'; reason: RoutingSkip | 'not_found' | 'changed_meanwhile' | 'nothing_to_do' }
+  | { status: 'skipped'; reason: RoutingSkip | 'not_found' | 'changed_meanwhile' | 'nothing_to_do' | 'module_off' }
 
 type Row = Record<string, unknown>
 
@@ -139,6 +140,11 @@ export async function applyRouting(
     if (!row) return { status: 'skipped', reason: 'not_found' }
     const c = row as Row
     const accountId = c.account_id as string
+    // Automatic distribution is part of the `support` module (099). Inbound keeps
+    // flowing for read-only accounts, so routing does too.
+    if (!(await accountHasModule(db, accountId, 'support', { allowReadOnly: true }))) {
+      return { status: 'skipped', reason: 'module_off' }
+    }
     const conv = asConversation(c)
     if (!conv.category_id) return { status: 'skipped', reason: 'no_category' }
     // An automatic assignee who already wrote in this conversation is a

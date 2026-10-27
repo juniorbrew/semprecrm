@@ -311,7 +311,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex flex-col gap-4">
           <ResolutionTimeCard refreshToken={tasksRefreshToken} />
-          {hasSlaPolicies && <SlaComplianceCard refreshToken={tasksRefreshToken} />}
+          {hasSlaPolicies && modules.support && <SlaComplianceCard refreshToken={tasksRefreshToken} />}
         </div>
       </div>
 

@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const h = vi.hoisted(() => ({
   pick: vi.fn<(db: unknown, accountId: string, opts?: { memberIds?: readonly string[] }) => Promise<string | null>>(),
   notify: vi.fn(async () => ({})),
+  hasModule: vi.fn(async () => true),
 }))
 
 vi.mock('@/lib/assignment/round-robin', () => ({ pickRoundRobinAssignee: h.pick }))
 vi.mock('@/lib/push/notify', () => ({ notifyConversationAssigned: h.notify }))
+vi.mock('@/lib/plans-server', () => ({ accountHasModule: h.hasModule }))
 
 import { applyRouting, decideRouting, transferToTeam, type RoutingConversation } from './routing'
 
@@ -164,6 +166,16 @@ describe('applyRouting', () => {
   beforeEach(() => {
     h.pick.mockReset()
     h.notify.mockClear()
+    h.hasModule.mockClear()
+  })
+
+  it('does nothing when the plan lacks the support module', async () => {
+    h.hasModule.mockResolvedValueOnce(false)
+    const store = seed()
+    expect(await applyRouting(fakeDb(store), 'c1')).toEqual({ status: 'skipped', reason: 'module_off' })
+    expect(h.hasModule).toHaveBeenCalledWith(expect.anything(), 'acc', 'support', { allowReadOnly: true })
+    expect(h.pick).not.toHaveBeenCalled()
+    expect(store.conversations[0].team_id ?? null).toBeNull()
   })
 
   it('sets the team, assigns an available member and logs both events', async () => {

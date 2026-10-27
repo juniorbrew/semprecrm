@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
 import { notifyCategoriesChanged } from "@/hooks/use-conversation-categories";
 import { notifyTriageSettingsChanged, useTriageSettings } from "@/hooks/use-triage-settings";
@@ -130,6 +130,8 @@ export function SupportSettings() {
   const shared = supportCopy(language);
   const { accountId, canEditSettings, profileLoading } = useAuth();
   const readOnly = !canEditSettings;
+  // SLA, teams/routing and CSAT are the `support` plan module (099).
+  const { modules } = useEntitlements();
 
   const [rows, setRows] = useState<ConversationCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,10 +278,14 @@ export function SupportSettings() {
       </SettingsGroup>
 
       <AutoTriage copy={copy} readOnly={readOnly} hasCategories={live.length > 0} />
-      <SlaSettings readOnly={readOnly} />
-      <TeamsSettings readOnly={readOnly} />
-      <RoutingSettings readOnly={readOnly} />
-      <CsatSettings readOnly={readOnly} />
+      {modules.support && (
+        <>
+          <SlaSettings readOnly={readOnly} />
+          <TeamsSettings readOnly={readOnly} />
+          <RoutingSettings readOnly={readOnly} />
+          <CsatSettings readOnly={readOnly} />
+        </>
+      )}
       </div>
     </div>
   );

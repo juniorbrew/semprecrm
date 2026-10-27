@@ -57,6 +57,7 @@ const KEYS = [
   'What it can do',
   'Actions the agent takes on its own during the conversation. All start off.',
   'Your plan does not include the Agenda module.',
+  'Your plan does not include AI actions.',
   ...[
     { enabled: false, mode: 'suggest', paused_at: null },
     { enabled: true, mode: 'suggest', paused_at: null },

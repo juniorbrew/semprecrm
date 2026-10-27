@@ -184,7 +184,13 @@ export function AgentConfigForm({
   const ro = !canEdit;
   // Booking needs the Agenda module; the server checks it again before each booking.
   const { ready: entitlementsReady, modules } = useEntitlements();
-  const skillLocked = (id: SkillId) => id === "book_appointment" && entitlementsReady && !modules.calendar;
+  // Why a skill cannot be turned on in this plan (099: any skill needs `ai_actions`), or null.
+  const skillLock = (id: SkillId): string | null => {
+    if (!entitlementsReady) return null;
+    if (!modules.ai_actions) return "Your plan does not include AI actions.";
+    if (id === "book_appointment" && !modules.calendar) return "Your plan does not include the Agenda module.";
+    return null;
+  };
 
   const set = <K extends FormField>(k: K, v: AgentDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const setHours = (patch: Partial<AgentDraft["business_hours"]>) =>
@@ -368,16 +374,16 @@ export function AgentConfigForm({
               <legend className="mb-1 text-sm font-medium text-foreground">{t(g.label)}</legend>
               {SKILLS.filter((s) => s.group === g.id).map((s) => {
                 const on = draft.skills.includes(s.id);
-                const locked = skillLocked(s.id);
+                const locked = skillLock(s.id);
                 return (
                   <SwitchRow
                     key={s.id}
                     label={s.label}
-                    hint={locked ? "Your plan does not include the Agenda module." : s.description}
+                    hint={locked ?? s.description}
                     checked={on}
                     onChange={(v) => set("skills", toggleIn(draft.skills, s.id, v))}
                     // Locked only for turning on: an agent that already has it can still turn it off.
-                    disabled={ro || (locked && !on)}
+                    disabled={ro || (locked !== null && !on)}
                   />
                 );
               })}

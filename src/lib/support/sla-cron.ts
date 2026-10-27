@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { accountHasModule } from '@/lib/plans-server'
 import { notifySlaBreached } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
 
@@ -90,8 +91,18 @@ export async function runSlaTick(db: SupabaseClient, now: Date = new Date()): Pr
   const pending = ((owed ?? []) as SlaPendingPush[]).slice(0, PUSH_PER_TICK)
   out.attempted = pending.length
   const done: string[] = []
+  // SLA alerts belong to the `support` module (099): without it the event is closed unsent.
+  const support = new Map<string, Promise<boolean>>()
+  const hasSupport = (id: string) => {
+    if (!support.has(id)) support.set(id, accountHasModule(db, id, 'support', { allowReadOnly: true }))
+    return support.get(id)!
+  }
   await pool(pending, PUSH_CONCURRENCY, async (p) => {
     try {
+      if (!(await hasSupport(p.account_id))) {
+        done.push(p.event_id)
+        return
+      }
       const res = await notifySlaBreached(db, {
         accountId: p.account_id,
         conversationId: p.conversation_id,

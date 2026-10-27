@@ -46,6 +46,10 @@ export const MODULES = [
   'internal_chat',
   'calendar',
   'ai',
+  'reports',
+  'api',
+  'support',
+  'ai_actions',
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -64,6 +68,10 @@ export const OPTIONAL_MODULES = [
   'internal_chat',
   'calendar',
   'ai',
+  'reports',
+  'api',
+  'support',
+  'ai_actions',
 ] as const satisfies readonly Module[];
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
@@ -100,6 +108,10 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  *  — team chat, migration 038 — and `calendar` — agenda, migration
  *  040 — and `ai` — AI assistant, bring-your-own key, migration
  *  058 — are in every plan except basico.)
+ * (Migration 099 split `reports` (was part of `dashboard`), `api`
+ *  (keys + webhooks), `support` (SLA, CSAT, teams/routing) and
+ *  `ai_actions` (AI agent skills, needs `ai`) into their own modules,
+ *  granted wherever the feature already worked.)
  * | empresa | todos                            | null      | 5            |
  */
 export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
@@ -108,7 +120,7 @@ export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
     limits: { max_users: 2, max_channels: 1 },
   },
   basico: {
-    modules: ['dashboard', 'pipelines', 'tasks', 'channel_qr'],
+    modules: ['dashboard', 'pipelines', 'tasks', 'channel_qr', 'reports', 'api', 'support'],
     limits: { max_users: 3, max_channels: 1 },
   },
   pro: {
@@ -153,6 +165,10 @@ export const MODULE_LABELS: Record<Module, string> = {
   internal_chat: 'Internal chat',
   calendar: 'Calendar',
   ai: 'AI assistant',
+  reports: 'Reports',
+  api: 'API & webhooks',
+  support: 'Advanced support',
+  ai_actions: 'AI actions',
 };
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {

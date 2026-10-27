@@ -84,6 +84,10 @@ const MODULE_LABELS_PT: Record<Module, string> = {
   internal_chat: 'Chat interno',
   calendar: 'Agenda',
   ai: 'Assistente de IA',
+  reports: 'Relatórios',
+  api: 'API e webhooks',
+  support: 'Suporte avançado',
+  ai_actions: 'Ações da IA (agendar, criar tarefas)',
 };
 
 // pt-BR plural forms per limit; null = unlimited.

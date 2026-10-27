@@ -46,21 +46,21 @@ export function rawClientIp(request: Request): string | null {
 }
 
 const lastTouched = new Map<string, number>()
-const blockedCache = new Map<string, { blocked: boolean; at: number }>()
+const blockedCache = new Map<string, { blocked: boolean | 'module_off'; at: number }>()
 
 export interface AuthDeps {
   db?: SupabaseClient
   now?: () => Date
-  /** Plan check; defaults to the account's entitlements (cached 30 s). */
-  accountBlocked?: (accountId: string) => Promise<boolean>
+  /** Plan check; defaults to the account's entitlements (cached 30 s). 'module_off' = plan lacks `api`. */
+  accountBlocked?: (accountId: string) => Promise<boolean | 'module_off'>
 }
 
-async function defaultAccountBlocked(db: SupabaseClient, accountId: string, nowMs: number): Promise<boolean> {
+async function defaultAccountBlocked(db: SupabaseClient, accountId: string, nowMs: number): Promise<boolean | 'module_off'> {
   const hit = blockedCache.get(accountId)
   if (hit && nowMs - hit.at < ENTITLEMENT_TTL_MS) return hit.blocked
   const ent = await loadAccountEntitlements(db, accountId)
   // Unreadable plan: fail closed.
-  const blocked = !ent || !!ent.blocked
+  const blocked = !ent || !!ent.blocked || (!ent.modules.api && 'module_off')
   blockedCache.set(accountId, { blocked, at: nowMs })
   return blocked
 }
@@ -125,6 +125,9 @@ export async function authenticateApiKey(
   const blocked = deps.accountBlocked
     ? await deps.accountBlocked(data.account_id)
     : await defaultAccountBlocked(db, data.account_id, now.getTime())
+  if (blocked === 'module_off') {
+    return refuse(403, 'module_not_included', "This account's plan does not include the API.")
+  }
   if (blocked) {
     return refuse(403, 'account_blocked', 'This account is suspended or its plan is not active.')
   }

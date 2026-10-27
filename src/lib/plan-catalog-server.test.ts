@@ -32,7 +32,7 @@ describe('catalog reads', () => {
       rows: PLANS.map((p) => ({
         ...version(p),
         definition: {
-          modules: ['invalid'],
+          modules: ['inbox'], // known but never part of a plan
           limits: { max_users: 2, max_channels: 1 },
         },
       })),
