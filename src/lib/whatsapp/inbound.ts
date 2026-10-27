@@ -39,7 +39,8 @@ import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
-import type { AccountPreferences, WhatsAppChannel } from '@/types'
+import { isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
+import type { AccountPreferences, ConversationChannel, MetaMessagingChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
 export type InboundMessageType =
@@ -56,8 +57,11 @@ export type InboundMessageType =
 export interface InboundMessageInput {
   /** Tenancy — every row created downstream is stamped with this. */
   accountId: string
-  channel: WhatsAppChannel
-  /** Sender phone as the transport reports it (digits, "5511…"). */
+  channel: ConversationChannel
+  /**
+   * The sender as the transport reports it: the phone (digits, "5511…") on
+   * WhatsApp, the IGSID / PSID on Instagram / Messenger (migration 100).
+   */
   from: string
   /** WhatsApp profile name; falls back to the phone when empty. */
   pushName?: string | null
@@ -93,6 +97,16 @@ export interface InboundMessageInput {
    * route leaves it unset and we resolve the account owner.
    */
   userId?: string | null
+  /**
+   * Instagram / Messenger only — name and photo of a NEW (or photo-less) contact,
+   * looked up lazily so a known customer costs no Graph call. May return null.
+   */
+  getProfile?: () => Promise<ContactProfile | null>
+}
+
+export interface ContactProfile {
+  name?: string | null
+  avatarUrl?: string | null
 }
 
 export interface IngestResult {
@@ -216,6 +230,86 @@ export async function findOrCreateContact(
   return { contact: newContact, wasCreated: true }
 }
 
+const MESSAGING_IDENTITY_COLUMN = { instagram: 'instagram_id', messenger: 'messenger_id' } as const
+const MESSAGING_LABEL = { instagram: 'Instagram', messenger: 'Messenger' } as const
+const PROFILE_REFRESH_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Name shown until the profile lookup gives a real one. */
+export function messagingFallbackName(kind: MetaMessagingChannel, externalId: string): string {
+  return `${MESSAGING_LABEL[kind]} ${externalId.slice(-6)}`
+}
+
+/**
+ * Instagram / Messenger counterpart of `findOrCreateContact`: the key is the
+ * IGSID / PSID (unique per account, migration 100), there is no phone, so no
+ * phone dedupe or LGPD suppression-list lookup applies. `getProfile` runs only
+ * for a new contact, or one without a photo not checked in the last 7 days.
+ */
+export async function findOrCreateMessagingContact(
+  db: SupabaseClient,
+  accountId: string,
+  ownerUserId: string,
+  kind: MetaMessagingChannel,
+  externalId: string,
+  getProfile?: InboundMessageInput['getProfile'],
+): Promise<ContactOutcome | null> {
+  const column = MESSAGING_IDENTITY_COLUMN[kind]
+  const fallback = messagingFallbackName(kind, externalId)
+  const lookup = () =>
+    db.from('contacts').select('*').eq('account_id', accountId).eq(column, externalId).maybeSingle()
+  const loadProfile = async (): Promise<ContactProfile | null> => {
+    try {
+      return (await getProfile?.()) ?? null
+    } catch (err) {
+      console.warn('[inbound] profile lookup failed:', err instanceof Error ? err.message : err)
+      return null
+    }
+  }
+
+  const { data: existing, error: lookupError } = await lookup()
+  if (lookupError) {
+    console.error('[inbound] contact lookup failed:', lookupError.code ?? 'unknown')
+    return null
+  }
+  if (existing) {
+    const checkedAt = existing.avatar_checked_at ? Date.parse(existing.avatar_checked_at as string) : 0
+    if (getProfile && !existing.avatar_url && Date.now() - checkedAt > PROFILE_REFRESH_MS) {
+      const profile = await loadProfile()
+      const now = new Date().toISOString()
+      const patch: Record<string, unknown> = { avatar_checked_at: now }
+      if (profile?.avatarUrl) patch.avatar_url = profile.avatarUrl
+      if (profile?.name && (!existing.name || existing.name === fallback)) patch.name = profile.name
+      const { error } = await db.from('contacts').update(patch).eq('id', existing.id)
+      if (!error) Object.assign(existing, patch)
+    }
+    return { contact: existing, wasCreated: false }
+  }
+
+  const profile = await loadProfile()
+  const { data: created, error: createError } = await db
+    .from('contacts')
+    .insert({
+      account_id: accountId,
+      user_id: ownerUserId,
+      [column]: externalId,
+      name: profile?.name || fallback,
+      avatar_url: profile?.avatarUrl ?? null,
+      avatar_checked_at: new Date().toISOString(),
+    })
+    .select()
+    .single()
+  if (createError) {
+    // Lost a race with a concurrent delivery (unique index, migration 100).
+    if (isUniqueViolation(createError)) {
+      const { data: raced } = await lookup()
+      if (raced) return { contact: raced, wasCreated: false }
+    }
+    console.error('[inbound] error creating contact:', createError.code ?? 'unknown')
+    return null
+  }
+  return { contact: created, wasCreated: true }
+}
+
 /**
  * Every conversation this contact has with the account, newest first.
  * Null on a DB error (the caller fails the delivery so it is retried).
@@ -305,7 +399,7 @@ export async function findOrCreateConversation(
   accountId: string,
   ownerUserId: string,
   contactId: string,
-  channel: WhatsAppChannel,
+  channel: ConversationChannel,
   known?: Row[],
 ): Promise<ConversationOutcome | null> {
   const rows = known ?? (await listContactConversations(db, accountId, contactId))
@@ -778,16 +872,14 @@ export async function ingestInboundMessage(
     return { ok: false, reason: 'account_owner_not_found' }
   }
 
-  const senderPhone = normalizePhone(input.from)
+  // Instagram / Messenger: no phone, the sender key is the IGSID / PSID.
+  const messaging = isMetaMessagingChannel(channel) ? channel : null
+  const senderPhone = messaging ? input.from : normalizePhone(input.from)
   const contactName = (input.pushName ?? '').trim()
 
-  const contactOutcome = await findOrCreateContact(
-    db,
-    accountId,
-    ownerUserId,
-    senderPhone,
-    contactName,
-  )
+  const contactOutcome = messaging
+    ? await findOrCreateMessagingContact(db, accountId, ownerUserId, messaging, senderPhone, input.getProfile)
+    : await findOrCreateContact(db, accountId, ownerUserId, senderPhone, contactName)
   if (!contactOutcome) return { ok: false, reason: 'contact_failed' }
   const contact = contactOutcome.contact
 
@@ -1020,7 +1112,8 @@ export async function ingestInboundMessage(
   const contactBlocked = optedOut || !!contact.opted_out_at || !!contact.anonymized_at
   // "1" / "sim" / "2" / "remarcar" answering an appointment reminder we sent (migration
   // 097): handled here, so the flows, automations, AI and the out-of-hours notice skip it.
-  const agendaReply = contactBlocked
+  // Instagram / Messenger: no automatic reply of any kind until part C — agenda, out-of-hours, flows.
+  const agendaReply = contactBlocked || messaging
     ? null
     : await tryHandleReminderReply(db, {
         accountId,
@@ -1031,7 +1124,7 @@ export async function ingestInboundMessage(
         text: contentText,
         quotedMessageId: input.quotedMessageId ?? null,
       })
-  const outOfHoursReply = contactBlocked || agendaReply
+  const outOfHoursReply = contactBlocked || agendaReply || messaging
     ? undefined
     : await replyOutOfHoursIfNeeded(
         db,
@@ -1065,7 +1158,7 @@ export async function ingestInboundMessage(
   const inboundText = plainMessageText(contentText)
   const flowResult: { consumed: boolean } = agendaReply
     ? { consumed: true }
-    : contactBlocked
+    : contactBlocked || messaging
     ? { consumed: false }
     : await dispatchInboundToFlows({
         accountId,

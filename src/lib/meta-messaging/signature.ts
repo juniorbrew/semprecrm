@@ -11,7 +11,7 @@ import crypto from 'node:crypto'
 export function verifyMessagingSignature(
   rawBody: string,
   signatureHeader: string | null,
-  env: { META_APP_SECRET?: string; INSTAGRAM_APP_SECRET?: string } = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): boolean {
   const secrets = [env.META_APP_SECRET, env.INSTAGRAM_APP_SECRET].filter((s): s is string => !!s)
   if (secrets.length === 0) {
