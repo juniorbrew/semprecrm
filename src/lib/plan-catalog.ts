@@ -1,4 +1,5 @@
 import {
+  isModule,
   isOptionalModule,
   isPlan,
   LIMIT_KEYS,
@@ -29,7 +30,10 @@ export function parsePlanDefinition(raw: unknown): PlanDefinition | null {
     !record(raw) ||
     Object.keys(raw).length !== 2 ||
     !Array.isArray(raw.modules) ||
-    !raw.modules.every(isOptionalModule) ||
+    !raw.modules.every((m) => typeof m === 'string') ||
+    // A module this build does not know yet (added by a newer migration that
+    // ran before this code was replaced) is ignored, not fatal: it stays off.
+    !raw.modules.every((m) => isOptionalModule(m) || !isModule(m)) ||
     new Set(raw.modules).size !== raw.modules.length ||
     !record(raw.limits) ||
     Object.keys(raw.limits).length !== 2
@@ -47,7 +51,7 @@ export function parsePlanDefinition(raw: unknown): PlanDefinition | null {
   )
     return null;
   return {
-    modules: [...raw.modules],
+    modules: raw.modules.filter(isOptionalModule),
     limits: {
       max_users: limits.max_users as number | null,
       max_channels: limits.max_channels as number | null,
