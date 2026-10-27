@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentAction } from './skills';
-import { executeActions, type ActionStatus, type MoveDealResult, type SkillGateway } from './skills-exec';
+import { BOOK_MESSAGES, bookedWhen, executeActions, type ActionStatus, type BookResult, type MoveDealResult, type SkillGateway } from './skills-exec';
 
 function gateway(over: Partial<SkillGateway> = {}) {
   const calls: string[] = [];
@@ -19,6 +19,15 @@ function gateway(over: Partial<SkillGateway> = {}) {
       return 'task-1';
     }),
     moveDeal: vi.fn(async (): Promise<MoveDealResult> => 'moved'),
+    book: vi.fn(
+      async (): Promise<BookResult> => ({
+        ok: true,
+        service: 'Corte',
+        professional: 'Ana',
+        startsAt: '2026-10-28T17:00:00.000Z',
+        timezone: 'America/Sao_Paulo',
+      }),
+    ),
     ...over,
   };
   return { gw, calls, finished };
@@ -71,5 +80,55 @@ describe('executeActions', () => {
     const { gw } = gateway({ claim: vi.fn(async () => { throw new Error('db down'); }) });
     await expect(executeActions([note], gw)).resolves.toEqual([]);
     spy.mockRestore();
+  });
+});
+
+describe('book_appointment', () => {
+  const book: AgentAction = { skill: 'book_appointment', service: 'corte', date: '2026-10-28', time: '14:00', professional: null };
+
+  it('formats the local date and time of the booking', () => {
+    expect(bookedWhen('2026-10-28T17:00:00.000Z', 'America/Sao_Paulo')).toBe('quarta-feira, 28/10 às 14:00');
+  });
+
+  it('a booking confirms to the customer only after it is reserved, by the server', async () => {
+    const { gw } = gateway();
+    const [r] = await executeActions([book], gw);
+    expect(gw.book).toHaveBeenCalledWith({ service: 'corte', date: '2026-10-28', time: '14:00', professional: null });
+    expect(r).toMatchObject({ status: 'ok', customerMessage: 'Pronto! Seu horário está reservado: Corte, quarta-feira, 28/10 às 14:00, com Ana.' });
+  });
+
+  it('a taken or invalid time tells the customer to pick another; nothing is confirmed', async () => {
+    const taken = gateway({ book: vi.fn(async (): Promise<BookResult> => ({ ok: false, reason: 'taken' })) });
+    expect((await executeActions([book], taken.gw))[0]).toMatchObject({ status: 'skipped', customerMessage: BOOK_MESSAGES.taken });
+    const bad = gateway({ book: vi.fn(async (): Promise<BookResult> => ({ ok: false, reason: 'no_service' })) });
+    expect((await executeActions([book], bad.gw))[0]).toMatchObject({ status: 'skipped', customerMessage: BOOK_MESSAGES.unavailable });
+  });
+
+  it('a crash while booking still tells the customer the team will confirm', async () => {
+    const { gw } = gateway({ book: vi.fn(async () => Promise.reject(new Error('db down'))) });
+    expect((await executeActions([book], gw))[0]).toMatchObject({ status: 'error', customerMessage: BOOK_MESSAGES.failed });
+  });
+
+  it('a retried job re-asks the booking (same job = same appointment) and still confirms it; the ledger is not rewritten', async () => {
+    const { gw, finished } = gateway({ claim: vi.fn(async () => false) });
+    const [r] = await executeActions([note, book], gw);
+    expect(gw.addNote).not.toHaveBeenCalled();
+    expect(gw.book).toHaveBeenCalledWith({ service: 'corte', date: '2026-10-28', time: '14:00', professional: null });
+    expect(r).toMatchObject({ seq: 1, status: 'ok', customerMessage: expect.stringContaining('Pronto!') });
+    expect(finished).toEqual([]);
+  });
+
+  it('booked but the ledger write failed: the customer gets the real confirmation', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { gw } = gateway({ finish: vi.fn(async () => { throw new Error('db down'); }) });
+    const [r] = await executeActions([book], gw);
+    expect(r).toMatchObject({ status: 'ok', customerMessage: expect.stringContaining('Pronto!') });
+    spy.mockRestore();
+  });
+
+  it('other actions never produce customer messages', async () => {
+    const { gw } = gateway();
+    const res = await executeActions([note, tag], gw);
+    expect(res.every((r) => r.customerMessage === undefined)).toBe(true);
   });
 });

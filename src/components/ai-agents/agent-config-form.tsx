@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useEntitlements } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
+import { SKILL_GROUPS, SKILLS, type SkillId } from "@/lib/ai/skills";
 import {
   AGENT_CHANNELS,
   AGENT_LIMITS,
@@ -41,6 +43,7 @@ const FORM_FIELDS = [
   "handoff_message",
   "max_messages_per_turn",
   "max_auto_replies_per_day",
+  "skills",
 ] as const;
 type FormField = (typeof FORM_FIELDS)[number];
 export type AgentDraft = Pick<AiAgent, FormField>;
@@ -179,6 +182,9 @@ export function AgentConfigForm({
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(draftFromAgent(agent)), [draft, agent]);
   const zones = useMemo(timeZones, []);
   const ro = !canEdit;
+  // Booking needs the Agenda module; the server checks it again before each booking.
+  const { ready: entitlementsReady, modules } = useEntitlements();
+  const skillLocked = (id: SkillId) => id === "book_appointment" && entitlementsReady && !modules.calendar;
 
   const set = <K extends FormField>(k: K, v: AgentDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const setHours = (patch: Partial<AgentDraft["business_hours"]>) =>
@@ -353,6 +359,31 @@ export function AgentConfigForm({
               {t("Manage knowledge base")}
             </Link>
           </p>
+        </Section>
+
+
+        <Section title="What it can do" description="Actions the agent takes on its own during the conversation. All start off.">
+          {SKILL_GROUPS.map((g) => (
+            <fieldset key={g.id} className="space-y-3">
+              <legend className="mb-1 text-sm font-medium text-foreground">{t(g.label)}</legend>
+              {SKILLS.filter((s) => s.group === g.id).map((s) => {
+                const on = draft.skills.includes(s.id);
+                const locked = skillLocked(s.id);
+                return (
+                  <SwitchRow
+                    key={s.id}
+                    label={s.label}
+                    hint={locked ? "Your plan does not include the Agenda module." : s.description}
+                    checked={on}
+                    onChange={(v) => set("skills", toggleIn(draft.skills, s.id, v))}
+                    // Locked only for turning on: an agent that already has it can still turn it off.
+                    disabled={ro || (locked && !on)}
+                  />
+                );
+              })}
+            </fieldset>
+          ))}
+          <FieldError id="agent-skills-error" error={err("skills")} />
         </Section>
 
 

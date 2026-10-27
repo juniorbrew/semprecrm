@@ -107,3 +107,46 @@ describe('auto-reply integration', () => {
     expect(parseAutoReplyOutput('{"reply":"Oi","handoff":false,"actions":"nope"}')?.rawActions).toEqual([]);
   });
 });
+
+describe('book_appointment skill', () => {
+  const offer = {
+    timezone: 'America/Sao_Paulo',
+    services: [
+      {
+        name: 'Corte',
+        minutes: 30,
+        professionals: ['Ana', 'Bia'],
+        days: [{ date: '2026-10-28', label: 'qua., 28/10', times: ['09:00', '14:00'] }],
+      },
+      { name: 'Barba', minutes: 20, professionals: ['Ana'], days: [] },
+    ],
+  };
+
+  it('parses one booking per reply, with strict date and time', () => {
+    const ok = { skill: 'book_appointment', service: 'Corte', date: '2026-10-28', time: '14:00' };
+    expect(parseActions([ok, { ...ok, time: '09:00' }], ['book_appointment'])).toEqual([
+      { skill: 'book_appointment', service: 'Corte', date: '2026-10-28', time: '14:00', professional: null },
+    ]);
+    for (const bad of [
+      { ...ok, date: '28/10/2026' },
+      { ...ok, date: '2026-02-31' }, // not a day: would roll over to March
+      { ...ok, time: '14h' },
+      { ...ok, time: '24:00' },
+      { ...ok, service: '' },
+    ]) {
+      expect(parseActions([bad], ['book_appointment'])).toEqual([]);
+    }
+    expect(parseActions([ok], ['add_tag'])).toEqual([]);
+  });
+
+  it('offers only the listed free times, and is silent without an agenda', () => {
+    const lines = skillsPromptLines({ enabled: ['book_appointment'], tags: [], stages: [], agenda: offer }).join('\n');
+    expect(lines).toContain('"book_appointment"');
+    expect(lines).toContain('qua., 28/10 (2026-10-28): 09:00, 14:00');
+    expect(lines).toContain('profissionais: ["Ana","Bia"]');
+    expect(lines).toContain('sem horário livre');
+    expect(lines).toMatch(/não diga que já está marcado/);
+    expect(skillsPromptLines({ enabled: ['book_appointment'], tags: [], stages: [], agenda: null })).toEqual([]);
+    expect(skillsPromptLines({ enabled: ['book_appointment'], tags: [], stages: [] })).toEqual([]);
+  });
+});
