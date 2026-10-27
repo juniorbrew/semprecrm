@@ -55,7 +55,11 @@ describe('assigned catalog', () => {
   });
   it('validates exact definitions and safe capacities', () => {
     expect(parsePlanDefinition(PLAN_CATALOG.pro)).toEqual(PLAN_CATALOG.pro);
-    for (const modules of [['tasks', 'tasks'], ['inbox'], ['unknown']])
+    // A module from a newer migration is ignored (off), not fatal.
+    expect(
+      parsePlanDefinition({ modules: ['tasks', 'from_the_future'], limits: PLAN_CATALOG.pro.limits })
+    ).toEqual({ modules: ['tasks'], limits: PLAN_CATALOG.pro.limits });
+    for (const modules of [['tasks', 'tasks'], ['inbox'], [3], ['x', 'x']])
       expect(
         parsePlanDefinition({ modules, limits: PLAN_CATALOG.pro.limits })
       ).toBeNull();
