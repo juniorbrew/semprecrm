@@ -194,9 +194,9 @@ export function MetaMessagingPanel() {
 
               {!status ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label={t('Loading')} />
-              ) : moduleOn && canEditSettings ? (
+              ) : canEditSettings && (moduleOn || conn) ? (
                 <div className="flex items-center gap-2">
-                  {(!conn || needsReconnect) && info?.configured && (
+                  {moduleOn && (!conn || needsReconnect) && info?.configured && (
                     <a href={connectHref} className={cn(buttonVariants({ size: 'sm', variant: needsReconnect ? 'default' : 'outline' }))}>
                       {needsReconnect ? t('Reconnect') : t('Connect')}
                     </a>

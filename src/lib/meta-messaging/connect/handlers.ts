@@ -333,11 +333,7 @@ export async function handleDisconnect(request: Request): Promise<NextResponse> 
   const body = (await request.json().catch(() => null)) as { kind?: unknown } | null
   if (!isKind(body?.kind)) return NextResponse.json({ error: 'Canal inválido.', code: 'invalid_kind' }, { status: 400 })
   const kind = body.kind
-  try {
-    await requireModule(ctx, messagingModule(kind))
-  } catch (err) {
-    return toErrorResponse(err)
-  }
+  // No module check: an account whose plan lost the channel must still be able to cut it off.
   const admin = supabaseAdmin()
   const conn = await loadOwnConnection(admin, ctx.accountId, kind)
   if (!conn) return NextResponse.json({ error: 'Canal não conectado.', code: 'not_connected' }, { status: 404 })

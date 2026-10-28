@@ -413,16 +413,21 @@ describe('disconnect', () => {
     expect(channels()).toHaveLength(0)
   })
 
-  it('404 when not connected, 400 for a bad kind, module and role are enforced', async () => {
+  it('404 when not connected, 400 for a bad kind, role is enforced', async () => {
     expect((await post({ kind: 'instagram' })).status).toBe(404)
     expect((await post({ kind: 'whatsapp' })).status).toBe(400)
     channels().push({ id: 'c1', account_id: 'acct-1', kind: 'instagram', external_id: '999', access_token: 'enc:L' })
-    h.moduleError = new ModuleNotIncludedError('channel_instagram')
-    expect((await post({ kind: 'instagram' })).status).toBe(403)
-    h.moduleError = null
     h.roleError = new ForbiddenError('no')
     expect((await post({ kind: 'instagram' })).status).toBe(403)
     expect(channels()).toHaveLength(1)
+  })
+
+  it('still disconnects after the plan lost the channel module', async () => {
+    channels().push({ id: 'c1', account_id: 'acct-1', kind: 'instagram', external_id: '999', access_token: 'enc:L' })
+    meta({ '/subscribed_apps': () => json({ success: true }) })
+    h.moduleError = new ModuleNotIncludedError('channel_instagram')
+    expect((await post({ kind: 'instagram' })).status).toBe(200)
+    expect(channels()).toHaveLength(0)
   })
 })
 
