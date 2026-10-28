@@ -13,7 +13,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { ingestInboundMessage } from '@/lib/whatsapp/inbound'
-import { findConnectionByExternalId, type MessagingConnection } from './connections'
+import { accountHasModule } from '@/lib/plans-server'
+import { findConnectionByExternalId, markConnectionExpired, type MessagingConnection } from './connections'
+import { messagingModule } from './channels'
 import { ingestMessagingEcho } from './echo'
 import { fetchMessagingProfile } from './graph'
 import { copyMessagingMedia, storeMessagingAvatar } from './media'
@@ -24,6 +26,8 @@ export interface ProcessSummary {
   duplicates: number
   echoes: number
   unknownRecipient: number
+  /** Events of accounts whose plan lacks the channel module. */
+  moduleOff: number
   /** Permanent problems (nothing to retry). */
   skipped: number
   /** Transient failures: the route answers 5xx so Meta redelivers. */
@@ -104,7 +108,7 @@ async function handleEvent(
   summary: ProcessSummary,
 ): Promise<void> {
   const getProfile = async () => {
-    const profile = await fetchMessagingProfile(conn.kind, conn.token, e.customerId)
+    const profile = await fetchMessagingProfile(conn.kind, conn.token, e.customerId, () => void markConnectionExpired(db, conn.id))
     return profile ? { name: profile.name, pictureUrl: profile.pictureUrl } : null
   }
   const storeAvatar = (contactId: string, pictureUrl: string) =>
@@ -161,16 +165,32 @@ async function handleEvent(
   }
 }
 
+async function moduleOn(db: SupabaseClient, conn: MessagingConnection, cache: Map<string, boolean>): Promise<boolean> {
+  const mod = messagingModule(conn.kind)
+  const key = `${conn.accountId}:${mod}`
+  if (!cache.has(key)) {
+    // Inbound keeps working in read-only mode; only the plan decides.
+    cache.set(key, await accountHasModule(db, conn.accountId, mod, { allowReadOnly: true }))
+  }
+  return cache.get(key) as boolean
+}
+
 export async function processMessagingEvents(
   db: SupabaseClient,
   events: MessagingEvent[],
 ): Promise<ProcessSummary> {
-  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, skipped: 0, failed: 0 }
+  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, moduleOff: 0, skipped: 0, failed: 0 }
   const connections = new Map<string, MessagingConnection | null>()
+  const moduleCache = new Map<string, boolean>()
   for (const e of events) {
     const key = `${e.kind}:${e.businessId}`
     if (!connections.has(key)) connections.set(key, await findConnectionByExternalId(db, e.kind, e.businessId))
     const conn = connections.get(key)
+    // The channel's module (plan): an account without it gets nothing stored, and Meta an ack.
+    if (conn && !(await moduleOn(db, conn, moduleCache))) {
+      summary.moduleOff += 1
+      continue
+    }
     if (!conn) {
       summary.unknownRecipient += 1
       continue

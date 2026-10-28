@@ -10,8 +10,9 @@
 
 import type { MetaMessagingChannel } from '@/types'
 
-const GRAPH_VERSION = 'v21.0'
-const GRAPH_BASE: Record<MetaMessagingChannel, string> = {
+/** The one Graph API version for Instagram / Messenger (send, profile, connect, refresh). */
+export const GRAPH_VERSION = 'v26.0'
+export const GRAPH_BASE: Record<MetaMessagingChannel, string> = {
   instagram: `https://graph.instagram.com/${GRAPH_VERSION}`,
   messenger: `https://graph.facebook.com/${GRAPH_VERSION}`,
 }
@@ -46,7 +47,7 @@ export class MessagingApiError extends Error {
   }
 }
 
-async function graphFetch(url: string, token: string, init: RequestInit = {}): Promise<unknown> {
+export async function graphFetch(url: string, token: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(url, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -116,6 +117,8 @@ export async function fetchMessagingProfile(
   kind: MetaMessagingChannel,
   token: string,
   customerId: string,
+  /** Called when Meta says the token is dead (code 190), so the connection can be flagged. */
+  onTokenInvalid?: () => void,
 ): Promise<MessagingProfile | null> {
   try {
     const fields = kind === 'instagram' ? 'name,username,profile_pic' : 'first_name,last_name,name,profile_pic'
@@ -130,6 +133,7 @@ export async function fetchMessagingProfile(
       pictureUrl: s(p.profile_pic),
     }
   } catch (err) {
+    if (err instanceof MessagingApiError && err.tokenInvalid) onTokenInvalid?.()
     console.warn(
       '[meta-messaging] profile lookup failed:',
       err instanceof MessagingApiError ? `code ${err.code}/${err.subcode}` : 'network',

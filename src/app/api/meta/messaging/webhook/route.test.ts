@@ -15,12 +15,21 @@ const h = vi.hoisted(() => ({
   contacts: [] as Record<string, unknown>[],
   conversations: [] as Record<string, unknown>[],
   messages: [] as Record<string, unknown>[],
+  /** Modules the plan includes (migration 101). */
+  modules: new Set<string>(['channel_instagram', 'channel_messenger']),
+  moduleCalls: [] as unknown[][],
 }))
 
 vi.mock('next/server', () => ({
   after: (cb: () => Promise<unknown>) => void h.pending.push(Promise.resolve(cb())),
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({ body, status: init?.status ?? 200 }),
+  },
+}))
+vi.mock('@/lib/plans-server', () => ({
+  accountHasModule: async (...a: unknown[]) => {
+    h.moduleCalls.push(a)
+    return h.modules.has(a[2] as string)
   },
 }))
 vi.mock('@/lib/supabase/url', () => ({ supabaseServerUrl: () => 'http://db' }))
@@ -107,6 +116,8 @@ beforeEach(() => {
   h.contacts = [{ id: 'ct-1', account_id: 'acct-1', instagram_id: 'IGSID', anonymized_at: null }]
   h.conversations = [{ id: 'cv-1', account_id: 'acct-1', contact_id: 'ct-1', status: 'open', created_at: '2026-01-01' }]
   h.messages = []
+  h.modules = new Set(['channel_instagram', 'channel_messenger'])
+  h.moduleCalls = []
   __resetRateLimitForTests()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
@@ -204,6 +215,27 @@ describe('POST events', () => {
       }),
     )) as unknown as { status: number }
     expect(res.status).toBe(413)
+  })
+
+  it('an account whose plan lacks the channel module gets 200 and nothing is stored (inbound and echo)', async () => {
+    h.modules = new Set(['channel_messenger'])
+    expect((await post(igBody(text('IGSID', 'IG1', 'm1')))).status).toBe(200)
+    expect((await post(igBody({ ...text('IG1', 'IGSID', 'm2', { is_echo: true }) }))).status).toBe(200)
+    await settle()
+    expect(h.ingest).not.toHaveBeenCalled()
+    expect(h.messages).toHaveLength(0)
+    // read-only accounts still receive: the check is the plan's module, with allowReadOnly
+    expect(h.moduleCalls[0].slice(2)).toEqual(['channel_instagram', { allowReadOnly: true }])
+  })
+
+  it('the module is the channel's own: a messenger event needs channel_messenger', async () => {
+    h.channels.push({ account_id: 'acct-2', kind: 'messenger', external_id: 'PG1', status: 'active', access_token: 'x', id: 'ch-2' })
+    h.modules = new Set(['channel_instagram'])
+    await post({ object: 'page', entry: [{ id: 'PG1', messaging: [text('PSID', 'PG1', 'm9')] }] })
+    expect(h.ingest).not.toHaveBeenCalled()
+    h.modules = new Set(['channel_messenger'])
+    await post({ object: 'page', entry: [{ id: 'PG1', messaging: [text('PSID', 'PG1', 'm9')] }] })
+    expect(h.ingest).toHaveBeenCalledOnce()
   })
 
   it('a revoked connection does not receive messages', async () => {

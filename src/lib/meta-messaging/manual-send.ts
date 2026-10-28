@@ -13,7 +13,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from '@/lib/whatsapp/phone-echo'
-import { findConnectionForAccount } from './connections'
+import { accountHasModule } from '@/lib/plans-server'
+import { messagingModule } from './channels'
+import { findConnectionForAccount, markConnectionExpired } from './connections'
 import { MessagingApiError, sendMessagingMessage, type MessagingMediaKind } from './graph'
 import type { MetaMessagingChannel } from '@/types'
 
@@ -99,6 +101,9 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
       'window_closed',
     )
   }
+  if (!(await accountHasModule(admin, accountId, messagingModule(kind)))) {
+    return fail(403, `Seu plano não inclui o canal ${label}. Fale com a equipe do SempreCRM para ativá-lo.`, 'module_not_included')
+  }
   const conn = await findConnectionForAccount(admin, accountId, kind)
   if (!conn) return fail(400, `O ${label} não está conectado. Conecte o canal nas configurações.`, 'channel_not_connected')
   if (conn.status !== 'active') {
@@ -161,6 +166,7 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
       // Only status/code/subcode are logged and the client gets a fixed message: Meta's text can quote ids.
       console.error(`[meta-messaging] send failed: status ${err.status} code ${err.code} subcode ${err.subcode}`)
       if (err.tokenInvalid) {
+        await markConnectionExpired(admin, conn.id)
         return fail(400, `O ${label} recusou a conexão (acesso expirado ou revogado). Reconecte o canal nas configurações.`, 'channel_expired')
       }
       if (err.permissionDenied) {

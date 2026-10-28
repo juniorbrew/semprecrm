@@ -50,6 +50,8 @@ export const MODULES = [
   'api',
   'support',
   'ai_actions',
+  'channel_instagram',
+  'channel_messenger',
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -72,6 +74,8 @@ export const OPTIONAL_MODULES = [
   'api',
   'support',
   'ai_actions',
+  'channel_instagram',
+  'channel_messenger',
 ] as const satisfies readonly Module[];
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
@@ -112,6 +116,9 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  *  (keys + webhooks), `support` (SLA, CSAT, teams/routing) and
  *  `ai_actions` (AI agent skills, needs `ai`) into their own modules,
  *  granted wherever the feature already worked.)
+ * (Migration 101 added `channel_instagram` and `channel_messenger`: in
+ *  trial, pro and empresa, not in basico. They do NOT count toward
+ *  `max_channels`, which limits WhatsApp numbers.)
  * | empresa | todos                            | null      | 5            |
  */
 export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
@@ -169,6 +176,8 @@ export const MODULE_LABELS: Record<Module, string> = {
   api: 'API & webhooks',
   support: 'Advanced support',
   ai_actions: 'AI actions',
+  channel_instagram: 'Instagram Direct',
+  channel_messenger: 'Facebook Messenger',
 };
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {
