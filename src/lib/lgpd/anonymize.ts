@@ -727,6 +727,10 @@ export async function anonymizeContact(
       .update({
         name: ANONYMIZED_NAME,
         phone: generateAnonymousPhone(opts.randomHex),
+        // Instagram / Messenger ids are identifiers too (migration 100); the random phone keeps
+        // contacts_identity_check true.
+        instagram_id: null,
+        messenger_id: null,
         email: null,
         company: null,
         avatar_url: null,
@@ -832,6 +836,12 @@ export async function remainingPersonalData(
   }
   const byContact = (table: string) =>
     admin.from(table).select('id').eq('contact_id', contactId).eq('account_id', accountId)
+  for (const column of ['instagram_id', 'messenger_id']) {
+    await any(
+      'contacts',
+      admin.from('contacts').select('id').eq('id', contactId).eq('account_id', accountId).not(column, 'is', null),
+    )
+  }
   await any('deals', byContact('deals').neq('title', ANONYMIZED_DEAL_TITLE))
   await any('tasks', byContact('tasks').neq('title', ANONYMIZED_TASK_TITLE))
   await any('calendar_events', byContact('calendar_events').neq('title', ANONYMIZED_EVENT_TITLE))

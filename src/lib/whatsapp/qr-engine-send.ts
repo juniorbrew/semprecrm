@@ -12,7 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import type { WhatsAppChannel } from '@/types'
+import type { ConversationChannel } from '@/types'
 import { sanitizePhoneForMeta, isValidE164 } from './phone-utils'
 import {
   BULK_MAX_WAIT_MS,
@@ -26,18 +26,23 @@ import { accountMediaUrlForServer } from '@/lib/storage/media-url'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from './phone-echo'
 
-/** `official` for rows that predate migration 026 or can't be read. */
+/**
+ * The conversation's channel. Fails CLOSED: a read error or a missing row throws, so no sender
+ * guesses "official" and delivers on the wrong transport. `official` only for an existing row
+ * whose channel is null (rows that predate migration 026).
+ */
 export async function conversationChannel(
   db: SupabaseClient,
   conversationId: string,
-): Promise<WhatsAppChannel> {
+): Promise<ConversationChannel> {
   const { data, error } = await db
     .from('conversations')
     .select('channel')
     .eq('id', conversationId)
     .maybeSingle()
-  if (error || !data) return 'official'
-  return data.channel === 'qr' ? 'qr' : 'official'
+  if (error || !data) throw new Error('conversation channel could not be determined')
+  const channel = data.channel
+  return channel === 'qr' || channel === 'instagram' || channel === 'messenger' ? channel : 'official'
 }
 
 /**

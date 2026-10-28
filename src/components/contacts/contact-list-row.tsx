@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ContactAvatar } from '@/components/inbox/contact-avatar';
+import { contactLabel } from '@/lib/contacts/label';
 
 /** Row density of the contacts list, per user on this device. */
 export type ContactsDensity = 'comfortable' | 'compact';
@@ -158,7 +159,7 @@ export function ContactListRow({
   onEdit,
   onDelete,
 }: ContactListRowProps) {
-  const name = contact.name || contact.phone;
+  const name = contactLabel(contact);
   const meta = contactMetaLine(contact);
   const anonymized = !!contact.anonymized_at;
   const cell = compact ? 'py-1.5' : 'py-2.5';

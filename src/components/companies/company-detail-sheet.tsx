@@ -29,6 +29,7 @@ import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import { companyInitials, companyMetaLine } from './company-list-row';
 import { SearchPicker } from './search-picker';
+import { contactLabel } from '@/lib/contacts/label';
 
 /** Small muted uppercase section title — same as the inbox contact panel. */
 const SECTION_TITLE = 'text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground';
@@ -294,7 +295,7 @@ export function CompanyDetailSheet({
                       excludeKeys={linkedIds}
                       renderItem={(c) => (
                         <span className="block min-w-0">
-                          <span className="block truncate font-medium">{c.name || c.phone}</span>
+                          <span className="block truncate font-medium">{contactLabel(c)}</span>
                           <span className="block truncate text-[11px] tabular-nums text-muted-foreground">{c.phone}</span>
                         </span>
                       )}
@@ -316,7 +317,7 @@ export function CompanyDetailSheet({
                           href={`/contacts?contact=${l.contact.id}`}
                           className="min-w-0 flex-1 rounded-sm hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
-                          <span className="block truncate text-sm font-medium">{l.contact.name || l.contact.phone}</span>
+                          <span className="block truncate text-sm font-medium">{contactLabel(l.contact)}</span>
                           <span className="block truncate text-xs tabular-nums text-muted-foreground">
                             {l.contact.phone}
                           </span>

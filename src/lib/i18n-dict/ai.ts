@@ -561,6 +561,7 @@ export const DICT_AI: Record<string, string> = {
   'Nothing to answer': 'Nada para responder',
   'Outside business hours': 'Fora do horário de atendimento',
   '24 h window closed': 'Janela de 24 h fechada',
+  'Channel not supported yet': 'Canal ainda não compatível',
   'Contact opted out': 'Contato descadastrado',
   'Contact anonymized': 'Contato anonimizado',
   'Conversation resolved': 'Conversa resolvida',

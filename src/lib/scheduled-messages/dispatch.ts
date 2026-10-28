@@ -120,6 +120,10 @@ export async function precheck(
     )
   }
 
+  if (c.channel === 'instagram' || c.channel === 'messenger') {
+    throw new Reject('channel_unsupported', 'O agendamento de mensagens ainda não está disponível no Instagram e no Messenger.')
+  }
+
   if (c.channel !== 'qr' && !isWithinServiceWindow(c.last_customer_message_at, now)) {
     throw new Reject(
       'window_closed',

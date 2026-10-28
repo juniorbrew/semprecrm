@@ -5,7 +5,7 @@
  * leaves the working lists instead of lingering behind a status chip.
  * Snoozed ones (migration 079) live only in Adiadas until they wake.
  */
-import type { ConversationPriority, ConversationStatus, WhatsAppChannel } from '@/types'
+import type { ConversationChannel, ConversationPriority, ConversationStatus } from '@/types'
 
 export type InboxTab = 'queue' | 'mine' | 'all' | 'snoozed' | 'closed' | 'archived'
 /** Narrows the live tabs (Minhas / Todas) only. */
@@ -107,8 +107,8 @@ export interface TriageState {
   live: LiveFilter
   /** Contact-tag filter (any of); [] = none. */
   tagIds: string[]
-  /** WhatsApp transport filter; null = both. */
-  channel: WhatsAppChannel | null
+  /** Channel filter (WhatsApp transports, Instagram, Messenger); null = all. */
+  channel: ConversationChannel | null
   /** Support category filter (migration 071); null = any. */
   categoryId?: string | null
   /** Support priority filter (migration 071); null = any. */
@@ -176,8 +176,13 @@ export function migrateTriage(raw: unknown): TriageState {
         new Set(stored.tagIds.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))),
       ).slice(0, MAX_TAG_FILTER)
     : []
-  const channel: WhatsAppChannel | null =
-    stored.channel === 'official' || stored.channel === 'qr' ? stored.channel : null
+  const channel: ConversationChannel | null =
+    stored.channel === 'official' ||
+    stored.channel === 'qr' ||
+    stored.channel === 'instagram' ||
+    stored.channel === 'messenger'
+      ? stored.channel
+      : null
   const categoryId =
     typeof stored.categoryId === 'string' && UUID_RE.test(stored.categoryId) ? stored.categoryId : null
   const priority: ConversationPriority | null =

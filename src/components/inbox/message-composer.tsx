@@ -198,11 +198,14 @@ const COMPOSER_COPY: Record<
     replyPlaceholderNoTemplates: string;
     notePlaceholder: string;
     expiredPlaceholder: string;
+    /** Instagram / Messenger: the window closed and there are no templates to fall back on. */
+    expiredPlaceholderNoTemplates: string;
     readOnlyPlaceholder: string;
     /** Trial ended / payment overdue (billing read-only mode). */
     planReadOnlyPlaceholder: string;
     anonymizedPlaceholder: string;
     expiredLine: string;
+    expiredLineNoTemplates: string;
     templates: string;
     sendTemplate: string;
     addNote: string;
@@ -260,11 +263,14 @@ const COMPOSER_COPY: Record<
     replyPlaceholderNoTemplates: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para respostas rápidas",
     notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
     expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
+    expiredPlaceholderNoTemplates: "Janela de 24 h encerrada — aguarde o cliente escrever de novo",
     readOnlyPlaceholder: "Somente leitura — seu perfil não pode responder",
     planReadOnlyPlaceholder: "Conta em modo somente leitura — assine em Configurações → Plano para voltar a enviar",
     anonymizedPlaceholder: "Contato anonimizado — envio bloqueado (LGPD)",
     expiredLine:
       "Janela de 24 h encerrada: o WhatsApp só aceita modelos aprovados até o cliente responder de novo.",
+    expiredLineNoTemplates:
+      "Janela de 24 h encerrada: só é possível responder até 24 h depois da última mensagem do cliente. Aguarde ele escrever de novo.",
     templates: "Modelos",
     sendTemplate: "Enviar modelo",
     addNote: "Adicionar nota",
@@ -325,11 +331,14 @@ const COMPOSER_COPY: Record<
     replyPlaceholderNoTemplates: "Type a message… Shift+Enter for a new line. Type / for quick replies",
     notePlaceholder: "Write a note for your team — the customer won't see it",
     expiredPlaceholder: "24-hour window closed — send a template",
+    expiredPlaceholderNoTemplates: "24-hour window closed — wait for the customer to write again",
     readOnlyPlaceholder: "Read-only — your role can't reply",
     planReadOnlyPlaceholder: "Account is read-only — subscribe in Settings → Plan to send again",
     anonymizedPlaceholder: "Contact anonymized — sending is blocked (LGPD)",
     expiredLine:
       "24-hour window closed: WhatsApp only accepts approved templates until the customer replies again.",
+    expiredLineNoTemplates:
+      "24-hour window closed: you can only reply within 24 hours of the customer's last message. Wait for them to write again.",
     templates: "Templates",
     sendTemplate: "Send template",
     addNote: "Add note",
@@ -1068,7 +1077,9 @@ ${restoreDraft.text}` : restoreDraft.text));
     : isNote
       ? copy.notePlaceholder
       : sessionExpired
-        ? copy.expiredPlaceholder
+        ? templatesEnabled
+          ? copy.expiredPlaceholder
+          : copy.expiredPlaceholderNoTemplates
         : templatesEnabled
           ? copy.replyPlaceholder
           : copy.replyPlaceholderNoTemplates;
@@ -1097,8 +1108,9 @@ ${restoreDraft.text}` : restoreDraft.text));
         >
           <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" />
           <p className="min-w-0 flex-1 text-xs leading-snug text-amber-600 dark:text-amber-400">
-            {copy.expiredLine}
+            {templatesEnabled ? copy.expiredLine : copy.expiredLineNoTemplates}
           </p>
+          {templatesEnabled && (
           <Button
             variant="ghost"
             size="sm"
@@ -1108,6 +1120,7 @@ ${restoreDraft.text}` : restoreDraft.text));
             <LayoutTemplate className="h-3.5 w-3.5" />
             {copy.sendTemplate}
           </Button>
+          )}
         </div>
       )}
 
@@ -1301,7 +1314,9 @@ ${restoreDraft.text}` : restoreDraft.text));
                     : isNote
                       ? copy.attachNotInNote
                       : sessionExpired
-                        ? copy.expiredPlaceholder
+                        ? templatesEnabled
+                          ? copy.expiredPlaceholder
+                          : copy.expiredPlaceholderNoTemplates
                         : copy.attach
                 }
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"

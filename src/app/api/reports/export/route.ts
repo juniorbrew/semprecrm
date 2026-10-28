@@ -53,7 +53,7 @@ export async function GET(request: Request) {
     }
     const channel = q.get('channel')
     if (channel) {
-      if (channel !== 'official' && channel !== 'qr') return NextResponse.json({ error: 'Invalid channel' }, { status: 400 })
+      if (channel !== 'official' && channel !== 'qr' && channel !== 'instagram' && channel !== 'messenger') return NextResponse.json({ error: 'Invalid channel' }, { status: 400 })
       filters.channel = channel as ReportChannel
     }
 

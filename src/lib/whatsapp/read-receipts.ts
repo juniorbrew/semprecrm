@@ -27,7 +27,7 @@ export interface ReadReceiptResult {
   /** Messages confirmed as read in this call. */
   sent: number
   /** Why nothing was sent, when nothing was. */
-  skipped?: 'nothing_new' | 'gateway_not_configured' | 'official_not_configured' | 'no_phone'
+  skipped?: 'nothing_new' | 'gateway_not_configured' | 'official_not_configured' | 'no_phone' | 'unsupported_channel'
 }
 
 export async function sendReadReceipts(
@@ -47,6 +47,11 @@ export async function sendReadReceipts(
     channel: string | null
     contact_id: string
     read_receipt_at: string | null
+  }
+
+  // Instagram / Messenger have no WhatsApp read receipts (and must not reach Meta's WhatsApp API).
+  if (conversation.channel === 'instagram' || conversation.channel === 'messenger') {
+    return { sent: 0, skipped: 'unsupported_channel' }
   }
 
   let query = db

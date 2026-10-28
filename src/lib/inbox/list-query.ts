@@ -12,7 +12,7 @@
  *   - everything else: last_message_at (created_at when there is none)
  *     newest first; ties on id.
  */
-import type { Conversation, ConversationPriority, WhatsAppChannel } from '@/types'
+import type { Conversation, ConversationChannel, ConversationPriority } from '@/types'
 import { matchesRadar, type RadarKey, type RadarPreferences } from '@/lib/radar/classify'
 import { isInQueue, queueWaitingSince } from '@/lib/radar/queue'
 import { isSlaBreached } from '@/lib/support/sla'
@@ -59,7 +59,7 @@ export interface InboxView {
   /** Contact has ANY of these tags (migration 068); [] = no filter. */
   tagIds: string[]
   /** One WhatsApp transport (migration 068); null = both. */
-  channel: WhatsAppChannel | null
+  channel: ConversationChannel | null
   /** Support category (migration 071); null / absent = any. */
   categoryId?: string | null
   /** Support priority (migration 071); null / absent = any. */
@@ -75,7 +75,7 @@ export function facetArgs(
   view: Pick<InboxView, 'tagIds' | 'channel' | 'categoryId' | 'priority' | 'teamId' | 'slaBreached'>,
 ): {
   p_tag_ids: string[] | null
-  p_channel: WhatsAppChannel | null
+  p_channel: ConversationChannel | null
   p_category_id: string | null
   p_priority: ConversationPriority | null
   p_team_id: string | null

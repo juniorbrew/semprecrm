@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationPriority, ConversationStatus, WhatsAppChannel } from "@/types";
+import type { Conversation, ConversationChannel, ConversationPriority, ConversationStatus, WhatsAppChannel } from "@/types";
+import { MESSAGING_LABEL, isMetaMessagingChannel } from "@/lib/meta-messaging/channels";
 import { useConversationCategories } from "@/hooks/use-conversation-categories";
 import { useSlaPolicies } from "@/hooks/use-sla-policies";
 import { useTeams } from "@/hooks/use-teams";
@@ -474,7 +475,7 @@ export function ConversationList({
   // Contact-tag and WhatsApp-channel filters (migration 068), persisted with
   // the tab / live filter.
   const [tagIds, setTagIds] = useState<string[]>([]);
-  const [channelFilter, setChannelFilter] = useState<WhatsAppChannel | null>(null);
+  const [channelFilter, setChannelFilter] = useState<ConversationChannel | null>(null);
   // Support category / priority filters (migration 071).
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<ConversationPriority | null>(null);
@@ -498,7 +499,7 @@ export function ConversationList({
   // A saved category that was deleted must not filter (nor show a chip).
   const validCategoryId =
     categoryId && (categoryById.size === 0 || categoryById.has(categoryId)) ? categoryId : null;
-  const { tags: facetTags, hasBothChannels, loaded: facetsLoaded } = useInboxFacets(accountId);
+  const { tags: facetTags, channels: facetChannels, hasBothChannels, loaded: facetsLoaded } = useInboxFacets(accountId);
   // A saved channel filter is meaningless (and invisible) without both channels.
   const channel = hasBothChannels ? channelFilter : null;
   // A saved tag that no longer exists must not filter (or show a chip).
@@ -639,7 +640,7 @@ export function ConversationList({
   );
 
   const handleChannelChange = useCallback(
-    (next: WhatsAppChannel | null) => {
+    (next: ConversationChannel | null) => {
       setChannelFilter(next);
       persistTriage({ tab, live: liveFilter, tagIds, channel: next });
     },
@@ -1410,6 +1411,7 @@ export function ConversationList({
 
             <FilterPopover
               tags={facetTags}
+              channels={facetChannels}
               hasBothChannels={hasBothChannels}
               tagIds={validTagIds}
               channel={channel}
@@ -1881,6 +1883,7 @@ export const ConversationItem = memo(function ConversationItem({
   onQuickAction,
   onPatch,
 }: ConversationItemProps) {
+  const messaging = isMetaMessagingChannel(conversation.channel) ? conversation.channel : null;
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Unknown contact";
@@ -1952,7 +1955,7 @@ export const ConversationItem = memo(function ConversationItem({
           />
           <span
             data-no-translate
-            title={`${channelLabel} · ${channelChip[channel]}`}
+            title={messaging ? MESSAGING_LABEL[messaging] : `${channelLabel} · ${channelChip[channel]}`}
             className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background"
           >
             <MessageCircle className="h-2.5 w-2.5" />
@@ -1986,12 +1989,14 @@ export const ConversationItem = memo(function ConversationItem({
               data-no-translate
               className={cn(
                 "shrink-0 text-[11px] leading-[18px]",
-                channel === "qr"
-                  ? "text-amber-600 dark:text-amber-400"
-                  : "text-muted-foreground",
+                messaging
+                  ? "text-fuchsia-600 dark:text-fuchsia-400"
+                  : channel === "qr"
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground",
               )}
             >
-              {channelChip[channel]}
+              {messaging ? MESSAGING_LABEL[messaging] : channelChip[channel]}
             </span>
             {aiHandling && (
               <span

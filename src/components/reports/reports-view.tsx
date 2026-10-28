@@ -234,7 +234,7 @@ export function ReportsView() {
           all={copy.all}
           onChange={(v) => setFilter({ channel: (v as ReportChannel | null) ?? null })}
         >
-          {(["official", "qr"] as const).map((c) => (
+          {(["official", "qr", "instagram", "messenger"] as const).map((c) => (
             <option key={c} value={c}>
               {copy.channels[c]}
             </option>

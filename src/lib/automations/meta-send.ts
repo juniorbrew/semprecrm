@@ -7,6 +7,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { assertWhatsAppChannel } from '@/lib/meta-messaging/channels'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { accountIsWritable } from '@/lib/plans-server'
 import {
@@ -97,7 +98,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // QR channel (migration 026): the conversation lives on the WhatsApp
   // Web session, so deliver through the gateway. Templates don't exist
   // there — send the rendered body as plain text instead.
-  if ((await conversationChannel(db, input.conversationId)) === 'qr') {
+  if (assertWhatsAppChannel(await conversationChannel(db, input.conversationId)) === 'qr') {
     // Anti-ban pacing is the gateway's job (bulk queue); a `throttled` answer
     // propagates so the automation engine / AI / CSAT can park and retry.
     if (input.kind === 'template') {

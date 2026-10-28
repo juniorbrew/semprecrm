@@ -5,7 +5,8 @@ import { ListFilter, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/hooks/use-language";
-import type { ConversationPriority, WhatsAppChannel } from "@/types";
+import type { ConversationChannel, ConversationPriority } from "@/types";
+import { MESSAGING_LABEL, isMetaMessagingChannel } from "@/lib/meta-messaging/channels";
 import { CATEGORY_DOT, PRIORITIES, PRIORITY_DOT, supportCopy, type ConversationCategory } from "@/lib/support/model";
 import { slaCopy } from "@/lib/support/sla";
 import { teamCopy, type Team } from "@/lib/support/teams";
@@ -19,13 +20,13 @@ export interface FacetTag {
 }
 
 /**
- * Tags of the account + whether both WhatsApp transports are set up (the
- * channel filter only makes sense then). One light fetch per account; a
- * failure just hides the corresponding control.
+ * Tags of the account + the channels it has set up (WhatsApp official / QR,
+ * Instagram, Messenger): the channel filter only makes sense with 2+. One
+ * light fetch per account; a failure just hides the corresponding control.
  */
 export function useInboxFacets(accountId: string | null) {
   const [tags, setTags] = useState<FacetTag[]>([]);
-  const [hasBothChannels, setHasBothChannels] = useState(false);
+  const [channels, setChannels] = useState<ConversationChannel[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -33,14 +34,21 @@ export function useInboxFacets(accountId: string | null) {
     let cancelled = false;
     const supabase = createClient();
     (async () => {
-      const [tagRes, official, qr] = await Promise.all([
+      const [tagRes, official, qr, meta] = await Promise.all([
         supabase.from("tags").select("id, name, color").eq("account_id", accountId).order("name"),
         supabase.from("whatsapp_config").select("account_id").eq("account_id", accountId).maybeSingle(),
         supabase.from("wa_qr_sessions").select("account_id").eq("account_id", accountId).maybeSingle(),
+        supabase.from("meta_messaging_channels").select("kind").eq("account_id", accountId),
       ]);
       if (cancelled) return;
       if (!tagRes.error) setTags((tagRes.data ?? []) as FacetTag[]);
-      setHasBothChannels(!!official.data && !!qr.data);
+      const connected: ConversationChannel[] = [];
+      if (official.data) connected.push("official");
+      if (qr.data) connected.push("qr");
+      for (const row of (meta.data ?? []) as { kind: string }[]) {
+        if (isMetaMessagingChannel(row.kind)) connected.push(row.kind);
+      }
+      setChannels(connected);
       setLoaded(true);
     })();
     return () => {
@@ -48,22 +56,23 @@ export function useInboxFacets(accountId: string | null) {
     };
   }, [accountId]);
 
-  return { tags, hasBothChannels, loaded };
+  return { tags, channels, hasBothChannels: channels.length > 1, loaded };
 }
 
-const CHANNELS: WhatsAppChannel[] = ["official", "qr"];
-
-export function channelLabel(channel: WhatsAppChannel, t: (s: string) => string): string {
+export function channelLabel(channel: ConversationChannel, t: (s: string) => string): string {
+  if (isMetaMessagingChannel(channel)) return MESSAGING_LABEL[channel];
   return channel === "qr" ? t("QR") : t("Official");
 }
 
 interface FilterPopoverProps {
   tags: FacetTag[];
+  /** Channels the account has set up; the filter shows when there are 2+. */
+  channels: ConversationChannel[];
   hasBothChannels: boolean;
   tagIds: string[];
-  channel: WhatsAppChannel | null;
+  channel: ConversationChannel | null;
   onTagsChange: (ids: string[]) => void;
-  onChannelChange: (channel: WhatsAppChannel | null) => void;
+  onChannelChange: (channel: ConversationChannel | null) => void;
   /** Support filters (migration 071); the sections show once the account has categories. */
   categories?: ConversationCategory[];
   categoryId?: string | null;
@@ -80,9 +89,10 @@ interface FilterPopoverProps {
   onSlaBreachedChange?: (on: boolean) => void;
 }
 
-/** Header button + popover: multi-select tags and (when both exist) the channel. */
+/** Header button + popover: multi-select tags and (with 2+ channels) the channel. */
 export function FilterPopover({
   tags,
+  channels,
   hasBothChannels,
   tagIds,
   channel,
@@ -164,23 +174,23 @@ export function FilterPopover({
         {hasBothChannels && (
           <div>
             <p className="mb-1 text-xs text-muted-foreground">
-              WhatsApp
+              {t("Channel")}
             </p>
-            <div className="flex gap-1" role="group" aria-label="WhatsApp">
-              {[null, ...CHANNELS].map((value) => (
+            <div className="flex flex-wrap gap-1" role="group" aria-label={t("Channel")}>
+              {[null, ...channels].map((value) => (
                 <button
                   key={value ?? "all"}
                   type="button"
                   aria-pressed={channel === value}
                   onClick={() => onChannelChange(value)}
                   className={cn(
-                    "h-7 flex-1 rounded-md border text-xs font-medium transition-colors",
+                    "h-7 min-w-14 flex-1 rounded-md border px-1.5 text-xs font-medium transition-colors",
                     channel === value
                       ? "border-transparent bg-primary/10 text-primary"
                       : "border-transparent text-foreground hover:bg-muted",
                   )}
                 >
-                  {value ? channelLabel(value, t) : t("Both")}
+                  {value ? channelLabel(value, t) : t("All channels")}
                 </button>
               ))}
             </div>

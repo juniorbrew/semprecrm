@@ -8,9 +8,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Language } from '@/lib/i18n'
+import type { ConversationChannel } from '@/types'
 
 export type ReportGroup = 'all' | 'category' | 'team' | 'agent' | 'priority'
-export type ReportChannel = 'official' | 'qr'
+export type ReportChannel = ConversationChannel
 
 /** One row of `support_report()`: `group_key` is an id (or a priority), null = none. */
 export interface ReportRow {
@@ -178,7 +179,7 @@ export interface ReportsCopy {
   category: string
   agent: string
   channel: string
-  channels: Record<ReportChannel, string>
+  channels: Record<ConversationChannel, string>
   all: string
   none: string
   export: string
@@ -236,7 +237,7 @@ const COPY: Record<Language, ReportsCopy> = {
     category: 'Categoria',
     agent: 'Atendente',
     channel: 'Canal',
-    channels: { official: 'API oficial', qr: 'QR code' },
+    channels: { official: 'API oficial', qr: 'QR code', instagram: 'Instagram', messenger: 'Messenger' },
     all: 'Todos',
     none: 'Sem definição',
     export: 'Exportar CSV',
@@ -292,7 +293,7 @@ const COPY: Record<Language, ReportsCopy> = {
     category: 'Category',
     agent: 'Agent',
     channel: 'Channel',
-    channels: { official: 'Official API', qr: 'QR code' },
+    channels: { official: 'Official API', qr: 'QR code', instagram: 'Instagram', messenger: 'Messenger' },
     all: 'All',
     none: 'Not set',
     export: 'Export CSV',

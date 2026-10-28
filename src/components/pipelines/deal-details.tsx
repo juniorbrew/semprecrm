@@ -440,7 +440,7 @@ export function DealDetails({
           <div className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary">
-                {initials(contact?.name, contact?.phone)}
+                {initials(contact?.name, contact?.phone ?? undefined)}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-foreground">

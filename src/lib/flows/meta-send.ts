@@ -15,6 +15,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { assertWhatsAppChannel } from '@/lib/meta-messaging/channels'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { accountIsWritable } from '@/lib/plans-server'
 import { mediaUrlForPublic } from '@/lib/storage/media-url'
@@ -74,7 +75,7 @@ export async function engineSendText(
   if (!(await accountIsWritable(db, args.accountId))) throw new AccountReadOnlyError()
 
   // QR channel (migration 026) → gateway.
-  if ((await conversationChannel(db, args.conversationId)) === 'qr') {
+  if (assertWhatsAppChannel(await conversationChannel(db, args.conversationId)) === 'qr') {
     return engineSendViaQr(db, {
       origin: 'flow',
       priority: 'interactive',
@@ -199,7 +200,7 @@ export async function engineSendMedia(
   if (!(await accountIsWritable(db, args.accountId))) throw new AccountReadOnlyError()
 
   // QR channel (migration 026) → gateway media send.
-  if ((await conversationChannel(db, args.conversationId)) === 'qr') {
+  if (assertWhatsAppChannel(await conversationChannel(db, args.conversationId)) === 'qr') {
     return engineSendViaQr(db, {
       origin: 'flow',
       priority: 'interactive',
@@ -372,7 +373,7 @@ async function sendInteractiveViaMeta(
 
   // QR channel (migration 026): WhatsApp Web has no interactive
   // messages, so the prompt degrades to body + a numbered option list.
-  if ((await conversationChannel(db, input.conversationId)) === 'qr') {
+  if (assertWhatsAppChannel(await conversationChannel(db, input.conversationId)) === 'qr') {
     const options =
       input.kind === 'buttons'
         ? input.buttons.map((b) => b.title)
