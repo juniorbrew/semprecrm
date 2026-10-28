@@ -2585,6 +2585,7 @@ export function MessageThread({
                         key={item.id}
                         message={msg}
                         onReply={() => handleStartReply(msg)}
+                        canReact={!messaging}
                         onReact={(emoji) => {
                           if (emoji) void postReaction(msg.id, emoji);
                         }}

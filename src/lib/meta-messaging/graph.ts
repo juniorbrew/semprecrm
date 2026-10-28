@@ -32,7 +32,17 @@ export class MessagingApiError extends Error {
 
   /** Meta refused because the customer's 24 h window is closed. */
   get outsideWindow(): boolean {
-    return this.code === 10 || this.subcode === 2534022 || this.subcode === 2018278
+    return this.subcode === 2534022 || this.subcode === 2018278
+  }
+
+  /** The token is invalid, expired or revoked (OAuthException 190). */
+  get tokenInvalid(): boolean {
+    return this.code === 190
+  }
+
+  /** Missing permission / capability (a plain code 10, or 200). */
+  get permissionDenied(): boolean {
+    return !this.outsideWindow && (this.code === 10 || this.code === 200)
   }
 }
 
@@ -47,8 +57,9 @@ async function graphFetch(url: string, token: string, init: RequestInit = {}): P
   } | null
   if (!res.ok || body?.error) {
     const e = body?.error
+    // Meta's own message can quote ids of the customer: keep only status/code/subcode.
     throw new MessagingApiError(
-      e?.message ?? `Meta Graph API error (${res.status})`,
+      `Meta Graph API error (status ${res.status}, code ${e?.code ?? 'n/a'}, subcode ${e?.error_subcode ?? 'n/a'})`,
       res.status,
       e?.code ?? null,
       e?.error_subcode ?? null,
@@ -119,7 +130,10 @@ export async function fetchMessagingProfile(
       pictureUrl: s(p.profile_pic),
     }
   } catch (err) {
-    console.warn('[meta-messaging] profile lookup failed:', err instanceof Error ? err.message : err)
+    console.warn(
+      '[meta-messaging] profile lookup failed:',
+      err instanceof MessagingApiError ? `code ${err.code}/${err.subcode}` : 'network',
+    )
     return null
   }
 }

@@ -63,7 +63,8 @@ INSERT INTO messages(conversation_id, sender_type, content_type, content_text, c
 VALUES ('10000000-0000-4000-8000-0000000002e1', 'customer', 'text', 'oi', 'instagram', 'mid.1');
 SELECT pg_temp.assert_fails(format('UPDATE conversations SET channel = %L WHERE id = %L', 'telegram', '10000000-0000-4000-8000-0000000002e1'), 'conversation channel CHECK');
 SELECT pg_temp.assert_fails(format('UPDATE messages SET channel = %L WHERE message_id = %L', 'telegram', 'mid.1'), 'message channel CHECK');
-SELECT pg_temp.assert_fails(format('INSERT INTO ai_agents(account_id, name, channels) VALUES (%L, %L, ARRAY[%L])', (SELECT acc_a FROM ids), 'x', 'telegram'), 'ai_agents.channels CHECK');
+SELECT pg_temp.assert_fails(format('INSERT INTO ai_agents(account_id, name, instructions, channels) VALUES (%L, %L, %L, ARRAY[%L])', (SELECT acc_a FROM ids), 'x', 'i', 'telegram'), 'ai_agents.channels CHECK');
+INSERT INTO ai_agents(id, account_id, name, instructions, channels) VALUES ('10000000-0000-4000-8000-0000000003a1', (SELECT acc_a FROM ids), 'ig only', 'i', ARRAY['instagram']);
 
 -- ---- RPCs accept the new channels -----------------------------------------
 SET ROLE authenticated;

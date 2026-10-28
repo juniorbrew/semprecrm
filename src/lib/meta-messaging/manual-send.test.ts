@@ -164,6 +164,45 @@ describe('sendManualMessagingReply', () => {
     expect(h.inserted).toHaveLength(0)
   })
 
+  it('plain code 10 is a permission problem, 190 a dead token; the Meta text never reaches the client', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'user 1784 blocked', code: 10 } }), { status: 400 }))
+    const denied = await sendManualMessagingReply(input())
+    expect(denied).toMatchObject({ status: 403, body: { code: 'permission_denied' } })
+    expect(JSON.stringify(denied.body)).not.toContain('1784')
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'x', code: 190 } }), { status: 401 }))
+    expect((await sendManualMessagingReply(input())).body.code).toBe('channel_expired')
+  })
+
+  it('logs code / subcode only, never the Meta message', async () => {
+    const logged: unknown[] = []
+    vi.mocked(console.error).mockImplementation((...a: unknown[]) => void logged.push(...a))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'IGSID 999 is bad', code: 100, error_subcode: 5 } }), { status: 400 }))
+    await sendManualMessagingReply(input())
+    expect(JSON.stringify(logged)).toContain('code 100')
+    expect(JSON.stringify(logged)).not.toContain('IGSID 999')
+  })
+
+  it('refuses text over the channel limit before calling Meta (Instagram bytes, Messenger characters)', async () => {
+    const ig = await sendManualMessagingReply(input({ contentText: 'é'.repeat(501) }))
+    expect(ig).toMatchObject({ status: 400, body: { code: 'text_too_long' } })
+    const ok1 = 'é'.repeat(500)
+    fetchMock.mockResolvedValueOnce(ok('m1'))
+    expect((await sendManualMessagingReply(input({ contentText: ok1 }))).status).toBe(200)
+    h.connection = { ...h.connection, kind: 'messenger', external_id: 'PG1' }
+    expect((await sendManualMessagingReply(input({ channel: 'messenger', contentText: 'a'.repeat(2001) }))).body.code).toBe('text_too_long')
+    fetchMock.mockResolvedValueOnce(ok('m2'))
+    expect((await sendManualMessagingReply(input({ channel: 'messenger', contentText: 'é'.repeat(2000) }))).status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('Meta accepted but the DB insert failed: still a success (with a warning), so the agent does not resend', async () => {
+    fetchMock.mockResolvedValueOnce(ok('mid.out'))
+    h.insertError = { code: '08006' }
+    const r = await sendManualMessagingReply(input())
+    expect(r.status).toBe(200)
+    expect(r.body).toMatchObject({ success: true, warning: 'not_saved', whatsapp_message_id: 'mid.out', message_id: null })
+  })
+
   it('when the echo of this mid was stored first, takes that row over', async () => {
     fetchMock.mockResolvedValueOnce(ok('mid.out'))
     h.insertError = { code: '23505' }

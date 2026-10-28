@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { copyMessagingMedia, isAllowedMetaMediaUrl } from './media'
+import { copyMessagingMedia, isAllowedMetaMediaUrl, storeMessagingAvatar } from './media'
 import { fetchMessagingProfile, MessagingApiError, sendMessagingMessage } from './graph'
 import { parseMessagingWebhook } from './parse'
 import { verifyMessagingSignature } from './signature'
@@ -34,7 +34,7 @@ describe('verifyMessagingSignature', () => {
   })
 })
 
-const envelope = (object: string, messaging: unknown[]) => ({ object, entry: [{ id: 'BIZ', time: 1, messaging }] })
+const envelope = (object: string, messaging: unknown[], id = object === 'page' ? 'PG1' : 'IG1') => ({ object, entry: [{ id, time: 1, messaging }] })
 
 describe('parseMessagingWebhook', () => {
   it('parses a text message and resolves the business from recipient.id', () => {
@@ -82,6 +82,14 @@ describe('parseMessagingWebhook', () => {
     )
     expect(e.replyToMid).toBe('m0')
     expect(e.attachments[0].type).toBe('story_mention')
+  })
+
+  it('skips an event whose business id is not the entry id', () => {
+    expect(
+      parseMessagingWebhook(
+        envelope('instagram', [{ sender: { id: 'C' }, recipient: { id: 'OTHER' }, timestamp: 1, message: { mid: 'm', text: 'x' } }]),
+      ),
+    ).toEqual([])
   })
 
   it('ignores reactions, reads, deliveries, unsends, empty messages and foreign objects', () => {
@@ -202,5 +210,54 @@ describe('copyMessagingMedia', () => {
     fetchMock.mockResolvedValueOnce(new Response('nope', { status: 404 }))
     expect(await copyMessagingMedia(db, 'acct-1', 'https://scontent.fbcdn.net/a.jpg', 'm1')).toBeNull()
     spy.mockRestore()
+  })
+})
+
+describe('media limits and types', () => {
+  const upload = vi.fn(async () => ({ error: null }))
+  const from = vi.fn(() => ({ upload }))
+  const db = { storage: { from } } as never
+  beforeEach(() => {
+    upload.mockClear()
+    from.mockClear()
+    process.env.NEXT_PUBLIC_SUPABASE_URL = '/supabase'
+  })
+
+  it('aborts a download past 16 MB even without content-length', async () => {
+    const chunk = new Uint8Array(4 * 1024 * 1024)
+    let sent = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 10) controller.enqueue(chunk)
+        else controller.close()
+      },
+    })
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'content-type': 'video/mp4' } }))
+    expect(await copyMessagingMedia(db, 'acct-1', 'https://video.fbcdn.net/v.mp4', 'm1')).toBeNull()
+    expect(upload).not.toHaveBeenCalled()
+    expect(sent).toBeLessThan(10)
+  })
+
+  it('stores only types the chat-media bucket accepts; others become a placeholder upstream', async () => {
+    for (const type of ['image/gif', 'text/html', 'application/x-msdownload', 'video/quicktime', '']) {
+      fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': type } }))
+      expect(await copyMessagingMedia(db, 'acct-1', 'https://x.fbcdn.net/a', 'm1'), type).toBeNull()
+    }
+    expect(upload).not.toHaveBeenCalled()
+  })
+
+  it('profile photo goes to contact-avatars at account-<id>/<contact-id> with upsert (no external id in the path)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), { status: 200, headers: { 'content-type': 'image/jpeg' } }))
+    const url = await storeMessagingAvatar(db, 'acct-1', 'Contact-1', 'https://scontent.cdninstagram.com/p.jpg')
+    expect(from).toHaveBeenCalledWith('contact-avatars')
+    expect(upload).toHaveBeenCalledWith('account-acct-1/contact-1', expect.anything(), expect.objectContaining({ upsert: true, contentType: 'image/jpeg' }))
+    expect(url).toMatch(/^\/supabase\/storage\/v1\/object\/public\/contact-avatars\/account-acct-1\/contact-1\?v=\d+$/)
+  })
+
+  it('refuses an avatar over 1 MB or of another type', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(new Uint8Array(1024 * 1024 + 1), { status: 200, headers: { 'content-type': 'image/jpeg' } }))
+    expect(await storeMessagingAvatar(db, 'a', 'c', 'https://x.fbcdn.net/p.jpg')).toBeNull()
+    fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'image/gif' } }))
+    expect(await storeMessagingAvatar(db, 'a', 'c', 'https://x.fbcdn.net/p.gif')).toBeNull()
   })
 })

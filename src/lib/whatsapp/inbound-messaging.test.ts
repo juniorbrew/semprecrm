@@ -206,6 +206,7 @@ function makeDb() {
       insert: (p: Record<string, unknown>) => ((ops.type = 'insert'), (ops.payload = p), b),
       update: (p: Record<string, unknown>) => ((ops.type = 'update'), (ops.payload = p), b),
       eq: (k: string, v: unknown) => (filters.push([k, v]), b),
+      is: (k: string, v: unknown) => (preds.push((r) => (r[k] ?? null) === v), b),
       neq: (k: string, v: unknown) => (preds.push((r) => r[k] !== v), b),
       in: (k: string, vs: unknown[]) => (preds.push((r) => vs.includes(r[k])), b),
       order: (col: string, o?: { ascending?: boolean }) => (
@@ -318,13 +319,23 @@ describe('ingestInboundMessage — Instagram / Messenger', () => {
     expect(h.state.messages).toHaveLength(2)
   })
 
-  it('looks the profile up only for a new contact and stores name and photo', async () => {
-    const getProfile = vi.fn(async () => ({ name: 'Ana Souza', avatarUrl: '/supabase/storage/v1/object/public/chat-media/a.jpg' }))
-    await ingestInboundMessage({ ...IG, getProfile }, makeDb())
+  it('looks the profile up only for a new contact; the photo is stored under the new contact id', async () => {
+    const getProfile = vi.fn(async () => ({ name: 'Ana Souza', pictureUrl: 'https://scontent.cdninstagram.com/p.jpg' }))
+    const storeAvatar = vi.fn(async (contactId: string) => `/supabase/storage/v1/object/public/contact-avatars/account-acct-1/${contactId}`)
+    await ingestInboundMessage({ ...IG, getProfile, storeAvatar }, makeDb())
     expect(getProfile).toHaveBeenCalledTimes(1)
-    expect(h.state.contacts[0]).toMatchObject({ name: 'Ana Souza', avatar_url: '/supabase/storage/v1/object/public/chat-media/a.jpg' })
-    await ingestInboundMessage({ ...IG, messageId: 'mid.2', getProfile }, makeDb())
+    const contact = h.state.contacts[0]
+    expect(storeAvatar).toHaveBeenCalledWith(contact.id, 'https://scontent.cdninstagram.com/p.jpg')
+    expect(contact).toMatchObject({ name: 'Ana Souza', avatar_url: `/supabase/storage/v1/object/public/contact-avatars/account-acct-1/${contact.id}` })
+    await ingestInboundMessage({ ...IG, messageId: 'mid.2', getProfile, storeAvatar }, makeDb())
     expect(getProfile).toHaveBeenCalledTimes(1)
+  })
+
+  it('a DM from an anonymised identity starts a new contact', async () => {
+    h.state.contacts.push({ id: 'old', account_id: 'acct-1', instagram_id: 'IGSID-123456', anonymized_at: '2026-01-01T00:00:00Z' })
+    const r = await ingestInboundMessage(IG, makeDb())
+    expect(r.contactCreated).toBe(true)
+    expect(h.state.contacts).toHaveLength(2)
   })
 
   it('a failing profile lookup never drops the message', async () => {
@@ -349,6 +360,11 @@ describe('ingestInboundMessage — Instagram / Messenger', () => {
     expect(findSuppressedPhones).not.toHaveBeenCalled()
     expect(h.sendCalls).toHaveLength(0)
     expect(dispatchInboundToFlows).not.toHaveBeenCalled()
+  })
+
+  it('dispatches no message-triggered automation until part C', async () => {
+    await ingestInboundMessage(IG, makeDb())
+    expect(h.automationCalls).toHaveLength(0)
   })
 
   it('does not touch the WhatsApp path: a phone sender still dedupes by phone', async () => {

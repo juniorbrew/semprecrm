@@ -40,13 +40,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_account_messenger_id
 -- ---- 2. canais aceitos ------------------------------------------------
 ALTER TABLE public.conversations DROP CONSTRAINT IF EXISTS conversations_channel_check;
 ALTER TABLE public.conversations ADD CONSTRAINT conversations_channel_check
-  CHECK (channel IN ('official', 'qr', 'instagram', 'messenger'));
+  CHECK (channel IN ('official', 'qr', 'instagram', 'messenger')) NOT VALID;
+ALTER TABLE public.conversations VALIDATE CONSTRAINT conversations_channel_check;
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_channel_check;
 ALTER TABLE public.messages ADD CONSTRAINT messages_channel_check
-  CHECK (channel IN ('official', 'qr', 'instagram', 'messenger'));
+  CHECK (channel IN ('official', 'qr', 'instagram', 'messenger')) NOT VALID;
+ALTER TABLE public.messages VALIDATE CONSTRAINT messages_channel_check;
 ALTER TABLE public.ai_agents DROP CONSTRAINT IF EXISTS ai_agents_channels_check;
 ALTER TABLE public.ai_agents ADD CONSTRAINT ai_agents_channels_check
-  CHECK (channels <@ ARRAY['official', 'qr', 'instagram', 'messenger']::TEXT[]);
+  CHECK (channels <@ ARRAY['official', 'qr', 'instagram', 'messenger']::TEXT[]) NOT VALID;
+ALTER TABLE public.ai_agents VALIDATE CONSTRAINT ai_agents_channels_check;
 
 -- ---- 3. conexões Meta -------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.meta_messaging_channels (

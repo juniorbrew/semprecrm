@@ -54,6 +54,7 @@ export function parseMessagingWebhook(body: unknown): MessagingEvent[] {
   const events: MessagingEvent[] = []
   for (const entry of body.entry) {
     if (!isObj(entry) || !Array.isArray(entry.messaging)) continue
+    const entryId = str(entry.id)
     for (const m of entry.messaging) {
       if (!isObj(m) || !isObj(m.message)) continue
       const msg = m.message
@@ -62,6 +63,9 @@ export function parseMessagingWebhook(body: unknown): MessagingEvent[] {
       const recipient = idOf(m.recipient)
       if (!mid || !sender || !recipient || msg.is_deleted === true) continue
       const echo = msg.is_echo === true
+      // The account is resolved from the business id; it must be the entry's own id
+      // (recipient, or sender on an echo). A mismatch is never ours to route.
+      if (entryId && entryId !== (echo ? sender : recipient)) continue
       const attachments = (Array.isArray(msg.attachments) ? msg.attachments : [])
         .map(parseAttachment)
         .filter((a): a is MessagingAttachment => a !== null)

@@ -26,7 +26,11 @@ import { accountMediaUrlForServer } from '@/lib/storage/media-url'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { claimEchoedRow } from './phone-echo'
 
-/** `official` for rows that predate migration 026 or can't be read. */
+/**
+ * The conversation's channel. Fails CLOSED: a read error or a missing row throws, so no sender
+ * guesses "official" and delivers on the wrong transport. `official` only for an existing row
+ * whose channel is null (rows that predate migration 026).
+ */
 export async function conversationChannel(
   db: SupabaseClient,
   conversationId: string,
@@ -36,7 +40,7 @@ export async function conversationChannel(
     .select('channel')
     .eq('id', conversationId)
     .maybeSingle()
-  if (error || !data) return 'official'
+  if (error || !data) throw new Error('conversation channel could not be determined')
   const channel = data.channel
   return channel === 'qr' || channel === 'instagram' || channel === 'messenger' ? channel : 'official'
 }

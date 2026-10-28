@@ -32,6 +32,12 @@ const MEDIA_KIND: Record<string, MessagingMediaKind> = {
   document: 'file',
 }
 
+/** Per Meta: Instagram counts 1000 bytes (UTF-8), Messenger 2000 characters. */
+export function textTooLong(kind: MetaMessagingChannel, text: string | null | undefined): boolean {
+  if (!text) return false
+  return kind === 'instagram' ? Buffer.byteLength(text, 'utf8') > 1000 : [...text].length > 2000
+}
+
 const IDENTITY_COLUMN = { instagram: 'instagram_id', messenger: 'messenger_id' } as const
 const LABEL = { instagram: 'Instagram', messenger: 'Messenger' } as const
 
@@ -72,6 +78,15 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
 
   if (input.messageType === 'template') {
     return fail(400, `Modelos de mensagem não existem no ${label}. Envie uma mensagem de texto.`, 'template_not_supported')
+  }
+  if (textTooLong(kind, input.contentText)) {
+    return fail(
+      400,
+      kind === 'instagram'
+        ? 'Mensagem longa demais para o Instagram: o limite é de 1000 bytes (cerca de 1000 letras sem acento; acentos e emojis ocupam mais).'
+        : 'Mensagem longa demais para o Messenger: o limite é de 2000 caracteres.',
+      'text_too_long',
+    )
   }
   const recipientId = conversation.contact?.[IDENTITY_COLUMN[kind]]
   if (typeof recipientId !== 'string' || !recipientId) {
@@ -129,9 +144,9 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
         try {
           const caption = await send({ text: input.contentText })
           await persist('text', input.contentText, null, caption.messageId)
-        } catch (err) {
+        } catch {
           captionFailed = true
-          console.warn('[meta-messaging] caption send failed:', err instanceof Error ? err.message : err)
+          console.warn('[meta-messaging] caption send failed')
         }
       }
     } else {
@@ -143,16 +158,23 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
       if (err.outsideWindow) {
         return fail(409, `A janela de 24 h do ${label} está encerrada. Aguarde o cliente escrever de novo.`, 'window_closed')
       }
-      console.error('[meta-messaging] send failed:', err.code ?? err.status)
-      return fail(502, `Falha ao enviar pelo ${label}: ${err.message}`, 'send_failed')
+      // Only status/code/subcode are logged and the client gets a fixed message: Meta's text can quote ids.
+      console.error(`[meta-messaging] send failed: status ${err.status} code ${err.code} subcode ${err.subcode}`)
+      if (err.tokenInvalid) {
+        return fail(400, `O ${label} recusou a conexão (acesso expirado ou revogado). Reconecte o canal nas configurações.`, 'channel_expired')
+      }
+      if (err.permissionDenied) {
+        return fail(403, `O ${label} recusou o envio por falta de permissão. Confira as permissões do app e reconecte o canal.`, 'permission_denied')
+      }
+      return fail(502, `O ${label} não aceitou a mensagem. Tente novamente em instantes.`, 'send_failed')
     }
-    console.error('[meta-messaging] send failed:', err instanceof Error ? err.message : err)
+    console.error('[meta-messaging] send failed: network')
     return fail(502, `Não foi possível falar com o ${label}. Tente novamente.`, 'send_failed')
   }
 
-  if (!mainRecord) {
-    return fail(500, 'Mensagem enviada, mas falhou ao salvar no banco.', 'persist_failed')
-  }
+  // Meta accepted it: never answer an error here (the agent would resend and the customer
+  // would get it twice). Report success with a warning instead.
+  if (!mainRecord) console.error('[meta-messaging] sent but not saved, mid', mainId)
 
   await db
     .from('conversations')
@@ -167,7 +189,8 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
     status: 200,
     body: {
       success: true,
-      message_id: mainRecord.id,
+      message_id: mainRecord?.id ?? null,
+      ...(mainRecord ? {} : { warning: 'not_saved' }),
       whatsapp_message_id: mainId,
       channel: kind,
       ...(captionFailed ? { caption_failed: true } : {}),

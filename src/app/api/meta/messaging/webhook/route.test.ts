@@ -94,6 +94,7 @@ const text = (sender: string, recipient: string, mid: string, extra: Record<stri
   sender: { id: sender }, recipient: { id: recipient }, timestamp: 1_700_000_000_000, message: { mid, text: 'oi', ...extra },
 })
 const igBody = (...messaging: unknown[]) => ({ object: 'instagram', entry: [{ id: 'IG1', time: 1, messaging }] })
+const entryBody = (id: string, ...messaging: unknown[]) => ({ object: 'instagram', entry: [{ id, time: 1, messaging }] })
 
 beforeEach(() => {
   process.env.META_APP_SECRET = SECRET
@@ -167,9 +168,42 @@ describe('POST events', () => {
   })
 
   it('an unknown recipient id is acknowledged and ingests nothing', async () => {
-    expect((await post(igBody(text('IGSID', 'UNKNOWN', 'm1')))).status).toBe(200)
+    expect((await post(entryBody('UNKNOWN', text('IGSID', 'UNKNOWN', 'm1')))).status).toBe(200)
     await settle()
     expect(h.ingest).not.toHaveBeenCalled()
+  })
+
+  it('skips an event whose recipient is not the entry id (cannot be routed to another account)', async () => {
+    h.channels.push({ account_id: 'acct-9', kind: 'instagram', external_id: 'OTHER', status: 'active', access_token: 'x', id: 'ch-9' })
+    expect((await post(entryBody('IG1', text('IGSID', 'OTHER', 'm1')))).status).toBe(200)
+    await settle()
+    expect(h.ingest).not.toHaveBeenCalled()
+  })
+
+  it('answers 500 when an event failed transiently, so Meta redelivers; unknown recipients stay 200', async () => {
+    h.ingest.mockResolvedValueOnce({ ok: false, reason: 'message_insert_failed' })
+    expect((await post(igBody(text('IGSID', 'IG1', 'm1')))).status).toBe(500)
+    h.ingest.mockResolvedValueOnce({ ok: false, reason: 'account_owner_not_found' })
+    expect((await post(igBody(text('IGSID', 'IG1', 'm2')))).status).toBe(200)
+  })
+
+  it('dedupes each part on its own: part 0 stored, part 1 still ingested', async () => {
+    h.messages = [{ id: 'msg-1', conversation_id: 'cv-1', message_id: 'm1' }]
+    const att = (n: number) => ({ type: 'story_mention', payload: { url: `https://lookaside.fbsbx.com/${n}` } })
+    await post(igBody({ sender: { id: 'IGSID' }, recipient: { id: 'IG1' }, timestamp: 1, message: { mid: 'm1', attachments: [att(0), att(1)] } }))
+    expect(h.ingest).toHaveBeenCalledOnce()
+    expect(h.ingest.mock.calls[0][0]).toMatchObject({ messageId: 'm1:1' })
+  })
+
+  it('refuses a body above 1 MB before reading it', async () => {
+    const res = (await POST(
+      new Request('http://localhost/api/meta/messaging/webhook', {
+        method: 'POST',
+        headers: { 'content-length': String(2 * 1024 * 1024), 'x-hub-signature-256': 'sha256=x' },
+        body: '{}',
+      }),
+    )) as unknown as { status: number }
+    expect(res.status).toBe(413)
   })
 
   it('a revoked connection does not receive messages', async () => {

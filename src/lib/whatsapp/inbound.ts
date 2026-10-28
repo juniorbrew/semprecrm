@@ -102,11 +102,17 @@ export interface InboundMessageInput {
    * looked up lazily so a known customer costs no Graph call. May return null.
    */
   getProfile?: () => Promise<ContactProfile | null>
+  /**
+   * Stores the photo at `pictureUrl` for the contact (which exists by then) and returns the
+   * URL for `contacts.avatar_url`, or null. Part of the lazy profile lookup above.
+   */
+  storeAvatar?: (contactId: string, pictureUrl: string) => Promise<string | null>
 }
 
 export interface ContactProfile {
   name?: string | null
-  avatarUrl?: string | null
+  /** Where the transport serves the photo; copied by `storeAvatar`. */
+  pictureUrl?: string | null
 }
 
 export interface IngestResult {
@@ -252,11 +258,19 @@ export async function findOrCreateMessagingContact(
   kind: MetaMessagingChannel,
   externalId: string,
   getProfile?: InboundMessageInput['getProfile'],
+  storeAvatar?: InboundMessageInput['storeAvatar'],
 ): Promise<ContactOutcome | null> {
   const column = MESSAGING_IDENTITY_COLUMN[kind]
   const fallback = messagingFallbackName(kind, externalId)
   const lookup = () =>
-    db.from('contacts').select('*').eq('account_id', accountId).eq(column, externalId).maybeSingle()
+    db
+      .from('contacts')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq(column, externalId)
+      // An anonymised contact keeps no identity (LGPD): a new DM starts a fresh contact, like WhatsApp.
+      .is('anonymized_at', null)
+      .maybeSingle()
   const loadProfile = async (): Promise<ContactProfile | null> => {
     try {
       return (await getProfile?.()) ?? null
@@ -277,7 +291,9 @@ export async function findOrCreateMessagingContact(
       const profile = await loadProfile()
       const now = new Date().toISOString()
       const patch: Record<string, unknown> = { avatar_checked_at: now }
-      if (profile?.avatarUrl) patch.avatar_url = profile.avatarUrl
+      const photo =
+        profile?.pictureUrl && storeAvatar ? await storeAvatar(existing.id as string, profile.pictureUrl) : null
+      if (photo) patch.avatar_url = photo
       if (profile?.name && (!existing.name || existing.name === fallback)) patch.name = profile.name
       const { error } = await db.from('contacts').update(patch).eq('id', existing.id)
       if (!error) Object.assign(existing, patch)
@@ -293,7 +309,6 @@ export async function findOrCreateMessagingContact(
       user_id: ownerUserId,
       [column]: externalId,
       name: profile?.name || fallback,
-      avatar_url: profile?.avatarUrl ?? null,
       avatar_checked_at: new Date().toISOString(),
     })
     .select()
@@ -306,6 +321,14 @@ export async function findOrCreateMessagingContact(
     }
     console.error('[inbound] error creating contact:', createError.code ?? 'unknown')
     return null
+  }
+  // The photo is stored under the new contact's id, so it can only be copied now.
+  if (profile?.pictureUrl && storeAvatar) {
+    const photo = await storeAvatar(created.id as string, profile.pictureUrl)
+    if (photo) {
+      const { error } = await db.from('contacts').update({ avatar_url: photo }).eq('id', created.id)
+      if (!error) created.avatar_url = photo
+    }
   }
   return { contact: created, wasCreated: true }
 }
@@ -878,7 +901,15 @@ export async function ingestInboundMessage(
   const contactName = (input.pushName ?? '').trim()
 
   const contactOutcome = messaging
-    ? await findOrCreateMessagingContact(db, accountId, ownerUserId, messaging, senderPhone, input.getProfile)
+    ? await findOrCreateMessagingContact(
+        db,
+        accountId,
+        ownerUserId,
+        messaging,
+        senderPhone,
+        input.getProfile,
+        input.storeAvatar,
+      )
     : await findOrCreateContact(db, accountId, ownerUserId, senderPhone, contactName)
   if (!contactOutcome) return { ok: false, reason: 'contact_failed' }
   const contact = contactOutcome.contact
@@ -1194,7 +1225,8 @@ export async function ingestInboundMessage(
 
   // Fire-and-forget: a slow automation must not block the transport's
   // 200 OK.
-  for (const triggerType of automationTriggers) {
+  // Instagram / Messenger: automations (their send steps) wait for part C instead of failing here.
+  for (const triggerType of messaging ? [] : automationTriggers) {
     runAutomationsForTrigger({
       accountId,
       triggerType,

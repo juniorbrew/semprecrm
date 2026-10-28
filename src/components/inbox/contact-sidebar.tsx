@@ -766,6 +766,7 @@ export function ContactSidebar({
 
           {/* Reach */}
           <div className="-mx-2 mt-3 space-y-0.5">
+            {contact.phone && (
             <button
               type="button"
               onClick={handleCopyPhone}
@@ -782,6 +783,7 @@ export function ContactSidebar({
                 <Copy className="h-3 w-3 text-muted-foreground" />
               )}
             </button>
+            )}
 
             {contact.email && (
               <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground">

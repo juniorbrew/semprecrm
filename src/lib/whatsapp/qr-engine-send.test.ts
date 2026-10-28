@@ -92,11 +92,22 @@ function makeDb(state: {
 }
 
 describe('conversationChannel', () => {
-  it('returns qr / official and defaults to official', async () => {
+  it('returns qr / official and defaults a null channel to official', async () => {
     expect(await conversationChannel(makeDb({ channel: 'qr', inserted: [], updates: [] }), 'c')).toBe('qr')
     expect(await conversationChannel(makeDb({ channel: 'official', inserted: [], updates: [] }), 'c')).toBe('official')
     expect(await conversationChannel(makeDb({ channel: null, inserted: [], updates: [] }), 'c')).toBe('official')
-    expect(await conversationChannel(makeDb({ inserted: [], updates: [] }), 'c')).toBe('official')
+  })
+
+  it('returns the real Instagram / Messenger channel', async () => {
+    expect(await conversationChannel(makeDb({ channel: 'instagram', inserted: [], updates: [] }), 'c')).toBe('instagram')
+    expect(await conversationChannel(makeDb({ channel: 'messenger', inserted: [], updates: [] }), 'c')).toBe('messenger')
+  })
+
+  it('fails closed on a read error or a missing row instead of guessing official', async () => {
+    const failing = (result: unknown) =>
+      ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => result }) }) }) }) as never
+    await expect(conversationChannel(failing({ data: null, error: { message: 'down' } }), 'c')).rejects.toThrow(/could not be determined/)
+    await expect(conversationChannel(failing({ data: null, error: null }), 'c')).rejects.toThrow(/could not be determined/)
   })
 })
 

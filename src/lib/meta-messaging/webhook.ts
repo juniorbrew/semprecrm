@@ -5,6 +5,9 @@
 // resolved to its account by the business id (`meta_messaging_channels`),
 // then goes through the same pipeline as WhatsApp: `ingestInboundMessage`
 // for the customer's messages, `ingestMessagingEcho` for the business's.
+//
+// Triage and AI auto-reply are intentionally NOT run for these channels (the
+// route never kicks them and the AI agent resolver refuses them) until part C.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -13,7 +16,7 @@ import { ingestInboundMessage } from '@/lib/whatsapp/inbound'
 import { findConnectionByExternalId, type MessagingConnection } from './connections'
 import { ingestMessagingEcho } from './echo'
 import { fetchMessagingProfile } from './graph'
-import { copyMessagingMedia } from './media'
+import { copyMessagingMedia, storeMessagingAvatar } from './media'
 import type { MessagingAttachment, MessagingEvent } from './parse'
 
 export interface ProcessSummary {
@@ -21,6 +24,9 @@ export interface ProcessSummary {
   duplicates: number
   echoes: number
   unknownRecipient: number
+  /** Permanent problems (nothing to retry). */
+  skipped: number
+  /** Transient failures: the route answers 5xx so Meta redelivers. */
   failed: number
 }
 
@@ -65,24 +71,31 @@ async function toPart(
   return { id, type: 'text', text: join(caption, att.title, att.url), mediaUrl: null, mimeType: null }
 }
 
+interface PartSpec {
+  id: string
+  caption: string | null
+  att: MessagingAttachment | null
+}
+
 /** One part per attachment (text rides on the first); the id of the 2nd+ is `mid:n`. */
-export async function toParts(db: SupabaseClient, accountId: string, e: MessagingEvent): Promise<Part[]> {
-  if (e.attachments.length === 0) return [await toPart(db, accountId, e.mid, e.text, null)]
-  return Promise.all(
-    e.attachments.map((a, i) => toPart(db, accountId, i === 0 ? e.mid : `${e.mid}:${i}`, i === 0 ? e.text : null, a)),
-  )
+export function partSpecs(e: MessagingEvent): PartSpec[] {
+  if (e.attachments.length === 0) return [{ id: e.mid, caption: e.text, att: null }]
+  return e.attachments.map((att, i) => ({ id: i === 0 ? e.mid : `${e.mid}:${i}`, caption: i === 0 ? e.text : null, att }))
 }
 
 /** Cheap redelivery check BEFORE any media is downloaded (the pipelines dedupe again, authoritatively). */
-async function alreadyStored(db: SupabaseClient, accountId: string, mid: string): Promise<boolean> {
+async function alreadyStored(db: SupabaseClient, accountId: string, id: string): Promise<boolean> {
   const { data } = await db
     .from('messages')
     .select('id, conversations!inner(account_id)')
-    .eq('message_id', mid)
+    .eq('message_id', id)
     .eq('conversations.account_id', accountId)
     .limit(1)
   return (data ?? []).length > 0
 }
+
+// Not transient: retrying cannot fix an account without an owner.
+const PERMANENT = new Set(['account_owner_not_found'])
 
 async function handleEvent(
   db: SupabaseClient,
@@ -90,14 +103,23 @@ async function handleEvent(
   e: MessagingEvent,
   summary: ProcessSummary,
 ): Promise<void> {
-  if (await alreadyStored(db, conn.accountId, e.mid)) {
-    summary.duplicates += 1
-    return
+  const getProfile = async () => {
+    const profile = await fetchMessagingProfile(conn.kind, conn.token, e.customerId)
+    return profile ? { name: profile.name, pictureUrl: profile.pictureUrl } : null
   }
-  const parts = await toParts(db, conn.accountId, e)
+  const storeAvatar = (contactId: string, pictureUrl: string) =>
+    storeMessagingAvatar(db, conn.accountId, contactId, pictureUrl)
 
-  if (e.echo) {
-    for (const part of parts) {
+  // Each part (mid, mid:1, …) is deduped on its own, so a redelivery after a partial failure
+  // stores only what is missing.
+  for (const spec of partSpecs(e)) {
+    if (await alreadyStored(db, conn.accountId, spec.id)) {
+      summary.duplicates += 1
+      continue
+    }
+    const part = await toPart(db, conn.accountId, spec.id, spec.caption, spec.att)
+
+    if (e.echo) {
       const r = await ingestMessagingEcho(db, {
         accountId: conn.accountId,
         kind: conn.kind,
@@ -112,19 +134,9 @@ async function handleEvent(
       if (!r.ok) summary.failed += 1
       else if (r.duplicate) summary.duplicates += 1
       else summary.echoes += 1
+      continue
     }
-    return
-  }
 
-  const getProfile = async () => {
-    const profile = await fetchMessagingProfile(conn.kind, conn.token, e.customerId)
-    if (!profile) return null
-    const photo = profile.pictureUrl
-      ? await copyMessagingMedia(db, conn.accountId, profile.pictureUrl, `avatar-${e.customerId}`)
-      : null
-    return { name: profile.name, avatarUrl: photo?.url ?? null }
-  }
-  for (const part of parts) {
     const r = await ingestInboundMessage(
       {
         accountId: conn.accountId,
@@ -138,12 +150,14 @@ async function handleEvent(
         quotedMessageId: e.replyToMid,
         timestamp: e.timestamp,
         getProfile,
+        storeAvatar,
       },
       db,
     )
-    if (!r.ok) summary.failed += 1
-    else if (r.reason === 'duplicate') summary.duplicates += 1
-    else summary.processed += 1
+    if (r.ok && r.reason === 'duplicate') summary.duplicates += 1
+    else if (r.ok) summary.processed += 1
+    else if (r.reason && PERMANENT.has(r.reason)) summary.skipped += 1
+    else summary.failed += 1
   }
 }
 
@@ -151,7 +165,7 @@ export async function processMessagingEvents(
   db: SupabaseClient,
   events: MessagingEvent[],
 ): Promise<ProcessSummary> {
-  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, failed: 0 }
+  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, skipped: 0, failed: 0 }
   const connections = new Map<string, MessagingConnection | null>()
   for (const e of events) {
     const key = `${e.kind}:${e.businessId}`
@@ -165,7 +179,7 @@ export async function processMessagingEvents(
       await handleEvent(db, conn, e, summary)
     } catch (err) {
       summary.failed += 1
-      console.error('[meta-messaging] event failed:', err instanceof Error ? err.message : err)
+      console.error('[meta-messaging] event failed:', err instanceof Error ? err.name : 'error')
     }
   }
   return summary

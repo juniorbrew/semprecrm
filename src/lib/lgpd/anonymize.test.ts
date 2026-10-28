@@ -192,6 +192,23 @@ describe('anonymizeContact', () => {
     expect(tables.contact_suppressions ?? []).toHaveLength(0)
   })
 
+  it('drops the Instagram / Messenger ids of a phone-less contact (migration 100)', async () => {
+    const base = seed().contacts[0]
+    const { db, tables } = makeFakeDb(
+      seed({ contacts: [{ ...base, phone: null, instagram_id: 'IGSID-1', messenger_id: 'PSID-1' }] }),
+    )
+    const res = await anonymizeContact(db, ACC, C1, { now, randomHex: () => 'deadbeef', secret: SECRET })
+    expect(res.completed).toBe(true)
+    expect(tables.contacts[0]).toMatchObject({ instagram_id: null, messenger_id: null, phone: 'anon-noknloop', anonymized_at: NOW })
+  })
+
+  it('does not complete while an Instagram id is still on the contact', async () => {
+    const { remainingPersonalData } = await import('./anonymize')
+    const base = seed().contacts[0]
+    const { db } = makeFakeDb(seed({ contacts: [{ ...base, instagram_id: 'IGSID-1' }] }))
+    expect(await remainingPersonalData(db, ACC, C1)).toContain('contacts')
+  })
+
   it('covers every table in SCRUBBED_TABLES (coverage)', async () => {
     const { db, writes } = makeFakeDb(seed())
     await anonymizeContact(db, ACC, C1, { now, secret: SECRET })

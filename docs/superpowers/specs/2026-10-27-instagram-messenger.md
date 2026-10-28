@@ -42,6 +42,11 @@ Ordem: A → B → C. Um PR por parte. A é testada com mensagens simuladas e um
 - Inbox: etiqueta "Instagram"/"Messenger" na lista e no topo da conversa, filtro de canal com mais de duas opções, aviso de janela de 24 h sem botão de modelo.
 - Dicionário pt-BR (`src/lib/i18n-dict/*` + `npm run i18n:split`).
 
+## Requisitos para a parte B (achados da revisão da parte A)
+
+- O `external_id` da conexão deve ser exatamente o id que a Meta manda como `recipient.id` (ou `sender.id` no eco) e como `entry[].id` no webhook. No login do Instagram, `/me` devolve `id` e `user_id`, que podem ser diferentes: verificar com um webhook real qual deles chega e gravar esse. O webhook ignora eventos em que `entry.id` não bate com esse id.
+- Todo envio (manual e, na parte C, automático) pelos canais novos deve ser barrado pelos módulos do plano `channel_instagram` / `channel_messenger` (hoje a parte A só exige a conexão ativa). Os módulos entram em `plans.ts` e nas listas SQL junto com o limite de canais.
+
 ## Comandos
 
 ```

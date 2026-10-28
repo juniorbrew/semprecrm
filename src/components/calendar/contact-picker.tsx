@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useLanguage } from "@/hooks/use-language";
 import type { CalendarContactRef } from "@/lib/calendar";
 import { Input } from "@/components/ui/input";
+import { contactLabel } from "@/lib/contacts/label";
 
 /**
  * Search a contact by name / phone and show the pick as a chip. Same
@@ -59,10 +60,10 @@ export function ContactPicker({
     return (
       <div className={`flex items-center gap-2 rounded-lg border border-border bg-muted px-2.5 text-foreground ${h}`}>
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-          {(contact.name || contact.phone).charAt(0).toUpperCase()}
+          {contactLabel(contact).charAt(0).toUpperCase()}
         </span>
-        <span className="min-w-0 flex-1 truncate">{contact.name || contact.phone}</span>
-        {contact.name && !compact && (
+        <span className="min-w-0 flex-1 truncate">{contactLabel(contact)}</span>
+        {contact.name && contact.phone && !compact && (
           <span className="hidden text-xs text-muted-foreground sm:inline">{contact.phone}</span>
         )}
         {!disabled && (
@@ -112,10 +113,10 @@ export function ContactPicker({
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-popover-foreground hover:bg-muted"
               >
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
-                  {(c.name || c.phone).charAt(0).toUpperCase()}
+                  {contactLabel(c).charAt(0).toUpperCase()}
                 </span>
-                <span className="min-w-0 flex-1 truncate">{c.name || c.phone}</span>
-                {c.name && <span className="text-xs text-muted-foreground">{c.phone}</span>}
+                <span className="min-w-0 flex-1 truncate">{contactLabel(c)}</span>
+                {c.name && c.phone && <span className="text-xs text-muted-foreground">{c.phone}</span>}
               </button>
             </li>
           ))}
