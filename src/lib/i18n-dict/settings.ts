@@ -376,6 +376,9 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Your plan does not include this channel.': 'Seu plano não inclui este canal.',
   'Only account admins can connect channels.': 'Só administradores da conta podem conectar canais.',
   'Your session expired. Sign in again.': 'Sua sessão expirou. Entre de novo.',
+  'Your account is locked for changes. Regularize your plan in Settings → Plan.':
+    'Sua conta está bloqueada para alterações. Regularize o plano em Configurações → Plano.',
+  'This account is blocked. Get in touch with SempreCRM support.': 'Esta conta está bloqueada. Fale com o suporte do SempreCRM.',
   'The connection was cancelled.': 'A conexão foi cancelada.',
   'The connection expired or was not started here. Try again.': 'A conexão expirou ou não foi iniciada aqui. Tente de novo.',
   'Meta did not accept the connection. Try again.': 'A Meta não aceitou a conexão. Tente de novo.',

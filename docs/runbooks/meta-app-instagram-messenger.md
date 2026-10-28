@@ -34,7 +34,7 @@ São os endereços para onde a Meta devolve o cliente depois do login. Têm que 
 
 - **Instagram**: em Instagram → API com login do Instagram → "Configurar o login de empresa" → **URIs de redirecionamento OAuth válidos**:
   `https://www.semprecrm.com.br/api/meta/messaging/callback/instagram`
-- **Messenger (Facebook Login)**: em Produtos → Login do Facebook para Empresas (ou Login do Facebook) → Configurações → **URIs de redirecionamento OAuth válidos**:
+- **Messenger (Facebook Login)**: use o **Login do Facebook clássico** (o caso de uso "Messenger"), **não** o "Login do Facebook para Empresas" (Facebook Login for Business): esse exige um `config_id` e ignora as permissões que o SempreCRM pede. Em Produtos → Login do Facebook → Configurações → **URIs de redirecionamento OAuth válidos**:
   `https://www.semprecrm.com.br/api/meta/messaging/callback/messenger`
 
 Para testar na sua máquina, acrescente também o endereço local equivalente, por exemplo `http://localhost:3101/api/meta/messaging/callback/instagram`. O SempreCRM usa o mesmo endereço da página em que você está quando é `localhost`.
@@ -49,7 +49,7 @@ Endereço do webhook, o mesmo para os dois canais:
 
 Configure em **Webhooks**:
 
-- **Instagram**: Produto "Instagram" → Webhooks → informe o endereço e o token → **Verificar e salvar**. Assine o campo **messages**. (No Instagram, esse campo já traz também as mensagens que a própria conta envia.)
+- **Instagram**: Produto "Instagram" → Webhooks → informe o endereço e o token → **Verificar e salvar**. Assine os campos **messages** e **message_echoes** (este último traz as mensagens que a própria conta envia, por exemplo pelo app do Instagram). A tabela de campos da Meta lista os dois separados; no teste do passo 7, **confirme que o eco chega**: responda pelo app do Instagram e veja a mensagem aparecer no inbox como enviada pela empresa.
 - **Página (Messenger)**: Produto "Webhooks" → objeto **Page** (ou Messenger → Configurações → Webhooks) → informe o endereço e o token → **Verificar e salvar** → assine **messages** e **message_echoes**.
 
 Importante: só salve o endereço depois que a nova versão do SempreCRM estiver no ar e as variáveis abaixo estiverem no servidor, porque a Meta chama o endereço na hora para conferir.

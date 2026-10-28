@@ -12,8 +12,13 @@ const h = vi.hoisted(() => ({
   account: 'acct-1',
   roleError: null as Error | null,
   moduleError: null as Error | null,
+  writableError: null as Error | null,
+  /** Rows that appear in the middle of an upsert (a concurrent connector). */
+  raceOnUpsert: null as Row | null,
+  upsertError: null as { code: string } | null,
   tables: { meta_messaging_channels: [] as Row[], meta_connect_sessions: [] as Row[] } as Record<string, Row[]>,
   seq: 0,
+  noModule: new Set<string>(),
 }))
 
 vi.mock('@/lib/auth/account', async (orig) => ({
@@ -22,12 +27,16 @@ vi.mock('@/lib/auth/account', async (orig) => ({
     if (h.roleError) throw h.roleError
     return { userId: h.user, accountId: h.account, role: 'admin', supabase: {}, account: {} }
   },
-  requireWritable: async (ctx: unknown) => ctx,
+  requireWritable: async (ctx: unknown) => {
+    if (h.writableError) throw h.writableError
+    return ctx
+  },
   requireModule: async () => {
     if (h.moduleError) throw h.moduleError
   },
 }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ encrypt: (v: string) => `enc:${v}`, decrypt: (v: string) => v.replace(/^enc:/, '') }))
+vi.mock('@/lib/plans-server', () => ({ accountHasModule: async (_d: unknown, acct: string) => !h.noModule.has(acct) }))
 vi.mock('@/lib/rate-limit', async (orig) => ({
   ...(await orig<typeof import('@/lib/rate-limit')>()),
   checkRateLimit: () => ({ success: true }),
@@ -48,6 +57,11 @@ vi.mock('@/lib/automations/admin-client', () => ({
           return { data: row, error: null }
         }
         if (op === 'upsert') {
+          if (h.upsertError) return { data: null, error: h.upsertError }
+          if (h.raceOnUpsert) {
+            rows().push(h.raceOnUpsert)
+            h.raceOnUpsert = null
+          }
           const keys = conflict.split(',')
           const hit = rows().find((r) => keys.every((k) => r[k] === payload[k]))
           const clash = rows().find((r) => r.kind === payload.kind && r.external_id === payload.external_id && r !== hit)
@@ -59,7 +73,7 @@ vi.mock('@/lib/automations/admin-client', () => ({
         if (op === 'delete') {
           const gone = matching()
           h.tables[table] = rows().filter((r) => !gone.includes(r))
-          return { data: null, error: null }
+          return { data: gone.map((r) => ({ id: r.id })), error: null }
         }
         return { data: matching(), error: null }
       }
@@ -79,9 +93,9 @@ vi.mock('@/lib/automations/admin-client', () => ({
   }),
 }))
 
-import { ForbiddenError, ModuleNotIncludedError, UnauthorizedError } from '@/lib/auth/account'
-import { handleCallback, handleConnect, handleDisconnect, handleListPages, handlePickPage } from './handlers'
-import { dueForRefresh, refreshInstagramTokens } from './refresh'
+import { ForbiddenError, ModuleNotIncludedError, ReadOnlyError, UnauthorizedError } from '@/lib/auth/account'
+import { handleCallback, handleCancelSession, handleConnect, handleDisconnect, handleListPages, handlePickPage } from './handlers'
+import { dueForRefresh, purgeExpiredConnectSessions, refreshInstagramTokens } from './refresh'
 import { signConnectState, verifyConnectState } from './state'
 
 const KEY = 'a'.repeat(64)
@@ -99,6 +113,10 @@ beforeEach(() => {
   h.account = 'acct-1'
   h.roleError = null
   h.moduleError = null
+  h.writableError = null
+  h.raceOnUpsert = null
+  h.upsertError = null
+  h.noModule = new Set()
   h.tables = { meta_messaging_channels: [], meta_connect_sessions: [] }
   h.seq = 0
   vi.stubGlobal('fetch', fetchMock)
@@ -111,8 +129,11 @@ afterEach(() => vi.unstubAllGlobals())
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 
 /** Route Meta calls by URL, in the order the code makes them. */
-function meta(routes: Record<string, () => Response>) {
-  fetchMock.mockImplementation(async (url: string) => {
+function meta(routes: Record<string, () => Response>, probe?: () => Response) {
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    // The incumbent probe is a GET /me with the OLD token; everything else follows the routes.
+    const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+    if (probe && String(url).includes('/me?fields=') && auth === 'Bearer OLDTOKEN') return probe()
     for (const [needle, make] of Object.entries(routes)) if (String(url).includes(needle)) return make()
     throw new Error(`unexpected Meta call: ${String(url).split('?')[0]}`)
   })
@@ -158,6 +179,14 @@ describe('connect state', () => {
     expect(verifyConnectState(s, { kind: 'instagram', now: 1_000_000 - 120_000 })).toBeNull()
     expect(verifyConnectState(s, { kind: 'instagram', now: 1_000_500, secret: 'b'.repeat(64) })).toBeNull()
     for (const junk of [null, undefined, '', 'abc', 'a.b', 'x'.repeat(3000)]) expect(verifyConnectState(junk, { kind: 'instagram' })).toBeNull()
+  })
+  it('signs with a purpose subkey, never the raw ENCRYPTION_KEY', async () => {
+    const { createHmac } = await import('node:crypto')
+    const [payload, sig] = sign().split('.')
+    const raw = createHmac('sha256', Buffer.from(KEY, 'hex')).update(payload).digest('hex')
+    const sub = createHmac('sha256', createHmac('sha256', Buffer.from(KEY, 'hex')).update('meta-connect-state:v1').digest()).update(payload).digest('hex')
+    expect(sig).not.toBe(raw)
+    expect(sig).toBe(sub)
   })
   it('every state is unique (nonce)', () => {
     expect(signConnectState({ userId: 'u', accountId: 'a', kind: 'instagram' })).not.toBe(signConnectState({ userId: 'u', accountId: 'a', kind: 'instagram' }))
@@ -220,9 +249,9 @@ describe('callback — Instagram', () => {
     const exchange = calls('api.instagram.com')[0]
     expect(String((exchange[1] as RequestInit).body)).toContain('client_secret=ig-secret')
     expect(String((exchange[1] as RequestInit).body)).toContain('code=CODE')
-    // webhook subscription: account id in the path, token in the header, only `messages`
+    // webhook subscription: account id in the path, token in the header, `messages` + `message_echoes`
     const sub = calls('/subscribed_apps')[0]
-    expect(String(sub[0])).toMatch(/graph\.instagram\.com\/v[\d.]+\/999\/subscribed_apps\?subscribed_fields=messages$/)
+    expect(String(sub[0])).toMatch(/graph\.instagram\.com\/v[\d.]+\/999\/subscribed_apps\?subscribed_fields=messages%2Cmessage_echoes$/)
     expect((sub[1] as RequestInit).method).toBe('POST')
     expect(((sub[1] as RequestInit).headers as Record<string, string>).Authorization).toBe('Bearer LONG')
     expect(res.headers.get('set-cookie')).toMatch(/metamsg_instagram_nonce=;/)
@@ -277,7 +306,7 @@ describe('callback — Instagram', () => {
   })
 
   it('an id owned by ANOTHER account is refused, not stolen, and the webhook is not even subscribed', async () => {
-    h.tables.meta_messaging_channels.push({ id: 'ch-x', account_id: 'acct-OTHER', kind: 'instagram', external_id: '999', access_token: 'enc:THEIRS' })
+    h.tables.meta_messaging_channels.push({ id: 'ch-x', account_id: 'acct-OTHER', kind: 'instagram', external_id: '999', status: 'active', access_token: 'enc:THEIRS' })
     meta(igRoutes())
     expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('owned')
     expect(channels()).toHaveLength(1)
@@ -374,7 +403,7 @@ describe('callback — Messenger', () => {
   })
 
   it('a Page owned by another account is refused on the picker too (409), nothing subscribed', async () => {
-    h.tables.meta_messaging_channels.push({ id: 'ch-x', account_id: 'acct-OTHER', kind: 'messenger', external_id: 'P2', access_token: 'enc:T' })
+    h.tables.meta_messaging_channels.push({ id: 'ch-x', account_id: 'acct-OTHER', kind: 'messenger', external_id: 'P2', status: 'active', access_token: 'enc:T' })
     meta(fbRoutes([page('P1', 'A'), page('P2', 'B')]))
     const sessionId = where(await callback('messenger')).searchParams.get('session') as string
     const res = await handlePickPage(new Request(`${BASE}/api/meta/messaging/pages`, { method: 'POST', body: JSON.stringify({ session: sessionId, page_id: 'P2' }) }))
@@ -431,6 +460,149 @@ describe('disconnect', () => {
   })
 })
 
+describe('stale owner takeover', () => {
+  const other = (over: Row = {}) => ({ id: 'ch-old', account_id: 'acct-OTHER', kind: 'instagram', external_id: '999', status: 'active', access_token: 'enc:OLDTOKEN', ...over })
+  const audits = () => h.tables.audit_log ?? []
+
+  it('an incumbent whose status is not active (expired) is replaced: old row gone, new saved, audit for BOTH accounts', async () => {
+    channels().push(other({ status: 'expired' }))
+    meta(igRoutes())
+    expect(where(await callback('instagram')).searchParams.get('meta')).toBe('connected')
+    expect(channels()).toHaveLength(1)
+    expect(channels()[0]).toMatchObject({ account_id: 'acct-1', external_id: '999', access_token: 'enc:LONG' })
+    expect(audits().map((a) => [a.account_id, a.action])).toEqual([
+      ['acct-1', 'meta_channel.taken_over'],
+      ['acct-OTHER', 'meta_channel.lost'],
+    ])
+    // the status already said it is dead: only the new connector's own profile call used /me
+    expect(calls('/me?fields=')).toHaveLength(1)
+  })
+
+  it('an "active" incumbent whose own token Meta refuses (190) is also replaced', async () => {
+    channels().push(other())
+    meta(igRoutes(), () => json({ error: { code: 190, message: 'x' } }, 401))
+    expect(where(await callback('instagram')).searchParams.get('meta')).toBe('connected')
+    const auths = calls('/me?fields=').map(([, init]) => ((init as RequestInit).headers as Record<string, string>).Authorization)
+    expect(auths).toEqual(['Bearer LONG', 'Bearer OLDTOKEN']) // the new profile, then the probe of the incumbent
+    expect(channels().map((c) => c.account_id)).toEqual(['acct-1'])
+    expect(audits()).toHaveLength(2)
+  })
+
+  it('a working incumbent (probe ok) and an unproven one (other error / network failure) are kept: "owned"', async () => {
+    channels().push(other())
+    meta(igRoutes())
+    expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('owned')
+    meta(igRoutes(), () => json({ error: { code: 1, message: 'x' } }, 500))
+    expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('owned')
+    meta(igRoutes(), () => {
+      throw new Error('network')
+    })
+    expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('owned')
+    expect(channels()).toHaveLength(1)
+    expect(channels()[0]).toMatchObject({ account_id: 'acct-OTHER', access_token: 'enc:OLDTOKEN' })
+    expect(audits()).toHaveLength(0)
+    expect(calls('/subscribed_apps')).toHaveLength(0)
+  })
+
+  it('Messenger: the probe is GET /me?fields=id with the incumbent Page token', async () => {
+    channels().push(other({ kind: 'messenger', external_id: 'P1', access_token: 'enc:OLDPAGE' }))
+    meta(fbRoutes([page('P1', 'A')], { '/me?fields=id': () => json({ error: { code: 190, message: 'x' } }, 401) }))
+    expect(where(await callback('messenger')).searchParams.get('meta')).toBe('connected')
+    expect(((calls('/me?fields=id')[0][1] as RequestInit).headers as Record<string, string>).Authorization).toBe('Bearer OLDPAGE')
+    expect(channels()[0]).toMatchObject({ account_id: 'acct-1', external_id: 'P1', access_token: 'enc:PT-P1' })
+  })
+})
+
+describe('orphan webhook subscriptions', () => {
+  const unsub = () => calls('/subscribed_apps').filter(([, init]) => (init as RequestInit).method === 'DELETE')
+
+  it('reconnecting with a DIFFERENT id unsubscribes the old one (with the old token) after the new save', async () => {
+    channels().push({ id: 'mine', account_id: 'acct-1', kind: 'instagram', external_id: '111', status: 'active', access_token: 'enc:OLD111' })
+    meta(igRoutes())
+    expect(where(await callback('instagram')).searchParams.get('meta')).toBe('connected')
+    expect(channels()).toHaveLength(1)
+    expect(channels()[0].external_id).toBe('999')
+    expect(unsub()).toHaveLength(1)
+    expect(String(unsub()[0][0])).toContain('/111/subscribed_apps')
+    expect(((unsub()[0][1] as RequestInit).headers as Record<string, string>).Authorization).toBe('Bearer OLD111')
+  })
+
+  it('reconnecting the SAME id unsubscribes nothing', async () => {
+    channels().push({ id: 'mine', account_id: 'acct-1', kind: 'instagram', external_id: '999', status: 'expired', access_token: 'enc:OLD' })
+    meta(igRoutes())
+    await callback('instagram')
+    expect(unsub()).toHaveLength(0)
+  })
+
+  it('a save that fails after the subscribe unsubscribes the NEW id (best effort)', async () => {
+    h.upsertError = { code: 'XX000' }
+    meta(igRoutes())
+    expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('save')
+    expect(unsub()).toHaveLength(1)
+    expect(String(unsub()[0][0])).toContain('/999/subscribed_apps')
+    expect(((unsub()[0][1] as RequestInit).headers as Record<string, string>).Authorization).toBe('Bearer LONG')
+  })
+
+  it('but not when the account already uses that id, nor when another account just took it', async () => {
+    channels().push({ id: 'mine', account_id: 'acct-1', kind: 'instagram', external_id: '999', status: 'active', access_token: 'enc:OLD' })
+    h.upsertError = { code: 'XX000' }
+    meta(igRoutes())
+    await callback('instagram')
+    expect(unsub()).toHaveLength(0)
+
+    channels().length = 0
+    h.upsertError = null
+    fetchMock.mockClear()
+    h.raceOnUpsert = { id: 'ch-race', account_id: 'acct-OTHER', kind: 'instagram', external_id: '999', status: 'active', access_token: 'enc:RACE' }
+    meta(igRoutes())
+    expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('owned')
+    expect(unsub()).toHaveLength(0)
+  })
+})
+
+describe('picker cancel, read-only accounts and error codes', () => {
+  const cancel = (id: string) => handleCancelSession(new Request(`${BASE}/api/meta/messaging/pages?session=${id}`, { method: 'DELETE' }))
+  const SID = '00000000-0000-4000-8000-0000000000aa'
+
+  it('Cancel deletes only the caller own parked session', async () => {
+    h.tables.meta_connect_sessions.push(
+      { id: SID, account_id: 'acct-1', user_id: 'user-1', kind: 'messenger', pages: 'x' },
+      { id: '00000000-0000-4000-8000-0000000000bb', account_id: 'acct-1', user_id: 'user-2', kind: 'messenger', pages: 'x' },
+      { id: '00000000-0000-4000-8000-0000000000cc', account_id: 'acct-9', user_id: 'user-1', kind: 'messenger', pages: 'x' },
+    )
+    expect((await cancel(SID)).status).toBe(200)
+    expect((await cancel('00000000-0000-4000-8000-0000000000bb')).status).toBe(200) // someone else's: silently nothing
+    expect((await cancel('00000000-0000-4000-8000-0000000000cc')).status).toBe(200)
+    expect(h.tables.meta_connect_sessions.map((r) => r.id)).toEqual([
+      '00000000-0000-4000-8000-0000000000bb',
+      '00000000-0000-4000-8000-0000000000cc',
+    ])
+    expect((await cancel('nope')).status).toBe(400)
+    h.roleError = new ForbiddenError('no')
+    expect((await cancel(SID)).status).toBe(403)
+  })
+
+  it('disconnect still works for a read-only / past-due account (no writable check)', async () => {
+    h.writableError = new ReadOnlyError('past_due')
+    channels().push({ id: 'c1', account_id: 'acct-1', kind: 'instagram', external_id: '999', status: 'active', access_token: 'enc:L' })
+    meta({ '/subscribed_apps': () => json({ success: true }) })
+    const res = await handleDisconnect(new Request(`${BASE}/api/meta/messaging/disconnect`, { method: 'POST', body: JSON.stringify({ kind: 'instagram' }) }))
+    expect(res.status).toBe(200)
+    expect(channels()).toHaveLength(0)
+  })
+
+  it('connect and callback map a read-only or blocked account to their own codes, not "forbidden"', async () => {
+    h.writableError = new ReadOnlyError('trial_expired')
+    expect(where(await handleConnect(new Request(`${BASE}/x`), 'instagram')).searchParams.get('meta_error')).toBe('read_only')
+    expect(where(await callback('instagram')).searchParams.get('meta_error')).toBe('read_only')
+    h.writableError = new ForbiddenError('blocked', 'account_blocked')
+    expect(where(await handleConnect(new Request(`${BASE}/x`), 'instagram')).searchParams.get('meta_error')).toBe('blocked')
+    h.writableError = null
+    h.roleError = new ForbiddenError('no')
+    expect(where(await handleConnect(new Request(`${BASE}/x`), 'instagram')).searchParams.get('meta_error')).toBe('forbidden')
+  })
+})
+
 describe('Instagram token renewal', () => {
   const now = new Date('2026-10-28T12:00:00Z')
   const inDays = (d: number) => new Date(now.getTime() + d * 86_400_000).toISOString()
@@ -453,9 +625,9 @@ describe('Instagram token renewal', () => {
 
   const seed = () =>
     channels().push(
-      { id: 'a', kind: 'instagram', status: 'active', token_expires_at: inDays(5), access_token: 'enc:OLD-A' },
-      { id: 'b', kind: 'instagram', status: 'active', token_expires_at: inDays(5), access_token: 'enc:OLD-B' },
-      { id: 'c', kind: 'instagram', status: 'active', token_expires_at: inDays(-2), access_token: 'enc:OLD-C' },
+      { id: 'a', account_id: 'acct-1', kind: 'instagram', status: 'active', token_expires_at: inDays(5), access_token: 'enc:OLD-A' },
+      { id: 'b', account_id: 'acct-1', kind: 'instagram', status: 'active', token_expires_at: inDays(5), access_token: 'enc:OLD-B' },
+      { id: 'c', account_id: 'acct-1', kind: 'instagram', status: 'active', token_expires_at: inDays(-2), access_token: 'enc:OLD-C' },
     )
 
   // the cron fake needs gt/lte/not/order/limit on top of the shared one
@@ -475,7 +647,8 @@ describe('Instagram token renewal', () => {
           then: (f: (v: unknown) => unknown) => {
             const hit = channels().filter((r) => r.kind === 'instagram' && filters.every((fn) => fn(r)))
             if (update) hit.forEach((r) => Object.assign(r, update))
-            return Promise.resolve({ data: update ? null : hit, error: null }).then(f)
+            // like PostgREST: a read returns copies, so a later write by someone else is not seen
+            return Promise.resolve({ data: update ? hit : hit.map((r) => ({ ...r })), error: null }).then(f)
           },
         }
         return b
@@ -491,7 +664,7 @@ describe('Instagram token renewal', () => {
       throw new MessagingApiError('x', 400, 190, null)
     })
     const summary = await refreshInstagramTokens(cronDb(), { now, refresh })
-    expect(summary).toEqual({ checked: 3, refreshed: 1, expired: 2, errors: 0 })
+    expect(summary).toEqual({ checked: 3, refreshed: 1, expired: 2, errors: 0, skipped: 0 })
     const byId = Object.fromEntries(channels().map((c) => [c.id, c]))
     expect(byId.a).toMatchObject({ access_token: 'enc:NEW-A', status: 'active' })
     expect(Date.parse(byId.a.token_expires_at as string)).toBeGreaterThan(now.getTime() + 59 * 86_400_000)
@@ -507,5 +680,78 @@ describe('Instagram token renewal', () => {
     const s2 = await refreshInstagramTokens(cronDb(), { now, refresh: net })
     expect(s2).toMatchObject({ refreshed: 0, errors: 2, expired: 1 })
     expect(channels().find((c) => c.id === 'a')?.status).toBe('active')
+  })
+  it('only a real token error expires a connection; any other 400 is retried; a changed token is never overwritten', async () => {
+    seed()
+    const { MessagingApiError } = await import('../graph')
+    const other400 = vi.fn(async () => {
+      throw new MessagingApiError('x', 400, 100, null)
+    })
+    const s1 = await refreshInstagramTokens(cronDb(), { now, refresh: other400 })
+    expect(s1).toMatchObject({ refreshed: 0, errors: 2, expired: 1 })
+    expect(channels().find((c) => c.id === 'a')?.status).toBe('active')
+    expect(channels().find((c) => c.id === 'b')?.status).toBe('active')
+    expect(channels().find((c) => c.id === 'c')?.status).toBe('expired') // already past its date
+
+    // a reconnect lands while the refresh is in flight: neither the new token nor the status is touched
+    channels().length = 0
+    seed()
+    const racing = vi.fn(async (token: string) => {
+      const row = channels().find((c) => c.access_token === `enc:${token}`)!
+      row.access_token = 'enc:RECONNECTED'
+      if (token === 'OLD-A') return { token: 'NEW-A', expiresIn: 5183944 }
+      throw new MessagingApiError('x', 400, 190, 463)
+    })
+    const s2 = await refreshInstagramTokens(cronDb(), { now, refresh: racing })
+    expect(s2.refreshed).toBe(0)
+    expect(channels().find((c) => c.id === 'a')).toMatchObject({ access_token: 'enc:RECONNECTED', status: 'active' })
+    expect(channels().find((c) => c.id === 'b')).toMatchObject({ access_token: 'enc:RECONNECTED', status: 'active' })
+  })
+
+  it('the token-invalid subcodes (458/459/460/463/467) count as a dead token', async () => {
+    seed()
+    const { MessagingApiError } = await import('../graph')
+    for (const sub of [458, 459, 460, 463, 467]) expect(new MessagingApiError('x', 400, 0, sub).tokenInvalid).toBe(true)
+    expect(new MessagingApiError('x', 400, 100, 2018278).tokenInvalid).toBe(false)
+  })
+
+  it('leaves the tokens of accounts that no longer have the module alone (they lapse)', async () => {
+    channels().push(
+      { id: 'a', account_id: 'acct-1', kind: 'instagram', status: 'active', token_expires_at: inDays(5), access_token: 'enc:OLD-A' },
+      { id: 'gone', account_id: 'acct-gone', kind: 'instagram', status: 'active', token_expires_at: inDays(5), access_token: 'enc:OLD-G' },
+      { id: 'gone-past', account_id: 'acct-gone', kind: 'instagram', status: 'active', token_expires_at: inDays(-1), access_token: 'enc:OLD-P' },
+    )
+    h.noModule.add('acct-gone')
+    const refresh = vi.fn(async () => ({ token: 'NEW', expiresIn: 5183944 }))
+    const summary = await refreshInstagramTokens(cronDb(), { now, refresh })
+    expect(summary).toEqual({ checked: 3, refreshed: 1, expired: 0, errors: 0, skipped: 2 })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(channels().find((c) => c.id === 'gone')?.access_token).toBe('enc:OLD-G')
+    expect(channels().find((c) => c.id === 'gone-past')?.status).toBe('active')
+  })
+
+  it('purges only the expired connect sessions', async () => {
+    h.tables.meta_connect_sessions.push(
+      { id: 's-old', expires_at: new Date(Date.now() - 1000).toISOString() },
+      { id: 's-new', expires_at: new Date(Date.now() + 600_000).toISOString() },
+    )
+    const db = {
+      from: (t: string) => {
+        const filters: ((r: Row) => boolean)[] = []
+        const b: Record<string, unknown> = {
+          delete: () => b,
+          lt: (c: string, v: string) => (filters.push((r) => String(r[c]) < v), b),
+          select: () => b,
+          then: (f: (v: unknown) => unknown) => {
+            const gone = h.tables[t].filter((r) => filters.every((fn) => fn(r)))
+            h.tables[t] = h.tables[t].filter((r) => !gone.includes(r))
+            return Promise.resolve({ data: gone.map((r) => ({ id: r.id })), error: null }).then(f)
+          },
+        }
+        return b
+      },
+    } as never
+    expect(await purgeExpiredConnectSessions(db)).toBe(1)
+    expect(h.tables.meta_connect_sessions.map((r) => r.id)).toEqual(['s-new'])
   })
 })

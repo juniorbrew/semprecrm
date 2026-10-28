@@ -2,7 +2,7 @@
 // OAuth `state` for connecting a channel — signed, short-lived and bound to
 // account + user + kind:
 //
-//   state = base64url(JSON{u, a, k, n, t}) + "." + HMAC-SHA256(payload, ENCRYPTION_KEY)
+//   state = base64url(JSON{u, a, k, n, t}) + "." + HMAC-SHA256(payload, subkey of ENCRYPTION_KEY)
 //
 // Verified with a constant-time compare, a 10 min max age and the kind the
 // callback route expects. Single use: the nonce `n` also travels in an httpOnly
@@ -24,10 +24,11 @@ export interface ConnectState {
   issuedAt: number
 }
 
+/** A subkey for this purpose only (same pattern as src/lib/lgpd/suppression.ts), never the raw encryption key. */
 function key(secret: string | undefined = process.env.ENCRYPTION_KEY): Buffer {
   const hex = (secret ?? '').trim()
   if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('ENCRYPTION_KEY must be 64 hex chars to sign the OAuth state')
-  return Buffer.from(hex, 'hex')
+  return createHmac('sha256', Buffer.from(hex, 'hex')).update('meta-connect-state:v1').digest()
 }
 
 const sign = (payload: string, secret?: string) => createHmac('sha256', key(secret)).update(payload).digest('hex')

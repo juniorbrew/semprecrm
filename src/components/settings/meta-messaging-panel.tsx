@@ -36,6 +36,8 @@ const ERRORS: Record<string, string> = {
   module: 'Your plan does not include this channel.',
   forbidden: 'Only account admins can connect channels.',
   unauthorized: 'Your session expired. Sign in again.',
+  read_only: 'Your account is locked for changes. Regularize your plan in Settings → Plan.',
+  blocked: 'This account is blocked. Get in touch with SempreCRM support.',
   denied: 'The connection was cancelled.',
   state: 'The connection expired or was not started here. Try again.',
   exchange: 'Meta did not accept the connection. Try again.',
@@ -125,6 +127,15 @@ export function MetaMessagingPanel() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function cancelPick() {
+    const session = pickSession;
+    setPickSession(null);
+    setPages(null);
+    if (!session) return;
+    // Drops the parked Pages on the server right away (they would expire in 15 min anyway).
+    await fetch(`/api/meta/messaging/pages?session=${encodeURIComponent(session)}`, { method: 'DELETE' }).catch(() => undefined);
   }
 
   async function pickPage(pageId: string) {
@@ -237,7 +248,7 @@ export function MetaMessagingPanel() {
               ))}
             </ul>
           )}
-          <Button size="sm" variant="ghost" onClick={() => { setPickSession(null); setPages(null); }}>
+          <Button size="sm" variant="ghost" onClick={() => void cancelPick()}>
             {t('Cancel')}
           </Button>
         </div>

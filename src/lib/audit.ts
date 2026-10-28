@@ -52,6 +52,8 @@ export const AUDIT_ACTIONS = {
   AI_KNOWLEDGE_CHANGED: 'ai.knowledge_changed',
   AI_AGENTS_CHANGED: 'ai.agents_changed',
   BILLING_CHECKOUT: 'billing.checkout',
+  META_CHANNEL_TAKEN_OVER: 'meta_channel.taken_over',
+  META_CHANNEL_LOST: 'meta_channel.lost',
 } as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS]
@@ -93,6 +95,8 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'branding.updated': 'Marca atualizada',
     'plan.changed': 'Plano alterado',
     'billing.checkout': 'Assinatura iniciada',
+    'meta_channel.taken_over': 'Instagram/Messenger assumido de outra conta (conexão anterior inválida)',
+    'meta_channel.lost': 'Instagram/Messenger conectado por outra conta (esta conexão estava inválida)',
     'mfa.enrolled': 'Verificação em duas etapas ativada',
     'mfa.disabled': 'Verificação em duas etapas desativada',
     'ai.settings_updated': 'Configurações de IA atualizadas',
@@ -126,6 +130,8 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'branding.updated': 'Branding updated',
     'plan.changed': 'Plan changed',
     'billing.checkout': 'Subscription started',
+    'meta_channel.taken_over': 'Instagram/Messenger taken over from another account (previous connection was invalid)',
+    'meta_channel.lost': 'Instagram/Messenger connected by another account (this connection was invalid)',
     'mfa.enrolled': 'Two-step verification enabled',
     'mfa.disabled': 'Two-step verification disabled',
     'ai.settings_updated': 'AI settings updated',

@@ -23,24 +23,39 @@ export interface ConnectionInput {
   expiresAt: Date | null
 }
 
+export interface Incumbent {
+  id: string
+  accountId: string
+  status: string
+  /** Decrypted token ('' when unreadable). */
+  token: string
+}
+
 /**
- * True when (kind, external_id) is connected to a DIFFERENT account. Checked before anything
- * is subscribed at Meta, so a refused connection leaves no trace there.
+ * The OTHER account that currently holds (kind, external_id), if any. Checked before anything is
+ * subscribed at Meta, so a refused connection leaves no trace there.
  */
-export async function isOwnedByOther(
+export async function findIncumbent(
   db: SupabaseClient,
   accountId: string,
   kind: MetaMessagingChannel,
   externalId: string,
-): Promise<boolean> {
+): Promise<Incumbent | null> {
   const { data, error } = await db
     .from('meta_messaging_channels')
-    .select('account_id')
+    .select('id, account_id, status, access_token')
     .eq('kind', kind)
     .eq('external_id', externalId)
     .maybeSingle()
   if (error) throw new Error(`connection lookup failed: ${error.code ?? 'unknown'}`)
-  return !!data && data.account_id !== accountId
+  if (!data || data.account_id === accountId) return null
+  let token = ''
+  try {
+    token = decrypt(data.access_token as string)
+  } catch {
+    // unreadable: counts as a dead token
+  }
+  return { id: data.id as string, accountId: data.account_id as string, status: data.status as string, token }
 }
 
 /** One connection per kind per account: connecting again (or another Page) replaces it. */

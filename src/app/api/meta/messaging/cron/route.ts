@@ -3,12 +3,12 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { refreshInstagramTokens } from '@/lib/meta-messaging/connect/refresh'
+import { purgeExpiredConnectSessions, refreshInstagramTokens } from '@/lib/meta-messaging/connect/refresh'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Renews the Instagram tokens that are a week old or more (they last 60 days) and flags the
+ * Also drops expired Page-picker sessions. Renews the Instagram tokens that are a week old or more (they last 60 days) and flags the
  * ones that cannot be renewed as expired, so Settings shows "Reconectar". Hit every few hours
  * by scripts/cron-tick.mjs with the shared `x-cron-secret` header; safe to overlap.
  */
@@ -21,7 +21,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    return NextResponse.json(await refreshInstagramTokens(supabaseAdmin()))
+    const db = supabaseAdmin()
+    const sessionsPurged = await purgeExpiredConnectSessions(db)
+    return NextResponse.json({ ...(await refreshInstagramTokens(db)), sessions_purged: sessionsPurged })
   } catch (err) {
     console.error('[meta-connect] token refresh cron failed:', err instanceof Error ? err.message : 'error')
     return NextResponse.json({ error: 'token refresh failed' }, { status: 500 })

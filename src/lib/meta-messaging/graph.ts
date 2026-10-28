@@ -38,7 +38,8 @@ export class MessagingApiError extends Error {
 
   /** The token is invalid, expired or revoked (OAuthException 190). */
   get tokenInvalid(): boolean {
-    return this.code === 190
+    // 190 and its subcodes: 458 app not authorized, 459/460 session/password, 463 expired, 467 invalid.
+    return this.code === 190 || (this.subcode !== null && [458, 459, 460, 463, 467].includes(this.subcode))
   }
 
   /** Missing permission / capability (a plain code 10, or 200). */

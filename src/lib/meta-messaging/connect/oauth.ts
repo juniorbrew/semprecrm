@@ -183,6 +183,20 @@ export async function subscribeWebhook(kind: MetaMessagingChannel, externalId: s
   })
 }
 
+/**
+ * Is this token dead? True only for a real token error (190); a network failure or any other
+ * error is "not proven dead", so a working connection is never taken from its owner.
+ */
+export async function tokenIsDead(kind: MetaMessagingChannel, token: string): Promise<boolean> {
+  if (!token) return true
+  try {
+    await metaRequest(`${GRAPH_BASE[kind]}/me?fields=${kind === 'instagram' ? 'user_id' : 'id'}`, { bearer: token })
+    return false
+  } catch (err) {
+    return err instanceof MessagingApiError && err.tokenInvalid
+  }
+}
+
 /** Best effort (disconnect): never throws. */
 export async function unsubscribeWebhook(kind: MetaMessagingChannel, externalId: string, token: string): Promise<boolean> {
   try {

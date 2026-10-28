@@ -18,6 +18,7 @@ import { NextResponse } from 'next/server'
 
 import { oauthRedirectBase } from '@/lib/calendar/sync/config'
 import { requireModule, requireRole, requireWritable, toErrorResponse, type AccountContext } from '@/lib/auth/account'
+import { AUDIT_ACTIONS, logAudit } from '@/lib/audit'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { decrypt, encrypt } from '@/lib/whatsapp/encryption'
@@ -34,16 +35,18 @@ import {
   subscribeWebhook,
   toLongLivedFacebook,
   toLongLivedInstagram,
+  tokenIsDead,
   unsubscribeWebhook,
   type FacebookPage,
 } from './oauth'
 import { signConnectState, STATE_MAX_AGE_MS, verifyConnectState } from './state'
 import {
   deleteConnection,
-  isOwnedByOther,
+  findIncumbent,
   loadOwnConnection,
   OwnedByAnotherAccountError,
   saveConnection,
+  type Incumbent,
 } from './store'
 
 export type ConnectErrorCode =
@@ -59,6 +62,8 @@ export type ConnectErrorCode =
   | 'subscribe'
   | 'save'
   | 'unauthorized'
+  | 'read_only'
+  | 'blocked'
 
 export function isKind(v: unknown): v is MetaMessagingChannel {
   return v === 'instagram' || v === 'messenger'
@@ -92,6 +97,9 @@ function redirectCodeFor(err: unknown): ConnectErrorCode {
   const name = err instanceof Error ? err.name : ''
   if (name === 'ModuleNotIncludedError') return 'module'
   if (name === 'UnauthorizedError') return 'unauthorized'
+  // requireWritable: trial ended / payment overdue (ReadOnlyError) or blocked (ForbiddenError account_blocked)
+  if (name === 'ReadOnlyError') return 'read_only'
+  if ((err as { code?: string }).code === 'account_blocked') return 'blocked'
   return 'forbidden'
 }
 
@@ -141,23 +149,53 @@ interface Target {
 
 async function finishConnection(ctx: AccountContext, kind: MetaMessagingChannel, t: Target): Promise<ConnectErrorCode | null> {
   const admin = supabaseAdmin()
+
+  // Somebody else holds this id? Only a dead connection can be taken over: its status is not
+  // 'active', or its own token is refused by Meta (190). A working one is never stolen.
+  let takeover: Incumbent | null = null
   try {
-    if (await isOwnedByOther(admin, ctx.accountId, kind, t.externalId)) return 'owned'
+    const incumbent = await findIncumbent(admin, ctx.accountId, kind, t.externalId)
+    if (incumbent) {
+      const dead = incumbent.status !== 'active' || (await tokenIsDead(kind, incumbent.token))
+      if (!dead) return 'owned'
+      takeover = incumbent
+    }
   } catch {
     return 'save'
   }
+
+  // The account's current connection of this kind, to clean up if this one is a different id.
+  const previous = await loadOwnConnection(admin, ctx.accountId, kind)
+
   try {
     await subscribeWebhook(kind, t.externalId, t.token)
   } catch (err) {
     console.error('[meta-connect] subscribe failed:', err instanceof MessagingApiError ? `code ${err.code}/${err.subcode}` : 'network')
     return 'subscribe'
   }
+
   try {
+    if (takeover) await deleteConnection(admin, takeover.id, takeover.accountId)
     await saveConnection(admin, { accountId: ctx.accountId, kind, ...t })
   } catch (err) {
+    const ownedNow =
+      err instanceof OwnedByAnotherAccountError ||
+      (await findIncumbent(admin, ctx.accountId, kind, t.externalId).then((i) => !!i, () => true))
+    // The webhook subscription is per app + id: drop the one we just made, unless another account
+    // now relies on it, or this is the account's own existing connection to the same id.
+    if (!ownedNow && previous?.externalId !== t.externalId) await unsubscribeWebhook(kind, t.externalId, t.token)
     if (err instanceof OwnedByAnotherAccountError) return 'owned'
     console.error('[meta-connect] save failed:', err instanceof Error ? err.message : 'error')
     return 'save'
+  }
+
+  if (previous && previous.externalId !== t.externalId && previous.token) {
+    await unsubscribeWebhook(kind, previous.externalId, previous.token)
+  }
+  if (takeover) {
+    const metadata = { kind, external_id: t.externalId }
+    await logAudit(admin, { accountId: ctx.accountId, actorUserId: ctx.userId, action: AUDIT_ACTIONS.META_CHANNEL_TAKEN_OVER, entityType: 'meta_channel', metadata })
+    await logAudit(admin, { accountId: takeover.accountId, actorUserId: null, actorName: 'Sistema', action: AUDIT_ACTIONS.META_CHANNEL_LOST, entityType: 'meta_channel', metadata })
   }
   return null
 }
@@ -309,6 +347,20 @@ export async function handlePickPage(request: Request): Promise<NextResponse> {
   return NextResponse.json({ ok: true })
 }
 
+/** DELETE ?session= → the picker's Cancel: drops the caller's own parked Pages (user + account bound). */
+export async function handleCancelSession(request: Request): Promise<NextResponse> {
+  let ctx: AccountContext
+  try {
+    ctx = await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+  const id = new URL(request.url).searchParams.get('session') ?? ''
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'Sessão inválida.', code: 'invalid_session' }, { status: 400 })
+  await supabaseAdmin().from('meta_connect_sessions').delete().eq('id', id).eq('account_id', ctx.accountId).eq('user_id', ctx.userId)
+  return NextResponse.json({ ok: true })
+}
+
 const FAILURE_PT: Partial<Record<ConnectErrorCode, string>> = {
   owned: 'Esta conta já está conectada a outra empresa no SempreCRM.',
   subscribe: 'Não foi possível ativar o recebimento de mensagens na Meta. Tente novamente.',
@@ -322,8 +374,9 @@ const FAILURE_PT: Partial<Record<ConnectErrorCode, string>> = {
 export async function handleDisconnect(request: Request): Promise<NextResponse> {
   let ctx: AccountContext
   try {
+    // Admin only: cutting a channel off only deletes the caller's own row, so a read-only /
+    // past-due account must still be able to do it.
     ctx = await requireRole('admin')
-    await requireWritable(ctx)
   } catch (err) {
     return toErrorResponse(err)
   }

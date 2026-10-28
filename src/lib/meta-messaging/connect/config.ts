@@ -42,8 +42,8 @@ export const SCOPES: Record<MetaMessagingChannel, readonly string[]> = {
 
 /** Webhook fields subscribed on connect. */
 export const SUBSCRIBED_FIELDS: Record<MetaMessagingChannel, string> = {
-  // For Instagram, `messages` also carries the messages the account itself sends (echoes).
-  instagram: 'messages',
+  // Meta's Instagram webhook-fields matrix lists `message_echoes` (the account's own sent messages) separately.
+  instagram: 'messages,message_echoes',
   messenger: 'messages,message_echoes',
 }
 
