@@ -56,6 +56,16 @@ export async function findConnectionByExternalId(
   return toConnection(data as Row | null)
 }
 
+/** The token was refused by Meta (code 190): the connection needs to be reconnected. Best effort. */
+export async function markConnectionExpired(db: SupabaseClient, connectionId: string): Promise<void> {
+  const { error } = await db
+    .from('meta_messaging_channels')
+    .update({ status: 'expired' })
+    .eq('id', connectionId)
+    .eq('status', 'active')
+  if (error) console.error('[meta-messaging] could not flag the connection as expired:', error.code ?? 'unknown')
+}
+
 /** The account's own connection of this kind (manual send). Service-role client. */
 export async function findConnectionForAccount(
   db: SupabaseClient,

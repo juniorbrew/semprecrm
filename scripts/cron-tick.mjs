@@ -16,7 +16,8 @@
 // whose time is up (GET /api/inbox/snooze/cron, migration 079), the scheduled messages
 // that are due (GET /api/inbox/scheduled/cron, migration 092) and the outbound webhooks
 // that are due (GET /api/webhooks/cron, migration 093) and the WhatsApp appointment
-// reminders that are due (GET /api/agenda/reminders/cron, migration 097).
+// reminders that are due (GET /api/agenda/reminders/cron, migration 097), and every 6 h the Instagram token
+// renewal (GET /api/meta/messaging/cron, part B).
 //
 // The calendar sync (Google / Outlook, POST /api/integrations/calendar/sync)
 // rides on the same loop but on its own, slower interval
@@ -67,6 +68,8 @@ const ENDPOINTS = [
   { path: '/api/webhooks/cron', method: 'GET', everyMs: null },
   { path: '/api/integrations/calendar/sync', method: 'POST', everyMs: CALENDAR_SYNC_INTERVAL_MS },
   { path: '/api/billing/cron', method: 'GET', everyMs: 60 * 60_000 },
+  // Instagram token renewal (migration 101 / part B): every 6 h is plenty for 60-day tokens.
+  { path: '/api/meta/messaging/cron', method: 'GET', everyMs: 6 * 60 * 60_000 },
 ]
 
 function log(line) {
@@ -95,7 +98,7 @@ function summarise(body) {
     if (i.errors) parts.push(`inactive_errors=${i.errors}`)
   }
   if (body.lead_events_purged != null) parts.push(`lead_events_purged=${body.lead_events_purged}`)
-  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped', 'failed', 'delivered', 'retrying', 'purged']) {
+  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped', 'failed', 'delivered', 'retrying', 'purged', 'refreshed', 'checked', 'sessions_purged']) {
     if (k in body) parts.push(`${k}=${body[k]}`)
   }
   return parts.join(' ')

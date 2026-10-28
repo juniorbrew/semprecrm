@@ -7,8 +7,11 @@ const h = vi.hoisted(() => ({
   updates: [] as Record<string, unknown>[],
   claim: vi.fn(async () => ({ id: 'claimed-1' }) as { id: string } | null),
   waSend: vi.fn(),
+  modules: new Set<string>(['channel_instagram', 'channel_messenger']),
+  expired: [] as unknown[],
 }))
 
+vi.mock('@/lib/plans-server', () => ({ accountHasModule: async (_db: unknown, _acct: string, mod: string) => h.modules.has(mod) }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `plain-${v}` }))
 vi.mock('@/lib/whatsapp/phone-echo', () => ({ claimEchoedRow: (...a: unknown[]) => (h.claim as (...x: unknown[]) => unknown)(...a) }))
 vi.mock('@/lib/whatsapp/meta-api', () => ({ sendTextMessage: h.waSend, sendMediaMessage: h.waSend, sendTemplateMessage: h.waSend }))
@@ -22,6 +25,8 @@ const admin = {
       select: () => b,
       eq: () => b,
       maybeSingle: async () => ({ data: h.connection, error: null }),
+      update: (p: unknown) => (h.expired.push(p), b),
+      then: (f: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(f),
     }
     return b
   },
@@ -83,6 +88,8 @@ beforeEach(() => {
   h.updates = []
   h.insertError = null
   h.claim.mockClear()
+  h.expired = []
+  h.modules = new Set(['channel_instagram', 'channel_messenger'])
   h.waSend.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   fetchMock.mockReset()
@@ -106,7 +113,7 @@ describe('sendManualMessagingReply', () => {
     expect(r.status).toBe(200)
     expect(r.body).toMatchObject({ success: true, whatsapp_message_id: 'mid.out', channel: 'instagram' })
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('https://graph.instagram.com/v21.0/IG1/messages')
+    expect(url).toBe('https://graph.instagram.com/v26.0/IG1/messages')
     expect(init.headers.Authorization).toBe('Bearer plain-ct')
     expect(JSON.parse(init.body)).toMatchObject({ recipient: { id: 'IGSID' }, message: { text: 'olá' } })
     expect(h.inserted[0]).toMatchObject({ sender_type: 'agent', sender_id: 'user-1', channel: 'instagram', message_id: 'mid.out', content_text: 'olá' })
@@ -120,7 +127,7 @@ describe('sendManualMessagingReply', () => {
       input({ channel: 'messenger', messageType: 'image', contentText: 'legenda', mediaUrl: '/supabase/storage/v1/object/public/chat-media/account-acct-1/a.png', publicMediaUrl: 'https://app.test/supabase/storage/v1/object/public/chat-media/account-acct-1/a.png' }),
     )
     expect(r.status).toBe(200)
-    expect(fetchMock.mock.calls[0][0]).toBe('https://graph.facebook.com/v21.0/PG1/messages')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://graph.facebook.com/v26.0/PG1/messages')
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).message.attachment).toMatchObject({ type: 'image', payload: { url: 'https://app.test/supabase/storage/v1/object/public/chat-media/account-acct-1/a.png' } })
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).message).toEqual({ text: 'legenda' })
     expect(h.inserted.map((x) => x.content_type)).toEqual(['image', 'text'])
@@ -137,6 +144,16 @@ describe('sendManualMessagingReply', () => {
 
   it('refuses a conversation with no customer message at all', async () => {
     expect((await sendManualMessagingReply(input({ lastAt: null }))).body.code).toBe('window_closed')
+  })
+
+  it('refuses with a clear pt-BR 403 when the plan lacks the channel module, before touching the connection or Meta', async () => {
+    h.modules = new Set(['channel_messenger'])
+    const r = await sendManualMessagingReply(input())
+    expect(r).toMatchObject({ status: 403, body: { code: 'module_not_included' } })
+    expect(String(r.body.error)).toMatch(/plano não inclui o canal Instagram/)
+    h.modules = new Set(['channel_instagram'])
+    expect((await sendManualMessagingReply(input({ channel: 'messenger' }))).status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('refuses templates (they do not exist on these channels)', async () => {
@@ -171,6 +188,8 @@ describe('sendManualMessagingReply', () => {
     expect(JSON.stringify(denied.body)).not.toContain('1784')
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'x', code: 190 } }), { status: 401 }))
     expect((await sendManualMessagingReply(input())).body.code).toBe('channel_expired')
+    // the dead token flags the connection so Settings shows "Reconectar"
+    expect(h.expired).toEqual([{ status: 'expired' }])
   })
 
   it('logs code / subcode only, never the Meta message', async () => {

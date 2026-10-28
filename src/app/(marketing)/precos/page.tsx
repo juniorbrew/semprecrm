@@ -88,6 +88,8 @@ const MODULE_LABELS_PT: Record<Module, string> = {
   api: 'API e webhooks',
   support: 'Suporte avançado',
   ai_actions: 'Ações da IA (agendar, criar tarefas)',
+  channel_instagram: 'Instagram Direct',
+  channel_messenger: 'Facebook Messenger',
 };
 
 // pt-BR plural forms per limit; null = unlimited.

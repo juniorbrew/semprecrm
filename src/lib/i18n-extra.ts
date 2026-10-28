@@ -2058,6 +2058,9 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'API & webhooks': 'API e webhooks',
   'Advanced support': 'Suporte avançado',
   'AI actions': 'Ações da IA',
+  // Modules added in migration 101
+  'Instagram Direct': 'Instagram Direct',
+  'Facebook Messenger': 'Facebook Messenger',
   'Month': 'Mês',
   'Week': 'Semana',
   'Day': 'Dia',

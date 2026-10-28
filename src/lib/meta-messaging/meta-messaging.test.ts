@@ -125,7 +125,7 @@ describe('sendMessagingMessage', () => {
     const r = await sendMessagingMessage({ kind: 'instagram', businessId: 'IG1', token: 'TKN', recipientId: 'IGSID' }, { text: 'oi' })
     expect(r.messageId).toBe('mid.1')
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('https://graph.instagram.com/v21.0/IG1/messages')
+    expect(url).toBe('https://graph.instagram.com/v26.0/IG1/messages')
     expect(url).not.toContain('TKN')
     expect(init.headers.Authorization).toBe('Bearer TKN')
     expect(JSON.parse(init.body)).toEqual({ recipient: { id: 'IGSID' }, messaging_type: 'RESPONSE', message: { text: 'oi' } })
@@ -138,7 +138,7 @@ describe('sendMessagingMessage', () => {
       { mediaKind: 'image', url: 'https://x.test/a.png' },
     )
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('https://graph.facebook.com/v21.0/PG1/messages')
+    expect(url).toBe('https://graph.facebook.com/v26.0/PG1/messages')
     expect(JSON.parse(init.body).message).toEqual({
       attachment: { type: 'image', payload: { url: 'https://x.test/a.png', is_reusable: false } },
     })
@@ -164,12 +164,24 @@ describe('fetchMessagingProfile', () => {
     expect(await fetchMessagingProfile('instagram', 'TKN', 'IGSID')).toEqual({
       name: 'Ana Souza', pictureUrl: 'https://scontent.cdninstagram.com/p.jpg',
     })
-    expect(fetchMock.mock.calls[0][0]).toContain('graph.instagram.com/v21.0/IGSID?fields=')
+    expect(fetchMock.mock.calls[0][0]).toContain('graph.instagram.com/v26.0/IGSID?fields=')
   })
   it('joins first and last name for Messenger', async () => {
     fetchMock.mockResolvedValueOnce(ok({ first_name: 'Bia', last_name: 'Lima', profile_pic: 'https://p' }))
     expect((await fetchMessagingProfile('messenger', 'TKN', 'PSID'))?.name).toBe('Bia Lima')
   })
+  it('tells the caller when the token is dead (190) so the connection can be flagged', async () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const onInvalid = vi.fn()
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 190, message: 'x' } }), { status: 401 }))
+    expect(await fetchMessagingProfile('messenger', 'TKN', 'PSID', onInvalid)).toBeNull()
+    expect(onInvalid).toHaveBeenCalledOnce()
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 1, message: 'x' } }), { status: 500 }))
+    await fetchMessagingProfile('messenger', 'TKN', 'PSID', onInvalid)
+    expect(onInvalid).toHaveBeenCalledOnce()
+    spy.mockRestore()
+  })
+
   it('returns null instead of throwing when Graph fails', async () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     fetchMock.mockRejectedValueOnce(new Error('boom'))
