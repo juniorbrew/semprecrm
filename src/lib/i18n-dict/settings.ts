@@ -359,4 +359,32 @@ export const DICT_SETTINGS: Record<string, string> = {
   // ---- Support triage (migration 071) ----
   'Conversation categories and triage': 'Categorias e classificação das conversas',
   'Triage is not enabled for this account.': 'A classificação automática não está ativada nesta conta.',
+  // ---- Instagram and Messenger connection (migration 101) ----
+  'Channel connected': 'Canal conectado',
+  'Channel disconnected': 'Canal desconectado',
+  'The choice expired. Connect again.': 'A escolha expirou. Conecte de novo.',
+  'Instagram and Messenger': 'Instagram e Messenger',
+  'Answer Instagram Direct and Facebook Messenger messages in the same inbox, with the same team.':
+    'Responda as mensagens do Instagram Direct e do Messenger no mesmo inbox, com a mesma equipe.',
+  'Your plan does not include this channel. Get in touch with the SempreCRM team to add it.':
+    'Seu plano não inclui este canal. Fale com a equipe do SempreCRM para ativá-lo.',
+  'Not set up by the platform yet': 'Ainda não configurado pela plataforma',
+  'Needs reconnection': 'Precisa reconectar',
+  'Choose a Facebook Page': 'Escolha uma Página do Facebook',
+  'Choose the Facebook Page to connect': 'Escolha a Página do Facebook que será conectada',
+  'This channel is not set up by the platform yet.': 'Este canal ainda não foi configurado pela plataforma.',
+  'Your plan does not include this channel.': 'Seu plano não inclui este canal.',
+  'Only account admins can connect channels.': 'Só administradores da conta podem conectar canais.',
+  'Your session expired. Sign in again.': 'Sua sessão expirou. Entre de novo.',
+  'The connection was cancelled.': 'A conexão foi cancelada.',
+  'The connection expired or was not started here. Try again.': 'A conexão expirou ou não foi iniciada aqui. Tente de novo.',
+  'Meta did not accept the connection. Try again.': 'A Meta não aceitou a conexão. Tente de novo.',
+  'Meta returned an error. Try again.': 'A Meta devolveu um erro. Tente de novo.',
+  'No Facebook Page found. Create or get access to a Page and try again.':
+    'Nenhuma Página do Facebook encontrada. Crie uma Página ou peça acesso e tente de novo.',
+  'This account is already connected to another SempreCRM account.':
+    'Esta conta já está conectada a outra empresa no SempreCRM.',
+  'Could not turn on message delivery at Meta. Try again.':
+    'Não foi possível ativar o recebimento de mensagens na Meta. Tente de novo.',
+  'Could not save the connection. Try again.': 'Não foi possível salvar a conexão. Tente de novo.',
 };

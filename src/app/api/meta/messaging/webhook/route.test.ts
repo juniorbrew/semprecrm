@@ -228,7 +228,7 @@ describe('POST events', () => {
     expect(h.moduleCalls[0].slice(2)).toEqual(['channel_instagram', { allowReadOnly: true }])
   })
 
-  it('the module is the channel's own: a messenger event needs channel_messenger', async () => {
+  it('the module is its own channel module: a messenger event needs channel_messenger', async () => {
     h.channels.push({ account_id: 'acct-2', kind: 'messenger', external_id: 'PG1', status: 'active', access_token: 'x', id: 'ch-2' })
     h.modules = new Set(['channel_instagram'])
     await post({ object: 'page', entry: [{ id: 'PG1', messaging: [text('PSID', 'PG1', 'm9')] }] })
