@@ -384,6 +384,29 @@ describe('runAutoReplyJob — sends that may or may not have gone out', () => {
     expect(r.failed).toBe(1);
     expect(jobRow()).toMatchObject({ status: 'queued', sent_parts: 0, reply_parts: ['Olá! Abrimos às 8h.'] });
   });
+
+  it('Instagram / Messenger refused on purpose (window closed meanwhile): the job is skipped, not retried', async () => {
+    const { MessagingSkipError } = await import('@/lib/meta-messaging/skip');
+    db.rpcHandler = () => ({ data: [job()], error: null });
+    const r = await drainAutoReplies(
+      deps({
+        send: async () => {
+          throw new MessagingSkipError('window_closed', 'janela encerrada');
+        },
+      }),
+    );
+    expect(r.failed).toBe(0);
+    expect(jobRow()).toMatchObject({ status: 'skipped', skip_reason: 'meta_window_closed', sent_parts: 0 });
+    db.rpcHandler = () => ({ data: [job()], error: null });
+    await drainAutoReplies(
+      deps({
+        send: async () => {
+          throw new MessagingSkipError('channel_expired', 'conexão expirada');
+        },
+      }),
+    );
+    expect(jobRow().skip_reason).toBe('channel_unavailable');
+  });
 });
 
 describe('runAutoReplyJob — stay out / hand over', () => {

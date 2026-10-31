@@ -16,7 +16,8 @@ import { claimEchoedRow } from '@/lib/whatsapp/phone-echo'
 import { accountHasModule } from '@/lib/plans-server'
 import { messagingModule } from './channels'
 import { findConnectionForAccount, markConnectionExpired } from './connections'
-import { MessagingApiError, sendMessagingMessage, type MessagingMediaKind } from './graph'
+import { sendMessagingMessage, type MessagingMediaKind } from './graph'
+import { classifyMetaSendError, textLimitMessage, windowClosedMessage } from './send-core'
 import type { MetaMessagingChannel } from '@/types'
 
 /** Same window as the customer-service window on WhatsApp. */
@@ -82,24 +83,14 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
     return fail(400, `Modelos de mensagem não existem no ${label}. Envie uma mensagem de texto.`, 'template_not_supported')
   }
   if (textTooLong(kind, input.contentText)) {
-    return fail(
-      400,
-      kind === 'instagram'
-        ? 'Mensagem longa demais para o Instagram: o limite é de 1000 bytes (cerca de 1000 letras sem acento; acentos e emojis ocupam mais).'
-        : 'Mensagem longa demais para o Messenger: o limite é de 2000 caracteres.',
-      'text_too_long',
-    )
+    return fail(400, textLimitMessage(kind), 'text_too_long')
   }
   const recipientId = conversation.contact?.[IDENTITY_COLUMN[kind]]
   if (typeof recipientId !== 'string' || !recipientId) {
     return fail(400, `Este contato não tem identificação do ${label}.`, 'contact_identity_missing')
   }
   if (!isWithinMessagingWindow(conversation.last_customer_message_at, input.now)) {
-    return fail(
-      409,
-      `A janela de 24 h do ${label} está encerrada: só é possível responder até 24 h depois da última mensagem do cliente. Aguarde ele escrever de novo.`,
-      'window_closed',
-    )
+    return fail(409, windowClosedMessage(kind), 'window_closed')
   }
   if (!(await accountHasModule(admin, accountId, messagingModule(kind)))) {
     return fail(403, `Seu plano não inclui o canal ${label}. Fale com a equipe do SempreCRM para ativá-lo.`, 'module_not_included')
@@ -159,23 +150,9 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
       mainRecord = await persist('text', input.contentText, null, mainId)
     }
   } catch (err) {
-    if (err instanceof MessagingApiError) {
-      if (err.outsideWindow) {
-        return fail(409, `A janela de 24 h do ${label} está encerrada. Aguarde o cliente escrever de novo.`, 'window_closed')
-      }
-      // Only status/code/subcode are logged and the client gets a fixed message: Meta's text can quote ids.
-      console.error(`[meta-messaging] send failed: status ${err.status} code ${err.code} subcode ${err.subcode}`)
-      if (err.tokenInvalid) {
-        await markConnectionExpired(admin, conn.id)
-        return fail(400, `O ${label} recusou a conexão (acesso expirado ou revogado). Reconecte o canal nas configurações.`, 'channel_expired')
-      }
-      if (err.permissionDenied) {
-        return fail(403, `O ${label} recusou o envio por falta de permissão. Confira as permissões do app e reconecte o canal.`, 'permission_denied')
-      }
-      return fail(502, `O ${label} não aceitou a mensagem. Tente novamente em instantes.`, 'send_failed')
-    }
-    console.error('[meta-messaging] send failed: network')
-    return fail(502, `Não foi possível falar com o ${label}. Tente novamente.`, 'send_failed')
+    const failure = classifyMetaSendError(kind, err)
+    if (failure.tokenInvalid) await markConnectionExpired(admin, conn.id)
+    return fail(failure.status, failure.message, failure.code)
   }
 
   // Meta accepted it: never answer an error here (the agent would resend and the customer

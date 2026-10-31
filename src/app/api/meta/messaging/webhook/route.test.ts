@@ -18,6 +18,8 @@ const h = vi.hoisted(() => ({
   /** Modules the plan includes (migration 101). */
   modules: new Set<string>(['channel_instagram', 'channel_messenger']),
   moduleCalls: [] as unknown[][],
+  kicked: 0,
+  triage: [] as unknown[][],
 }))
 
 vi.mock('next/server', () => ({
@@ -32,6 +34,8 @@ vi.mock('@/lib/plans-server', () => ({
     return h.modules.has(a[2] as string)
   },
 }))
+vi.mock('@/lib/ai/auto-reply-runtime', () => ({ kickAutoReplies: async () => void h.kicked++ }))
+vi.mock('@/lib/support/triage-trigger', () => ({ scheduleTriageIfDue: (...a: unknown[]) => void h.triage.push(a) }))
 vi.mock('@/lib/supabase/url', () => ({ supabaseServerUrl: () => 'http://db' }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `dec:${v}` }))
 vi.mock('@/lib/whatsapp/inbound', () => ({
@@ -118,6 +122,8 @@ beforeEach(() => {
   h.messages = []
   h.modules = new Set(['channel_instagram', 'channel_messenger'])
   h.moduleCalls = []
+  h.kicked = 0
+  h.triage = []
   __resetRateLimitForTests()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
@@ -236,6 +242,20 @@ describe('POST events', () => {
     h.modules = new Set(['channel_messenger'])
     await post({ object: 'page', entry: [{ id: 'PG1', messaging: [text('PSID', 'PG1', 'm9')] }] })
     expect(h.ingest).toHaveBeenCalledOnce()
+  })
+
+  it('an ingested message hands the AI triage hint to the scheduler and kicks the auto-reply drain (part C)', async () => {
+    h.ingest.mockResolvedValueOnce({ ok: true, aiReplyQueued: true, triageDue: true, conversationId: 'cv-1' } as never)
+    await post(igBody(text('IGSID', 'IG1', 'm1')))
+    await settle()
+    expect(h.triage).toEqual([[expect.objectContaining({ triageDue: true, conversationId: 'cv-1' }), 'acct-1']])
+    expect(h.kicked).toBe(1)
+  })
+
+  it('no AI reply queued: the drain is not kicked', async () => {
+    await post(igBody(text('IGSID', 'IG1', 'm1')))
+    await settle()
+    expect(h.kicked).toBe(0)
   })
 
   it('a revoked connection does not receive messages', async () => {

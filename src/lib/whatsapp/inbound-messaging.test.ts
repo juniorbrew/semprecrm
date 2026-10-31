@@ -102,6 +102,7 @@ vi.mock('@/lib/lgpd/suppression', () => ({
   findSuppressedPhones: vi.fn(async () => new Set<string>()),
 }))
 
+import { MessagingSkipError } from '@/lib/meta-messaging/skip'
 import { ingestInboundMessage } from './inbound'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
@@ -350,21 +351,49 @@ describe('ingestInboundMessage — Instagram / Messenger', () => {
     warn.mockRestore()
   })
 
-  it('skips the phone-only LGPD suppression lookup and every automatic reply', async () => {
-    h.state.accountPreferences = {
-      out_of_hours_enabled: true,
-      out_of_hours_message: 'Fechado',
-      business_hours: { timezone: 'America/Sao_Paulo', days: {} },
-    }
+  it('skips only the phone-only LGPD suppression lookup', async () => {
     await ingestInboundMessage(IG, makeDb())
     expect(findSuppressedPhones).not.toHaveBeenCalled()
-    expect(h.sendCalls).toHaveLength(0)
-    expect(dispatchInboundToFlows).not.toHaveBeenCalled()
   })
 
-  it('dispatches no message-triggered automation until part C', async () => {
+  it('answers out of hours on an Instagram conversation through the engine sender (part C)', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-24T15:00:00Z'), toFake: ['Date'] }) // a Saturday
+    h.state.accountPreferences = { out_of_hours_enabled: true, out_of_hours_message: 'Voltamos segunda!' }
+    const res = await ingestInboundMessage(IG, makeDb())
+    expect(res.outOfHoursReply).toBe('sent')
+    expect(h.sendCalls).toHaveLength(1)
+    expect(h.sendCalls[0]).toMatchObject({ conversationId: h.state.conversations[0].id, text: 'Voltamos segunda!' })
+  })
+
+  it('an out-of-hours notice the channel refuses on purpose (window / module / token) is skipped, not failed', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-24T15:00:00Z'), toFake: ['Date'] })
+    h.state.accountPreferences = { out_of_hours_enabled: true, out_of_hours_message: 'Voltamos segunda!' }
+    h.sendError = new MessagingSkipError('module_off', 'sem módulo')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await ingestInboundMessage(IG, makeDb())
+    expect(res.outOfHoursReply).toBe('skipped')
+    warn.mockRestore()
+  })
+
+  it('feeds the text to the flows engine like any transport (numbered options are matched by text)', async () => {
     await ingestInboundMessage(IG, makeDb())
-    expect(h.automationCalls).toHaveLength(0)
+    expect(dispatchInboundToFlows).toHaveBeenCalledOnce()
+    expect(vi.mocked(dispatchInboundToFlows).mock.calls[0][0]).toMatchObject({
+      accountId: 'acct-1',
+      message: { kind: 'text', text: 'oi', meta_message_id: 'mid.1' },
+    })
+  })
+
+  it('dispatches the message-triggered automations on an Instagram conversation (part C)', async () => {
+    await ingestInboundMessage(IG, makeDb())
+    expect(h.automationCalls.map((c) => c.triggerType)).toEqual(
+      expect.arrayContaining(['new_contact_created', 'first_inbound_message', 'new_message_received', 'keyword_match']),
+    )
+  })
+
+  it('flags the AI auto-reply and the triage like the other transports (result hints for the webhook)', async () => {
+    const r = await ingestInboundMessage(IG, makeDb())
+    expect(r.triageDue).toBe(true)
   })
 
   it('does not touch the WhatsApp path: a phone sender still dedupes by phone', async () => {

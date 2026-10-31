@@ -6,12 +6,13 @@
 // then goes through the same pipeline as WhatsApp: `ingestInboundMessage`
 // for the customer's messages, `ingestMessagingEcho` for the business's.
 //
-// Triage and AI auto-reply are intentionally NOT run for these channels (the
-// route never kicks them and the AI agent resolver refuses them) until part C.
+// Like the other transports, the AI auto-reply job is queued by the ingest (the route kicks
+// the drain) and the AI triage is scheduled here for the customer's 1st / 3rd message.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { scheduleTriageIfDue } from '@/lib/support/triage-trigger'
 import { ingestInboundMessage } from '@/lib/whatsapp/inbound'
 import { accountHasModule } from '@/lib/plans-server'
 import { findConnectionByExternalId, markConnectionExpired, type MessagingConnection } from './connections'
@@ -28,6 +29,8 @@ export interface ProcessSummary {
   unknownRecipient: number
   /** Events of accounts whose plan lacks the channel module. */
   moduleOff: number
+  /** An AI auto-reply job was queued: the route kicks the drain. */
+  aiReplyQueued: boolean
   /** Permanent problems (nothing to retry). */
   skipped: number
   /** Transient failures: the route answers 5xx so Meta redelivers. */
@@ -159,7 +162,12 @@ async function handleEvent(
       db,
     )
     if (r.ok && r.reason === 'duplicate') summary.duplicates += 1
-    else if (r.ok) summary.processed += 1
+    else if (r.ok) {
+      summary.processed += 1
+      if (r.aiReplyQueued) summary.aiReplyQueued = true
+      // AI triage on the customer's 1st / 3rd message (opt-in, never blocks).
+      scheduleTriageIfDue(r, conn.accountId)
+    }
     else if (r.reason && PERMANENT.has(r.reason)) summary.skipped += 1
     else summary.failed += 1
   }
@@ -179,7 +187,7 @@ export async function processMessagingEvents(
   db: SupabaseClient,
   events: MessagingEvent[],
 ): Promise<ProcessSummary> {
-  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, moduleOff: 0, skipped: 0, failed: 0 }
+  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, moduleOff: 0, aiReplyQueued: false, skipped: 0, failed: 0 }
   const connections = new Map<string, MessagingConnection | null>()
   const moduleCache = new Map<string, boolean>()
   for (const e of events) {

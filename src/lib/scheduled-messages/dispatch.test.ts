@@ -313,6 +313,42 @@ describe('runScheduledDispatch', () => {
       )
     })
 
+    it('Instagram / Messenger outside the 24 h window fail with a pt-BR reason naming the channel (no send)', async () => {
+      const old = new Date(NOW.getTime() - 25 * HOUR).toISOString()
+      for (const [channel, label] of [['instagram', 'Instagram'], ['messenger', 'Messenger']] as const) {
+        const msg = await failsWith(
+          { conversations: [{ id: 'c1', account_id: 'a1', status: 'open', channel, last_customer_message_at: old }] },
+          'window_closed',
+        )
+        expect(msg).toContain(label)
+        expect(msg).toContain('24 h')
+        notify.mockClear()
+      }
+    })
+
+    it('Instagram inside the window is sent (scheduled messages are allowed again on these channels)', async () => {
+      const { db } = makeDb({
+        scheduled: [sched()],
+        conversations: [{ id: 'c1', account_id: 'a1', status: 'open', channel: 'instagram', last_customer_message_at: new Date(NOW.getTime() - HOUR).toISOString() }],
+      })
+      const send = okSend()
+      expect((await runScheduledDispatch(db, { now: NOW, send, findOtherActive: noOther })).sent).toBe(1)
+    })
+
+    it('a refusal by the Instagram / Messenger sender is recorded with its own code and pt-BR text', async () => {
+      const { MessagingSkipError } = await import('@/lib/meta-messaging/skip')
+      const { db, t } = makeDb({
+        scheduled: [sched()],
+        conversations: [{ id: 'c1', account_id: 'a1', status: 'open', channel: 'instagram', last_customer_message_at: new Date(NOW.getTime() - HOUR).toISOString() }],
+      })
+      const send = vi.fn(async () => {
+        throw new MessagingSkipError('channel_expired', 'A conexão do Instagram expirou. Reconecte o canal nas configurações.')
+      })
+      const out = await runScheduledDispatch(db, { now: NOW, send, notifyFailure: notify, findOtherActive: noOther })
+      expect(out.failed).toBe(1)
+      expect(t.scheduled_messages[0]).toMatchObject({ status: 'failed', error_code: 'channel_expired', error_text: expect.stringContaining('Reconecte') })
+    })
+
     it('the QR channel has no 24 h window', async () => {
       const { db } = makeDb({
         scheduled: [sched()],

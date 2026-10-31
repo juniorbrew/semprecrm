@@ -2,9 +2,10 @@
 // Channel guard shared by every WhatsApp sender.
 //
 // Instagram / Messenger conversations (migration 100) live in the same inbox
-// as WhatsApp ones, but nothing automatic may send on them yet (part C).
-// A sender that only knows `official` / `qr` must never fall into its
-// `official` branch for one of them — it calls `assertWhatsAppChannel` first.
+// as WhatsApp ones. The WhatsApp-only primitives (Cloud API / QR gateway senders, receipts, typing,
+// reactions, broadcasts, agenda reminders) must never see one of them: they call
+// `assertWhatsAppChannel` first. The automatic features (automations, flows, AI, surveys, scheduled
+// messages, the public API) route these channels to `engine-send.ts` instead (part C).
 // ============================================================
 
 import type { Module } from '@/lib/plans'

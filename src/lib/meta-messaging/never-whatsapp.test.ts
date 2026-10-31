@@ -58,6 +58,7 @@ import {
 } from '@/lib/flows/meta-send'
 import { engineSendTemplate, engineSendText } from '@/lib/automations/meta-send'
 import { assertWhatsAppChannel, ChannelNotSupportedError } from './channels'
+import { MessagingSkipError } from './skip'
 import { conversationChannel } from '@/lib/whatsapp/qr-engine-send'
 
 const fetchMock = vi.fn()
@@ -90,6 +91,8 @@ describe('conversationChannel / assertWhatsAppChannel', () => {
 })
 
 describe.each(['instagram', 'messenger'])('automatic senders on a %s conversation', (channel) => {
+  // Part C: they go to the Instagram / Messenger sender (here refused: this fake conversation has no
+  // contact identity), and never to a WhatsApp primitive.
   it('never call Meta WhatsApp, the QR gateway or write a message', async () => {
     h.channel = channel
     const sends = [
@@ -106,7 +109,7 @@ describe.each(['instagram', 'messenger'])('automatic senders on a %s conversatio
           sections: [{ title: 'A', rows: [{ id: '1', title: 'Um' }] }],
         }),
     ]
-    for (const send of sends) await expect(send()).rejects.toBeInstanceOf(ChannelNotSupportedError)
+    for (const send of sends) await expect(send()).rejects.toBeInstanceOf(MessagingSkipError)
     expect(fetchMock).not.toHaveBeenCalled()
     for (const m of Object.values(h.meta)) expect(m).not.toHaveBeenCalled()
     expect(h.inserted).toHaveLength(0)

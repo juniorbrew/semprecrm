@@ -62,6 +62,7 @@ import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from '
 import { runModelCall } from './run-model-call';
 import { MEMORY_PROMPT_MAX_FACTS, type SuggestMessage } from './suggest-reply';
 import { plainMessageText } from '@/lib/inbox/vcard';
+import { MessagingSkipError } from '@/lib/meta-messaging/skip';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any;
@@ -133,8 +134,6 @@ export async function resolveConversationAgent(
   contactId: string,
   channel: string | null,
 ): Promise<AiAgent | null> {
-  // Auto-reply is WhatsApp only until the Instagram / Messenger automation part ships.
-  if (channel === 'instagram' || channel === 'messenger') return null;
   const { data: agents, error } = await db
     .from('ai_agents')
     .select(AGENT_COLUMNS)
@@ -673,6 +672,10 @@ async function sendParts(ctx: RunCtx, parts: string[], started: Date): Promise<J
     } catch (err) {
       if (!isUncertainSend(err)) {
         await patchJob(deps.db, job.id, { sent_parts: i });
+        // Instagram / Messenger refused on purpose (24 h window, module off, token expired…): nothing to retry.
+        if (err instanceof MessagingSkipError) {
+          return skip(deps.db, job.id, err.code === 'window_closed' ? 'meta_window_closed' : 'channel_unavailable');
+        }
         throw err;
       }
       // It may have gone out: the record stays, the team takes over.

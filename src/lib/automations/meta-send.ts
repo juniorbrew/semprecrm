@@ -7,7 +7,8 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
-import { assertWhatsAppChannel } from '@/lib/meta-messaging/channels'
+import { assertWhatsAppChannel, isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
+import { engineSendMessaging, templateSkip } from '@/lib/meta-messaging/engine-send'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { accountIsWritable } from '@/lib/plans-server'
 import {
@@ -98,7 +99,21 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // QR channel (migration 026): the conversation lives on the WhatsApp
   // Web session, so deliver through the gateway. Templates don't exist
   // there — send the rendered body as plain text instead.
-  if (assertWhatsAppChannel(await conversationChannel(db, input.conversationId)) === 'qr') {
+  // Instagram / Messenger (part C): its own sender — 24 h window, no templates, Meta Graph API.
+  const channel = await conversationChannel(db, input.conversationId)
+  if (isMetaMessagingChannel(channel)) {
+    if (input.kind === 'template') throw templateSkip(channel)
+    return engineSendMessaging(db, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      content: { kind: 'text', text: input.text },
+      origin: input.agentId ? undefined : (input.origin ?? 'automation'),
+      agentId: input.agentId,
+      apiRequestId: input.apiRequestId,
+    })
+  }
+  if (assertWhatsAppChannel(channel) === 'qr') {
     // Anti-ban pacing is the gateway's job (bulk queue); a `throttled` answer
     // propagates so the automation engine / AI / CSAT can park and retry.
     if (input.kind === 'template') {

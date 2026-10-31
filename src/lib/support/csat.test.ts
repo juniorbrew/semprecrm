@@ -163,6 +163,16 @@ describe('csatSkipReason', () => {
   it('an ordinary resolved conversation is eligible', () => {
     expect(csatSkipReason(base())).toBeNull()
   })
+  it('Instagram / Messenger: no phone needed; inside its own 24 h window it is eligible, outside it is skipped', () => {
+    const ig = (last: string, contactLast?: string) =>
+      base({ contactLastCustomerAt: contactLast, contact: { phone: null }, conversation: { channel: 'instagram', last_customer_message_at: last, resolved_at: '2026-09-30T11:00:00Z' } })
+    expect(csatSkipReason(ig('2026-09-30T10:00:00Z'))).toBeNull()
+    expect(csatSkipReason(ig('2026-09-29T10:00:00Z'))).toBe('window_closed')
+    // another conversation of the contact (a WhatsApp one) writing later does not open this window
+    expect(csatSkipReason(ig('2026-09-29T10:00:00Z', '2026-09-30T11:30:00Z'))).toBe('window_closed')
+    // WhatsApp keeps needing a phone
+    expect(csatSkipReason(base({ contact: { phone: null } }))).toBe('no_phone')
+  })
   it('reopened before the send, or reopened and resolved again (another attendance)', () => {
     expect(csatSkipReason(base({ conversation: { status: 'open' } }))).toBe('reopened')
     expect(csatSkipReason(base({ conversation: { service_count: 2 } }))).toBe('reopened')

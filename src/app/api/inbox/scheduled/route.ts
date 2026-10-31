@@ -131,12 +131,6 @@ export async function POST(request: Request) {
     contact: { anonymized_at: string | null } | { anonymized_at: string | null }[] | null
   } | null
   if (!c || !c.contact_id) return NextResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 })
-  if (c.channel === 'instagram' || c.channel === 'messenger') {
-    return NextResponse.json(
-      { error: 'O agendamento de mensagens ainda não está disponível no Instagram e no Messenger.', code: 'channel_unsupported' },
-      { status: 400 },
-    )
-  }
   const contact = Array.isArray(c.contact) ? c.contact[0] : c.contact
   if (contact?.anonymized_at) {
     return NextResponse.json(
