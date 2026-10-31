@@ -320,7 +320,10 @@ export function resolveAgent<T extends Pick<AiAgent, 'enabled' | 'is_default' | 
   agents: readonly T[],
   ctx: { channel: string | null; tagIds: readonly string[] },
 ): { agent: T; match: AgentMatch } | null {
-  const enabled = agents.filter((a) => a.enabled);
+  // Instagram / Messenger are opt-in: an agent (default, tag-matched or channel-matched) serves them only
+  // when its channels list names the channel. An empty list keeps covering the WhatsApp channels only.
+  const optIn = ctx.channel === 'instagram' || ctx.channel === 'messenger';
+  const enabled = agents.filter((a) => a.enabled && (!optIn || (a.channels as string[]).includes(ctx.channel as string)));
   const tags = new Set(ctx.tagIds);
   const byTag = enabled.find((a) => a.tag_ids.some((t) => tags.has(t)));
   if (byTag) return { agent: byTag, match: 'tag' };

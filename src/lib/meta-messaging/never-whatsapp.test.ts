@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   channel: 'instagram' as string,
+  /** A complete setup: contact id, open window, active connection. */
+  complete: false,
   inserted: [] as Record<string, unknown>[],
   meta: {
     sendTextMessage: vi.fn(async () => ({ messageId: 'META' })),
@@ -18,7 +20,7 @@ const h = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@/lib/plans-server', () => ({ accountIsWritable: async () => true }))
+vi.mock('@/lib/plans-server', () => ({ accountIsWritable: async () => true, accountHasModule: async () => true }))
 vi.mock('@/lib/whatsapp/meta-api', () => h.meta)
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: () => 'token' }))
 
@@ -37,6 +39,20 @@ function makeAdmin() {
       then: (onF: (v: unknown) => unknown) => Promise.resolve(resolve()).then(onF),
     }
     function resolve() {
+      if (h.complete && table === 'conversations' && type === 'select') {
+        return {
+          data: {
+            id: 'conv-1',
+            channel: h.channel,
+            last_customer_message_at: new Date().toISOString(),
+            contact: { instagram_id: 'IGSID', messenger_id: 'PSID', anonymized_at: null },
+          },
+          error: null,
+        }
+      }
+      if (h.complete && table === 'meta_messaging_channels') {
+        return { data: { id: 'ch-1', account_id: 'acct-1', kind: h.channel, external_id: 'BIZ1', status: 'active', access_token: 'ct' }, error: null }
+      }
       if (table === 'conversations' && type === 'select') return { data: { id: 'conv-1', channel: h.channel }, error: null }
       if (table === 'contacts') return { data: { id: 'c-1', phone: '5511999990000' }, error: null }
       if (table === 'whatsapp_config') return { data: { phone_number_id: '123', access_token: 'enc' }, error: null }
@@ -65,6 +81,7 @@ const fetchMock = vi.fn()
 const BASE = { accountId: 'acct-1', userId: 'u-1', conversationId: 'conv-1', contactId: 'c-1' }
 
 beforeEach(() => {
+  h.complete = false
   h.inserted = []
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = 'shh'
@@ -115,3 +132,28 @@ describe.each(['instagram', 'messenger'])('automatic senders on a %s conversatio
     expect(h.inserted).toHaveLength(0)
   })
 })
+
+describe.each([['instagram', 'graph.instagram.com'], ['messenger', 'graph.facebook.com']])(
+  'a complete %s setup (contact id, open window, connection)',
+  (channel, host) => {
+    it('the automatic senders talk only to that Graph API: never the WhatsApp Cloud API, the QR gateway or a WhatsApp primitive', async () => {
+      h.channel = channel
+      h.complete = true
+      fetchMock.mockImplementation(async () => new Response(JSON.stringify({ recipient_id: 'x', message_id: 'mid.ok' }), { status: 200 }))
+      await engineSendText({ ...BASE, text: 'oi' })
+      await flowSendText({ ...BASE, text: 'oi' })
+      await engineSendInteractiveButtons({ ...BASE, bodyText: 'x', buttons: [{ id: 'a', title: 'A' }] })
+      await engineSendInteractiveList({ ...BASE, bodyText: 'x', buttonLabel: 'v', sections: [{ title: 'A', rows: [{ id: '1', title: 'Um' }] }] })
+      expect(fetchMock).toHaveBeenCalledTimes(4)
+      for (const [url] of fetchMock.mock.calls) {
+        const u = new URL(String(url))
+        expect(u.hostname).toBe(host)
+        expect(u.pathname).toMatch(/^\/v[\d.]+\/BIZ1\/messages$/)
+        expect(String(url)).not.toMatch(/gateway\.test|whatsapp|3201/i)
+      }
+      for (const m of Object.values(h.meta)) expect(m).not.toHaveBeenCalled()
+      expect(h.inserted.every((r) => r.channel === channel)).toBe(true)
+      expect(h.inserted).toHaveLength(4)
+    })
+  },
+)

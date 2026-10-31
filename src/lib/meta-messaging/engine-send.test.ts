@@ -22,6 +22,8 @@ vi.mock('@/lib/plans-server', () => ({ accountHasModule: async (_d: unknown, _a:
 vi.mock('@/lib/whatsapp/phone-echo', () => ({ claimEchoedRow: () => h.claim() }))
 
 import { engineSendMessaging, MessagingSkipError, templateSkip, type EngineMessagingSendInput } from './engine-send'
+import { MessagingSendRefusedError, MessagingUncertainSendError } from './skip'
+import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import { renderInteractiveAsText } from '@/lib/whatsapp/qr-engine-send'
 
 const NOW = Date.parse('2026-10-31T12:00:00Z')
@@ -164,6 +166,27 @@ describe('engineSendMessaging', () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 2, message: 'boom' } }), { status: 500 }))
     expect(await skipCode(engineSendMessaging(db, input()))).toMatch(/^error:O Instagram não aceitou/)
     expect(h.inserted).toHaveLength(0)
+  })
+
+  it('ambiguous failures are UNCERTAIN (never resent): 5xx, a timeout / network error, an unreadable 2xx', async () => {
+    const caught = async () => engineSendMessaging(db, input()).then(() => null, (e: unknown) => e)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 2, message: 'boom' } }), { status: 503 }))
+    const e5 = await caught()
+    expect(e5).toBeInstanceOf(MessagingUncertainSendError)
+    expect(isUncertainSend(e5)).toBe(true)
+    fetchMock.mockRejectedValueOnce(Object.assign(new Error('The operation was aborted'), { name: 'TimeoutError' }))
+    expect(isUncertainSend(await caught())).toBe(true)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ recipient_id: 'x' }), { status: 200 }))
+    expect(isUncertainSend(await caught())).toBe(true)
+    expect(h.inserted).toHaveLength(0)
+  })
+
+  it('a definitive 4xx refusal is certain (safe to retry), and a skip is not "uncertain" either', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 100, message: 'bad param' } }), { status: 400 }))
+    const e = await engineSendMessaging(db, input()).then(() => null, (x: unknown) => x)
+    expect(e).toBeInstanceOf(MessagingSendRefusedError)
+    expect(isUncertainSend(e)).toBe(false)
+    expect(isUncertainSend(templateSkip('instagram'))).toBe(false)
   })
 
   it('a send Meta accepted but the DB refused throws the "do not retry" marker; an echo that got there first is claimed', async () => {

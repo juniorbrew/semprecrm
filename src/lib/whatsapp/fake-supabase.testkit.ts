@@ -189,6 +189,10 @@ class Query implements PromiseLike<unknown> {
     this.preds.push((r) => r[col] != null && cmp(r[col], val) >= 0);
     return this;
   }
+  lte(col: string, val: unknown) {
+    this.preds.push((r) => r[col] != null && cmp(r[col], val) <= 0);
+    return this;
+  }
   not(col: string, op: string, val: unknown) {
     if (op !== 'is' || val !== null) throw new Error('fake-supabase: only not(col,"is",null)');
     this.preds.push((r) => r[col] != null);

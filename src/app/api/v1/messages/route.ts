@@ -85,7 +85,8 @@ export async function POST(request: Request) {
         accountId: ctx.accountId,
         key: idem.key,
         hash: requestHash({
-          to: typeof body.to === 'string' ? sanitizePhoneForMeta(body.to) : body.to,
+          // A phone is normalised; an Instagram / Messenger id is hashed as given (digits, not a phone).
+          to: typeof body.to === 'string' && body.channel !== 'instagram' && body.channel !== 'messenger' ? sanitizePhoneForMeta(body.to) : body.to,
           text: body.text,
           channel: body.channel ?? null,
         }),

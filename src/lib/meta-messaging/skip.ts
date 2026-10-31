@@ -19,3 +19,22 @@ export class MessagingSkipError extends Error {
     this.code = code
   }
 }
+
+/**
+ * The send may already have reached Instagram / Messenger (timeout, network error, Meta 5xx, a 2xx we
+ * could not read). Never sent again by the automatic senders: `isUncertainSend` recognises it.
+ */
+export class MessagingUncertainSendError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MessagingUncertainSendError'
+  }
+}
+
+/** Meta definitively refused the message (a 4xx that is not a skip): nothing was sent, retrying is safe. */
+export class MessagingSendRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MessagingSendRefusedError'
+  }
+}

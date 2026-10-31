@@ -396,6 +396,19 @@ describe('ingestInboundMessage — Instagram / Messenger', () => {
     expect(r.triageDue).toBe(true)
   })
 
+  it('a store-only part (2nd attachment of a message) is saved but triggers nothing', async () => {
+    await ingestInboundMessage(IG, makeDb()) // part 0 did its triggers
+    h.automationCalls = []
+    vi.mocked(dispatchInboundToFlows).mockClear()
+    const r = await ingestInboundMessage({ ...IG, messageId: 'mid.1:1', type: 'image', text: null, storeOnly: true }, makeDb())
+    expect(r.ok).toBe(true)
+    expect(h.state.messages.map((m) => m.message_id)).toEqual(['mid.1', 'mid.1:1'])
+    expect(h.automationCalls).toHaveLength(0)
+    expect(dispatchInboundToFlows).not.toHaveBeenCalled()
+    expect(h.sendCalls).toHaveLength(0)
+    expect(r.aiReplyQueued).toBeUndefined()
+  })
+
   it('does not touch the WhatsApp path: a phone sender still dedupes by phone', async () => {
     await ingestInboundMessage(BASE, makeDb())
     expect(h.state.contacts[0]).toMatchObject({ phone: '5511999990000' })

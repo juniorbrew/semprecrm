@@ -30,7 +30,8 @@ import { findConnectionForAccount, markConnectionExpired } from './connections'
 import { sendMessagingMessage, type MessagingMediaKind } from './graph'
 import { isWithinMessagingWindow, textTooLong } from './manual-send'
 import { classifyMetaSendError, textLimitMessage, windowClosedMessage } from './send-core'
-import { MessagingSkipError } from './skip'
+import { MessagingApiError } from './graph'
+import { MessagingSendRefusedError, MessagingSkipError, MessagingUncertainSendError } from './skip'
 
 export { MessagingSkipError, type MessagingSkipCode } from './skip'
 
@@ -140,7 +141,12 @@ export async function engineSendMessaging(
   } catch (err) {
     const failure = classifyMetaSendError(kind, err)
     if (failure.tokenInvalid) await markConnectionExpired(db, conn.id)
-    if (failure.code === 'send_failed') throw new Error(failure.message)
+    if (failure.code === 'send_failed') {
+      // Ambiguous (network / timeout / 5xx / unreadable 2xx): it may have been delivered, never resend.
+      // A definitive 4xx means nothing left.
+      const definitive = err instanceof MessagingApiError && err.status < 500
+      throw definitive ? new MessagingSendRefusedError(failure.message) : new MessagingUncertainSendError(failure.message)
+    }
     throw new MessagingSkipError(failure.code, failure.message)
   }
 

@@ -163,11 +163,24 @@ describe('AI auto-reply on Instagram / Messenger', () => {
     { id: 'ig-only', account_id: 'acct-1', enabled: true, mode: 'auto', is_default: false, channels: ['instagram'], tag_ids: [], created_at: '2' },
   ]
 
-  it('an agent whose channels include instagram answers there; the default agent (channels empty = not channel-specific) answers everywhere else', async () => {
+  it('Instagram / Messenger are OPT-IN: only an agent that lists the channel answers there; channels [] still covers the WhatsApp channels', async () => {
     const db = makeFakeDb({ ai_agents: agents, contact_tags: [] }) as never
     expect((await resolveConversationAgent(db, 'acct-1', 'c-1', 'instagram'))?.id).toBe('ig-only')
-    expect((await resolveConversationAgent(db, 'acct-1', 'c-1', 'messenger'))?.id).toBe('default')
+    // the default agent (channels empty) does NOT answer Messenger
+    expect(await resolveConversationAgent(db, 'acct-1', 'c-1', 'messenger')).toBeNull()
+    // WhatsApp semantics unchanged
     expect((await resolveConversationAgent(db, 'acct-1', 'c-1', 'official'))?.id).toBe('default')
+    expect((await resolveConversationAgent(db, 'acct-1', 'c-1', 'qr'))?.id).toBe('default')
+  })
+
+  it('a tag-matched or default agent without the channel is skipped on Instagram; with it ticked it answers', async () => {
+    const tagged = { id: 'tagged', account_id: 'acct-1', enabled: true, mode: 'auto', is_default: false, channels: [], tag_ids: ['t1'], created_at: '3' }
+    const taggedIg = { ...tagged, id: 'tagged-ig', channels: ['instagram'] }
+    const noIg = makeFakeDb({ ai_agents: [tagged, agents[0]], contact_tags: [{ contact_id: 'c-1', tag_id: 't1' }] }) as never
+    expect(await resolveConversationAgent(noIg, 'acct-1', 'c-1', 'instagram')).toBeNull()
+    expect((await resolveConversationAgent(noIg, 'acct-1', 'c-1', 'official'))?.id).toBe('tagged')
+    const withIg = makeFakeDb({ ai_agents: [taggedIg, agents[0]], contact_tags: [{ contact_id: 'c-1', tag_id: 't1' }] }) as never
+    expect((await resolveConversationAgent(withIg, 'acct-1', 'c-1', 'instagram'))?.id).toBe('tagged-ig')
   })
 
   it('the agent form accepts the new channels and still refuses unknown ones', async () => {

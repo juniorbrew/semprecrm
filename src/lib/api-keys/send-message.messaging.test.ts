@@ -59,7 +59,7 @@ const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString
 const call = (over: Record<string, unknown> = {}) =>
   sendTextViaApi(db, {
     accountId: 'acct-1',
-    to: 'IGSID-1',
+    to: '17841400000000001',
     text: 'olá',
     channel: 'instagram',
     claimId: 'claim-1',
@@ -117,6 +117,8 @@ describe('sendTextViaApi on Instagram / Messenger', () => {
     expect(await fails(call())).toMatchObject({ status: 402, code: 'read_only' })
     h.blocked = false
     expect(await fails(call({ to: 'has spaces!' }))).toMatchObject({ status: 400, code: 'invalid_recipient' })
+    expect(await fails(call({ to: 'IGSID-1' }))).toMatchObject({ status: 400, code: 'invalid_recipient' }) // ids are digits only
+    expect(await fails(call({ to: '1'.repeat(65) }))).toMatchObject({ status: 400, code: 'invalid_recipient' })
     expect(await fails(call({ to: 42 }))).toMatchObject({ status: 400, code: 'invalid_recipient' })
     expect(h.sends).toHaveLength(0)
   })
@@ -136,6 +138,20 @@ describe('sendTextViaApi on Instagram / Messenger', () => {
     }
   })
 
+  it('a definitive Meta refusal (4xx) is 502 send_failed "Nothing was sent", not send_unknown', async () => {
+    const { MessagingSendRefusedError } = await import('@/lib/meta-messaging/skip')
+    h.sendError = new MessagingSendRefusedError('O Instagram não aceitou a mensagem.')
+    const e = await fails(call())
+    expect(e).toMatchObject({ status: 502, code: 'send_failed', maybeSent: false })
+    expect(e?.message).toMatch(/Nothing was sent/)
+  })
+
+  it('an uncertain failure (timeout / 5xx) keeps the maybe-sent handling', async () => {
+    const { MessagingUncertainSendError } = await import('@/lib/meta-messaging/skip')
+    h.sendError = new MessagingUncertainSendError('Não foi possível falar com o Instagram. Tente novamente.')
+    expect(await fails(call())).toMatchObject({ status: 502, code: 'send_unknown', maybeSent: true })
+  })
+
   it('a transient failure is "unknown" (it may have been delivered) and a recording failure is "do not resend"', async () => {
     h.sendError = new Error('O Instagram não aceitou a mensagem. Tente novamente em instantes.')
     expect(await fails(call())).toMatchObject({ status: 502, code: 'send_unknown', maybeSent: true })
@@ -145,9 +161,9 @@ describe('sendTextViaApi on Instagram / Messenger', () => {
 
   it('Messenger uses messenger_id and its own module', async () => {
     h.conversations = [{ id: 'conv-m', status: 'open', channel: 'messenger', last_customer_message_at: hoursAgo(2) }]
-    expect((await call({ channel: 'messenger', to: 'PSID-1' })).channel).toBe('messenger')
+    expect((await call({ channel: 'messenger', to: '5001234567890' })).channel).toBe('messenger')
     h.modules = new Set(['channel_instagram'])
-    expect(await fails(call({ channel: 'messenger', to: 'PSID-1' }))).toMatchObject({ code: 'module_not_included' })
+    expect(await fails(call({ channel: 'messenger', to: '5001234567890' }))).toMatchObject({ code: 'module_not_included' })
   })
 
   it('an unknown channel is still refused with the full list', async () => {

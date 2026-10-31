@@ -253,6 +253,19 @@ describe('runCsatCron: reserved, uncertain, active, recent, burst (review round)
     expect(send).toHaveBeenCalledTimes(1)
   })
 
+  it('an Instagram / Messenger timeout is uncertain too: reservation kept, never retried', async () => {
+    const { MessagingUncertainSendError } = await import('@/lib/meta-messaging/skip')
+    const { state, send, run } = setup({ conv: { channel: 'instagram' }, contact: { phone: null } })
+    send.mockRejectedValueOnce(new MessagingUncertainSendError('Não foi possível falar com o Instagram. Tente novamente.'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await run()
+    warn.mockRestore()
+    expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'reserved' })])
+    expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'uncertain' })
+    expect(await run(new Date(NOW.getTime() + 60_000))).toMatchObject({ claimed: 0 })
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
   it('a gateway 5xx (send_failed, 502) is uncertain: reservation kept, never retried', async () => {
     const { GatewayRequestError } = await import('@/lib/whatsapp/qr-gateway')
     const { state, send, run } = setup()

@@ -399,7 +399,8 @@ async function sendInteractiveViaMeta(
 
   // QR channel (migration 026) and Instagram / Messenger (part C): no interactive
   // messages, so the prompt degrades to body + a numbered option list. The customer
-  // answers by typing, which the flows engine already matches (same as on QR).
+  // answers by typing the number or the title: the flows engine matches that against the node's options
+  // (`matchTextReply` in engine.ts, same ordering as this list) on every channel.
   const channel = await conversationChannel(db, input.conversationId)
   const messaging = isMetaMessagingChannel(channel)
   if (messaging || assertWhatsAppChannel(channel) === 'qr') {

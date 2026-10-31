@@ -104,6 +104,11 @@ export interface InboundMessageInput {
    */
   getProfile?: () => Promise<ContactProfile | null>
   /**
+   * Instagram / Messenger: a 2nd, 3rd… attachment of the same customer message. It is stored (and shown)
+   * but triggers nothing: no automation, flow, out-of-hours notice, AI reply or push — part 0 already did.
+   */
+  storeOnly?: boolean
+  /**
    * Stores the photo at `pictureUrl` for the contact (which exists by then) and returns the
    * URL for `contacts.avatar_url`, or null. Part of the lazy profile lookup above.
    */
@@ -1085,6 +1090,10 @@ export async function ingestInboundMessage(
   await cancelWaitsOnCustomerReply(conversation.id)
   if (newConversation && conversationOutcome.previous) {
     await cancelWaitsOnCustomerReply(conversationOutcome.previous.id)
+  }
+
+  if (input.storeOnly) {
+    return { ok: true, contactId: contact.id, conversationId: conversation.id, contactCreated: contactOutcome.wasCreated }
   }
 
   const reopened = !!conversationOutcome.reopened

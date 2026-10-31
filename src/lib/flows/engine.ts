@@ -88,6 +88,43 @@ export function matchReplyId(
   return null;
 }
 
+/** Lower-case, no accents, no outer spaces: "  Opção A " and "opcao a" are the same answer. */
+function normalizeAnswer(text: string): string {
+  return text.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+}
+
+/**
+ * A typed answer to a buttons / list prompt, for channels that cannot show real buttons: the
+ * prompt went out as numbered text (`renderInteractiveAsText`: "1. Vendas", "2. Suporte"; list
+ * sections flattened in order), so the customer answers with the option number ("1", "1.", " 1 ")
+ * or its title (case- and accent-insensitive, exact). Same ordering as the sender. No match → null,
+ * and the flow's normal fallback policy applies.
+ */
+export function matchTextReply(
+  node: { node_type: string; config: Record<string, unknown> },
+  text: string,
+): string | null {
+  let options: { title: string; next: string }[] = [];
+  if (node.node_type === "send_buttons") {
+    const cfg = node.config as unknown as SendButtonsNodeConfig;
+    options = (cfg.buttons ?? []).map((b) => ({ title: b.title, next: b.next_node_key }));
+  } else if (node.node_type === "send_list") {
+    const cfg = node.config as unknown as SendListNodeConfig;
+    options = (cfg.sections ?? []).flatMap((s) => (s.rows ?? []).map((r) => ({ title: r.title, next: r.next_node_key })));
+  } else {
+    return null;
+  }
+  const number = /^\s*(\d{1,3})\s*[.)]?\s*$/.exec(text);
+  if (number) {
+    const hit = options[Number(number[1]) - 1];
+    if (hit) return hit.next ?? null;
+  }
+  const answer = normalizeAnswer(text);
+  if (!answer) return null;
+  const byTitle = options.find((o) => normalizeAnswer(o.title ?? "") === answer);
+  return byTitle?.next ?? null;
+}
+
 /**
  * Case-insensitive contains/exact match against a list of keywords.
  * Used by the trigger evaluator. Stable enough that the v3 builder
@@ -998,6 +1035,12 @@ async function handleReplyForActiveRun(
       currentNode.node_type === "send_list")
   ) {
     matched = matchReplyId(currentNode, message.reply_id);
+  } else if (
+    message.kind === "text" &&
+    (currentNode.node_type === "send_buttons" || currentNode.node_type === "send_list")
+  ) {
+    // The menu went out as numbered text (QR, Instagram, Messenger): match the number or the title.
+    matched = matchTextReply(currentNode, message.text);
   } else if (
     message.kind === "text" &&
     currentNode.node_type === "collect_input"

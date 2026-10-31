@@ -560,10 +560,11 @@ export const DICT_AI: Record<string, string> = {
   'Nothing to answer': 'Nada para responder',
   'Outside business hours': 'Fora do horário de atendimento',
   '24 h window closed': 'Janela de 24 h fechada',
-  'Channel not supported yet': 'Canal ainda não compatível',
   "'channels' must be a list of 'official', 'qr', 'instagram' and/or 'messenger'":
     "'channels' deve ser uma lista de 'official', 'qr', 'instagram' e/ou 'messenger'",
   Instagram: 'Instagram (Direct)',
+  'On Instagram and Messenger the AI only answers when the channel is ticked here. Leaving all unticked covers WhatsApp only.':
+    'No Instagram e no Messenger a IA só responde se o canal estiver marcado aqui. Deixar tudo desmarcado vale só para o WhatsApp.',
   Messenger: 'Messenger (Facebook)',
   'Channel unavailable (disconnected, expired or off in the plan)': 'Canal indisponível (desconectado, expirado ou fora do plano)',
   'Contact opted out': 'Contato descadastrado',

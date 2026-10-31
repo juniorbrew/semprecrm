@@ -122,8 +122,13 @@ não faz parte do plano), `409 channel_conflict`.
 (`instagram_id` / `messenger_id` do contato, o mesmo que chega no webhook), não um telefone. A Meta só deixa a
 empresa responder, em até 24 h depois da última mensagem do cliente, então só funciona com o contato que já
 escreveu e tem uma conversa aberta nesse canal. Erros: `404 contact_not_found`, `409 no_open_conversation`,
-`409 window_closed` (passou das 24 h; nada foi enviado), `403 module_not_included`, `422 channel_not_connected |
-channel_expired`, `400 text_too_long` (Instagram: 1000 bytes; Messenger: 2000 caracteres). Nenhum deles enviou nada.
+`409 window_closed` (passou das 24 h; nada foi enviado), `403 module_not_included`, `403 contact_opted_out`,
+`400 invalid_recipient` (`to` não é um id numérico de até 64 dígitos), `400 text_too_long` (Instagram: 1000 bytes;
+Messenger: 2000 caracteres), `422 channel_not_connected | channel_expired | permission_denied |
+template_unsupported` (conexão ausente ou expirada, a Meta recusou por falta de permissão, ou passo de modelo —
+não existem modelos nesses canais) e `502 send_failed` (a Meta recusou a mensagem de forma definitiva: nada foi
+enviado, pode tentar de novo). Todos esses não enviaram nada. Falha ambígua (tempo esgotado, erro 5xx da Meta) vira
+`502 send_unknown`: a mensagem pode ter chegado, confira a conversa antes de reenviar.
 
 Falhas de envio, e o que cada uma garante:
 

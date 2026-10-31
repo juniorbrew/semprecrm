@@ -326,6 +326,11 @@ export function AgentConfigForm({
                 {t(CHANNEL_LABEL[c])}
               </label>
             ))}
+            {AGENT_CHANNELS.some((c) => (c === "instagram" || c === "messenger") && channelOffered(c, modules, draft.channels)) && (
+              <p className="text-xs text-muted-foreground">
+                {t("On Instagram and Messenger the AI only answers when the channel is ticked here. Leaving all unticked covers WhatsApp only.")}
+              </p>
+            )}
           </fieldset>
           <fieldset className="space-y-2">
             <legend className="mb-1 text-sm font-medium text-foreground">{t("Contact tags")}</legend>

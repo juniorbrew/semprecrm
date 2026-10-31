@@ -15,7 +15,7 @@ import { isValidE164, sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils'
 import { MESSAGING_LABEL, messagingModule } from '@/lib/meta-messaging/channels'
 import { engineSendMessaging } from '@/lib/meta-messaging/engine-send'
 import { isWithinMessagingWindow } from '@/lib/meta-messaging/manual-send'
-import { MessagingSkipError, type MessagingSkipCode } from '@/lib/meta-messaging/skip'
+import { MessagingSendRefusedError, MessagingSkipError, type MessagingSkipCode } from '@/lib/meta-messaging/skip'
 import type { ConversationChannel, MetaMessagingChannel, WhatsAppChannel } from '@/types'
 
 export const MAX_TEXT_LENGTH = 4096
@@ -69,7 +69,8 @@ async function guardAccount(db: SupabaseClient, accountId: string): Promise<stri
   return owner
 }
 
-const MESSAGING_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/
+// Instagram-scoped / Page-scoped ids are decimal digit strings.
+const MESSAGING_ID_RE = /^\d{1,64}$/
 const IDENTITY_COLUMN = { instagram: 'instagram_id', messenger: 'messenger_id' } as const
 /** MessagingSkipError code → API status. Nothing was sent in any of these. */
 const SKIP_STATUS: Record<MessagingSkipCode, number> = {
@@ -267,6 +268,11 @@ export async function sendTextViaApi(db: SupabaseClient, input: ApiSendInput): P
  */
 export function classifySendFailure(err: unknown): ApiSendError {
   const msg = err instanceof Error ? err.message : String(err)
+  // Instagram / Messenger: Meta definitively refused (a 4xx) — nothing was sent. Anything ambiguous
+  // (MessagingUncertainSendError) falls through to the maybe-sent default below.
+  if (err instanceof MessagingSendRefusedError) {
+    return new ApiSendError(502, 'send_failed', 'Instagram / Messenger refused the message. Nothing was sent.')
+  }
   if (/but DB insert failed/i.test(msg)) {
     return new ApiSendError(502, 'send_unconfirmed', 'The message was sent but could not be recorded. Do not resend it.', true)
   }
