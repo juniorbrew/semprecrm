@@ -48,7 +48,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const { id } = await params;
     const ctx = await requireRole('agent');
-    await requireModule(ctx, 'ai');
+    const ent = await requireModule(ctx, 'ai');
+    // Without Pipelines the deal (and its stages) never reach the provider; without Tasks no task is offered.
+    const pipelinesOn = ent.modules.pipelines === true;
+    const tasksOn = ent.modules.tasks === true;
 
     const limit = checkRateLimit(`ai:deal-summary:${ctx.userId}`, RATE_LIMITS.aiDealSummary);
     if (!limit.success) return rateLimitResponse(limit);
@@ -66,14 +69,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       );
     }
 
-    const { data: dealRows, error: dealErr } = await ctx.supabase
-      .from('deals')
-      .select('id, title, value, currency, expected_close_date, stage_id, pipeline_id, conversation_id, stage:pipeline_stages(name)')
-      .eq('account_id', ctx.accountId)
-      .eq('contact_id', conv.contact_id)
-      .eq('status', 'open')
-      .order('updated_at', { ascending: false })
-      .limit(20);
+    const { data: dealRows, error: dealErr } = pipelinesOn
+      ? await ctx.supabase
+          .from('deals')
+          .select('id, title, value, currency, expected_close_date, stage_id, pipeline_id, conversation_id, stage:pipeline_stages(name)')
+          .eq('account_id', ctx.accountId)
+          .eq('contact_id', conv.contact_id)
+          .eq('status', 'open')
+          .order('updated_at', { ascending: false })
+          .limit(20)
+      : { data: [], error: null };
     if (dealErr) throw new Error(`deals read failed: ${dealErr.message}`);
     // Newest-updated first: the one linked to this conversation wins, else the first.
     const openDeals = (dealRows ?? []) as unknown as OpenDealRow[];
@@ -101,6 +106,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       deal,
       stages: stages.map((s) => ({ id: s.id, name: s.name })),
       today,
+      tasks: tasksOn,
     });
 
     const result = await runModelCall({
@@ -114,7 +120,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       signal: request.signal,
     });
 
-    const parsed = parseDealSummary(result.text, { today, stageIds: stages.map((s) => s.id), deal });
+    const parsed = parseDealSummary(result.text, { today, stageIds: stages.map((s) => s.id), deal, tasks: tasksOn });
     if (!parsed) throw new AiError('empty_response');
 
     return NextResponse.json({
@@ -127,6 +133,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             stage_id: parsed.updates.stageId ?? null,
             value: parsed.updates.value ?? null,
             expected_close_date: parsed.updates.closeDate ?? null,
+            // Who said it (the card shows it; unknown counts as the customer).
+            origin: {
+              stage_id: parsed.updates.stageId ? parsed.origins.stageId : null,
+              value: parsed.updates.value !== undefined ? parsed.origins.value : null,
+              expected_close_date: parsed.updates.closeDate ? parsed.origins.closeDate : null,
+            },
             task: parsed.updates.task
               ? { title: parsed.updates.task.title, due_date: parsed.updates.task.dueDate }
               : null,

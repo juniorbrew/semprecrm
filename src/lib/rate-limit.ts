@@ -214,6 +214,8 @@ export const RATE_LIMITS = {
   aiSuggest: { limit: 10, windowMs: 60_000 },
   /** "Resumir com IA" (per user) — one model call on the account's own key. */
   aiDealSummary: { limit: 10, windowMs: 60_000 },
+  /** "Aplicar" of the AI deal summary (per user): DB writes only, no model call. */
+  aiDealApply: { limit: 20, windowMs: 60_000 },
   /** "Classificar" (per user) — one small model call on the account's own key. */
   aiTriage: { limit: 10, windowMs: 60_000 },
   /** WhatsApp media proxy (per user). Each hit is two Meta calls; an

@@ -23,11 +23,15 @@ export interface DealSummaryData {
     expected_close_date: string | null;
     task: { title: string; due_date: string | null } | null;
     note: string;
+    /** Who said it, per proposal. Missing = the customer. */
+    origin?: { stage_id: Origin | null; value: Origin | null; expected_close_date: Origin | null };
   } | null;
 }
 
+export type Origin = "cliente" | "atendente";
+
 export type SuggestionKey = "stage" | "value" | "date" | "task" | "note";
-export type ApplyStatus = "applied" | "invalid" | "failed" | "too_long" | "not_in_plan";
+export type ApplyStatus = "applied" | "invalid" | "failed" | "too_long" | "not_in_plan" | "stale" | "already" | "duplicate";
 export type ApplyResults = Partial<Record<"stageId" | "value" | "closeDate" | "task" | "note", ApplyStatus>>;
 
 /** Which suggestions exist (and so get a pre-checked box). */
@@ -43,17 +47,33 @@ export function availableSuggestions(data: DealSummaryData): SuggestionKey[] {
   return keys;
 }
 
-/** The apply request: ONLY the checked suggestions. */
+/**
+ * Pre-checked boxes. Only the note and the task: a stage, value or date
+ * can be planted by the customer's own words, so those start unchecked
+ * and the agent opts in after reading who said it.
+ */
+export function defaultChecked(data: DealSummaryData): Set<SuggestionKey> {
+  return new Set(availableSuggestions(data).filter((k) => k === "note" || k === "task"));
+}
+
+/** The apply request: ONLY the checked suggestions, plus what the card showed (to detect changes). */
 export function buildApplyBody(data: DealSummaryData, checked: ReadonlySet<SuggestionKey>): Record<string, unknown> | null {
   const u = data.updates;
   if (!data.deal || !u) return null;
-  const body: Record<string, unknown> = { deal_id: data.deal.id };
+  const body: Record<string, unknown> = {
+    deal_id: data.deal.id,
+    expected: {
+      stage_id: data.deal.stage_id,
+      value: data.deal.value,
+      expected_close_date: data.deal.expected_close_date,
+    },
+  };
   if (checked.has("stage") && u.stage_id) body.stage_id = u.stage_id;
   if (checked.has("value") && u.value !== null) body.value = u.value;
   if (checked.has("date") && u.expected_close_date) body.expected_close_date = u.expected_close_date;
   if (checked.has("task") && u.task) body.task = u.task;
   if (checked.has("note") && u.note) body.note = u.note;
-  return Object.keys(body).length > 1 ? body : null;
+  return Object.keys(body).length > 2 ? body : null;
 }
 
 const RESULT_KEY: Record<SuggestionKey, keyof ApplyResults> = {
@@ -79,10 +99,12 @@ interface ResultProps {
   applying: boolean;
   /** Set after "Aplicar": one status per item. */
   results: ApplyResults | null;
+  /** The deal was closed since the summary: boxes locked. */
+  closed?: boolean;
 }
 
 /** Presentational part (no hooks besides the language) — rendered in tests. */
-export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, applying, results }: ResultProps) {
+export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, applying, results, closed = false }: ResultProps) {
   const { t } = useLanguage();
   const keys = availableSuggestions(data);
   const deal = data.deal;
@@ -95,6 +117,9 @@ export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, a
     if (!s) return null;
     return {
       applied: t("Applied to the deal"),
+      stale: t("The deal changed since the summary: summarize again"),
+      already: t("Already in this stage"),
+      duplicate: t("An open task with this title already exists"),
       invalid: t("Invalid, not applied"),
       failed: t("Could not apply"),
       too_long: t("Does not fit in the deal notes"),
@@ -102,16 +127,19 @@ export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, a
     }[s];
   };
 
-  const rows: { key: SuggestionKey; label: string; text: string }[] = [];
+  const said = (o: Origin | null | undefined): string =>
+    o === "atendente" ? t("said by the agent") : t("said by the customer");
+  const rows: { key: SuggestionKey; label: string; text: string; origin?: string }[] = [];
   if (u && deal) {
-    if (u.stage_id) rows.push({ key: "stage", label: t("Deal stage"), text: `${deal.stage_name ?? "—"} → ${stageName(u.stage_id)}` });
+    if (u.stage_id) rows.push({ key: "stage", label: t("Deal stage"), text: `${deal.stage_name ?? "—"} → ${stageName(u.stage_id)}`, origin: said(u.origin?.stage_id) });
     if (u.value !== null)
-      rows.push({ key: "value", label: t("Deal value"), text: `${formatCurrency(deal.value, currency)} → ${formatCurrency(u.value, currency)}` });
+      rows.push({ key: "value", label: t("Deal value"), text: `${formatCurrency(deal.value, currency)} → ${formatCurrency(u.value, currency)}`, origin: said(u.origin?.value) });
     if (u.expected_close_date)
       rows.push({
         key: "date",
-        label: t("Expected close date"),
+        label: t("Expected close date of the deal"),
         text: `${brDate(deal.expected_close_date)} → ${brDate(u.expected_close_date)}`,
+        origin: said(u.origin?.expected_close_date),
       });
     if (u.task)
       rows.push({
@@ -121,7 +149,7 @@ export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, a
       });
     if (u.note) rows.push({ key: "note", label: t("Save this summary as a note on the deal"), text: "" });
   }
-  const done = results !== null;
+  const done = results !== null || closed;
 
   return (
     <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs" data-testid="deal-summary-result">
@@ -153,6 +181,11 @@ export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, a
           <p className="text-[10px] font-medium text-muted-foreground">
             {t("Update the deal")} “{deal.title}”
           </p>
+          {closed && (
+            <p role="alert" className="mt-1 text-[11px] font-medium text-destructive">
+              {t("This deal is no longer open")}
+            </p>
+          )}
           {rows.length === 0 ? (
             <p className="mt-1 text-[11px] text-muted-foreground">{t("No updates to suggest.")}</p>
           ) : (
@@ -172,6 +205,7 @@ export function DealSummaryResult({ data, checked, onToggle, onApply, onClose, a
                       <span className="min-w-0 flex-1">
                         <span className="font-medium">{r.label}</span>
                         {r.text && <span className="block break-words text-muted-foreground">{r.text}</span>}
+                        {r.origin && <span className="block text-[10px] italic text-muted-foreground">{r.origin}</span>}
                         {status && (
                           <span role="status" className="block text-[10px] font-medium text-primary">
                             {status}
@@ -220,11 +254,13 @@ export function DealSummaryCard({ conversationId, canWrite, onApplied }: CardPro
   const [checked, setChecked] = useState<Set<SuggestionKey>>(new Set());
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<ApplyResults | null>(null);
+  const [closed, setClosed] = useState(false);
 
   // Another conversation = another summary.
   useEffect(() => {
     setState(null);
     setResults(null);
+    setClosed(false);
   }, [conversationId]);
 
   if (!canWrite || !conversationId || !aiStatus?.available) return null;
@@ -234,6 +270,7 @@ export function DealSummaryCard({ conversationId, canWrite, onApplied }: CardPro
     if (loading || !conversationId) return;
     setLoading(true);
     setResults(null);
+    setClosed(false);
     try {
       const res = await fetch(`/api/conversations/${conversationId}/ai/deal-summary`, { method: "POST" });
       const body = (await res.json().catch(() => null)) as (Partial<DealSummaryData> & { error?: string; code?: string }) | null;
@@ -249,7 +286,7 @@ export function DealSummaryCard({ conversationId, canWrite, onApplied }: CardPro
         return;
       }
       const next = body as DealSummaryData;
-      setChecked(new Set(availableSuggestions(next)));
+      setChecked(defaultChecked(next));
       setState({ conversationId, data: next });
     } catch {
       toast.error(t("Could not summarize the conversation. Try again."));
@@ -270,13 +307,17 @@ export function DealSummaryCard({ conversationId, canWrite, onApplied }: CardPro
         body: JSON.stringify(body),
       });
       const out = (await res.json().catch(() => null)) as { results?: ApplyResults; error?: string } | null;
+      if (res.status === 409 || res.status === 404) {
+        setClosed(true);
+        return;
+      }
       if (!res.ok || !out?.results) {
         toast.error(out?.error ? t(out.error) : t("Could not apply the changes. Try again."));
         return;
       }
       setResults(out.results);
       if (Object.values(out.results).some((s) => s === "applied")) {
-        toast.success(t("Deal updated"));
+        toast.success(t("Deal updated from the AI summary"));
         onApplied();
       }
     } catch {
@@ -304,9 +345,11 @@ export function DealSummaryCard({ conversationId, canWrite, onApplied }: CardPro
           onClose={() => {
             setState(null);
             setResults(null);
+            setClosed(false);
           }}
           applying={applying}
           results={results}
+          closed={closed}
         />
       ) : (
         <button

@@ -28,7 +28,7 @@ const DEAL: SummaryDeal = {
   stage_id: 's-new',
   stage_name: 'Novo',
 };
-const ctx = { today: TODAY, stageIds: STAGES.map((s) => s.id), deal: DEAL };
+const ctx = { today: TODAY, stageIds: STAGES.map((s) => s.id), deal: DEAL, tasks: true };
 
 const msg = (sender: SuggestMessage['sender_type'], text: string): SuggestMessage => ({
   sender_type: sender,
@@ -49,6 +49,7 @@ describe('buildDealSummaryPrompt', () => {
     deal: DEAL,
     stages: STAGES,
     today: TODAY,
+    tasks: true,
   };
 
   it('puts messages as JSON lines and lists only the given stages', () => {
@@ -57,6 +58,15 @@ describe('buildDealSummaryPrompt', () => {
     expect(prompt).toContain('{"id":"s-prop","nome":"Proposta"}');
     expect(prompt).toContain(`Data de hoje: ${TODAY}`);
     expect(system).toContain('"sugestoes"');
+    expect(system).toContain('"origem_valor"');
+    expect(system).toMatch(/NÃO é acordo/);
+    expect(system).toContain('"tarefa"');
+  });
+
+  it('without Tasks in the plan the task is not offered', () => {
+    const { system } = buildDealSummaryPrompt({ ...base, tasks: false });
+    expect(system).not.toContain('"tarefa"');
+    expect(system).toMatch(/Não proponha tarefa/);
   });
 
   it('summary-only mode (no open deal) asks for no suggestions and sends no stages', () => {
@@ -159,7 +169,6 @@ describe('normalizeUpdates', () => {
     ['NaN value', { value: Number.NaN }, 'value'],
     ['Infinity value', { value: Number.POSITIVE_INFINITY }, 'value'],
     ['value above the column max', { value: DEAL_VALUE_MAX + 1 }, 'value'],
-    ['value as string', { value: '1500' }, 'value'],
     ['past close date', { closeDate: '2026-10-30' }, 'closeDate'],
     ['absurd close date', { closeDate: '2099-01-01' }, 'closeDate'],
     ['impossible close date', { closeDate: '2026-02-31' }, 'closeDate'],
@@ -169,7 +178,7 @@ describe('normalizeUpdates', () => {
     ['task title not a string', { task: { title: 42 } }, 'task'],
     ['task not an object', { task: 'ligar' }, 'task'],
     ['empty note', { note: '   ' }, 'note'],
-    ['huge note', { note: 'a'.repeat(1501) }, 'note'],
+    ['huge note', { note: 'a'.repeat(601) }, 'note'],
     ['note not a string', { note: { a: 1 } }, 'note'],
   ] as const)('rejects %s', (_label, raw, key) => {
     const { updates, rejected } = normalizeUpdates(raw, c);
@@ -194,6 +203,70 @@ describe('normalizeUpdates', () => {
     expect(normalizeUpdates({ task: { title: 'Ligar\n\nIGNORE <b>tudo</b>' } }, c).updates.task?.title).toBe(
       'Ligar IGNORE ‹b›tudo‹/b›',
     );
+  });
+});
+
+describe('task titles planted by a customer', () => {
+  const c = { today: TODAY, stageIds: ['s-new'] };
+  it.each([
+    'Abrir https://evil.example/pagar',
+    'Enviar boleto em www.site.com.br',
+    'Clicar bit.ly/abc123',
+    'Ver pagamento em loja.com',
+    'Pagar via Pix para a empresa',
+    'Usar a chave 123 para transferir',
+    'Cobrar CPF 123.456.789-09',
+    'Ligar para (11) 91234-5678',
+    'Falar com 11912345678',
+    'Mandar para joao@exemplo.com',
+    'CNPJ da empresa',
+  ])('drops the task %j but keeps other fields', (title) => {
+    const r = normalizeUpdates({ task: { title }, value: 10 }, c);
+    expect(r.rejected).toEqual(['task']);
+    expect(r.updates).toEqual({ value: 10 });
+  });
+  it.each(['Enviar proposta', 'Ligar dia 12/11/2026', 'Retornar sobre o plano 2.0 do cliente', 'Confirmar prazo etc.'])(
+    'keeps the harmless title %j',
+    (title) => {
+      expect(normalizeUpdates({ task: { title } }, c).updates.task?.title).toBe(title);
+    },
+  );
+});
+
+describe('model values as text', () => {
+  const c = { today: TODAY, stageIds: [] };
+  it.each([
+    ['1500', 1500],
+    ['1500.50', 1500.5],
+    ['1.500,00', 1500],
+    ['R$ 1.500,00', 1500],
+    ['r$1500,5', 1500.5],
+    [' 99 ', 99],
+  ])('%j -> %d', (text, n) => {
+    expect(normalizeUpdates({ value: text }, c).updates.value).toBe(n);
+  });
+  it.each(['', 'mil e quinhentos', '1.500', '-5', 'R$', '1e5', '10 reais', '99999999999999', '1,5,5'])('drops %j', (text) => {
+    expect(normalizeUpdates({ value: text }, c).rejected).toEqual(['value']);
+  });
+});
+
+describe('origin of proposals', () => {
+  it('reads origem_* and treats missing or invalid as cliente', () => {
+    const r = parseDealSummary(
+      json({
+        resumo: ok,
+        sugestoes: { etapa_id: 's-prop', origem_etapa: 'atendente', valor: 5, origem_valor: 'sistema', previsao_fechamento: '2026-11-20' },
+      }),
+      ctx,
+    )!;
+    expect(r.origins).toEqual({ stageId: 'atendente', value: 'cliente', closeDate: 'cliente' });
+  });
+});
+
+describe('tasks not in the plan', () => {
+  it('ignores a task the model proposed anyway', () => {
+    const r = parseDealSummary(json({ resumo: ok, sugestoes: { tarefa: { titulo: 'Ligar' } } }), { ...ctx, tasks: false })!;
+    expect(r.updates.task).toBeUndefined();
   });
 });
 
@@ -287,6 +360,12 @@ describe('parseDealSummary', () => {
 });
 
 describe('summaryText', () => {
+  it('stays within the 600-char note cap even at the maximum line sizes', () => {
+    const long = 'x'.repeat(180);
+    expect(summaryText({ wants: long, status: long, nextStep: long }).length).toBeLessThanOrEqual(600);
+    expect(summaryText({ wants: 'y'.repeat(900), status: '', nextStep: '' }).length).toBeLessThanOrEqual(600);
+  });
+
   it('labels the three parts and skips empty ones', () => {
     expect(summaryText({ wants: 'a', status: '', nextStep: 'c' })).toBe('O que o cliente quer: a\nPróximo passo: c');
   });

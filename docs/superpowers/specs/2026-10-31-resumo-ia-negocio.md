@@ -29,6 +29,19 @@ Sucesso = no painel lateral, na área de negócios, o botão **Resumir com IA** 
 - `src/app/api/conversations/[id]/ai/deal-summary/route.ts` (gera) e `.../apply/route.ts` (aplica).
 - `src/lib/rate-limit.ts`, `src/components/inbox/deal-summary-card.tsx`, `panel-deals.tsx`, `contact-sidebar.tsx`, `usage-view.tsx` (nome do recurso), `src/lib/i18n-dict/ai.ts`.
 
+## Revisão (decisões adicionadas em 2026-10-31)
+
+1. **Pré-marcado só nota e tarefa.** Etapa, valor e previsão começam DESMARCADOS: o cliente pode plantar uma frase que vire proposta. O prompt só deixa a IA propor valor/previsão quando o atendente combinou ou o cliente confirmou claramente, e ela devolve `origem_etapa`/`origem_valor`/`origem_previsao` (`cliente` | `atendente`); o card mostra "dito pelo cliente" / "dito pelo atendente" (origem ausente ou inválida = cliente).
+2. **Título de tarefa filtrado:** links/domínios, "pix", "chave", CPF/CNPJ, e-mail e sequências de dígitos de telefone derrubam a tarefa (o resto das sugestões continua).
+3. **Tarefa duplicada:** se já existe tarefa aberta (não concluída) do mesmo negócio com o mesmo título normalizado, o item volta `duplicate`.
+4. **Nota substitui, não acumula:** o bloco anterior "Resumo da IA — dd/mm/aaaa" de `deals.notes` é trocado pelo novo; o que o usuário escreveu fica. Nota limitada a 600 caracteres (linhas de 180).
+5. **Concorrência:** o UPDATE de valor/previsão/nota exige `status = 'open'` e o `updated_at` lido no início; 0 linhas = `stale`.
+6. **Proposta velha:** o "Aplicar" leva o que o card mostrou (`expected`: etapa, valor, previsão). Se o negócio mudou, o item volta `stale` ("O negócio mudou desde o resumo — resuma de novo"). Etapa proposta igual à atual = `already` ("Já está nessa etapa").
+7. **Negócio fechado entre gerar e aplicar:** 409 `deal_not_open`; o card mostra "Este negócio não está mais aberto" e trava as caixas.
+8. **Planos:** sem o módulo `pipelines` nenhum dado do negócio/etapas vai ao provedor (só resumo); sem `tasks` a tarefa não é oferecida.
+9. **Valor do modelo:** número ou texto simples ("1500", "1.500,00", "R$ 1.500,00") vira número; o resto é descartado.
+10. **Custo/limites:** teto de saída de `deal_summary` sobe para 900 tokens por recurso (`FEATURE_MIN_OUTPUT_TOKENS`, sem mudar os outros); "Aplicar" tem limite próprio de 20/min por usuário.
+
 ## Testes
 
 - Prompt: injeção (`</historico_da_conversa>`, linha "atendente" forjada, pedido para ignorar regras) fica dentro de JSON e sem `<`/`>`; só as etapas do funil entram no prompt.
