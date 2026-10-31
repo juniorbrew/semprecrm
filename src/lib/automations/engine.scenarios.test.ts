@@ -808,6 +808,24 @@ describe('contacts with resolved conversations (migrations 060 / 062)', () => {
   });
 });
 
+describe('Instagram / Messenger refuses a send on purpose', () => {
+  it('a send step the channel skips (window closed, no template…) is logged as skipped with the reason, and the next steps still run', async () => {
+    const { MessagingSkipError } = await import('@/lib/meta-messaging/skip');
+    const a = automation();
+    step(a.id, 'send_message', { text: 'oi' }, 0);
+    step(a.id, 'send_message', { text: 'de novo' }, 1);
+    vi.mocked(engineSendText)
+      .mockRejectedValueOnce(new MessagingSkipError('window_closed', 'A janela de 24 h do Instagram está encerrada.'))
+      .mockResolvedValueOnce({ whatsapp_message_id: 'w2' });
+    await message();
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(2);
+    expect(logs()[0].status).not.toBe('failed');
+    const results = JSON.stringify(logs()[0].step_results ?? logs()[0]);
+    expect(results).toContain('skipped');
+    expect(results).toContain('janela de 24 h do Instagram');
+  });
+});
+
 describe('gateway throttled (anti-ban queue full)', () => {
   const throttled = () => new GatewayRequestError('fila cheia', 429, 'throttled');
 

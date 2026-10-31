@@ -347,6 +347,36 @@ describe('runAutoReplyJob — sends that may or may not have gone out', () => {
     expect(sent).toEqual([]);
   });
 
+  it('an Instagram / Messenger timeout (uncertain) is never resent: bubble counted, silent hand-over', async () => {
+    const { MessagingUncertainSendError } = await import('@/lib/meta-messaging/skip');
+    await expect(
+      runAutoReplyJob(
+        job(),
+        deps({
+          send: async () => {
+            throw new MessagingUncertainSendError('Não foi possível falar com o Instagram. Tente novamente.');
+          },
+        }),
+      ),
+    ).resolves.toBe('handoff');
+    expect(jobRow()).toMatchObject({ sent_parts: 1, status: 'done', outcome: 'handoff' });
+    expect(db.table('ai_handoffs')[0]).toMatchObject({ notified: false });
+  });
+
+  it('a definitive Instagram / Messenger refusal (4xx) is retried from the same bubble, like a pre-send WhatsApp error', async () => {
+    const { MessagingSendRefusedError } = await import('@/lib/meta-messaging/skip');
+    db.rpcHandler = () => ({ data: [job()], error: null });
+    const r = await drainAutoReplies(
+      deps({
+        send: async () => {
+          throw new MessagingSendRefusedError('O Instagram não aceitou a mensagem.');
+        },
+      }),
+    );
+    expect(r.failed).toBe(1);
+    expect(jobRow()).toMatchObject({ status: 'queued', sent_parts: 0 });
+  });
+
   it('"sent … but DB insert failed" is treated as sent', async () => {
     await runAutoReplyJob(
       job(),
@@ -383,6 +413,98 @@ describe('runAutoReplyJob — sends that may or may not have gone out', () => {
     );
     expect(r.failed).toBe(1);
     expect(jobRow()).toMatchObject({ status: 'queued', sent_parts: 0, reply_parts: ['Olá! Abrimos às 8h.'] });
+  });
+
+  describe('Instagram / Messenger', () => {
+    const asInstagram = (channel = 'instagram', created = '2026-09-29T14:30:00Z') => {
+      agentRow().channels = [channel];
+      Object.assign(conv(), { channel, created_at: created });
+    };
+
+    it('a send the channel refuses on purpose mid-reply hands over to the team (no notice), naming the channel', async () => {
+      const { MessagingSkipError } = await import('@/lib/meta-messaging/skip');
+      asInstagram();
+      db.rpcHandler = () => ({ data: [job()], error: null });
+      const r = await drainAutoReplies(
+        deps({
+          send: async () => {
+            throw new MessagingSkipError('window_closed', 'janela encerrada');
+          },
+        }),
+      );
+      expect(r.failed).toBe(0);
+      expect(r.handoff).toBe(1);
+      expect(jobRow()).toMatchObject({ status: 'done', outcome: 'handoff', sent_parts: 0 });
+      expect(db.table('ai_handoffs')[0]).toMatchObject({ notified: false, reason: 'A janela de 24 h do Instagram fechou antes da resposta' });
+      expect(String(db.table('ai_handoffs')[0].reason)).not.toMatch(/WhatsApp/);
+      expect(conv()).toMatchObject({ ai_paused_until: 'infinity' });
+    });
+
+    it('an expired / disconnected channel hands over too, with its own reason', async () => {
+      const { MessagingSkipError } = await import('@/lib/meta-messaging/skip');
+      asInstagram('messenger');
+      await runAutoReplyJob(
+        job(),
+        deps({
+          send: async () => {
+            throw new MessagingSkipError('channel_expired', 'A conexão do Messenger expirou.');
+          },
+        }),
+      );
+      expect(db.table('ai_handoffs')[0]).toMatchObject({ notified: false });
+      expect(String(db.table('ai_handoffs')[0].reason)).toMatch(/^O Messenger não aceitou o envio da resposta da IA/);
+    });
+
+    it('the 24 h window closing before the job runs names the right channel', async () => {
+      asInstagram();
+      conv().last_customer_message_at = '2026-09-28T10:00:00Z';
+      await runAutoReplyJob(job(), deps());
+      expect(db.table('ai_handoffs')[0].reason).toBe('A janela de 24 h do Instagram fechou antes da resposta');
+      expect(sent).toEqual([]);
+    });
+
+    const manyConversations = (n: number, channel = 'instagram') =>
+      db.seed(
+        'conversations',
+        Array.from({ length: n }, (_, i) => ({
+          id: `other-${i}`,
+          account_id: 'acc',
+          contact_id: `x${i}`,
+          channel,
+          created_at: `2026-09-29T14:${String(10 + (i % 18)).padStart(2, '0')}:00Z`,
+        })),
+      );
+
+    it('over the hourly cap of NEW conversations the AI does not answer: hand-over to the team, with notice', async () => {
+      asInstagram('instagram', '2026-09-29T14:59:30Z'); // the newest of the hour
+      manyConversations(30); // 30 older ones + this = 31st
+      await expect(runAutoReplyJob(job(), deps())).resolves.toBe('handoff');
+      expect(prompts).toHaveLength(0);
+      expect(db.table('ai_handoffs')[0]).toMatchObject({ notified: true, reason: expect.stringContaining('Limite por hora') });
+      expect(sent).toEqual([DEFAULT_HANDOFF_MESSAGE]);
+    });
+
+    it('exactly at the cap it still answers; an older conversation, a WhatsApp one and other channels do not count', async () => {
+      asInstagram('instagram', '2026-09-29T14:59:30Z');
+      manyConversations(29); // this one is the 30th
+      await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+      expect(prompts).toHaveLength(1);
+
+      // a conversation created more than an hour ago is not "new"
+      sent = [];
+      prompts = [];
+      db.table('ai_reply_jobs').length = 0;
+      db.seed('ai_reply_jobs', [{ ...job(), status: 'running' }]);
+      asInstagram('instagram', '2026-09-29T13:00:00Z');
+      manyConversations(40);
+      await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+    });
+
+    it('WhatsApp conversations are never capped', async () => {
+      Object.assign(conv(), { channel: 'qr', created_at: '2026-09-29T14:59:30Z' });
+      manyConversations(80, 'qr');
+      await expect(runAutoReplyJob(job(), deps())).resolves.toBe('replied');
+    });
   });
 });
 

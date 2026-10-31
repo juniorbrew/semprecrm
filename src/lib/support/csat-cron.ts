@@ -24,6 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/automations/meta-send'
 import { accountHasModule } from '@/lib/plans-server'
 import { GatewayRequestError, isGatewayThrottled } from '@/lib/whatsapp/qr-gateway'
+import { MessagingSkipError } from '@/lib/meta-messaging/skip'
 import { isUncertainSend } from '@/lib/whatsapp/uncertain-send'
 import {
   CSAT_JOB_ONLY_REASONS,
@@ -276,6 +277,13 @@ async function handleJob(
       origin: 'csat',
     })
   } catch (err) {
+    // Instagram / Messenger refused on purpose (window closed meanwhile, module off, channel
+    // disconnected / expired): final skip, nothing was sent, no retry.
+    if (err instanceof MessagingSkipError) {
+      await db.from('csat_responses').update({ status: 'skipped', skip_reason: err.code === 'window_closed' ? 'window_closed' : 'channel_unavailable' }).eq('id', row.id).eq('status', 'reserved')
+      await finish(db, job, 'channel_unavailable', now)
+      return 'channel_unavailable'
+    }
     if (isUncertainSend(err) || isGateway5xx(err)) {
       // It may have reached the customer: the reservation stays (nothing else is
       // ever sent for this conversation) and the job is never retried.

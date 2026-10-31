@@ -18,6 +18,9 @@ const h = vi.hoisted(() => ({
   /** Modules the plan includes (migration 101). */
   modules: new Set<string>(['channel_instagram', 'channel_messenger']),
   moduleCalls: [] as unknown[][],
+  kicked: 0,
+  agents: [] as Record<string, unknown>[],
+  triage: [] as unknown[][],
 }))
 
 vi.mock('next/server', () => ({
@@ -32,6 +35,11 @@ vi.mock('@/lib/plans-server', () => ({
     return h.modules.has(a[2] as string)
   },
 }))
+vi.mock('@/lib/ai/auto-reply-runtime', async (orig) => ({
+  ...(await orig<typeof import('@/lib/ai/auto-reply-runtime')>()),
+  kickAutoReplies: async () => void h.kicked++,
+}))
+vi.mock('@/lib/support/triage-trigger', () => ({ scheduleTriageIfDue: (...a: unknown[]) => void h.triage.push(a) }))
 vi.mock('@/lib/supabase/url', () => ({ supabaseServerUrl: () => 'http://db' }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: (v: string) => `dec:${v}` }))
 vi.mock('@/lib/whatsapp/inbound', () => ({
@@ -50,6 +58,7 @@ vi.mock('@supabase/supabase-js', () => ({
         : table === 'contacts' ? h.contacts
         : table === 'conversations' ? h.conversations
         : table === 'messages' ? h.messages
+        : table === 'ai_agents' ? h.agents
         : []
       const filters: [string, unknown][] = []
       let insert: Record<string, unknown> | null = null
@@ -118,6 +127,9 @@ beforeEach(() => {
   h.messages = []
   h.modules = new Set(['channel_instagram', 'channel_messenger'])
   h.moduleCalls = []
+  h.kicked = 0
+  h.agents = [{ account_id: 'acct-1', enabled: true, channels: ['instagram'] }]
+  h.triage = []
   __resetRateLimitForTests()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
@@ -206,6 +218,16 @@ describe('POST events', () => {
     expect(h.ingest.mock.calls[0][0]).toMatchObject({ messageId: 'm1:1' })
   })
 
+  it('only the first attachment of a message may start automations / flows / the AI (the rest are store-only)', async () => {
+    const att = (n: number) => ({ type: 'story_mention', payload: { url: `https://lookaside.fbsbx.com/${n}` } })
+    await post(igBody({ sender: { id: 'IGSID' }, recipient: { id: 'IG1' }, timestamp: 1, message: { mid: 'm7', attachments: [att(0), att(1), att(2)] } }))
+    expect(h.ingest.mock.calls.map((c) => [(c[0] as { messageId: string }).messageId, (c[0] as { storeOnly: boolean }).storeOnly])).toEqual([
+      ['m7', false],
+      ['m7:1', true],
+      ['m7:2', true],
+    ])
+  })
+
   it('refuses a body above 1 MB before reading it', async () => {
     const res = (await POST(
       new Request('http://localhost/api/meta/messaging/webhook', {
@@ -236,6 +258,32 @@ describe('POST events', () => {
     h.modules = new Set(['channel_messenger'])
     await post({ object: 'page', entry: [{ id: 'PG1', messaging: [text('PSID', 'PG1', 'm9')] }] })
     expect(h.ingest).toHaveBeenCalledOnce()
+  })
+
+  it('an ingested message hands the AI triage hint to the scheduler and kicks the auto-reply drain (part C)', async () => {
+    h.ingest.mockResolvedValueOnce({ ok: true, aiReplyQueued: true, triageDue: true, conversationId: 'cv-1' } as never)
+    await post(igBody(text('IGSID', 'IG1', 'm1')))
+    await settle()
+    expect(h.triage).toEqual([[expect.objectContaining({ triageDue: true, conversationId: 'cv-1' }), 'acct-1']])
+    expect(h.kicked).toBe(1)
+  })
+
+  it('triage on Instagram / Messenger is opt-in: no agent listing the channel, no triage', async () => {
+    h.agents = [{ account_id: 'acct-1', enabled: true, channels: [] }]
+    h.ingest.mockResolvedValueOnce({ ok: true, triageDue: true, conversationId: 'cv-1' } as never)
+    await post(igBody(text('IGSID', 'IG1', 'm1')))
+    await settle()
+    expect(h.triage).toHaveLength(0)
+    h.agents = [{ account_id: 'acct-1', enabled: true, channels: ['messenger'] }]
+    h.ingest.mockResolvedValueOnce({ ok: true, triageDue: true, conversationId: 'cv-1' } as never)
+    await post(igBody(text('IGSID', 'IG1', 'm2')))
+    expect(h.triage).toHaveLength(0)
+  })
+
+  it('no AI reply queued: the drain is not kicked', async () => {
+    await post(igBody(text('IGSID', 'IG1', 'm1')))
+    await settle()
+    expect(h.kicked).toBe(0)
   })
 
   it('a revoked connection does not receive messages', async () => {

@@ -40,6 +40,7 @@ import { isPushConfigured } from '@/lib/push/send'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
+import { MessagingSkipError } from '@/lib/meta-messaging/skip'
 import type { AccountPreferences, ConversationChannel, MetaMessagingChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
@@ -102,6 +103,11 @@ export interface InboundMessageInput {
    * looked up lazily so a known customer costs no Graph call. May return null.
    */
   getProfile?: () => Promise<ContactProfile | null>
+  /**
+   * Instagram / Messenger: a 2nd, 3rd… attachment of the same customer message. It is stored (and shown)
+   * but triggers nothing: no automation, flow, out-of-hours notice, AI reply or push — part 0 already did.
+   */
+  storeOnly?: boolean
   /**
    * Stores the photo at `pictureUrl` for the contact (which exists by then) and returns the
    * URL for `contacts.avatar_url`, or null. Part of the lazy profile lookup above.
@@ -787,6 +793,12 @@ async function replyOutOfHoursIfNeeded(
   } catch (err) {
     // Read-only account: the message was stored, only the automatic notice is skipped.
     if (err instanceof AccountReadOnlyError) return 'skipped'
+    // Instagram / Messenger: the notice was refused on purpose (module off, token expired, text too long…).
+    if (err instanceof MessagingSkipError) {
+      console.warn('[inbound] out-of-hours reply skipped:', err.code)
+      await stamp()
+      return 'skipped'
+    }
     if (isOutsideMetaWindowError(err)) {
       console.warn('[inbound] out-of-hours reply skipped (outside Meta window):', conversation.id)
       await stamp()
@@ -1080,6 +1092,10 @@ export async function ingestInboundMessage(
     await cancelWaitsOnCustomerReply(conversationOutcome.previous.id)
   }
 
+  if (input.storeOnly) {
+    return { ok: true, contactId: contact.id, conversationId: conversation.id, contactCreated: contactOutcome.wasCreated }
+  }
+
   const reopened = !!conversationOutcome.reopened
   if (reopened) {
     const { error: evErr } = await db.from('conversation_events').insert({
@@ -1143,7 +1159,8 @@ export async function ingestInboundMessage(
   const contactBlocked = optedOut || !!contact.opted_out_at || !!contact.anonymized_at
   // "1" / "sim" / "2" / "remarcar" answering an appointment reminder we sent (migration
   // 097): handled here, so the flows, automations, AI and the out-of-hours notice skip it.
-  // Instagram / Messenger: no automatic reply of any kind until part C — agenda, out-of-hours, flows.
+  // Instagram / Messenger have no appointment reminders (they would almost always fall outside the
+  // 24 h window), so there is nothing for the customer to answer.
   const agendaReply = contactBlocked || messaging
     ? null
     : await tryHandleReminderReply(db, {
@@ -1155,7 +1172,7 @@ export async function ingestInboundMessage(
         text: contentText,
         quotedMessageId: input.quotedMessageId ?? null,
       })
-  const outOfHoursReply = contactBlocked || agendaReply || messaging
+  const outOfHoursReply = contactBlocked || agendaReply
     ? undefined
     : await replyOutOfHoursIfNeeded(
         db,
@@ -1189,7 +1206,7 @@ export async function ingestInboundMessage(
   const inboundText = plainMessageText(contentText)
   const flowResult: { consumed: boolean } = agendaReply
     ? { consumed: true }
-    : contactBlocked || messaging
+    : contactBlocked
     ? { consumed: false }
     : await dispatchInboundToFlows({
         accountId,
@@ -1225,8 +1242,7 @@ export async function ingestInboundMessage(
 
   // Fire-and-forget: a slow automation must not block the transport's
   // 200 OK.
-  // Instagram / Messenger: automations (their send steps) wait for part C instead of failing here.
-  for (const triggerType of messaging ? [] : automationTriggers) {
+  for (const triggerType of automationTriggers) {
     runAutomationsForTrigger({
       accountId,
       triggerType,

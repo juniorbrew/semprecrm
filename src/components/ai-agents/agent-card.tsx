@@ -27,6 +27,8 @@ export const MODE_LABEL: Record<AgentMode, string> = {
 export const CHANNEL_LABEL: Record<AgentChannel, string> = {
   official: "Official WhatsApp",
   qr: "WhatsApp QR",
+  instagram: "Instagram",
+  messenger: "Messenger",
 };
 
 /** Status as a dot + plain text, not a pill. */

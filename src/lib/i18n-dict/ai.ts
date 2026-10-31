@@ -308,7 +308,6 @@ export const DICT_AI: Record<string, string> = {
   'The name is required (up to 80 characters).': 'O nome é obrigatório (até 80 caracteres).',
   'The instructions are required (up to 4000 characters).': 'As instruções são obrigatórias (até 4000 caracteres).',
   'The tone must be at most 200 characters.': 'O tom de voz deve ter no máximo 200 caracteres.',
-  "'channels' must be a list of 'official' and/or 'qr'": "'channels' deve ser uma lista com 'official' e/ou 'qr'",
   "'tag_ids' must be a list of up to 50 tag ids": "'tag_ids' deve ser uma lista de até 50 etiquetas",
   'AI agent not found': 'Agente de IA não encontrado',
   'This account already has the maximum of 20 AI agents.': 'Esta conta já tem o máximo de 20 agentes de IA.',
@@ -561,7 +560,13 @@ export const DICT_AI: Record<string, string> = {
   'Nothing to answer': 'Nada para responder',
   'Outside business hours': 'Fora do horário de atendimento',
   '24 h window closed': 'Janela de 24 h fechada',
-  'Channel not supported yet': 'Canal ainda não compatível',
+  "'channels' must be a list of 'official', 'qr', 'instagram' and/or 'messenger'":
+    "'channels' deve ser uma lista de 'official', 'qr', 'instagram' e/ou 'messenger'",
+  Instagram: 'Instagram (Direct)',
+  'On Instagram and Messenger the AI only answers when the channel is ticked here. Leaving all unticked covers WhatsApp only.':
+    'No Instagram e no Messenger a IA só responde se o canal estiver marcado aqui. Deixar tudo desmarcado vale só para o WhatsApp.',
+  Messenger: 'Messenger (Facebook)',
+  'Channel unavailable (disconnected, expired or off in the plan)': 'Canal indisponível (desconectado, expirado ou fora do plano)',
   'Contact opted out': 'Contato descadastrado',
   'Contact anonymized': 'Contato anonimizado',
   'Conversation resolved': 'Conversa resolvida',

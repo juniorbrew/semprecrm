@@ -150,6 +150,35 @@ describe('runCsatCron', () => {
     expect(new Date(String(state.tables.csat_jobs[0].run_at)).toISOString()).toBe('2026-09-30T12:01:00.000Z')
   })
 
+  describe('Instagram / Messenger conversations', () => {
+    const ig = { conv: { channel: 'instagram', last_customer_message_at: minutesAgo(30) }, contact: { phone: null } }
+
+    it('the survey goes out inside the 24 h window to a contact with no phone', async () => {
+      const { state, send, run } = setup(ig)
+      expect(await run()).toMatchObject({ sent: 1, skipped: 0, errors: 0 })
+      expect(send).toHaveBeenCalledOnce()
+      expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'sent' })])
+    })
+
+    it('outside the window it is skipped with a reason and nothing is sent', async () => {
+      const { state, send, run } = setup({ ...ig, conv: { channel: 'instagram', last_customer_message_at: minutesAgo(60 * 25) } })
+      expect(await run()).toMatchObject({ sent: 0, skipped: 1 })
+      expect(send).not.toHaveBeenCalled()
+      expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'skipped', skip_reason: 'window_closed' })])
+    })
+
+    it('a refusal by the channel sender (module off, disconnected, window closed meanwhile) is a final skip, not a retry', async () => {
+      const { MessagingSkipError } = await import('@/lib/meta-messaging/skip')
+      const { state, send, run } = setup(ig)
+      send.mockRejectedValueOnce(new MessagingSkipError('channel_not_connected', 'O Instagram não está conectado.'))
+      expect(await run()).toMatchObject({ sent: 0, errors: 0 })
+      expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'skipped', skip_reason: 'channel_unavailable' })])
+      expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'channel_unavailable', processed_at: NOW.toISOString() })
+      expect(await run()).toMatchObject({ claimed: 0 })
+      expect(send).toHaveBeenCalledOnce()
+    })
+  })
+
   it('a failed send removes the reservation and releases the job for another try', async () => {
     const { state, send, run } = setup()
     send.mockRejectedValueOnce(new Error('WhatsApp not configured'))
@@ -220,6 +249,19 @@ describe('runCsatCron: reserved, uncertain, active, recent, burst (review round)
     expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'reserved', conversation_id: 'conv-1' })])
     expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'uncertain', processed_at: NOW.toISOString() })
     // The next tick has nothing to claim and sends nothing.
+    expect(await run(new Date(NOW.getTime() + 60_000))).toMatchObject({ claimed: 0 })
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('an Instagram / Messenger timeout is uncertain too: reservation kept, never retried', async () => {
+    const { MessagingUncertainSendError } = await import('@/lib/meta-messaging/skip')
+    const { state, send, run } = setup({ conv: { channel: 'instagram' }, contact: { phone: null } })
+    send.mockRejectedValueOnce(new MessagingUncertainSendError('Não foi possível falar com o Instagram. Tente novamente.'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await run()
+    warn.mockRestore()
+    expect(state.tables.csat_responses).toEqual([expect.objectContaining({ status: 'reserved' })])
+    expect(state.tables.csat_jobs[0]).toMatchObject({ result: 'uncertain' })
     expect(await run(new Date(NOW.getTime() + 60_000))).toMatchObject({ claimed: 0 })
     expect(send).toHaveBeenCalledTimes(1)
   })

@@ -214,7 +214,7 @@ export type CsatSkipReason =
   | 'cooldown'
   | 'window_closed'
   | 'no_phone'
-  | 'channel_unsupported'
+  | 'channel_unavailable'
 
 export const CSAT_JOB_ONLY_REASONS: readonly CsatSkipReason[] = [
   'reopened',
@@ -259,9 +259,9 @@ export function csatSkipReason(i: CsatEligibilityInput): CsatSkipReason | null {
     return 'category_excluded'
   }
   if (i.contact.opted_out_at || i.contact.anonymized_at) return 'opted_out'
-  if (!i.contact.phone) return 'no_phone'
-  // WhatsApp-only until the Instagram / Messenger automation part ships.
-  if (c.channel === 'instagram' || c.channel === 'messenger') return 'channel_unsupported'
+  // Instagram / Messenger contacts have no phone (their id is the address).
+  const messaging = c.channel === 'instagram' || c.channel === 'messenger'
+  if (!i.contact.phone && !messaging) return 'no_phone'
   if (!c.last_customer_message_at) return 'no_customer_message'
   if (c.last_agent_message_at === null) return 'no_agent_message'
   if (c.resolved_at) {
@@ -273,7 +273,8 @@ export function csatSkipReason(i: CsatEligibilityInput): CsatSkipReason | null {
     if (Number.isFinite(since) && since < i.settings.cooldown_days * 86_400_000) return 'cooldown'
   }
   if (c.channel !== 'qr') {
-    const last = Date.parse(i.contactLastCustomerAt ?? c.last_customer_message_at)
+    // On Instagram / Messenger the window is the conversation's own (it is also what the sender checks).
+    const last = Date.parse((messaging ? null : i.contactLastCustomerAt) ?? c.last_customer_message_at)
     if (!Number.isFinite(last) || i.now.getTime() - last > META_WINDOW_MS) return 'window_closed'
   }
   return null

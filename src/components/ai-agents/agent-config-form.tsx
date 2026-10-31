@@ -17,6 +17,7 @@ import {
   AGENT_CHANNELS,
   AGENT_LIMITS,
   parseAgentInput,
+  type AgentChannel,
   type AgentWrite,
   type AiAgent,
 } from "@/lib/ai/agents";
@@ -46,6 +47,15 @@ const FORM_FIELDS = [
   "skills",
 ] as const;
 type FormField = (typeof FORM_FIELDS)[number];
+
+/** WhatsApp channels always; Instagram / Messenger only with the plan module (or when already selected, so it can be unticked). */
+function channelOffered(c: AgentChannel, modules: Record<string, boolean>, selected: readonly AgentChannel[]): boolean {
+  if (selected.includes(c)) return true;
+  if (c === "instagram") return !!modules.channel_instagram;
+  if (c === "messenger") return !!modules.channel_messenger;
+  return true;
+}
+
 export type AgentDraft = Pick<AiAgent, FormField>;
 
 export function draftFromAgent(a: AiAgent): AgentDraft {
@@ -306,7 +316,7 @@ export function AgentConfigForm({
         <Section title="Where it works" description="The agent linked to a contact's tag wins over the one linked to the number.">
           <fieldset className="space-y-2">
             <legend className="mb-1 text-sm font-medium text-foreground">{t("Channels")}</legend>
-            {AGENT_CHANNELS.map((c) => (
+            {AGENT_CHANNELS.filter((c) => channelOffered(c, modules, draft.channels)).map((c) => (
               <label key={c} className="flex items-center gap-2 text-sm text-foreground">
                 <Checkbox
                   checked={draft.channels.includes(c)}
@@ -316,6 +326,11 @@ export function AgentConfigForm({
                 {t(CHANNEL_LABEL[c])}
               </label>
             ))}
+            {AGENT_CHANNELS.some((c) => (c === "instagram" || c === "messenger") && channelOffered(c, modules, draft.channels)) && (
+              <p className="text-xs text-muted-foreground">
+                {t("On Instagram and Messenger the AI only answers when the channel is ticked here. Leaving all unticked covers WhatsApp only.")}
+              </p>
+            )}
           </fieldset>
           <fieldset className="space-y-2">
             <legend className="mb-1 text-sm font-medium text-foreground">{t("Contact tags")}</legend>

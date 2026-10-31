@@ -58,6 +58,11 @@ export const AUTO_REPLY = {
   /** A single (not split) reply longer than this goes to a person. */
   maxSingleReplyChars: 4000,
   metaWindowMs: 24 * 60 * 60 * 1000,
+  // ponytail: a plain per-account cap on NEW Instagram / Messenger conversations the AI takes per hour
+  // (a flood of DMs from strangers is cheap to send and costs model calls). Counted from `conversations`
+  // (indexed by account + created_at), no new table; the ones beyond it go straight to the team.
+  // Raise it, or make it a setting, if a real account needs more.
+  messagingNewConversationsPerHour: 30,
 } as const;
 
 export type SkipReason =
@@ -72,7 +77,6 @@ export type SkipReason =
   | 'ai_paused'
   | 'group_chat'
   | 'meta_window_closed'
-  | 'channel_unsupported'
   | 'outside_hours'
   | 'daily_cap';
 
@@ -120,10 +124,11 @@ export function checkEligibility(i: EligibilityInput): Eligibility {
   if (c.archived_at) return { ok: false, reason: 'conversation_archived' };
   if (c.status === 'closed') return { ok: false, reason: 'conversation_closed' };
   if (isPausedUntil(c.ai_paused_until, now)) return { ok: false, reason: 'ai_paused' };
-  // WhatsApp only until the Instagram / Messenger automation part ships.
-  if (c.channel === 'instagram' || c.channel === 'messenger') return { ok: false, reason: 'channel_unsupported' };
   if (i.isGroup && agent.ignore_groups) return { ok: false, reason: 'group_chat' };
-  if ((c.channel ?? 'official') === 'official') {
+  // Cloud API and Instagram / Messenger all answer only inside 24 h of the customer's last message
+  // (QR has no window).
+  const windowed = (c.channel ?? 'official') === 'official' || c.channel === 'instagram' || c.channel === 'messenger';
+  if (windowed) {
     const last = c.last_customer_message_at ? Date.parse(c.last_customer_message_at) : NaN;
     if (!Number.isFinite(last) || now.getTime() - last >= AUTO_REPLY.metaWindowMs) {
       return { ok: false, reason: 'meta_window_closed' };

@@ -29,6 +29,7 @@ import {
   listTaskStatuses,
   type TaskPriority,
 } from '@/lib/tasks'
+import { MessagingSkipError } from '@/lib/meta-messaging/skip'
 import { engineSendText, engineSendTemplate } from './meta-send'
 import { isGatewayThrottled } from '@/lib/whatsapp/qr-gateway'
 import { DestinoNaoPermitido, fetchSeguro } from '@/lib/webhooks/ssrf'
@@ -883,6 +884,12 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
       // A step that went through ends the throttle streak for the rest of the run.
       run.throttleRetries = 0
     } catch (err) {
+      // Instagram / Messenger refused the send on purpose (24 h window closed, no template there, channel
+      // off / disconnected…): recorded as skipped with the reason, and the run goes on (tags, tasks, deals).
+      if (err instanceof MessagingSkipError) {
+        run.results.push({ step_id: step.id, step_type: step.step_type, status: 'skipped', detail: err.message })
+        continue
+      }
       // The gateway's anti-ban queue refused the message (nothing was sent):
       // park THIS step and let the cron resume it, instead of failing the run.
       if (!args.dryRun && SEND_STEP_TYPES.has(step.step_type) && isGatewayThrottled(err)) {

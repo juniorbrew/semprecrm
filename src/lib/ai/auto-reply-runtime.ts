@@ -62,6 +62,8 @@ import { kbQueryFromMessages, KB_LIMITS, selectKbHits, type KbSearchHit } from '
 import { runModelCall } from './run-model-call';
 import { MEMORY_PROMPT_MAX_FACTS, type SuggestMessage } from './suggest-reply';
 import { plainMessageText } from '@/lib/inbox/vcard';
+import { isMetaMessagingChannel, MESSAGING_LABEL } from '@/lib/meta-messaging/channels';
+import { MessagingSkipError } from '@/lib/meta-messaging/skip';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any;
@@ -133,8 +135,6 @@ export async function resolveConversationAgent(
   contactId: string,
   channel: string | null,
 ): Promise<AiAgent | null> {
-  // Auto-reply is WhatsApp only until the Instagram / Messenger automation part ships.
-  if (channel === 'instagram' || channel === 'messenger') return null;
   const { data: agents, error } = await db
     .from('ai_agents')
     .select(AGENT_COLUMNS)
@@ -149,6 +149,44 @@ export async function resolveConversationAgent(
   if (tagErr) throw new Error(`contact tags read failed: ${tagErr.message}`);
   const tagIds = ((tags ?? []) as { tag_id: string }[]).map((t) => t.tag_id);
   return resolveAgent(list, { channel: channel ?? 'official', tagIds })?.agent ?? null;
+}
+
+/** Where the hand-over reason names the channel (the 24 h rule is each channel's own). */
+function channelLabel(channel: string | null): string {
+  return isMetaMessagingChannel(channel) ? MESSAGING_LABEL[channel] : 'WhatsApp';
+}
+const windowClosedReason = (channel: string | null) => `A janela de 24 h do ${channelLabel(channel)} fechou antes da resposta`;
+const unavailableReason = (channel: string | null, detail: string) =>
+  `O ${channelLabel(channel)} não aceitou o envio da resposta da IA (${detail.slice(0, 120)})`;
+const MESSAGING_CAP_REASON = 'Limite por hora de conversas novas atendidas pela IA no Instagram/Messenger atingido';
+
+/** Does the account have an enabled AI agent that lists this Instagram / Messenger channel? (opt-in: `[]` does not) */
+export async function messagingAiOptedIn(db: SupabaseClient, accountId: string, kind: 'instagram' | 'messenger'): Promise<boolean> {
+  const { data, error } = await db.from('ai_agents').select('channels').eq('account_id', accountId).eq('enabled', true);
+  if (error) return false;
+  return ((data ?? []) as { channels: string[] | null }[]).some((a) => (a.channels ?? []).includes(kind));
+}
+
+/**
+ * Is this Instagram / Messenger conversation beyond the account's hourly cap of NEW conversations the AI
+ * takes? Rank = how many messaging conversations of the account were created in the last hour up to and
+ * including this one (indexed by account + created_at). A conversation older than an hour is not "new".
+ */
+export async function messagingAiCapReached(db: SupabaseClient, accountId: string, conversationId: string, now: Date): Promise<boolean> {
+  const { data: conv } = await db.from('conversations').select('created_at').eq('id', conversationId).eq('account_id', accountId).maybeSingle();
+  const createdAt = (conv as { created_at?: string } | null)?.created_at;
+  const hourAgo = new Date(now.getTime() - 3_600_000).toISOString();
+  if (!createdAt || createdAt < hourAgo) return false;
+  const { count, error } = await db
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId)
+    .in('channel', ['instagram', 'messenger'])
+    .gte('created_at', hourAgo)
+    .lte('created_at', createdAt);
+  // A failed count must not silence the AI nor open the floodgates: let this one through.
+  if (error) return false;
+  return (count ?? 0) > AUTO_REPLY.messagingNewConversationsPerHour;
 }
 
 async function aiSettingsEnabled(db: SupabaseClient, accountId: string): Promise<boolean> {
@@ -417,7 +455,7 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     }
     if (verdict.reason === 'meta_window_closed' && agent && pending.length > 0) {
       // We can no longer answer on WhatsApp: the team must pick it up.
-      return handOff(ctx, { reason: 'A janela de 24 h do WhatsApp fechou antes da resposta', lastWords: lastWords(pending), notify: false });
+      return handOff(ctx, { reason: windowClosedReason(conv.channel), lastWords: lastWords(pending), notify: false });
     }
     const resuming = !!job.reply_parts?.length && job.sent_parts < job.reply_parts.length;
     // A reply already written (and partly sent) is finished even at the cap.
@@ -427,6 +465,11 @@ export async function runAutoReplyJob(job: AiReplyJob, deps: AutoReplyDeps): Pro
     if (!(verdict.reason === 'daily_cap' && resuming)) return skip(db, job.id, verdict.reason);
   }
   const agentCfg = agent as AiAgent;
+
+  // Instagram / Messenger: at most N NEW conversations per account per hour get the AI; the rest go to the team.
+  if (isMetaMessagingChannel(conv.channel) && !job.reply_parts?.length && pending.length > 0 && (await messagingAiCapReached(db, job.account_id, conv.id, started))) {
+    return handOff(ctx, { reason: MESSAGING_CAP_REASON, lastWords: lastWords(pending), notify: true });
+  }
 
   // A retry resumes the bubbles the previous attempt did not send.
   if (job.reply_parts?.length && job.sent_parts < job.reply_parts.length) {
@@ -673,6 +716,14 @@ async function sendParts(ctx: RunCtx, parts: string[], started: Date): Promise<J
     } catch (err) {
       if (!isUncertainSend(err)) {
         await patchJob(deps.db, job.id, { sent_parts: i });
+        // Instagram / Messenger refused on purpose (24 h window, module off, token expired…): nothing to
+        // retry, and the customer is waiting — the team takes over (no notice: it could not be sent either).
+        if (err instanceof MessagingSkipError) {
+          return handOff(ctx, {
+            reason: err.code === 'window_closed' ? windowClosedReason(conv.channel) : unavailableReason(conv.channel, err.message),
+            notify: false,
+          });
+        }
         throw err;
       }
       // It may have gone out: the record stays, the team takes over.

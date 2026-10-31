@@ -192,7 +192,9 @@ async function prepare(
     .order('created_at', { ascending: false })
     .limit(10);
   if (convs.error) throw new Error(convs.error.message);
-  // Reminders are WhatsApp-only: an Instagram / Messenger conversation is never a candidate.
+  // Reminders are WhatsApp-only on purpose: they go out a day / two hours before the appointment, almost
+  // always outside Instagram's / Messenger's 24 h window (and those channels have no templates), so an
+  // Instagram / Messenger conversation is never a candidate.
   const whatsappConvs = ((convs.data ?? []) as ConversationRow[]).filter(
     (c) => c.channel !== 'instagram' && c.channel !== 'messenger',
   );

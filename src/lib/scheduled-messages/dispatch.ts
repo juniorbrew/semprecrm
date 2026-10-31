@@ -17,6 +17,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasMinRole, isAccountRole } from '@/lib/auth/roles'
 import { findOtherActiveConversation } from '@/lib/conversations/find-by-contact'
 import { engineSendText } from '@/lib/automations/meta-send'
+import { MESSAGING_LABEL } from '@/lib/meta-messaging/channels'
+import { isWithinMessagingWindow } from '@/lib/meta-messaging/manual-send'
+import { MessagingSkipError } from '@/lib/meta-messaging/skip'
 import { pauseActiveFlowRuns } from '@/lib/flows/pause-on-agent'
 import { accountIsWritable } from '@/lib/plans-server'
 import { conversationUrl } from '@/lib/push/notify'
@@ -120,8 +123,15 @@ export async function precheck(
     )
   }
 
+  // Instagram / Messenger: the same 24 h rule, with no template to fall back on.
   if (c.channel === 'instagram' || c.channel === 'messenger') {
-    throw new Reject('channel_unsupported', 'O agendamento de mensagens ainda não está disponível no Instagram e no Messenger.')
+    if (!isWithinMessagingWindow(c.last_customer_message_at, now.getTime())) {
+      throw new Reject(
+        'window_closed',
+        `A janela de 24 h do ${MESSAGING_LABEL[c.channel]} estava encerrada no horário do envio: só é possível responder até 24 h depois da última mensagem do cliente.`,
+      )
+    }
+    return
   }
 
   if (c.channel !== 'qr' && !isWithinServiceWindow(c.last_customer_message_at, now)) {
@@ -199,8 +209,10 @@ async function dispatchRow(db: SupabaseClient, row: ScheduledRow, now: Date, dep
       })
       return true
     }
-    const code = err instanceof Reject ? err.code : 'send_failed'
-    const reason = err instanceof Reject ? err.message : `Falha ao enviar: ${raw}`.slice(0, 480)
+    // Instagram / Messenger refused on purpose by the sender (module off, disconnected, text too long…).
+    const refused = err instanceof Reject || err instanceof MessagingSkipError
+    const code = err instanceof Reject || err instanceof MessagingSkipError ? err.code : 'send_failed'
+    const reason = refused ? err.message : `Falha ao enviar: ${raw}`.slice(0, 480)
     await writeOutcome(db, row.id, { status: 'failed', error_code: code, error_text: reason, updated_at: stamp })
     try {
       await (deps.notifyFailure ?? ((r, why) => pushFailure(db, r, why)))(row, reason)

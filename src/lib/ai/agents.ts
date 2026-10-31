@@ -6,7 +6,7 @@
 // knowledge on/off). Which agent writes a suggestion:
 //   1. an enabled agent linked to one of the contact's tags
 //   2. an enabled agent linked to the conversation's WhatsApp number
-//      (channel 'official' | 'qr' — one number of each per account)
+//      (channel 'official' | 'qr' | 'instagram' | 'messenger' — an empty list = not channel-specific)
 //   3. the enabled default agent
 //   4. none → the account's ai_settings.instructions (phase 1)
 // Ties inside a step go to the oldest agent (callers pass them sorted
@@ -21,7 +21,7 @@ import { isValidModelId } from './providers';
 import { parseSkills, type SkillId } from './skills';
 import { promptName } from './suggest-reply';
 
-export const AGENT_CHANNELS = ['official', 'qr'] as const;
+export const AGENT_CHANNELS = ['official', 'qr', 'instagram', 'messenger'] as const;
 export type AgentChannel = (typeof AGENT_CHANNELS)[number];
 
 export const AGENT_MODES = ['suggest', 'auto'] as const;
@@ -116,7 +116,7 @@ export const AGENT_ERRORS = {
   tone: 'The tone must be at most 200 characters.',
   model: 'Invalid model id',
   flag: 'On/off settings must be true or false.',
-  channels: "'channels' must be a list of 'official' and/or 'qr'",
+  channels: "'channels' must be a list of 'official', 'qr', 'instagram' and/or 'messenger'",
   tags: "'tag_ids' must be a list of up to 50 tag ids",
   notFound: 'AI agent not found',
   tooMany: 'This account already has the maximum of 20 AI agents.',
@@ -320,7 +320,10 @@ export function resolveAgent<T extends Pick<AiAgent, 'enabled' | 'is_default' | 
   agents: readonly T[],
   ctx: { channel: string | null; tagIds: readonly string[] },
 ): { agent: T; match: AgentMatch } | null {
-  const enabled = agents.filter((a) => a.enabled);
+  // Instagram / Messenger are opt-in: an agent (default, tag-matched or channel-matched) serves them only
+  // when its channels list names the channel. An empty list keeps covering the WhatsApp channels only.
+  const optIn = ctx.channel === 'instagram' || ctx.channel === 'messenger';
+  const enabled = agents.filter((a) => a.enabled && (!optIn || (a.channels as string[]).includes(ctx.channel as string)));
   const tags = new Set(ctx.tagIds);
   const byTag = enabled.find((a) => a.tag_ids.some((t) => tags.has(t)));
   if (byTag) return { agent: byTag, match: 'tag' };

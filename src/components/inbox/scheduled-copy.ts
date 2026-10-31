@@ -69,7 +69,7 @@ export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
       too_far: "Escolha uma data em até 90 dias.",
     },
     outsideWindow:
-      "Atenção: nesse horário a janela de 24 h do WhatsApp estará encerrada. Se o cliente não responder antes, o envio falha e você é avisado.",
+      "Atenção: nesse horário a janela de 24 h do canal (WhatsApp, Instagram ou Messenger) estará encerrada. Se o cliente não responder antes, o envio falha e você é avisado.",
     panelTitle: (n) => (n === 1 ? "1 mensagem agendada" : `${n} mensagens agendadas`),
     sendsAt: (when) => `Envia ${when}`,
     by: (name) => `por ${name}`,
@@ -124,7 +124,7 @@ export const SCHEDULED_COPY: Record<Language, ScheduledCopy> = {
       too_far: "Pick a date within 90 days.",
     },
     outsideWindow:
-      "Heads up: at that time the 24-hour WhatsApp window will be closed. If the customer does not reply before then, the send fails and you are notified.",
+      "Heads up: at that time the channel's 24-hour window (WhatsApp, Instagram or Messenger) will be closed. If the customer does not reply before then, the send fails and you are notified.",
     panelTitle: (n) => (n === 1 ? "1 scheduled message" : `${n} scheduled messages`),
     sendsAt: (when) => `Sends ${when}`,
     by: (name) => `by ${name}`,

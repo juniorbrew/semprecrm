@@ -80,3 +80,22 @@ npx supabase migration up --include-all --local   # nunca db reset
 ## Perguntas em aberto
 
 - Nenhuma que bloqueie a parte A. Antes da parte B: o usuário confirma se já tem conta de desenvolvedor na Meta (o passo a passo do app vai junto do PR B).
+
+## Parte C — recursos automáticos (omni-auto)
+
+Regra única: tudo que é automático sai por `src/lib/meta-messaging/engine-send.ts`, sempre **dentro da janela de 24 h** da última mensagem do cliente, nunca pelo WhatsApp. Fora da janela, sem módulo, sem conexão, conexão expirada, modelo ou texto grande demais, o envio é **pulado com um motivo claro** (`MessagingSkipError`), sem repetir tentativa. Falha passageira da Meta continua sendo erro comum (tenta de novo como no WhatsApp). Token recusado (190) marca a conexão como expirada ("Reconectar").
+
+**Funciona:**
+- Automações (gatilhos de mensagem recebida, palavra-chave, contato novo, primeira mensagem) e seus passos de enviar texto. O passo "modelo" é pulado com motivo (não existem modelos nesses canais).
+- Fluxos: texto, mídia (a legenda vai como segunda mensagem) e botões/listas **como texto numerado**, igual ao canal QR. O cliente responde digitando o número da opção ("1", "1.") ou o título dela (sem diferenciar maiúsculas e acentos); o motor de fluxos (`matchTextReply`) compara com as opções do nó na mesma ordem em que foram numeradas, em todos os canais (isso também conserta o QR). Resposta que não bate segue a política de fallback do fluxo.
+- Resposta fora do horário.
+- IA: resposta automática (só dentro da janela; se a janela fecha no meio ou o canal recusa o envio, a conversa vai para a equipe com um aviso que cita o canal), triagem da IA (1ª e 3ª mensagem) e o seletor de canais do agente passa a oferecer Instagram/Messenger quando a conta tem o módulo. **No Instagram e no Messenger a IA é opt-in:** um agente (padrão, por etiqueta ou por canal) só responde ou faz triagem ali se a lista de canais dele marcar o canal explicitamente; lista vazia continua valendo só para o WhatsApp (oficial e QR). Teto de custo: no máximo 30 conversas NOVAS por hora por conta recebem a IA nesses canais (`AUTO_REPLY.messagingNewConversationsPerHour`); as demais vão direto para a equipe, com aviso.
+- Pesquisa de satisfação (CSAT): enviada só se a janela daquela conversa ainda estiver aberta; senão é registrada como pulada (`window_closed`).
+- Mensagens agendadas: voltam a poder ser criadas, com o aviso de que só saem se o cliente tiver escrito nas 24 h anteriores; no horário, fora da janela falha com motivo em pt-BR.
+- API pública: `channel: "instagram" | "messenger"` com `to` = id do cliente no canal; exige conversa aberta e janela aberta (`409 window_closed`, `409 no_open_conversation`, entre outros).
+
+**Continua desligado, e por quê:**
+- Disparos em massa (broadcasts): a Meta proíbe fora da janela e não há modelos.
+- Lembretes da agenda: saem 1 dia / 2 h antes do compromisso, quase sempre fora da janela, e não há modelos. Por isso a resposta "1/2" aos lembretes também não se aplica.
+- Confirmação de leitura, "digitando…" e reações: não há API equivalente na parte A/B.
+- Etiqueta de atendente humano (7 dias): exige revisão do app pela Meta; fica para depois da aprovação.

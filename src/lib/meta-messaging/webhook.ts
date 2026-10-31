@@ -6,12 +6,14 @@
 // then goes through the same pipeline as WhatsApp: `ingestInboundMessage`
 // for the customer's messages, `ingestMessagingEcho` for the business's.
 //
-// Triage and AI auto-reply are intentionally NOT run for these channels (the
-// route never kicks them and the AI agent resolver refuses them) until part C.
+// Like the other transports, the AI auto-reply job is queued by the ingest (the route kicks
+// the drain) and the AI triage is scheduled here for the customer's 1st / 3rd message.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { messagingAiCapReached, messagingAiOptedIn } from '@/lib/ai/auto-reply-runtime'
+import { scheduleTriageIfDue } from '@/lib/support/triage-trigger'
 import { ingestInboundMessage } from '@/lib/whatsapp/inbound'
 import { accountHasModule } from '@/lib/plans-server'
 import { findConnectionByExternalId, markConnectionExpired, type MessagingConnection } from './connections'
@@ -28,6 +30,8 @@ export interface ProcessSummary {
   unknownRecipient: number
   /** Events of accounts whose plan lacks the channel module. */
   moduleOff: number
+  /** An AI auto-reply job was queued: the route kicks the drain. */
+  aiReplyQueued: boolean
   /** Permanent problems (nothing to retry). */
   skipped: number
   /** Transient failures: the route answers 5xx so Meta redelivers. */
@@ -116,7 +120,7 @@ async function handleEvent(
 
   // Each part (mid, mid:1, …) is deduped on its own, so a redelivery after a partial failure
   // stores only what is missing.
-  for (const spec of partSpecs(e)) {
+  for (const [index, spec] of partSpecs(e).entries()) {
     if (await alreadyStored(db, conn.accountId, spec.id)) {
       summary.duplicates += 1
       continue
@@ -155,11 +159,21 @@ async function handleEvent(
         timestamp: e.timestamp,
         getProfile,
         storeAvatar,
+        // Only the first attachment of a message starts automations / flows / the AI.
+        storeOnly: index > 0,
       },
       db,
     )
     if (r.ok && r.reason === 'duplicate') summary.duplicates += 1
-    else if (r.ok) summary.processed += 1
+    else if (r.ok) {
+      summary.processed += 1
+      if (r.aiReplyQueued) summary.aiReplyQueued = true
+      // AI triage on the customer's 1st / 3rd message (opt-in, never blocks). On these channels it needs an
+      // agent that lists the channel and stays under the hourly cap of new conversations.
+      if (r.triageDue && r.conversationId && (await messagingAiOptedIn(db, conn.accountId, conn.kind)) && !(await messagingAiCapReached(db, conn.accountId, r.conversationId, new Date()))) {
+        scheduleTriageIfDue(r, conn.accountId)
+      }
+    }
     else if (r.reason && PERMANENT.has(r.reason)) summary.skipped += 1
     else summary.failed += 1
   }
@@ -179,7 +193,7 @@ export async function processMessagingEvents(
   db: SupabaseClient,
   events: MessagingEvent[],
 ): Promise<ProcessSummary> {
-  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, moduleOff: 0, skipped: 0, failed: 0 }
+  const summary: ProcessSummary = { processed: 0, duplicates: 0, echoes: 0, unknownRecipient: 0, moduleOff: 0, aiReplyQueued: false, skipped: 0, failed: 0 }
   const connections = new Map<string, MessagingConnection | null>()
   const moduleCache = new Map<string, boolean>()
   for (const e of events) {

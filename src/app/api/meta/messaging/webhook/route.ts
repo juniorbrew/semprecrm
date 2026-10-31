@@ -1,8 +1,9 @@
 // read-only: allowed (inbound: Meta Instagram/Messenger webhook)
 import crypto from 'node:crypto'
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
+import { kickAutoReplies } from '@/lib/ai/auto-reply-runtime'
 import { parseMessagingWebhook } from '@/lib/meta-messaging/parse'
 import { verifyMessagingSignature } from '@/lib/meta-messaging/signature'
 import { processMessagingEvents } from '@/lib/meta-messaging/webhook'
@@ -76,12 +77,19 @@ export async function POST(request: Request) {
   const events = parseMessagingWebhook(body)
   if (events.length > 0) {
     // Inline, so a transient failure can be answered with a 5xx and Meta redelivers
-    // (every part is deduped by its message id, so a replay is safe). Triage and the
-    // AI auto-reply are intentionally off for these channels until part C.
+    // (every part is deduped by its message id, so a replay is safe).
     try {
       const summary = await processMessagingEvents(supabaseAdmin(), events)
       if (summary.failed > 0 || summary.unknownRecipient > 0 || summary.skipped > 0) {
         console.warn('[meta-messaging] webhook processed with problems:', JSON.stringify(summary))
+      }
+      // Automatic reply (AI): the drain runs after the response; the cron catches anything it misses.
+      if (summary.aiReplyQueued) {
+        try {
+          after(kickAutoReplies)
+        } catch {
+          void kickAutoReplies()
+        }
       }
       if (summary.failed > 0) {
         return NextResponse.json({ error: 'Temporary failure, retry' }, { status: 500 })

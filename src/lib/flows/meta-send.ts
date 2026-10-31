@@ -15,7 +15,8 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
-import { assertWhatsAppChannel } from '@/lib/meta-messaging/channels'
+import { assertWhatsAppChannel, isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
+import { engineSendMessaging } from '@/lib/meta-messaging/engine-send'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { accountIsWritable } from '@/lib/plans-server'
 import { mediaUrlForPublic } from '@/lib/storage/media-url'
@@ -74,8 +75,20 @@ export async function engineSendText(
   // Read-only / blocked account: nothing is sent on its behalf (defence in depth).
   if (!(await accountIsWritable(db, args.accountId))) throw new AccountReadOnlyError()
 
+  // Instagram / Messenger (part C): 24 h window, Meta Graph API.
+  const channel = await conversationChannel(db, args.conversationId)
+  if (isMetaMessagingChannel(channel)) {
+    return engineSendMessaging(db, {
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      content: { kind: 'text', text: args.text },
+      origin: 'flow',
+    })
+  }
+
   // QR channel (migration 026) → gateway.
-  if (assertWhatsAppChannel(await conversationChannel(db, args.conversationId)) === 'qr') {
+  if (assertWhatsAppChannel(channel) === 'qr') {
     return engineSendViaQr(db, {
       origin: 'flow',
       priority: 'interactive',
@@ -199,8 +212,21 @@ export async function engineSendMedia(
   // Read-only / blocked account: nothing is sent on its behalf (defence in depth).
   if (!(await accountIsWritable(db, args.accountId))) throw new AccountReadOnlyError()
 
+  // Instagram / Messenger (part C): the attachment, then the caption as a text message.
+  const channel = await conversationChannel(db, args.conversationId)
+  if (isMetaMessagingChannel(channel)) {
+    return engineSendMessaging(db, {
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      content: { kind: 'media', mediaType: args.kind, url: args.link, caption: args.caption },
+      origin: 'flow',
+      preview: args.caption?.trim() || `[${args.kind}]`,
+    })
+  }
+
   // QR channel (migration 026) → gateway media send.
-  if (assertWhatsAppChannel(await conversationChannel(db, args.conversationId)) === 'qr') {
+  if (assertWhatsAppChannel(channel) === 'qr') {
     return engineSendViaQr(db, {
       origin: 'flow',
       priority: 'interactive',
@@ -371,9 +397,13 @@ async function sendInteractiveViaMeta(
   // Read-only / blocked account: nothing is sent on its behalf (defence in depth).
   if (!(await accountIsWritable(db, input.accountId))) throw new AccountReadOnlyError()
 
-  // QR channel (migration 026): WhatsApp Web has no interactive
-  // messages, so the prompt degrades to body + a numbered option list.
-  if (assertWhatsAppChannel(await conversationChannel(db, input.conversationId)) === 'qr') {
+  // QR channel (migration 026) and Instagram / Messenger (part C): no interactive
+  // messages, so the prompt degrades to body + a numbered option list. The customer
+  // answers by typing the number or the title: the flows engine matches that against the node's options
+  // (`matchTextReply` in engine.ts, same ordering as this list) on every channel.
+  const channel = await conversationChannel(db, input.conversationId)
+  const messaging = isMetaMessagingChannel(channel)
+  if (messaging || assertWhatsAppChannel(channel) === 'qr') {
     const options =
       input.kind === 'buttons'
         ? input.buttons.map((b) => b.title)
@@ -384,6 +414,16 @@ async function sendInteractiveViaMeta(
       headerText: input.headerText,
       footerText: input.footerText,
     })
+    if (messaging) {
+      return engineSendMessaging(db, {
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        contactId: input.contactId,
+        content: { kind: 'text', text },
+        origin: 'flow',
+        preview: input.bodyText,
+      })
+    }
     return engineSendViaQr(db, {
       origin: 'flow',
       priority: 'interactive',
