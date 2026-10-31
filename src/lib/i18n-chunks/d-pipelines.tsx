@@ -110,7 +110,7 @@ registerDict({
   "End": "Fim",
   "End time": "Fim",
   "Expected close": "Fechamento previsto",
-  "Expected close date": "Data prevista de fechamento",
+  "Expected close date": "Previsão de fechamento",
   "Expected revenue: each open deal's value × its stage probability. First stage ≈ 10%, stages progress up to 90%, Won = 100%. Lost deals are excluded.": "Receita esperada: valor de cada negócio aberto × probabilidade da etapa. Primeira etapa ≈ 10%, avançando até 90%; Ganho = 100%. Perdidos são excluídos.",
   "Failed": "Falhou",
   "Failed to add stage": "Falha ao adicionar a etapa",

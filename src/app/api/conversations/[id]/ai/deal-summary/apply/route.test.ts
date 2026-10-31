@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fakeSupabase, makeFakeDb, type FakeDb } from '@/lib/ai/fake-supabase.test-helper';
+import { makeFakeDb, type FakeDb } from '@/lib/ai/fake-supabase.test-helper';
 
 // ------------------------------------------------------------
 // POST /api/conversations/:id/ai/deal-summary/apply

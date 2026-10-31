@@ -1050,6 +1050,10 @@ export function ContactSidebar({
               deals={deals}
               onPatch={patchDeal}
               onMoved={() => setActivityVersion((v) => v + 1)}
+              onApplied={() => {
+                void refreshDeals();
+                setActivityVersion((v) => v + 1);
+              }}
               loaded={panelLoaded}
               canWrite={canWrite}
               conversationId={conversationId}
