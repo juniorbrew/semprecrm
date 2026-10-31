@@ -111,6 +111,11 @@ export class FakeDb {
     return `id-${this.seq}`;
   }
 
+  /** Table -> operations ('select' | 'insert' | 'update' | 'delete') that must fail with an error. */
+  failures: Record<string, string[]> = {};
+  /** Every insert / update that ran, in order (row = payload, match = the eq() filters). */
+  writes: { table: string; op: 'insert' | 'update'; row: Row; match: Row }[] = [];
+
   /** Optional `rpc` handler for tests that call Postgres functions. */
   rpcHandler: ((fn: string, args: Row) => { data: unknown; error: unknown }) | null = null;
 
@@ -135,6 +140,7 @@ class Query implements PromiseLike<unknown> {
   private from_ = 0;
   private to_: number | null = null;
   private single_: 'single' | 'maybe' | null = null;
+  private eqs: Row = {};
 
   constructor(
     private db: FakeDb,
@@ -166,6 +172,7 @@ class Query implements PromiseLike<unknown> {
     return this;
   }
   eq(col: string, val: unknown) {
+    this.eqs[col] = val;
     this.preds.push((r) => sameValue(r[col], val) || r[col] === val);
     return this;
   }
@@ -233,7 +240,11 @@ class Query implements PromiseLike<unknown> {
     if (this.denied) {
       return { data: null, error: { code: '42501', message: `permission denied for table ${this.name}` } };
     }
+    if (this.db.failures[this.name]?.includes(this.op)) {
+      return { data: null, error: { message: `forced ${this.op} failure on ${this.name}` } };
+    }
     if (this.op === 'insert') {
+      for (const r of this.inserts) this.db.writes.push({ table: this.name, op: 'insert', row: r, match: {} });
       const created = this.inserts.map((r) => ({ id: this.db.nextId(), ...r }));
       this.db.table(this.name).push(...created);
       return { data: this.returning ? created.map((r) => ({ ...r })) : null, error: null };
@@ -248,6 +259,7 @@ class Query implements PromiseLike<unknown> {
     }
     if (this.op === 'update') {
       const hit = this.matches();
+      this.db.writes.push({ table: this.name, op: 'update', row: this.patch, match: { ...this.eqs } });
       for (const r of hit) Object.assign(r, this.patch);
       return { data: this.returning ? hit.map((r) => ({ ...r })) : null, error: null };
     }

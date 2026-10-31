@@ -18,6 +18,7 @@ import {
   type DealFieldKey,
 } from "@/lib/pipelines/deal-fields";
 import type { Deal, PipelineStage } from "@/types";
+import { DealSummaryCard } from "./deal-summary-card";
 import { SectionHeader } from "./panel-section";
 
 /** Deals shown before "Ver todos". */
@@ -107,9 +108,11 @@ interface PanelDealsProps {
   conversationId: string | null;
   /** The "+" of the header (parent owns the deal sheet). */
   addAction?: React.ReactNode;
+  /** After "Resumir com IA" applied something: refresh the deals + activity feed. */
+  onApplied?: () => void;
 }
 
-export function PanelDeals({ deals, onPatch, onMoved, loaded, canWrite, conversationId, addAction }: PanelDealsProps) {
+export function PanelDeals({ deals, onPatch, onMoved, loaded, canWrite, conversationId, addAction, onApplied }: PanelDealsProps) {
   const { language } = useLanguage();
   const copy = COPY[language] ?? COPY["pt-BR"];
   const [showAll, setShowAll] = useState(false);
@@ -174,6 +177,7 @@ export function PanelDeals({ deals, onPatch, onMoved, loaded, canWrite, conversa
           </>
         )}
       </div>
+      {loaded && <DealSummaryCard conversationId={conversationId} canWrite={canWrite} onApplied={() => onApplied?.()} />}
     </div>
   );
 }

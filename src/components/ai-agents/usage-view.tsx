@@ -23,6 +23,7 @@ interface SettingsResponse {
 const FEATURE_LABELS: Record<string, string> = {
   auto_reply: "Resposta automática",
   suggest_reply: "Sugestão de resposta",
+  deal_summary: "Resumo do negócio",
   memory_extract: "Memória do contato",
   agent_test: "Teste de agente",
 };

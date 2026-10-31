@@ -201,6 +201,12 @@ describe('callProfile', () => {
     expect(callProfile('anthropic', 'claude-haiku-4-5')).toEqual({ maxOutputTokens: 600, providerOptions: {} });
   });
 
+  it('deal_summary raises the cap on plain models only; other features and reasoning models are untouched', () => {
+    expect(callProfile('openai', 'gpt-4.1-mini', 'deal_summary').maxOutputTokens).toBe(900);
+    expect(callProfile('openai', 'gpt-4.1-mini', 'suggest_reply').maxOutputTokens).toBe(600);
+    expect(callProfile('openai', 'gpt-5-mini', 'deal_summary').maxOutputTokens).toBe(callProfile('openai', 'gpt-5-mini').maxOutputTokens);
+  });
+
   it('reasoning models: low effort and a bigger cap', () => {
     for (const m of ['gpt-5-mini', 'gpt-5', 'o3-mini', 'o4-mini']) {
       const p = callProfile('openai', m);

@@ -39,6 +39,19 @@ type ProviderOptions = Record<string, Record<string, string | boolean>>;
 export function callProfile(
   provider: AiProvider,
   model: string,
+  feature?: AiFeature,
+): { maxOutputTokens: number; providerOptions: ProviderOptions } {
+  const p = baseProfile(provider, model);
+  const floor = (feature && FEATURE_MIN_OUTPUT_TOKENS[feature]) || 0;
+  return floor > p.maxOutputTokens ? { ...p, maxOutputTokens: floor } : p;
+}
+
+/** Features whose answer is longer than a reply (a JSON summary): never below this cap. */
+export const FEATURE_MIN_OUTPUT_TOKENS: Partial<Record<AiFeature, number>> = { deal_summary: 900 };
+
+function baseProfile(
+  provider: AiProvider,
+  model: string,
 ): { maxOutputTokens: number; providerOptions: ProviderOptions } {
   const id = model.toLowerCase();
   if (provider === 'openai') {
@@ -177,7 +190,7 @@ export async function runModelCall(input: RunModelCallInput): Promise<RunModelCa
     else input.signal.addEventListener('abort', onClientAbort, { once: true });
   }
 
-  const profile = callProfile(provider, model);
+  const profile = callProfile(provider, model, input.feature);
   const started = Date.now();
   try {
     const result = await generateText({
