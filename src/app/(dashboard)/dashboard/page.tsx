@@ -41,6 +41,7 @@ import { TasksToday } from '@/components/dashboard/tasks-today'
 import { CalendarToday } from '@/components/dashboard/calendar-today'
 import { RadarCard } from '@/components/dashboard/radar-card'
 import { TeamMetrics } from '@/components/dashboard/team-metrics'
+import { SalesGoalsCard } from '@/components/dashboard/sales-goals-card'
 import { ResolutionTimeCard } from '@/components/dashboard/resolution-time-card'
 import { SlaComplianceCard } from '@/components/dashboard/sla-compliance-card'
 import { useSlaPolicies } from '@/hooks/use-sla-policies'
@@ -54,6 +55,8 @@ export default function DashboardPage() {
   const { ready: entitlementsReady, modules } = useEntitlements()
   const tasksEnabled = !entitlementsReady || modules.tasks
   const calendarEnabled = !entitlementsReady || modules.calendar
+  // Goals follow the deals: only accounts with the pipelines module see the card.
+  const goalsEnabled = entitlementsReady && modules.pipelines
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
 
@@ -250,6 +253,9 @@ export default function DashboardPage() {
           </>
         )}
       </div>
+
+      {/* Monthly sales goals (migration 103); the card hides itself for sellers with no goal. */}
+      {goalsEnabled && <SalesGoalsCard refreshToken={tasksRefreshToken} />}
 
       {/* Quick actions */}
       <QuickActions />
