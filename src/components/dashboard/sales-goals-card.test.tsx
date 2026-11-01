@@ -109,14 +109,36 @@ describe('SalesGoalsCard', () => {
     render(<SalesGoalsCard />)
     await screen.findAllByRole('progressbar')
     fireEvent.click(screen.getByRole('button', { name: 'Definir metas' }))
-    const input = await screen.findByLabelText('Meta')
-    fireEvent.change(screen.getByLabelText('Medida'), { target: { value: 'won_count' } })
+    const input = await screen.findByLabelText('Valor da meta')
+    fireEvent.change(screen.getByLabelText('O que a meta mede'), { target: { value: 'won_count' } })
     fireEvent.change(input, { target: { value: '25' } })
     fireEvent.click(screen.getByRole('button', { name: 'Adicionar meta' }))
     await waitFor(() => expect(h.set).toHaveBeenCalledTimes(1))
     expect(h.set.mock.calls[0][1]).toBe('acc-1')
     expect(h.set.mock.calls[0][2]).toMatchObject({ scope: 'account', metric: 'won_count', target: 25, month: h.fetch.mock.calls[0][2] })
     await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2)) // reloads after saving
+  })
+
+  it('invalid value shows a visible message linked to the input', async () => {
+    h.fetch.mockResolvedValue([company])
+    render(<SalesGoalsCard />)
+    await screen.findAllByRole('progressbar')
+    fireEvent.click(screen.getByRole('button', { name: 'Definir metas' }))
+    const input = await screen.findByLabelText('Valor da meta')
+    fireEvent.change(input, { target: { value: 'abc1' } })
+    const msg = await screen.findByText(/Digite um número maior que zero/)
+    expect(input.getAttribute('aria-describedby')).toBe(msg.id)
+    expect(screen.getByRole('button', { name: 'Adicionar meta' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('never shows another month while loading and shows the error when the fetch fails', async () => {
+    h.fetch.mockResolvedValueOnce([company])
+    render(<SalesGoalsCard />)
+    await screen.findAllByRole('progressbar')
+    h.fetch.mockRejectedValueOnce(new Error('boom'))
+    fireEvent.click(screen.getByRole('button', { name: 'Mês anterior' }))
+    expect(screen.queryAllByRole('progressbar')).toHaveLength(0)
+    expect(await screen.findByText('Não foi possível carregar as metas.')).toBeTruthy()
   })
 
   it('removing a goal sends a null target', async () => {

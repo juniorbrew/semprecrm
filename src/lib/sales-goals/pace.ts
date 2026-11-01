@@ -44,7 +44,8 @@ export interface GoalNumbers {
 }
 
 export function percent(g: GoalNumbers): number {
-  return g.target > 0 ? Math.round((g.achieved / g.target) * 100) : 0
+  // floor: 999,60 of 1.000 is 99%, never a 100% that is not a hit (epsilon absorbs float noise)
+  return g.target > 0 ? Math.floor((g.achieved * 100) / g.target + 1e-9) : 0
 }
 
 export function remaining(g: GoalNumbers): number {
@@ -75,7 +76,8 @@ export const MAX_TARGET = 1_000_000_000
  * decimals, or not a whole number for a count goal.
  */
 export function parseTarget(text: string, metric: GoalMetric): number | null {
-  let s = text.trim().replace(/\s/g, '')
+  // a leading currency symbol or code (R$, US$, $, BRL ...) is ignored
+  let s = text.trim().replace(/^(?:R\$|US\$|[$€£]|BRL|USD|EUR)\s*/i, '').replace(/\s/g, '')
   if (!s) return null
   // pt-BR: dots group thousands, comma is the decimal separator
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.')

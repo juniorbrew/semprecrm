@@ -43,7 +43,8 @@ interface Props {
  */
 export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, teams, members, labelOf, format, onChanged }: Props) {
   const { t } = useLanguage()
-  const ids = { who: useId(), target: useId(), metric: useId(), value: useId() }
+  const ids = { who: useId(), target: useId(), metric: useId(), value: useId(), hint: useId() }
+  const invalidText = t('Enter a number above zero (whole number for deals won).')
   const [busy, setBusy] = useState(false)
   const [scope, setScope] = useState<GoalScope>('account')
   const [refId, setRefId] = useState('')
@@ -113,7 +114,8 @@ export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, 
                     </p>
                   </div>
                   <Input
-                    aria-label={`${t('Goal')}: ${name}`}
+                    aria-label={`${t('Goal amount')}: ${name}`}
+                    aria-describedby={parsed === null ? `${ids.hint}-${key}` : undefined}
                     inputMode="decimal"
                     value={text}
                     disabled={busy}
@@ -121,6 +123,11 @@ export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, 
                     className="w-32"
                     onChange={(e) => setEdits((prev) => ({ ...prev, [key]: e.target.value }))}
                   />
+                  {parsed === null && (
+                    <p id={`${ids.hint}-${key}`} className="basis-full text-xs text-destructive">
+                      {invalidText}
+                    </p>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -169,7 +176,7 @@ export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, 
           <p className="text-sm font-medium text-foreground">{t('New goal')}</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <label htmlFor={ids.who} className="text-xs font-medium text-muted-foreground">{t('For')}</label>
+              <label htmlFor={ids.who} className="text-xs font-medium text-muted-foreground">{t('Goal applies to')}</label>
               <select
                 id={ids.who}
                 className={SELECT_CLASS}
@@ -181,16 +188,16 @@ export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, 
               >
                 <option value="account">{t('Company')}</option>
                 <option value="team">{t('Team')}</option>
-                <option value="member">{t('Seller')}</option>
+                <option value="member">{t('A salesperson')}</option>
               </select>
             </div>
             {needsRef && (
               <div className="grid gap-1.5">
                 <label htmlFor={ids.target} className="text-xs font-medium text-muted-foreground">
-                  {scope === 'team' ? t('Team') : t('Seller')}
+                  {t('Choose who the goal is for')}
                 </label>
                 <select id={ids.target} className={SELECT_CLASS} value={refId} onChange={(e) => setRefId(e.target.value)} data-no-translate>
-                  <option value="">{t('Choose')}</option>
+                  <option value="">{t('Choose who the goal is for')}</option>
                   {scope === 'team'
                     ? teams.map((x) => (
                         <option key={x.id} value={x.id}>
@@ -199,21 +206,21 @@ export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, 
                       ))
                     : members.map((m) => (
                         <option key={m.user_id} value={m.user_id}>
-                          {m.name || t('Seller')}
+                          {m.name || t('Unnamed salesperson')}
                         </option>
                       ))}
                 </select>
               </div>
             )}
             <div className="grid gap-1.5">
-              <label htmlFor={ids.metric} className="text-xs font-medium text-muted-foreground">{t('Measure')}</label>
+              <label htmlFor={ids.metric} className="text-xs font-medium text-muted-foreground">{t('What the goal measures')}</label>
               <select id={ids.metric} className={SELECT_CLASS} value={metric} onChange={(e) => setMetric(e.target.value as GoalMetric)}>
                 <option value="won_value">{t('Won value')}</option>
                 <option value="won_count">{t('Won deals')}</option>
               </select>
             </div>
             <div className="grid gap-1.5">
-              <label htmlFor={ids.value} className="text-xs font-medium text-muted-foreground">{t('Goal')}</label>
+              <label htmlFor={ids.value} className="text-xs font-medium text-muted-foreground">{t('Goal amount')}</label>
               <Input
                 id={ids.value}
                 inputMode="decimal"
@@ -221,8 +228,14 @@ export function SalesGoalsDialog({ open, onOpenChange, accountId, month, goals, 
                 disabled={busy}
                 placeholder={metric === 'won_value' ? '50.000' : '20'}
                 aria-invalid={value !== '' && newTarget === null}
+                aria-describedby={value !== '' && newTarget === null ? ids.hint : undefined}
                 onChange={(e) => setValue(e.target.value)}
               />
+              {value !== '' && newTarget === null && (
+                <p id={ids.hint} className="text-xs text-destructive">
+                  {invalidText}
+                </p>
+              )}
             </div>
           </div>
           <div>

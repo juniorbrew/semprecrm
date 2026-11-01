@@ -30,6 +30,8 @@ describe('progress numbers', () => {
   it('percent is not capped, remaining never negative', () => {
     expect(percent({ target: 200, achieved: 50 })).toBe(25)
     expect(percent({ target: 200, achieved: 300 })).toBe(150)
+    expect(percent({ target: 1000, achieved: 999.6 })).toBe(99)
+    expect(percent({ target: 100, achieved: 29 })).toBe(29)
     expect(remaining({ target: 200, achieved: 300 })).toBe(0)
     expect(remaining({ target: 200, achieved: 50 })).toBe(150)
     expect(percent({ target: 0, achieved: 5 })).toBe(0)
@@ -63,6 +65,12 @@ describe('parseTarget', () => {
     expect(parseTarget('1.234.567,8', 'won_value')).toBe(1234567.8)
     expect(parseTarget(' 40 ', 'won_count')).toBe(40)
     expect(parseTarget('99.5', 'won_value')).toBe(99.5)
+    expect(parseTarget('R$ 1.500,00', 'won_value')).toBe(1500)
+    expect(parseTarget('1.500', 'won_value')).toBe(1500)
+    expect(parseTarget('1500,5', 'won_value')).toBe(1500.5)
+    expect(parseTarget('1.5', 'won_value')).toBe(1.5)
+    expect(parseTarget('BRL 20', 'won_count')).toBe(20)
+    expect(parseTarget('$300', 'won_value')).toBe(300)
   })
   it('refuses unusable targets', () => {
     expect(parseTarget('', 'won_value')).toBeNull()

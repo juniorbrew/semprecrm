@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { useLanguage } from '@/hooks/use-language'
 import { useTeams } from '@/hooks/use-teams'
 import { formatCurrency } from '@/lib/currency'
-import { DEFAULT_TIMEZONE } from '@/lib/calendar/range'
+import { safeTimezone } from '@/lib/calendar/range'
 import { fetchGoalProgress, goalKey, type GoalProgress } from '@/lib/sales-goals/data'
 import {
   currentMonth,
@@ -46,14 +46,27 @@ const CHIP: Record<Exclude<PaceStatus, 'none'>, { label: string; className: stri
 export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) {
   const { t, language } = useLanguage()
   const { accountId, user, canManageMembers, defaultCurrency, preferences, profileLoading } = useAuth()
-  const timezone = preferences.business_hours?.timezone ?? DEFAULT_TIMEZONE
+  const timezone = safeTimezone(preferences.business_hours?.timezone)
   const { active: teams, byId: teamById } = useTeams()
 
-  const current = useMemo(() => currentMonth(timezone), [timezone])
+  // A tab left open across midnight of the 1st moves on when it is looked at again.
+  const [, setClock] = useState(0)
+  useEffect(() => {
+    const bump = () => setClock((n) => n + 1)
+    window.addEventListener('focus', bump)
+    document.addEventListener('visibilitychange', bump)
+    return () => {
+      window.removeEventListener('focus', bump)
+      document.removeEventListener('visibilitychange', bump)
+    }
+  }, [])
+  const current = currentMonth(timezone)
   const [month, setMonth] = useState<string | null>(null)
   const shown = month ?? current
-  const [rows, setRows] = useState<GoalProgress[] | null>(null)
-  const [failed, setFailed] = useState(false)
+  // Rows are kept with the month they belong to: another month's numbers are never shown.
+  const [data, setData] = useState<{ month: string; rows: GoalProgress[]; failed: boolean } | null>(null)
+  const rows = data && data.month === shown ? data.rows : null
+  const failed = data?.month === shown && data.failed
   const [members, setMembers] = useState<Member[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [tick, setTick] = useState(0)
@@ -79,15 +92,12 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
     let cancelled = false
     fetchGoalProgress(createClient(), accountId, shown)
       .then((r) => {
-        if (cancelled) return
-        setRows(r)
-        setFailed(false)
+        if (!cancelled) setData({ month: shown, rows: r, failed: false })
       })
       .catch((err) => {
         if (cancelled) return
         console.error('[dashboard] sales goals failed:', err)
-        setFailed(true)
-        setRows((prev) => prev ?? [])
+        setData({ month: shown, rows: [], failed: true })
       })
     return () => {
       cancelled = true
@@ -95,7 +105,7 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
   }, [accountId, shown, refreshToken, tick])
 
   const memberName = useCallback(
-    (id: string | null) => members.find((m) => m.user_id === id)?.name || t('Seller'),
+    (id: string | null) => members.find((m) => m.user_id === id)?.name || t('Unnamed salesperson'),
     [members, t],
   )
   const labelOf = useCallback(
@@ -123,8 +133,14 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
   const total = daysInMonth(shown)
   const editable = canManageMembers && shown === current
   const money = (n: number) => formatCurrency(n, defaultCurrency)
-  const count = (n: number) => `${n.toLocaleString(language)} ${n === 1 ? t('deal') : t('deals')}`
+  const count = (n: number) => `${n.toLocaleString(language)} ${n === 1 ? t('deal won') : t('deals won')}`
   const fmt = (g: GoalProgress, n: number) => (g.metric === 'won_value' ? money(n) : count(n))
+  // Under R$ 1 left (but not hit) shows the cents, never "R$ 0".
+  const fmtLeft = (g: GoalProgress, n: number) =>
+    g.metric === 'won_value' && n < 1
+      ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: defaultCurrency || 'BRL', minimumFractionDigits: 2 }).format(n)
+      : fmt(g, n)
+  const plain = (g: GoalProgress, n: number) => (g.metric === 'won_value' ? money(n) : n.toLocaleString(language))
 
   const monthLabel = useMemo(() => {
     const [y, m] = shown.split('-').map(Number)
@@ -134,7 +150,7 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
 
   const loading = profileLoading || rows === null
   // A seller with nothing assigned does not need an empty box on the dashboard.
-  if (!loading && !canManageMembers && rows!.length === 0 && shown === current) return null
+  if (!loading && !failed && !canManageMembers && rows!.length === 0 && shown === current) return null
 
   return (
     <section className="flex flex-col rounded-xl border border-border bg-card" data-no-translate>
@@ -231,11 +247,11 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 text-xs text-muted-foreground tabular-nums">
                   <span>
-                    {fmt(g, g.achieved)} {t('of')} {fmt(g, g.target)} ({pct}%)
+                    {plain(g, g.achieved)} {t('of')} {fmt(g, g.target)} ({pct}%)
                   </span>
                   {remaining(g) > 0 && (
                     <span>
-                      {t('short by')} {fmt(g, remaining(g))}
+                      {t('short by')} {fmtLeft(g, remaining(g))}
                     </span>
                   )}
                 </div>
