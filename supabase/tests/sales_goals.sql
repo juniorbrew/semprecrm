@@ -165,6 +165,7 @@ SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000a
 SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals), 6, 'owner sees all six goals');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goal_progress((SELECT acc_a FROM ctx), (SELECT cur FROM ctx))), 6, 'owner progress: six goals');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000c', true);
@@ -181,6 +182,7 @@ SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, NULL, %L
 UPDATE sales_goals SET target = 1 WHERE scope = 'account';
 DELETE FROM sales_goals WHERE scope = 'account';
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals WHERE scope = 'account' AND target = 1), 0, 'agent update touched 0 rows');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals WHERE scope = 'account'), 2, 'agent delete touched 0 rows');
 
@@ -189,6 +191,7 @@ SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000d
 SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals WHERE scope = 'member' AND user_id = (SELECT ag1 FROM ctx)), 0, 'agent 2 cannot read agent 1 goal');
 SELECT pg_temp.assert_true(pg_temp.prog((SELECT acc_a FROM ctx), (SELECT cur FROM ctx), 'team', (SELECT team1 FROM ctx), 'won_value') IS NULL, 'agent 2 gets no progress of team 1');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000b', true);
@@ -196,10 +199,12 @@ SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals), 0, 'tenant B sees n
 SELECT pg_temp.assert_fails(format('SELECT * FROM sales_goal_progress(%L, %L)', (SELECT acc_a FROM ctx), (SELECT cur FROM ctx)), 'tenant B cannot ask A progress');
 SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, NULL, %L, %L, 5)', (SELECT acc_a FROM ctx), 'account', 'won_value', (SELECT cur FROM ctx)), 'tenant B cannot set goals in A');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 
 SET ROLE anon;
 SELECT pg_temp.assert_fails(format('SELECT * FROM sales_goal_progress(%L, %L)', (SELECT acc_a FROM ctx), (SELECT cur FROM ctx)), 'anon has no EXECUTE');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 
 -- =====================================================================
 -- admin writes: current month onward only; upsert path; guards
@@ -214,6 +219,14 @@ SELECT pg_temp.assert_true(pg_temp.prog((SELECT acc_a FROM ctx), (SELECT prev FR
 SELECT sales_goal_set((SELECT acc_a FROM ctx), 'team', (SELECT team1 FROM ctx), NULL, 'won_value', (SELECT cur FROM ctx), NULL);
 SELECT pg_temp.assert_true(pg_temp.prog((SELECT acc_a FROM ctx), (SELECT cur FROM ctx), 'team', (SELECT team1 FROM ctx), 'won_value') IS NULL, 'NULL target removes the goal from this month');
 SELECT sales_goal_set((SELECT acc_a FROM ctx), 'account', NULL, NULL, 'won_value', ((SELECT cur FROM ctx) + INTERVAL '1 month')::date, 3000);  -- future month is fine
+SELECT sales_goal_set((SELECT acc_a FROM ctx), 'account', NULL, NULL, 'won_value', ((SELECT cur FROM ctx) + INTERVAL '24 months')::date, 3100);  -- the cap itself is fine
+SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, NULL, %L, %L, 5)', (SELECT acc_a FROM ctx), 'account', 'won_value', ((SELECT cur FROM ctx) + INTERVAL '25 months')::date), 'more than 24 months ahead is refused');
+-- created_by is stamped by the database, a forged value is overwritten
+SELECT pg_temp.assert_true((SELECT created_by FROM sales_goals WHERE scope = 'account' AND metric = 'won_value' AND month = (SELECT cur FROM ctx)) = (SELECT owner FROM ctx), 'created_by = the writer');
+INSERT INTO sales_goals(account_id, scope, metric, month, target, created_by) VALUES ((SELECT acc_a FROM ctx), 'account', 'won_count', (SELECT cur FROM ctx), 7, (SELECT ag1 FROM ctx));
+SELECT pg_temp.assert_true((SELECT created_by FROM sales_goals WHERE scope = 'account' AND metric = 'won_count' AND month = (SELECT cur FROM ctx)) = (SELECT owner FROM ctx), 'forged created_by on insert is overwritten');
+UPDATE sales_goals SET created_by = (SELECT ag1 FROM ctx), target = 8 WHERE scope = 'account' AND metric = 'won_count' AND month = (SELECT cur FROM ctx);
+SELECT pg_temp.assert_true((SELECT created_by FROM sales_goals WHERE scope = 'account' AND metric = 'won_count' AND month = (SELECT cur FROM ctx)) = (SELECT owner FROM ctx), 'created_by cannot change on update');
 -- past months are read-only for the admin too
 SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, NULL, %L, %L, 5)', (SELECT acc_a FROM ctx), 'account', 'won_value', (SELECT prev FROM ctx)), 'admin cannot write a past month (insert)');
 SELECT pg_temp.assert_fails(format('UPDATE sales_goals SET target = 5 WHERE month = %L', (SELECT prev2 FROM ctx)), 'admin cannot update a past month');
@@ -224,6 +237,15 @@ SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, %L, NULL, %L, 
 SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, %L, %L, %L, 5)', (SELECT acc_a FROM ctx), 'member', (SELECT owner_b FROM ctx), 'won_value', (SELECT cur FROM ctx)), 'admin cannot target a user of another account');
 SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, NULL, %L, %L, 5)', (SELECT acc_b FROM ctx), 'account', 'won_value', (SELECT cur FROM ctx)), 'admin of A cannot write into B');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+
+-- role authenticated without any sub (no user): nothing is written, past months included
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_fails(format('INSERT INTO sales_goals(account_id, scope, metric, month, target) VALUES (%L, %L, %L, %L, 5)', (SELECT acc_a FROM ctx), 'account', 'won_value', (SELECT prev FROM ctx)), 'authenticated with no sub cannot write a past month');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals), 0, 'authenticated with no sub reads nothing');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 
 -- =====================================================================
 -- time zone month boundary: the same instant, another account zone
@@ -234,6 +256,7 @@ SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000a', true);
 SELECT pg_temp.assert_true(pg_temp.prog((SELECT acc_a FROM ctx), (SELECT prev FROM ctx), 'account', NULL, 'won_value') = '1000.00/30.00', 'UTC account: the boundary deal is no longer in the previous month');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 UPDATE accounts SET preferences = '{"business_hours":{"timezone":"America/Sao_Paulo","days":{}}}'::jsonb WHERE id = (SELECT acc_a FROM ctx);
 
 -- =====================================================================
@@ -243,14 +266,27 @@ UPDATE accounts SET plan_status = 'past_due', plan_expires_at = NULL WHERE id = 
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000a', true);
 SELECT pg_temp.assert_fails(format('SELECT sales_goal_set(%L, %L, NULL, NULL, %L, %L, 123)', (SELECT acc_a FROM ctx), 'account', 'won_value', (SELECT cur FROM ctx)), 'past_due: insert/update blocked');
-SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals), 9, 'past_due: still readable');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals), 11, 'past_due: still readable');
 RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 UPDATE accounts SET plan_status = 'active' WHERE id = (SELECT acc_a FROM ctx);
+
+-- FK cascade of a team with history (past-month goals) is not blocked by the guard
+INSERT INTO teams(id, account_id, name) VALUES ('10300000-0000-4000-8000-0000000000b9', (SELECT acc_a FROM ctx), 'Efemera');
+INSERT INTO sales_goals(account_id, scope, team_id, metric, month, target) VALUES ((SELECT acc_a FROM ctx), 'team', '10300000-0000-4000-8000-0000000000b9', 'won_value', (SELECT prev2 FROM ctx), 10);
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000a', true);
+DELETE FROM teams WHERE id = '10300000-0000-4000-8000-0000000000b9';
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_eq((SELECT count(*) FROM sales_goals WHERE team_id = '10300000-0000-4000-8000-0000000000b9'), 0, 'deleting a team cascades its past goals');
 
 -- ---- grants (076 rule) -------------------------------------------------------------------
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.sales_goal_progress(uuid, date)', 'EXECUTE'), 'anon cannot run progress');
 SELECT pg_temp.assert_true(has_function_privilege('authenticated', 'public.sales_goal_progress(uuid, date)', 'EXECUTE'), 'authenticated runs progress');
 SELECT pg_temp.assert_true(NOT has_function_privilege('authenticated', 'public.sales_goals_guard()', 'EXECUTE'), 'trigger function is closed');
+SELECT pg_temp.assert_true(NOT has_table_privilege('anon', 'public.sales_goals', 'SELECT') AND NOT has_table_privilege('anon', 'public.sales_goals', 'INSERT'), 'anon has no table privileges');
+SELECT pg_temp.assert_true(has_table_privilege('authenticated', 'public.sales_goals', 'SELECT'), 'authenticated reads (RLS filters)');
 SELECT pg_temp.assert_true(NOT has_table_privilege('authenticated', 'public.sales_goals', 'TRUNCATE'), 'no TRUNCATE for authenticated');
 
 ROLLBACK;

@@ -82,15 +82,18 @@ DROP TRIGGER IF EXISTS set_updated_at ON public.sales_goals;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.sales_goals
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
--- Guard: same-account team / member, immutable key, current month onward.
--- SECURITY DEFINER only to read teams / profiles regardless of the caller's
--- policies; the "user context" test mirrors readonly_guard (094): service
--- role and postgres jobs (backfills, tests seeding history) pass the
--- month rule, the same-account rules always apply.
+-- Guard: same-account team / member, immutable key, current month onward,
+-- at most 24 months ahead, created_by stamped by the database.
+-- SECURITY INVOKER on purpose (like readonly_guard, 094): current_user is the
+-- caller, teams / profiles are read under the caller's RLS (so a probe for a
+-- team of another account looks the same as a missing one) and the "user
+-- context" test below is real. service_role and postgres jobs (backfills,
+-- tests seeding history) skip the month / created_by rules; the same-account
+-- rules always apply. A past-month DELETE from an FK cascade (team or account
+-- deleted) is not blocked.
 CREATE OR REPLACE FUNCTION public.sales_goals_guard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
@@ -122,19 +125,34 @@ BEGIN
   END IF;
 
   IF v_user_ctx THEN
-    v_current := date_trunc('month', now() AT TIME ZONE public.report_timezone(v_row.account_id))::date;
-    IF v_row.month < v_current THEN
-      RAISE EXCEPTION 'sales_goal_past_month: goals of past months are read-only' USING ERRCODE = '42501';
+    IF TG_OP = 'INSERT' THEN
+      NEW.created_by := auth.uid();
+    ELSIF TG_OP = 'UPDATE' THEN
+      NEW.created_by := OLD.created_by;
+    END IF;
+    IF NOT (TG_OP = 'DELETE' AND pg_trigger_depth() > 1) THEN
+      v_current := date_trunc('month', now() AT TIME ZONE public.report_timezone(v_row.account_id))::date;
+      IF v_row.month < v_current THEN
+        RAISE EXCEPTION 'sales_goal_past_month: goals of past months are read-only' USING ERRCODE = '42501';
+      END IF;
+      IF TG_OP <> 'DELETE' AND v_row.month > (v_current + INTERVAL '24 months')::date THEN
+        RAISE EXCEPTION 'sales_goal_too_far: goals can be set at most 24 months ahead' USING ERRCODE = '22023';
+      END IF;
     END IF;
   END IF;
 
-  RETURN v_row;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.sales_goals_guard() FROM PUBLIC, anon, authenticated;
 DROP TRIGGER IF EXISTS sales_goals_guard ON public.sales_goals;
 CREATE TRIGGER sales_goals_guard BEFORE INSERT OR UPDATE OR DELETE ON public.sales_goals
   FOR EACH ROW EXECUTE FUNCTION public.sales_goals_guard();
+
+-- ---- grants (076 / 096 style) ---------------------------------------
+REVOKE ALL ON public.sales_goals FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sales_goals TO authenticated;
+GRANT ALL ON public.sales_goals TO service_role;
 
 -- ---- RLS ------------------------------------------------------------
 ALTER TABLE public.sales_goals ENABLE ROW LEVEL SECURITY;
