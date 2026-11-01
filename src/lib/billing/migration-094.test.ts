@@ -32,6 +32,9 @@ const STAY_WRITABLE = [
   'chat_thread_members', 'storage',
 ]
 
+/** Tables created after 094 that bring their own RESTRICTIVE read-only policies (checked in their own migration). */
+const BLOCKED_IN_OWN_MIGRATION: Record<string, string> = { sales_goals: '103_sales_goals.sql' }
+
 /** Tables that carry a write policy (INSERT/UPDATE/DELETE/ALL) after all migrations before 094. */
 function writableTables(): Set<string> {
   const policies = new Map<string, { table: string; cmd: string }>()
@@ -153,9 +156,21 @@ describe('migration 094 contract: policies', () => {
   })
 
   it('classifies every table that carries a write policy (a new table must be decided)', () => {
-    const known = new Set([...BLOCKED_DIRECT, ...BLOCKED_DERIVED, ...STAY_WRITABLE])
+    const known = new Set([...BLOCKED_DIRECT, ...BLOCKED_DERIVED, ...STAY_WRITABLE, ...Object.keys(BLOCKED_IN_OWN_MIGRATION)])
     const unknown = [...writableTables()].filter((t) => !known.has(t))
     expect(unknown).toEqual([])
+  })
+})
+
+describe('tables created after 094 stay inside the billing block', () => {
+  it.each(Object.entries(BLOCKED_IN_OWN_MIGRATION))('%s: RESTRICTIVE insert / update / delete with account_is_writable', (table, file) => {
+    const text = readFileSync(join(dir, file), 'utf8')
+    for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
+      const name = `${table}_readonly_${cmd.toLowerCase()}`
+      const i = text.indexOf(`CREATE POLICY ${name} ON public.${table} AS RESTRICTIVE FOR ${cmd} TO authenticated`)
+      expect(i, name).toBeGreaterThan(-1)
+      expect(text.slice(i, text.indexOf(';', i))).toContain('private.account_is_writable(account_id)')
+    }
   })
 })
 
