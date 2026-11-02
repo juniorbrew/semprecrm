@@ -8,6 +8,7 @@ import { Header } from "@/components/layout/header";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BlockedScreen } from "@/components/plans/blocked-screen";
 import { ReadOnlyBanner } from "@/components/billing/read-only-banner";
+import { InstallAppBanner } from "@/components/layout/install-app-banner";
 import { readOnlyReason } from "@/lib/billing/read-only";
 import { MfaRequiredNotice } from "@/components/settings/mfa-card";
 import { isMfaEnrollAllowedPath, MFA_ENROLL_PATH, mustEnrollMfa } from "@/lib/auth/mfa";
@@ -135,6 +136,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           <Header onOpenSidebar={() => setSidebarOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
           <MfaRequiredNotice compact />
           {entitlementsReady ? <ReadOnlyBanner /> : null}
+          <InstallAppBanner />
           {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
           <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
         </div>

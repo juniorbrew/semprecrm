@@ -1859,6 +1859,15 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
     'As notificações estão bloqueadas para este site. Permita nas configurações do navegador e tente de novo.',
   'This browser does not support push notifications.':
     'Este navegador não suporta notificações push.',
+  'On iPhone and iPad, notifications only work in the installed app: open this site in Safari, tap Share, then "Add to Home Screen", and open SempreCRM from the icon.':
+    'No iPhone e no iPad, as notificações só funcionam no app instalado: abra este site no Safari, toque em Compartilhar, depois em "Adicionar à Tela de Início", e abra o SempreCRM pelo ícone.',
+  'Install SempreCRM on your phone.': 'Instale o SempreCRM no celular.',
+  'Tap Share, then "Add to Home Screen". On iPhone, notifications only arrive in the installed app.':
+    'Toque em Compartilhar e depois em "Adicionar à Tela de Início". No iPhone, as notificações só chegam no app instalado.',
+  'It opens full screen, like an app, and receives notifications.':
+    'Ele abre em tela cheia, como um aplicativo, e recebe notificações.',
+  'Install': 'Instalar',
+  'Dismiss': 'Dispensar',
   'Turn on notifications here — the browser will ask for permission.':
     'Ative as notificações aqui — o navegador vai pedir permissão.',
   'Enable in this browser': 'Ativar neste navegador',
