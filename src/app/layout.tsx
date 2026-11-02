@@ -25,12 +25,21 @@ export const metadata: Metadata = {
     template: '%s — SempreCRM',
   },
   description: 'CRM autogerenciável para WhatsApp.',
+  applicationName: 'SempreCRM',
+  // iPhone/iPad: opens full screen from the home-screen icon.
+  appleWebApp: {
+    capable: true,
+    title: 'SempreCRM',
+    statusBarStyle: 'default',
+  },
   robots: {
     index: false,
     follow: false,
   },
   icons: {
     icon: [{ url: '/icon' }],
+    // Listed by hand: this explicit `icons` replaces the apple-icon file convention.
+    apple: [{ url: '/apple-icon', sizes: '180x180', type: 'image/png' }],
   },
   formatDetection: {
     email: false,

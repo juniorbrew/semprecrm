@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth, useEntitlements } from '@/hooks/use-auth';
+import { useInstallPrompt } from '@/hooks/use-install-prompt';
 import { useLanguage } from '@/hooks/use-language';
 import {
   getCurrentSubscription,
@@ -74,6 +75,8 @@ export function NotificationsSettings() {
     return true;
   });
 
+  // iPhone/iPad only expose push inside the installed (home-screen) app.
+  const { ios, standalone } = useInstallPrompt();
   const [permission, setPermission] = useState<PushPermission>('unsupported');
   const [thisBrowserEndpoint, setThisBrowserEndpoint] = useState<string | null>(null);
   const [subs, setSubs] = useState<SubscriptionRow[] | null>(null);
@@ -217,7 +220,9 @@ export function NotificationsSettings() {
               : permission === 'denied'
                 ? t('Notifications are blocked for this site. Allow them in the browser settings, then try again.')
                 : permission === 'unsupported'
-                  ? t('This browser does not support push notifications.')
+                  ? ios && !standalone
+                    ? t('On iPhone and iPad, notifications only work in the installed app: open this site in Safari, tap Share, then "Add to Home Screen", and open SempreCRM from the icon.')
+                    : t('This browser does not support push notifications.')
                   : t('Turn on notifications here — the browser will ask for permission.')
           }
           action={
