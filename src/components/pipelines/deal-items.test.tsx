@@ -100,7 +100,8 @@ describe("DealItemsSection", () => {
     fireEvent.change(screen.getByLabelText("Price per unit"), { target: { value: "R$ 1.500,00" } })
     fireEvent.change(screen.getByLabelText("Number of units"), { target: { value: "1,5" } })
     fireEvent.change(screen.getByLabelText("Discount in percent"), { target: { value: "10" } })
-    expect(screen.getByText(/Line total: R\$\s2\.025,00/)).toBeTruthy()
+    expect(screen.getByText("Line total")).toBeTruthy()
+    expect(screen.getByText(/^R\$\s2\.025,00$/)).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: "Add item" }))
     await waitFor(() => expect(addDealItem).toHaveBeenCalled())
     expect(addDealItem).toHaveBeenCalledWith(
@@ -182,19 +183,37 @@ describe("DealItemsSection", () => {
 
   it("removes a line and refreshes the deal", async () => {
     const { onChanged } = setup([item()])
-    fireEvent.click(await screen.findByRole("button", { name: "Remove item: Plano Mensal" }))
+    // Removing is inside the line's editor, one step away from a stray click.
+    expect(screen.queryByRole("button", { name: /Remove item/ })).toBeNull()
+    fireEvent.click(await screen.findByRole("button", { name: /Edit item:\s*Plano Mensal/ }))
+    fireEvent.click(screen.getByRole("button", { name: "Remove item: Plano Mensal" }))
     await waitFor(() => expect(removeDealItem).toHaveBeenCalledWith(expect.anything(), "i1"))
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
     expect(toast.success).toHaveBeenCalledWith("Item removed")
+    await waitFor(() => expect(screen.queryByLabelText("Number of units")).toBeNull())
   })
 
   it("edits a line in place", async () => {
     setup([item()])
-    fireEvent.click(await screen.findByRole("button", { name: "Edit item: Plano Mensal" }))
-    fireEvent.change(screen.getByLabelText("Number of units"), { target: { value: "3" } })
+    fireEvent.click(await screen.findByRole("button", { name: /Edit item:\s*Plano Mensal/ }))
+    fireEvent.click(screen.getByRole("button", { name: "One unit more" })) // 2 → 3
     fireEvent.click(screen.getByRole("button", { name: "Save item" }))
     await waitFor(() => expect(updateDealItem).toHaveBeenCalled())
     expect(updateDealItem).toHaveBeenCalledWith(expect.anything(), "i1", { name: "Plano Mensal", unit_price: 100, quantity: 3, discount_pct: 0 })
+  })
+
+  it("the unit stepper never goes below one and keeps decimals", async () => {
+    setup([])
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }))
+    const units = screen.getByLabelText("Number of units") as HTMLInputElement
+    const less = screen.getByRole("button", { name: "One unit less" }) as HTMLButtonElement
+    expect(less.disabled).toBe(true) // starts at 1
+    fireEvent.change(units, { target: { value: "1,5" } })
+    fireEvent.click(screen.getByRole("button", { name: "One unit more" }))
+    expect(units.value).toBe("2,5")
+    fireEvent.click(less)
+    fireEvent.click(less)
+    expect(units.value).toBe("1")
   })
 
   it("offers a retry when the lines cannot be loaded", async () => {

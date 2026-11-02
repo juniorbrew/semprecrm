@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Loader2, Minus, Package, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -26,10 +26,20 @@ import {
   updateDealItem,
 } from "@/lib/products/data";
 import type { DealItem, ItemValues, Product } from "@/lib/products/types";
+import { parsePtBrAmount } from "@/lib/sales-goals/pace";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 const HEADING =
-  "mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+  "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+
+/** One bordered box holding an input plus a prefix, suffix or stepper buttons. */
+const GROUP =
+  "flex h-9 items-center overflow-hidden rounded-lg border border-input bg-transparent transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 has-[[aria-invalid=true]]:border-destructive has-[[aria-invalid=true]]:ring-3 has-[[aria-invalid=true]]:ring-destructive/20 dark:bg-input/30";
+const GROUP_INPUT =
+  "h-full rounded-none border-0 bg-transparent px-2 tabular-nums focus-visible:ring-0 aria-invalid:ring-0 dark:bg-transparent";
+const STEP =
+  "flex h-full w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40";
 
 /** Which field each error belongs to, and the plain-language message (English key for t()). */
 const ERROR_FIELD: Record<ItemError, "name" | "price" | "quantity" | "discount"> = {
@@ -53,6 +63,25 @@ const ERROR_TEXT: Record<ItemError, string> = {
   "total-max": "This line is worth more than a deal can hold",
 };
 
+/** "R$" for BRL, "US$" for USD… the symbol the price box shows before the number. */
+function currencySymbol(currency: string): string {
+  try {
+    return (
+      new Intl.NumberFormat("pt-BR", { style: "currency", currency })
+        .formatToParts(0)
+        .find((p) => p.type === "currency")?.value ?? currency
+    );
+  } catch {
+    return currency;
+  }
+}
+
+/** The units after one press of − or + (never below 1; "1,5" + 1 = "2,5"). */
+function stepUnits(text: string, delta: 1 | -1): string {
+  const n = parsePtBrAmount(text) ?? 0;
+  return toInputNumber(Math.max(1, Math.round((n + delta) * 100) / 100));
+}
+
 interface FieldProps {
   label: string;
   error?: string;
@@ -64,18 +93,18 @@ function Field({ label, error, hint, children }: FieldProps) {
   const errId = `${id}-err`;
   const hintId = `${id}-hint`;
   return (
-    <div className="grid gap-1">
+    <div className="grid content-start gap-1.5">
       <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>
       {children({ id, "aria-invalid": !!error, "aria-describedby": error ? errId : hint ? hintId : undefined })}
       {hint && !error && (
-        <p id={hintId} className="text-[11px] text-muted-foreground">
+        <p id={hintId} className="text-[11px] leading-snug text-muted-foreground">
           {hint}
         </p>
       )}
       {error && (
-        <p id={errId} role="alert" className="text-xs text-destructive">
+        <p id={errId} role="alert" className="text-xs leading-snug text-destructive">
           {error}
         </p>
       )}
@@ -92,9 +121,11 @@ interface ItemFormProps {
   submitLabel: string;
   onSubmit: (values: ItemValues, productId: string | null) => void | Promise<void>;
   onCancel: () => void;
+  /** Editing an existing line: removing it lives here, one step away from a stray click. */
+  onRemove?: () => void;
 }
 
-function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, onCancel }: ItemFormProps) {
+function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, onCancel, onRemove }: ItemFormProps) {
   const { t } = useLanguage();
   const [name, setName] = useState(initial?.name ?? "");
   const [price, setPrice] = useState(initial ? toInputNumber(initial.unit_price) : "");
@@ -108,6 +139,7 @@ function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, on
   const preview = parsed.ok
     ? lineTotal(parsed.values.quantity, parsed.values.unit_price, parsed.values.discount_pct)
     : null;
+  const units = parsePtBrAmount(quantity);
 
   const matches = useMemo(() => {
     if (!products || productId) return [];
@@ -141,11 +173,16 @@ function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, on
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-3 rounded-xl border border-border bg-card p-3" noValidate>
+    <form
+      onSubmit={submit}
+      noValidate
+      className={cn("grid gap-3 p-3", initial ? "bg-muted/30" : "rounded-xl border border-border bg-card")}
+    >
       <Field label={t("Product or service name")} error={errorFor("name")}>
         {(a) => (
           <Input
             {...a}
+            className="h-9"
             value={name}
             maxLength={200}
             autoComplete="off"
@@ -158,40 +195,116 @@ function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, on
         )}
       </Field>
       {matches.length > 0 && (
-        <ul aria-label={t("Catalog matches")} className="grid gap-1">
+        <ul
+          aria-label={t("Catalog matches")}
+          className="-mt-1 divide-y divide-border overflow-hidden rounded-lg border border-border"
+        >
           {matches.map((p) => (
             <li key={p.id}>
               <button
                 type="button"
                 onClick={() => pick(p)}
-                className="flex w-full items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
               >
-                <span className="min-w-0 truncate" data-no-translate>
-                  {p.name}
-                  {p.code ? <span className="ml-1 text-xs text-muted-foreground">({p.code})</span> : null}
+                <span className="min-w-0" data-no-translate>
+                  <span className="block truncate text-sm text-foreground">{p.name}</span>
+                  {p.code ? <span className="block truncate text-[11px] text-muted-foreground">{p.code}</span> : null}
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatMoney(p.unit_price, currency)}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {formatMoney(p.unit_price, currency)}
+                </span>
               </button>
             </li>
           ))}
         </ul>
       )}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3">
         <Field label={t("Price per unit")} error={errorFor("price")}>
-          {(a) => <Input {...a} inputMode="decimal" value={price} placeholder="0,00" onChange={(e) => setPrice(e.target.value)} />}
+          {(a) => (
+            <div className={GROUP}>
+              <span aria-hidden className="pl-3 text-sm text-muted-foreground">
+                {currencySymbol(currency)}
+              </span>
+              <Input
+                {...a}
+                className={GROUP_INPUT}
+                inputMode="decimal"
+                value={price}
+                placeholder="0,00"
+                onChange={(e) => setPrice(e.target.value)}
+              />
+            </div>
+          )}
         </Field>
         <Field label={t("Number of units")} error={errorFor("quantity")} hint={t("Use a comma for decimals, like 1,5")}>
-          {(a) => <Input {...a} inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} />}
+          {(a) => (
+            <div className={GROUP}>
+              <button
+                type="button"
+                className={STEP}
+                aria-label={t("One unit less")}
+                disabled={units === null || units <= 1}
+                onClick={() => setQuantity((q) => stepUnits(q, -1))}
+              >
+                <Minus className="size-3.5" />
+              </button>
+              <Input
+                {...a}
+                className={cn(GROUP_INPUT, "text-center")}
+                inputMode="decimal"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+              />
+              <button
+                type="button"
+                className={STEP}
+                aria-label={t("One unit more")}
+                onClick={() => setQuantity((q) => stepUnits(q, 1))}
+              >
+                <Plus className="size-3.5" />
+              </button>
+            </div>
+          )}
         </Field>
         <Field label={t("Discount in percent")} error={errorFor("discount")}>
-          {(a) => <Input {...a} inputMode="decimal" value={discount} placeholder="0" onChange={(e) => setDiscount(e.target.value)} />}
+          {(a) => (
+            <div className={GROUP}>
+              <Input
+                {...a}
+                className={cn(GROUP_INPUT, "pl-3")}
+                inputMode="decimal"
+                value={discount}
+                placeholder="0"
+                onChange={(e) => setDiscount(e.target.value)}
+              />
+              <span aria-hidden className="pr-3 text-sm text-muted-foreground">
+                %
+              </span>
+            </div>
+          )}
         </Field>
+        <div className="grid content-start gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">{t("Line total")}</span>
+          <p className="flex h-9 items-center text-base font-semibold tabular-nums text-foreground" aria-live="polite">
+            {preview !== null ? formatMoney(preview, currency) : "—"}
+          </p>
+        </div>
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground" aria-live="polite">
-          {preview !== null ? `${t("Line total")}: ${formatMoney(preview, currency)}` : ""}
-        </p>
-        <div className="flex gap-2">
+      <div className="flex items-center gap-2 pt-1">
+        {onRemove && initial && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="-ml-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            aria-label={`${t("Remove item")}: ${initial.name}`}
+            disabled={busy}
+            onClick={onRemove}
+          >
+            {t("Remove item")}
+          </Button>
+        )}
+        <div className="ml-auto flex gap-2">
           <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
             {t("Cancel")}
           </Button>
@@ -202,6 +315,38 @@ function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, on
         </div>
       </div>
     </form>
+  );
+}
+
+/** Name, units × price (and the discount) on the left; what the line is worth on the right. */
+function ItemRow({ item, currency }: { item: DealItem; currency: string }) {
+  const gross = item.discount_pct > 0 ? lineTotal(item.quantity, item.unit_price, 0) : null;
+  return (
+    <>
+      <span className="min-w-0 flex-1">
+        <span className="block break-words text-sm font-medium text-foreground" data-no-translate>
+          {item.name}
+        </span>
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs tabular-nums text-muted-foreground">
+          {`${toInputNumber(item.quantity)} × ${formatMoney(item.unit_price, currency)}`}
+          {item.discount_pct > 0 && (
+            <span className="rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-semibold text-primary">
+              {`− ${toInputNumber(item.discount_pct)}%`}
+            </span>
+          )}
+        </span>
+      </span>
+      <span className="shrink-0 text-right">
+        <span className="block text-sm font-semibold tabular-nums text-foreground">
+          {formatMoney(item.line_total, currency)}
+        </span>
+        {gross !== null && (
+          <span className="block text-[11px] tabular-nums text-muted-foreground line-through">
+            {formatMoney(gross, currency)}
+          </span>
+        )}
+      </span>
+    </>
   );
 }
 
@@ -218,7 +363,7 @@ interface DealItemsSectionProps {
  * "Produtos e serviços" of a deal: the lines (name, price, units, discount) and
  * their total. The deal value is the sum of the lines and is computed by the
  * database; this section only reads and edits the lines. Whoever can edit the
- * deal edits the lines; everyone else only reads.
+ * deal edits the lines (tap a line to edit or remove it); everyone else only reads.
  */
 export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealItemsSectionProps) {
   const { t } = useLanguage();
@@ -308,7 +453,8 @@ export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealI
   }
 
   async function remove(item: DealItem) {
-    await run(() => removeDealItem(supabase, item.id), "Item removed");
+    const ok = await run(() => removeDealItem(supabase, item.id), "Item removed");
+    if (ok) setEditingId(null);
   }
 
   const total = items ? itemsTotal(items).total : 0;
@@ -316,11 +462,21 @@ export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealI
   return (
     <section aria-labelledby={headingId}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 id={headingId} className={HEADING + " mb-0"}>
+        <h3 id={headingId} className={cn(HEADING, "flex items-center gap-2")}>
           {t("Products and services")}
+          {items && items.length > 0 && (
+            <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold tabular-nums">{items.length}</span>
+          )}
         </h3>
         {canEdit && !adding && items && (
-          <Button type="button" size="xs" variant="ghost" onClick={() => void openAdd()} disabled={busy}>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="text-primary hover:text-primary"
+            onClick={() => void openAdd()}
+            disabled={busy}
+          >
             <Plus />
             {t("Add item")}
           </Button>
@@ -343,70 +499,63 @@ export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealI
       )}
 
       {items && items.length === 0 && !adding && (
-        <p className="text-sm text-muted-foreground">
-          {canEdit
-            ? t("No products or services in this deal yet. The deal value is typed by hand until you add one.")
-            : t("No products or services in this deal.")}
-        </p>
+        <div className="flex items-start gap-3 rounded-xl border border-dashed border-border p-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Package className="size-4" />
+          </span>
+          <p className="text-sm leading-snug text-muted-foreground">
+            {canEdit
+              ? t("No products or services in this deal yet. The deal value is typed by hand until you add one.")
+              : t("No products or services in this deal.")}
+          </p>
+        </div>
       )}
 
       {items && items.length > 0 && (
-        <ul className="divide-y divide-border rounded-xl border border-border bg-card">
-          {items.map((item) =>
-            editingId === item.id ? (
-              <li key={item.id} className="p-2">
-                <ItemForm
-                  initial={item}
-                  currency={currency}
-                  busy={busy}
-                  submitLabel={t("Save item")}
-                  onSubmit={(values) => save(item, values)}
-                  onCancel={() => setEditingId(null)}
-                />
-              </li>
-            ) : (
-              <li key={item.id} className="flex items-start gap-2 p-3">
-                <div className="min-w-0 flex-1">
-                  <p className="break-words text-sm font-medium text-foreground" data-no-translate>{item.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {`${toInputNumber(item.quantity)} × ${formatMoney(item.unit_price, currency)}`}
-                    {item.discount_pct > 0 ? ` − ${toInputNumber(item.discount_pct)}%` : ""}
-                  </p>
-                </div>
-                <p className="shrink-0 text-sm font-semibold text-foreground">{formatMoney(item.line_total, currency)}</p>
-                {canEdit && (
-                  <div className="flex shrink-0">
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`${t("Edit item")}: ${item.name}`}
-                      title={t("Edit item")}
-                      disabled={busy}
-                      onClick={() => {
-                        setAdding(false);
-                        setEditingId(item.id);
-                      }}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`${t("Remove item")}: ${item.name}`}
-                      title={t("Remove item")}
-                      disabled={busy}
-                      onClick={() => void remove(item)}
-                    >
-                      <Trash2 />
-                    </Button>
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <ul className="divide-y divide-border">
+            {items.map((item) => (
+              <li key={item.id}>
+                {editingId === item.id ? (
+                  <ItemForm
+                    initial={item}
+                    currency={currency}
+                    busy={busy}
+                    submitLabel={t("Save item")}
+                    onSubmit={(values) => save(item, values)}
+                    onCancel={() => setEditingId(null)}
+                    onRemove={() => void remove(item)}
+                  />
+                ) : canEdit ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setAdding(false);
+                      setEditingId(item.id);
+                    }}
+                    className="group flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 disabled:opacity-60"
+                  >
+                    <span className="sr-only">{t("Edit item")}: </span>
+                    <ItemRow item={item} currency={currency} />
+                    <ChevronRight
+                      aria-hidden
+                      className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground"
+                    />
+                  </button>
+                ) : (
+                  <div className="flex items-start gap-3 px-3 py-2.5">
+                    <ItemRow item={item} currency={currency} />
                   </div>
                 )}
               </li>
-            ),
-          )}
-        </ul>
+            ))}
+          </ul>
+          <div className="flex items-baseline justify-between gap-3 border-t border-border bg-muted/30 px-3 py-2.5">
+            <span className="text-sm text-muted-foreground">{t("Items total")}</span>
+            <span className="text-base font-semibold tabular-nums text-foreground">{formatMoney(total, currency)}</span>
+          </div>
+        </div>
       )}
 
       {adding && (
@@ -419,16 +568,6 @@ export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealI
             onSubmit={add}
             onCancel={() => setAdding(false)}
           />
-        </div>
-      )}
-
-      {items && items.length > 0 && (
-        <div className="mt-2 flex items-center justify-between gap-2 px-1">
-          <p className="text-xs text-muted-foreground">{t("The deal value is the sum of the items.")}</p>
-          <p className="text-sm font-semibold text-foreground">
-            <span className="mr-2 text-xs font-normal text-muted-foreground">{t("Items total")}</span>
-            {formatMoney(total, currency)}
-          </p>
         </div>
       )}
     </section>
