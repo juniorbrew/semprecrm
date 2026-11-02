@@ -292,6 +292,20 @@ describe('parseDealSummary', () => {
     });
   });
 
+  it('a deal with product lines never gets a value proposal (the other proposals stay)', () => {
+    const withItems = { ...ctx, deal: { ...DEAL, has_items: true } };
+    const r = parseDealSummary(json(full), withItems)!;
+    expect(r.updates.value).toBeUndefined();
+    expect(r.updates.stageId).toBe('s-prop');
+    expect(parseDealSummary(json(full), ctx)!.updates.value).toBe(2400);
+  });
+
+  it('the prompt of a deal with lines says the value is calculated, a plain deal does not', () => {
+    const base = { accountName: 'X', contactName: null, instructions: null, messages: [], stages: STAGES, today: TODAY, tasks: false };
+    expect(buildDealSummaryPrompt({ ...base, deal: { ...DEAL, has_items: true } }).system).toContain('calculado pelos itens');
+    expect(buildDealSummaryPrompt({ ...base, deal: DEAL }).system).not.toContain('calculado pelos itens');
+  });
+
   it('tolerates a code fence and chatter around the JSON', () => {
     const r = parseDealSummary('Claro!\n```json\n' + json(full) + '\n```\nPronto.', ctx);
     expect(r?.updates.stageId).toBe('s-prop');

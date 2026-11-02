@@ -179,6 +179,20 @@ describe('applying', () => {
     expect(h.db.table('conversation_events')).toHaveLength(0);
   });
 
+  it('a deal with product lines refuses a value (it is calculated by the items) and writes nothing; other items still apply', async () => {
+    h.db.seed('deal_items', [{ id: 'i1', deal_id: DEAL, account_id: 'acc-a' }]);
+    expect(await results(await send({ value: 5000 }))).toEqual({ value: 'invalid' });
+    expect(dealRow()).toMatchObject({ value: 1000, updated_at: UPDATED });
+    const both = await results(await send({ value: 5000, expected_close_date: inDays(10) }));
+    expect(both).toEqual({ value: 'invalid', closeDate: 'applied' });
+    expect(dealRow().value).toBe(1000);
+  });
+
+  it('a deal whose lines belong to another deal still takes a value', async () => {
+    h.db.seed('deal_items', [{ id: 'i1', deal_id: 'someone-else', account_id: 'acc-a' }]);
+    expect(await results(await send({ value: 5000 }))).toEqual({ value: 'applied' });
+  });
+
   it('moves the stage like the panel does: UPDATE stage_id + conversation event', async () => {
     expect(await results(await send({ stage_id: 's-prop' }))).toEqual({ stageId: 'applied' });
     expect(dealRow().stage_id).toBe('s-prop');

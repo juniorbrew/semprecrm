@@ -32,6 +32,7 @@ import type { AccountContext } from '@/lib/auth/account';
 import { getEntitlements } from '@/lib/auth/account';
 import { validateDealFields, type DealFieldDraft, type DealFieldKey } from '@/lib/pipelines/deal-fields';
 import { moveDealToStage } from '@/lib/pipelines/move-deal';
+import { countDealItems } from '@/lib/products/data';
 import { createTask, listTaskStatuses } from '@/lib/tasks';
 import type { PipelineStage } from '@/types';
 import {
@@ -66,6 +67,8 @@ export interface DealRow {
   contact_id: string;
   status: string;
   updated_at: string | null;
+  /** The deal has product/service lines: deals.value is their sum and is not written here. */
+  has_items?: boolean;
 }
 
 /** What the card showed when the summary was generated. */
@@ -150,7 +153,8 @@ export async function loadDeal(ctx: AccountContext, contactId: string, dealId: s
     .eq('contact_id', contactId)
     .maybeSingle();
   if (error) throw new Error(`deal read failed: ${error.message}`);
-  return (data as DealRow | null) ?? null;
+  if (!data) return null;
+  return { ...(data as DealRow), has_items: (await countDealItems(ctx.supabase, dealId)) > 0 };
 }
 
 export async function loadPipelineStages(ctx: AccountContext, pipelineId: string): Promise<PipelineStage[]> {
@@ -204,7 +208,10 @@ export async function applyDealUpdates(
       columnKeys.push(key);
     }
   };
-  if (updates.value !== undefined) {
+  if (updates.value !== undefined && deal.has_items) {
+    // Calculated by the items (migration 104): refuse without writing.
+    results.value = 'invalid';
+  } else if (updates.value !== undefined) {
     const value = updates.value;
     addColumn('value', validField('value', { value: String(value), expected_close_date: '', notes: '' }), staleValue, () => {
       patch.value = value;

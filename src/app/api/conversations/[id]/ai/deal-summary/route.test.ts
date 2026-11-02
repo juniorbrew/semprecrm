@@ -229,6 +229,17 @@ describe('plan modules', () => {
 });
 
 describe('model output is validated before it reaches the browser', () => {
+  it('a deal with product lines tells the model the value is calculated and never returns a value proposal', async () => {
+    h.db.seed('deal_items', [{ id: 'i1', deal_id: 'd1', account_id: 'acc-a' }]);
+    const res = await call();
+    expect(res.status).toBe(200);
+    const { system } = h.runModelCall.mock.calls[0][0];
+    expect(system).toContain('calculado pelos itens');
+    const body = await res.json();
+    expect(body.updates.value).toBeNull();
+    expect(body.updates.stage_id).toBe('s-prop');
+  });
+
   it('returns validated proposals plus the summary note', async () => {
     const body = await (await call()).json();
     expect(body.updates).toMatchObject({ stage_id: 's-prop', value: 2400, task: { title: 'Enviar proposta', due_date: null } });
