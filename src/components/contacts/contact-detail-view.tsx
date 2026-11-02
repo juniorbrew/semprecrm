@@ -602,6 +602,19 @@ export function ContactDetailView({
                       ? t('Open conversation')
                       : t('Start conversation')}
                   </Button>
+                  {/* Phone only: the number is stored with the country code (WhatsApp id). */}
+                  {contact.phone && !contact.anonymized_at && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      nativeButton={false}
+                      render={<a href={`tel:+${contact.phone.replace(/\D/g, '')}`} />}
+                      className="border-border text-foreground hover:bg-muted md:hidden"
+                    >
+                      <Phone className="size-3.5" />
+                      {t('Call')}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"

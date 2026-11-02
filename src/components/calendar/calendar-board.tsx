@@ -77,7 +77,8 @@ function readStoredView(): CalendarView {
     const raw = localStorage.getItem(VIEW_STORAGE_KEY);
     if (isCalendarView(raw)) return raw;
   } catch {}
-  return "week";
+  // Seven columns are unreadable on a phone: open on the day there.
+  return window.matchMedia?.("(max-width: 767px)").matches ? "day" : "week";
 }
 
 /**
@@ -304,7 +305,7 @@ export function CalendarBoard() {
             {visibleEvents.length}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           <DensityToggle density={density} onToggle={toggleDensity} label={copy.compact} />
           <GatedButton
             canAct={canWrite}
