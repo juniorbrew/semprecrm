@@ -14,7 +14,6 @@ export const DICT_PRODUCTS: Record<string, string> = {
   'No products or services in this deal yet. The deal value is typed by hand until you add one.':
     'Este negócio ainda não tem produtos nem serviços. O valor é digitado à mão até você adicionar um.',
   'No products or services in this deal.': 'Este negócio não tem produtos nem serviços.',
-  'The deal value is the sum of the items.': 'O valor do negócio é a soma dos itens.',
   'Items total': 'Total dos itens',
   'Line total': 'Total do item',
   'calculated from the items': 'calculado pelos itens',
@@ -25,6 +24,8 @@ export const DICT_PRODUCTS: Record<string, string> = {
   'Number of units': 'Quantidade de unidades',
   'Discount in percent': 'Desconto em porcentagem',
   'Use a comma for decimals, like 1,5': 'Use vírgula para decimais, ex.: 1,5',
+  'One unit less': 'Uma unidade a menos',
+  'One unit more': 'Uma unidade a mais',
   'A deal can have at most 200 items': 'Um negócio pode ter no máximo 200 itens',
 
   // ---- Validation (items and catalog) ----
