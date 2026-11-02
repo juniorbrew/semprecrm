@@ -53,6 +53,7 @@ import {
   User,
   X,
 } from "lucide-react";
+import { formatPhoneDisplay } from "@/lib/whatsapp/phone-utils";
 
 interface DealDetailsProps {
   deal: Deal;
@@ -473,7 +474,7 @@ export function DealDetails({
                     className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                   >
                     <Phone className="h-3 w-3" />
-                    <span className="truncate">{contact.phone}</span>
+                    <span className="truncate">{formatPhoneDisplay(contact.phone)}</span>
                   </a>
                 )}
                 {contact?.company && (

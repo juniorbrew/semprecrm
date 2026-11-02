@@ -59,6 +59,7 @@ import {
 } from 'lucide-react';
 import { ContactPrivacySection } from './contact-privacy-section';
 import { ContactCompanies } from '@/components/companies/contact-companies';
+import { formatPhoneDisplay } from '@/lib/whatsapp/phone-utils';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -522,7 +523,7 @@ export function ContactDetailView({
                 </Avatar>
                 <div className="flex-1 min-w-0">
                   <SheetTitle className="text-popover-foreground text-base font-semibold leading-tight truncate">
-                    {contact.name || contact.phone}
+                    {contact.name || formatPhoneDisplay(contact.phone)}
                   </SheetTitle>
                   <SheetDescription className="sr-only">
                     {t('Contact details')}
@@ -564,7 +565,7 @@ export function ContactDetailView({
                       className="flex max-w-full items-center gap-1.5 rounded-sm hover:text-primary transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <Phone className="size-3 shrink-0" />
-                      <span className="font-mono truncate">{contact.phone}</span>
+                      <span className="truncate tabular-nums">{formatPhoneDisplay(contact.phone)}</span>
                       {copiedPhone ? (
                         <Check className="size-3 text-primary shrink-0" />
                       ) : (

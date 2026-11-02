@@ -7,11 +7,11 @@ import {
   useEffect,
   useMemo,
   useState,
-  useSyncExternalStore,
   type ReactElement,
   type ReactNode,
 } from "react"
 import { useRouter } from "next/navigation"
+import { useMediaQuery } from "@/hooks/use-media-query"
 import { isStubTemplate } from "@/lib/whatsapp/template-row-guard"
 import { toast } from "sonner"
 import {
@@ -1119,24 +1119,6 @@ function formatHours(hours: number, pt: boolean): string {
 
 type Selection = { kind: "trigger" } | { kind: "step"; cid: string } | null
 
-function useMediaQuery(query: string): boolean {
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const mql = window.matchMedia(query)
-      mql.addEventListener("change", onChange)
-      return () => mql.removeEventListener("change", onChange)
-    },
-    [query],
-  )
-  return useSyncExternalStore(
-    subscribe,
-    () => window.matchMedia(query).matches,
-    // Server snapshot: assume the docked layout; the client corrects
-    // it on hydration (this subtree only mounts client-side anyway).
-    () => true,
-  )
-}
-
 // ------------------------------------------------------------
 // Main builder component
 // ------------------------------------------------------------
@@ -1156,7 +1138,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   // panel is never blank on first paint (docked layout only — see the
   // effect below for the narrow/sheet case).
   const [selection, setSelection] = useState<Selection>({ kind: "trigger" })
-  const isWide = useMediaQuery("(min-width: 1024px)")
+  const isWide = useMediaQuery("(min-width: 1024px)", true)
 
   // Below lg the inspector is a slide-over sheet; never auto-open it
   // (on mount, or when the viewport shrinks) — wait for a tap.

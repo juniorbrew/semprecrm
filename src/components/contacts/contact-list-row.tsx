@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ContactAvatar } from '@/components/inbox/contact-avatar';
 import { contactLabel } from '@/lib/contacts/label';
+import { formatPhoneDisplay } from '@/lib/whatsapp/phone-utils';
 
 /** Row density of the contacts list, per user on this device. */
 export type ContactsDensity = 'comfortable' | 'compact';
@@ -38,7 +39,7 @@ export function writeContactsDensity(userId: string, density: ContactsDensity): 
 
 /** "Empresa · telefone" — the one meta line under the name. */
 export function contactMetaLine(contact: Pick<Contact, 'company' | 'phone'>): string {
-  return [contact.company?.trim(), contact.phone].filter(Boolean).join(' · ');
+  return [contact.company?.trim(), formatPhoneDisplay(contact.phone)].filter(Boolean).join(' · ');
 }
 
 export const CONTACTS_COPY = {

@@ -69,6 +69,7 @@ import { PanelActivity } from "./panel-activity";
 import { PanelSituation } from "./panel-situation";
 import { PanelHistory, PanelPreviousConversations } from "./panel-history";
 import { contactLabel } from "@/lib/contacts/label";
+import { formatPhoneDisplay } from "@/lib/whatsapp/phone-utils";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -775,7 +776,7 @@ export function ContactSidebar({
             >
               <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="flex-1 truncate text-left tabular-nums text-foreground">
-                {contact.phone}
+                {formatPhoneDisplay(contact.phone)}
               </span>
               {copied ? (
                 <Check className="h-3 w-3 text-primary" />

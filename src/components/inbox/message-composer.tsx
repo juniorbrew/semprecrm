@@ -9,6 +9,7 @@ import {
   KeyboardEvent,
 } from "react";
 import Link from "next/link";
+import { TOUCH_KEYBOARD_QUERY, useMediaQuery } from "@/hooks/use-media-query";
 import {
   Send,
   LayoutTemplate,
@@ -196,6 +197,8 @@ const COMPOSER_COPY: Record<
     replyPlaceholder: string;
     /** QR-channel threads: same hint without the "/" shortcut. */
     replyPlaceholderNoTemplates: string;
+    /** Phone keyboards: Enter makes a new line there, so no Shift+Enter hint. */
+    replyPlaceholderTouch: string;
     notePlaceholder: string;
     expiredPlaceholder: string;
     /** Instagram / Messenger: the window closed and there are no templates to fall back on. */
@@ -261,6 +264,7 @@ const COMPOSER_COPY: Record<
     note: "Nota interna",
     replyPlaceholder: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para respostas rápidas",
     replyPlaceholderNoTemplates: "Digite uma mensagem… Shift+Enter para nova linha. Digite / para respostas rápidas",
+    replyPlaceholderTouch: "Digite uma mensagem… Digite / para respostas rápidas",
     notePlaceholder: "Escreva uma nota para a equipe — o cliente não vê",
     expiredPlaceholder: "Janela de 24 h encerrada — envie um modelo",
     expiredPlaceholderNoTemplates: "Janela de 24 h encerrada — aguarde o cliente escrever de novo",
@@ -329,6 +333,7 @@ const COMPOSER_COPY: Record<
     note: "Private note",
     replyPlaceholder: "Type a message… Shift+Enter for a new line. Type / for quick replies",
     replyPlaceholderNoTemplates: "Type a message… Shift+Enter for a new line. Type / for quick replies",
+    replyPlaceholderTouch: "Type a message… Type / for quick replies",
     notePlaceholder: "Write a note for your team — the customer won't see it",
     expiredPlaceholder: "24-hour window closed — send a template",
     expiredPlaceholderNoTemplates: "24-hour window closed — wait for the customer to write again",
@@ -428,6 +433,9 @@ export function MessageComposer({
 }: MessageComposerProps) {
   const { language, t } = useLanguage();
   const copy = COMPOSER_COPY[language] ?? COMPOSER_COPY["pt-BR"];
+  // Phone keyboards have no Shift: there Enter is a new line and the send
+  // button sends (as in WhatsApp itself).
+  const touchKeyboard = useMediaQuery(TOUCH_KEYBOARD_QUERY);
   const [text, setText] = useState("");
   // Latest text for async callbacks (the AI suggestion decides between
   // filling the box and asking replace/append when it arrives).
@@ -876,7 +884,7 @@ ${restoreDraft.text}` : restoreDraft.text));
           closeQuick();
         }
       }
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !touchKeyboard) {
         e.preventDefault();
         handleSend();
         return;
@@ -901,6 +909,7 @@ ${restoreDraft.text}` : restoreDraft.text));
       handleSend,
       isNote,
       wrapSelection,
+      touchKeyboard,
     ]
   );
 
@@ -1080,9 +1089,11 @@ ${restoreDraft.text}` : restoreDraft.text));
         ? templatesEnabled
           ? copy.expiredPlaceholder
           : copy.expiredPlaceholderNoTemplates
-        : templatesEnabled
-          ? copy.replyPlaceholder
-          : copy.replyPlaceholderNoTemplates;
+        : touchKeyboard
+          ? copy.replyPlaceholderTouch
+          : templatesEnabled
+            ? copy.replyPlaceholder
+            : copy.replyPlaceholderNoTemplates;
 
   return (
     // Composer sits on the thread background as one bordered field with
