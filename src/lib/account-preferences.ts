@@ -12,6 +12,7 @@ import type {
   AccountPreferences,
   BusinessHours,
   BusinessHoursRange,
+  UnassignedPushTo,
   Weekday,
 } from '@/types'
 
@@ -43,11 +44,16 @@ export const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
   auto_assign_enabled: false,
   require_mfa_admins: false,
   sla_count_only_business_hours: true,
+  unassigned_push_to: 'available',
+  unassigned_alert_minutes: 5,
 }
+
+export const UNASSIGNED_PUSH_TO: UnassignedPushTo[] = ['available', 'managers', 'none']
 
 /** Bounds the settings form and the parser agree on. */
 export const PREFERENCE_LIMITS = {
   inbox_sla_minutes: { min: 1, max: 1440 },
+  unassigned_alert_minutes: { min: 1, max: 1440 },
   cooling_hours: { min: 1, max: 720 },
   opt_out_keyword_max_length: 30,
   opt_out_keywords_max: 20,
@@ -187,6 +193,15 @@ export function parseAccountPreferences(raw: unknown): AccountPreferences {
       obj.sla_count_only_business_hours,
       d.sla_count_only_business_hours,
     ),
+    unassigned_push_to: UNASSIGNED_PUSH_TO.includes(obj.unassigned_push_to as UnassignedPushTo)
+      ? (obj.unassigned_push_to as UnassignedPushTo)
+      : d.unassigned_push_to,
+    unassigned_alert_minutes:
+      positiveNumber(
+        obj.unassigned_alert_minutes,
+        PREFERENCE_LIMITS.unassigned_alert_minutes.min,
+        PREFERENCE_LIMITS.unassigned_alert_minutes.max,
+      ) ?? d.unassigned_alert_minutes,
   }
 }
 
@@ -218,5 +233,8 @@ export function mergeAccountPreferences(
     base.require_mfa_admins = parsed.require_mfa_admins
   if (patch.sla_count_only_business_hours !== undefined)
     base.sla_count_only_business_hours = parsed.sla_count_only_business_hours
+  if (patch.unassigned_push_to !== undefined) base.unassigned_push_to = parsed.unassigned_push_to
+  if (patch.unassigned_alert_minutes !== undefined)
+    base.unassigned_alert_minutes = parsed.unassigned_alert_minutes
   return base
 }

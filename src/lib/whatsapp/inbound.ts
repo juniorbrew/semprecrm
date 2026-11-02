@@ -1195,6 +1195,7 @@ export async function ingestInboundMessage(
       assigneeUserId: (conversation.assigned_agent_id as string | null) ?? null,
       contactName: (contact.name as string | null) || senderPhone,
       preview: previewText(contentText, input.type),
+      unassignedPushTo: prefs.unassigned_push_to,
     })
   }
 

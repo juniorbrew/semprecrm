@@ -7,6 +7,8 @@
 // enable a browser. The first four kinds are the four triggers of the
 // spec; `chat_message` is the internal team chat (migration 038) and
 // `calendar_reminder` the agenda's event reminders (migration 040).
+// The `manager_*` kinds (team monitoring, owners/admins) are the
+// exception: a missing key means OFF (migration 105).
 // ============================================================
 
 export const PUSH_EVENT_KINDS = [
@@ -18,6 +20,10 @@ export const PUSH_EVENT_KINDS = [
   'calendar_reminder',
   'sla_breached',
   'snooze_woke',
+  'manager_waiting',
+  'manager_unassigned',
+  'manager_sla_team',
+  'manager_all_messages',
 ] as const;
 export type PushEventKind = (typeof PUSH_EVENT_KINDS)[number];
 
@@ -32,7 +38,24 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   calendar_reminder: true,
   sla_breached: true,
   snooze_woke: true,
+  // Team monitoring (owners/admins only): opt-in, they can be noisy.
+  manager_waiting: false,
+  manager_unassigned: false,
+  manager_sla_team: false,
+  manager_all_messages: false,
 };
+
+/** Kinds only owners and admins receive (Settings → Notificações, "Team monitoring"). */
+export const MANAGER_EVENT_KINDS = [
+  'manager_waiting',
+  'manager_unassigned',
+  'manager_sla_team',
+  'manager_all_messages',
+] as const satisfies readonly PushEventKind[];
+
+export function isManagerEventKind(kind: PushEventKind): boolean {
+  return (MANAGER_EVENT_KINDS as readonly string[]).includes(kind);
+}
 
 /** English labels — go through `t()` in the UI. */
 export const PUSH_EVENT_LABELS: Record<PushEventKind, { title: string; description: string }> = {
@@ -68,6 +91,23 @@ export const PUSH_EVENT_LABELS: Record<PushEventKind, { title: string; descripti
     title: 'Snoozed conversation is back',
     description: 'When a snoozed conversation assigned to you comes back (or one you snoozed, if nobody is assigned).',
   },
+  manager_waiting: {
+    title: 'Customer waiting for a reply',
+    description:
+      "When any customer has been waiting longer than the reply target set in Settings → Service, in anyone's conversation.",
+  },
+  manager_unassigned: {
+    title: 'Conversation with nobody assigned',
+    description: 'When a customer has been waiting without anyone taking the conversation for the minutes set in Settings → Service.',
+  },
+  manager_sla_team: {
+    title: 'Team deadline missed',
+    description: 'When a conversation assigned to someone on the team misses its deadline.',
+  },
+  manager_all_messages: {
+    title: 'Copy of every customer message',
+    description: 'Every message a customer sends, in any conversation. Can be a lot on a busy team.',
+  },
 };
 
 export function isPushEventKind(value: unknown): value is PushEventKind {
@@ -85,7 +125,7 @@ export function parseNotificationPrefs(raw: unknown): NotificationPrefs {
   return out;
 }
 
-/** Whether `userId`'s prefs allow `kind`. Missing row / key → allowed. */
+/** Whether `userId`'s prefs allow `kind`. Missing row / key → the kind's default. */
 export function prefAllows(raw: unknown, kind: PushEventKind): boolean {
   return parseNotificationPrefs(raw)[kind];
 }

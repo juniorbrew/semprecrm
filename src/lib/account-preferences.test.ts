@@ -152,3 +152,27 @@ describe('sla_count_only_business_hours (migration 072)', () => {
     })
   })
 })
+
+describe('unassigned conversations (migration 105)', () => {
+  it('defaults to every available agent and a 5-minute manager alert', () => {
+    const p = parseAccountPreferences({})
+    expect(p.unassigned_push_to).toBe('available')
+    expect(p.unassigned_alert_minutes).toBe(5)
+  })
+
+  it('keeps valid values and falls back on bad ones', () => {
+    expect(parseAccountPreferences({ unassigned_push_to: 'managers', unassigned_alert_minutes: 12 })).toMatchObject({
+      unassigned_push_to: 'managers',
+      unassigned_alert_minutes: 12,
+    })
+    expect(parseAccountPreferences({ unassigned_push_to: 'everyone', unassigned_alert_minutes: 0 })).toMatchObject({
+      unassigned_push_to: 'available',
+      unassigned_alert_minutes: 5,
+    })
+  })
+
+  it('the save merge writes only what was sent, validated', () => {
+    const merged = mergeAccountPreferences({ cooling_hours: 48 }, { unassigned_push_to: 'none', unassigned_alert_minutes: 99999 })
+    expect(merged).toEqual({ cooling_hours: 48, unassigned_push_to: 'none', unassigned_alert_minutes: 5 })
+  })
+})

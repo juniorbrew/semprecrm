@@ -22,10 +22,14 @@
 //                                     SLA target missed, migration 072
 //   (j) notifySnoozeWoke            — /api/inbox/snooze/cron
 //                                     snoozed conversation woke, migration 079
+//   (k) notifyManagerAlert          — /api/inbox/snooze/cron (same tick)
+//                                     customer waiting / nobody assigned,
+//                                     owners+admins who opted in, migration 105
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import type { UnassignedPushTo } from '@/types'
 import { eventHref } from '@/lib/calendar/links'
 import { asChatAttachment, attachmentPreview } from '@/lib/chat/attachments'
 import { normalizeTransferReason } from '@/lib/conversations/transfer-reason'
@@ -75,8 +79,13 @@ export function inboundPushBody(preview: string): string {
 }
 
 const AGENT_PLUS = ['owner', 'admin', 'agent'] as const
+const MANAGERS = ['owner', 'admin'] as const
 
-interface ProfileLite {
+function isManager(p: ProfileLite): boolean {
+  return (MANAGERS as readonly string[]).includes(p.account_role)
+}
+
+export interface ProfileLite {
   user_id: string
   account_id: string
   account_role: string
@@ -137,27 +146,52 @@ export interface InboundMessageNotice {
   contactName: string
   /** Message text or a `[image]`-style placeholder. */
   preview: string
+  /** `accounts.preferences.unassigned_push_to`; defaults to 'available'. */
+  unassignedPushTo?: UnassignedPushTo
 }
 
 /**
- * Assigned → the assignee. Unassigned → every available agent+ member.
- * Users focused on the conversation (POST /api/push/seen) are skipped.
+ * Who gets an inbound-message push, before the focus filter:
+ *   assigned   → the assignee;
+ *   unassigned → per the account setting: every available agent+
+ *                ('available', the default), owners/admins ('managers')
+ *                or nobody ('none');
+ * plus, either way, the owners/admins who turned on
+ * `manager_all_messages`. Each group honours its own preference.
  */
+export function inboundRecipients(
+  profiles: readonly ProfileLite[],
+  assigneeUserId: string | null,
+  unassignedPushTo: UnassignedPushTo = 'available',
+): string[] {
+  const base = assigneeUserId
+    ? profiles.filter((p) => p.user_id === assigneeUserId)
+    : profiles.filter((p) =>
+        unassignedPushTo === 'managers'
+          ? isManager(p)
+          : unassignedPushTo === 'available'
+            ? (AGENT_PLUS as readonly string[]).includes(p.account_role) &&
+              (p.availability ?? 'available') === 'available'
+            : false,
+      )
+  const copies = profiles.filter(isManager)
+  return Array.from(
+    new Set([...allowed(base, 'inbound_message'), ...allowed(copies, 'manager_all_messages')]),
+  )
+}
+
+/** Users focused on the conversation (POST /api/push/seen) are skipped. */
 export async function notifyInboundMessage(
   admin: SupabaseClient,
   notice: InboundMessageNotice,
 ): Promise<SendPushResult> {
   try {
-    const profiles = notice.assigneeUserId
-      ? await loadProfiles(admin, notice.accountId, [notice.assigneeUserId])
-      : (await loadProfiles(admin, notice.accountId, null)).filter(
-          (p) =>
-            (AGENT_PLUS as readonly string[]).includes(p.account_role) &&
-            (p.availability ?? 'available') === 'available',
-        )
-    const recipients = allowed(profiles, 'inbound_message').filter(
-      (uid) => !isFocusedOn(uid, notice.conversationId),
-    )
+    const profiles = await loadProfiles(admin, notice.accountId, null)
+    const recipients = inboundRecipients(
+      profiles,
+      notice.assigneeUserId,
+      notice.unassignedPushTo,
+    ).filter((uid) => !isFocusedOn(uid, notice.conversationId))
     if (recipients.length === 0) return { ...NOOP }
     return await sendPushToUsers(admin, recipients, {
       title: notice.contactName || tr('New message'),
@@ -663,7 +697,8 @@ export interface SlaBreachNotice {
 }
 
 /**
- * Assigned → the assignee. Unassigned → the account's owners and admins.
+ * Assigned → the assignee, plus the owners/admins who turned on
+ * `manager_sla_team`. Unassigned → the account's owners and admins.
  * One push per breach event (the cron only hands over events it just
  * created, so a conversation is never notified twice for the same target).
  */
@@ -672,12 +707,18 @@ export async function notifySlaBreached(
   notice: SlaBreachNotice,
 ): Promise<SendPushResult> {
   try {
-    const profiles = notice.assigneeUserId
-      ? await loadProfiles(admin, notice.accountId, [notice.assigneeUserId])
-      : (await loadProfiles(admin, notice.accountId, null)).filter((p) =>
-          ['owner', 'admin'].includes(p.account_role),
+    const profiles = await loadProfiles(admin, notice.accountId, null)
+    const recipients = notice.assigneeUserId
+      ? Array.from(
+          new Set([
+            ...allowed(
+              profiles.filter((p) => p.user_id === notice.assigneeUserId),
+              'sla_breached',
+            ),
+            ...allowed(profiles.filter(isManager), 'manager_sla_team'),
+          ]),
         )
-    const recipients = allowed(profiles, 'sla_breached')
+      : allowed(profiles.filter(isManager), 'sla_breached')
     if (recipients.length === 0) return { ...NOOP }
 
     const { data: conv } = await admin
@@ -787,6 +828,67 @@ export async function notifySnoozeWoke(
     })
   } catch (err) {
     console.error('[push] notifySnoozeWoke threw:', err instanceof Error ? err.message : err)
+    return { ...NOOP }
+  }
+}
+
+// ------------------------------------------------------------
+// (k) Team monitoring: customer waiting / nobody assigned (cron)
+// ------------------------------------------------------------
+
+export interface ManagerAlertNotice {
+  accountId: string
+  conversationId: string
+  contactId: string | null
+  assigneeUserId: string | null
+  kind: 'waiting' | 'unassigned'
+  /** First unanswered customer message of this wait. */
+  since: Date
+  now: Date
+}
+
+/**
+ * The owners/admins who turned on `manager_waiting` / `manager_unassigned`.
+ * The cron claims each (conversation, kind, wait) once (migration 105), so
+ * a wait is pushed once, however long it lasts.
+ */
+export async function notifyManagerAlert(
+  admin: SupabaseClient,
+  notice: ManagerAlertNotice,
+): Promise<SendPushResult> {
+  try {
+    const kind: PushEventKind = notice.kind === 'waiting' ? 'manager_waiting' : 'manager_unassigned'
+    const profiles = await loadProfiles(admin, notice.accountId, null)
+    const recipients = allowed(profiles.filter(isManager), kind).filter(
+      (uid) => !isFocusedOn(uid, notice.conversationId),
+    )
+    if (recipients.length === 0) return { ...NOOP }
+
+    let who = ''
+    if (notice.contactId) {
+      const { data: contact } = await admin
+        .from('contacts')
+        .select('name, phone')
+        .eq('id', notice.contactId)
+        .eq('account_id', notice.accountId)
+        .maybeSingle()
+      const c = contact as { name?: string | null; phone?: string | null } | null
+      who = pushLine(c?.name || c?.phone, 60)
+    }
+    const minutes = Math.max(1, Math.round((notice.now.getTime() - notice.since.getTime()) / 60_000))
+    const parts = [who || tr('Conversation'), `${minutes} min`]
+    if (notice.kind === 'waiting' && notice.assigneeUserId) {
+      const agent = await actorName(admin, notice.assigneeUserId)
+      if (agent) parts.push(agent)
+    }
+    return await sendPushToUsers(admin, recipients, {
+      title: tr(notice.kind === 'waiting' ? 'Customer waiting for a reply' : 'Nobody took this conversation'),
+      body: parts.join(' · '),
+      url: conversationUrl(notice.conversationId),
+      tag: `manager:${notice.kind}:${notice.conversationId}`,
+    })
+  } catch (err) {
+    console.error('[push] notifyManagerAlert threw:', err instanceof Error ? err.message : err)
     return { ...NOOP }
   }
 }

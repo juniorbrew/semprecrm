@@ -19,6 +19,8 @@ import {
 import {
   PUSH_EVENT_KINDS,
   PUSH_EVENT_LABELS,
+  MANAGER_EVENT_KINDS,
+  isManagerEventKind,
   parseNotificationPrefs,
   type NotificationPrefs,
   type PushEventKind,
@@ -65,10 +67,11 @@ function describeDevice(ua: string | null): { label: string; mobile: boolean } {
 export function NotificationsSettings() {
   const supabase = useMemo(() => createClient(), []);
   const { t, language } = useLanguage();
-  const { user, profile, profileLoading, refreshProfile } = useAuth();
+  const { user, profile, profileLoading, refreshProfile, canEditSettings } = useAuth();
   // The internal-chat toggle only makes sense when the module is on.
   const { ready: entitlementsReady, modules } = useEntitlements();
   const visibleKinds = PUSH_EVENT_KINDS.filter((kind) => {
+    if (isManagerEventKind(kind)) return false;
     if (!entitlementsReady) return true;
     if (kind === 'chat_message') return modules.internal_chat;
     if (kind === 'calendar_reminder') return modules.calendar;
@@ -194,6 +197,35 @@ export function NotificationsSettings() {
     } finally {
       setSavingPref(null);
     }
+  }
+
+  function kindList(kinds: readonly PushEventKind[]) {
+    return (
+      <ul className="divide-y divide-border">
+        {kinds.map((kind) => {
+          const meta = PUSH_EVENT_LABELS[kind];
+          return (
+            <li key={kind} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{t(meta.title)}</p>
+                <p className="text-xs text-muted-foreground">{t(meta.description)}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {savingPref === kind ? (
+                  <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                ) : null}
+                <Switch
+                  checked={prefs[kind]}
+                  disabled={profileLoading || savingPref !== null}
+                  onCheckedChange={(v) => togglePref(kind, !!v)}
+                  aria-label={t(meta.title)}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
   }
 
   const dateFmt = useMemo(
@@ -335,31 +367,20 @@ export function NotificationsSettings() {
           title={t('What to notify')}
           description={t('Applies to all your devices. You are never notified about a conversation you have open on screen.')}
         >
-          <ul className="divide-y divide-border">
-            {visibleKinds.map((kind) => {
-              const meta = PUSH_EVENT_LABELS[kind];
-              return (
-                <li key={kind} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{t(meta.title)}</p>
-                    <p className="text-xs text-muted-foreground">{t(meta.description)}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {savingPref === kind ? (
-                      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-                    ) : null}
-                    <Switch
-                      checked={prefs[kind]}
-                      disabled={profileLoading || savingPref !== null}
-                      onCheckedChange={(v) => togglePref(kind, !!v)}
-                      aria-label={t(meta.title)}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          {kindList(visibleKinds)}
         </SettingsGroup>
+
+        {/* Team monitoring (owners/admins) ----------------------------- */}
+        {canEditSettings ? (
+          <SettingsGroup
+            title={t('Team monitoring')}
+            description={t(
+              'Alerts about the whole team, for owners and admins. All off until you turn them on. The waiting times come from Settings → Service.',
+            )}
+          >
+            {kindList(MANAGER_EVENT_KINDS)}
+          </SettingsGroup>
+        ) : null}
       </div>
     </section>
   );

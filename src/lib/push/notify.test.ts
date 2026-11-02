@@ -11,7 +11,18 @@ vi.mock('./send', async (importOriginal) => ({ ...(await importOriginal<typeof i
 
 import { makeFakeDb } from '@/lib/ai/fake-db.test-helper'
 import { _resetFocusForTests, setConversationFocus } from './focus'
-import { assignedPushBody, chatPushBody, inboundPushBody, notifyAccountAdmins, notifySnoozeWoke, pushLine } from './notify'
+import {
+  assignedPushBody,
+  chatPushBody,
+  inboundPushBody,
+  inboundRecipients,
+  notifyAccountAdmins,
+  notifyManagerAlert,
+  notifySlaBreached,
+  notifySnoozeWoke,
+  pushLine,
+  type ProfileLite,
+} from './notify'
 
 describe('notifyAccountAdmins (security / spend notices)', () => {
   it('pushes to every owner and admin of the account, whatever their notification prefs', async () => {
@@ -140,5 +151,126 @@ describe('notifySnoozeWoke (snooze wake push)', () => {
     expect(pushLine('a\u0000b‏ c', 80)).toBe('a b c')
     expect(pushLine('x'.repeat(200), 80)).toBe('x'.repeat(79) + '…')
     expect(pushLine(null, 80)).toBe('')
+  })
+})
+
+/** User ids handed to sendPushToUsers by its first call. */
+const recipientsOfFirstSend = () => (sendSpy.mock.calls[0] as unknown as [unknown, string[]])[1]
+
+describe('inboundRecipients (who hears a customer message)', () => {
+  const p = (user_id: string, account_role: string, extra: Partial<ProfileLite> = {}): ProfileLite => ({
+    user_id,
+    account_id: 'acc',
+    account_role,
+    availability: 'available',
+    notification_prefs: {},
+    ...extra,
+  })
+  const team = [
+    p('owner', 'owner'),
+    p('admin', 'admin', { availability: 'away' }),
+    p('ana', 'agent'),
+    p('bia', 'agent', { availability: 'away' }),
+    p('vic', 'viewer'),
+  ]
+
+  it('assigned: only the assignee', () => {
+    expect(inboundRecipients(team, 'ana')).toEqual(['ana'])
+  })
+
+  it('unassigned, "available" (default): every available agent+', () => {
+    expect(inboundRecipients(team, null)).toEqual(['owner', 'ana'])
+    expect(inboundRecipients(team, null, 'available')).toEqual(['owner', 'ana'])
+  })
+
+  it('unassigned, "managers": owners and admins, whatever their availability', () => {
+    expect(inboundRecipients(team, null, 'managers')).toEqual(['owner', 'admin'])
+  })
+
+  it('unassigned, "none": nobody', () => {
+    expect(inboundRecipients(team, null, 'none')).toEqual([])
+  })
+
+  it('each person can still turn new-message pushes off', () => {
+    const muted = team.map((x) => (x.user_id === 'ana' ? { ...x, notification_prefs: { inbound_message: false } } : x))
+    expect(inboundRecipients(muted, 'ana')).toEqual([])
+    expect(inboundRecipients(muted, null)).toEqual(['owner'])
+  })
+
+  it('managers with "copy of every message" hear every conversation, once', () => {
+    const watching = team.map((x) =>
+      x.account_role === 'owner' || x.account_role === 'admin' || x.user_id === 'ana'
+        ? { ...x, notification_prefs: { manager_all_messages: true } }
+        : x,
+    )
+    // The agent's flag is ignored: the copy is a manager-only alert.
+    expect(inboundRecipients(watching, 'bia')).toEqual(['bia', 'owner', 'admin'])
+    expect(inboundRecipients(watching, null, 'none')).toEqual(['owner', 'admin'])
+    expect(inboundRecipients(watching, null, 'managers')).toEqual(['owner', 'admin'])
+  })
+})
+
+describe('notifySlaBreached (team deadline for managers)', () => {
+  const profiles = [
+    { user_id: 'owner', account_id: 'acc', account_role: 'owner', notification_prefs: { manager_sla_team: true } },
+    { user_id: 'admin', account_id: 'acc', account_role: 'admin', notification_prefs: {} },
+    { user_id: 'ana', account_id: 'acc', account_role: 'agent', notification_prefs: { manager_sla_team: true } },
+  ]
+
+  it('assigned: the assignee plus the managers who opted in', async () => {
+    sendSpy.mockClear()
+    const db = makeFakeDb({ profiles, conversations: [{ id: 'c1', account_id: 'acc' }] })
+    await notifySlaBreached(db as never, { accountId: 'acc', conversationId: 'c1', assigneeUserId: 'ana', kind: 'first_response' })
+    expect(recipientsOfFirstSend()).toEqual(['ana', 'owner'])
+  })
+
+  it('unassigned: every owner and admin, as before', async () => {
+    sendSpy.mockClear()
+    const db = makeFakeDb({ profiles, conversations: [{ id: 'c1', account_id: 'acc' }] })
+    await notifySlaBreached(db as never, { accountId: 'acc', conversationId: 'c1', assigneeUserId: null, kind: 'first_response' })
+    expect(recipientsOfFirstSend()).toEqual(['owner', 'admin'])
+  })
+})
+
+describe('notifyManagerAlert (customer waiting / nobody assigned)', () => {
+  const now = new Date('2026-11-02T15:00:00Z')
+  const since = new Date('2026-11-02T14:48:00Z')
+  const db = () =>
+    makeFakeDb({
+      profiles: [
+        { user_id: 'owner', account_id: 'acc', account_role: 'owner', full_name: 'Dona', notification_prefs: { manager_waiting: true } },
+        { user_id: 'admin', account_id: 'acc', account_role: 'admin', notification_prefs: { manager_unassigned: true } },
+        { user_id: 'ana', account_id: 'acc', account_role: 'agent', full_name: 'Ana', notification_prefs: { manager_waiting: true } },
+      ],
+      contacts: [{ id: 'k1', account_id: 'acc', name: 'Marina', phone: '5511999990000' }],
+    })
+
+  it('waiting: the opted-in managers, with who is waiting, for how long and with whom', async () => {
+    sendSpy.mockClear()
+    await notifyManagerAlert(db() as never, {
+      accountId: 'acc', conversationId: 'c1', contactId: 'k1', assigneeUserId: 'ana', kind: 'waiting', since, now,
+    })
+    const [, recipients, payload] = sendSpy.mock.calls[0] as unknown as [unknown, string[], { title: string; body: string; url: string }]
+    expect(recipients).toEqual(['owner'])
+    expect(payload.title).toBe('Cliente esperando resposta')
+    expect(payload.body).toBe('Marina · 12 min · Ana')
+    expect(payload.url).toBe('/inbox?c=c1')
+  })
+
+  it('unassigned: only the managers who turned that one on', async () => {
+    sendSpy.mockClear()
+    await notifyManagerAlert(db() as never, {
+      accountId: 'acc', conversationId: 'c1', contactId: 'k1', assigneeUserId: null, kind: 'unassigned', since, now,
+    })
+    expect(recipientsOfFirstSend()).toEqual(['admin'])
+  })
+
+  it('nobody opted in: nothing is sent', async () => {
+    sendSpy.mockClear()
+    const quiet = makeFakeDb({ profiles: [{ user_id: 'owner', account_id: 'acc', account_role: 'owner', notification_prefs: {} }] })
+    await notifyManagerAlert(quiet as never, {
+      accountId: 'acc', conversationId: 'c1', contactId: null, assigneeUserId: null, kind: 'waiting', since, now,
+    })
+    expect(sendSpy).not.toHaveBeenCalled()
   })
 })
