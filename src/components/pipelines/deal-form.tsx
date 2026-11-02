@@ -8,6 +8,7 @@ import { NOTES_LABEL } from "@/components/contacts/notes-label";
 import { CURRENCIES } from "@/lib/currency";
 import { AUDIT_ACTIONS } from "@/lib/audit";
 import { recordAudit } from "@/lib/audit-client";
+import { countDealItems } from "@/lib/products/data";
 import { getPrimaryCompany, type CompanySummary } from "@/lib/companies";
 import { DealCompanyField } from "@/components/companies/deal-company-field";
 import type { Contact, Deal, PipelineStage, Profile } from "@/types";
@@ -67,6 +68,20 @@ export function DealFormBody({
 
   const [title, setTitle] = useState(deal?.title ?? "");
   const [value, setValue] = useState(String(deal?.value ?? ""));
+  // Product lines (migration 104): the value is calculated, not typed.
+  const [hasItems, setHasItems] = useState(false);
+  useEffect(() => {
+    if (!deal?.id) return;
+    let cancelled = false;
+    countDealItems(createClient(), deal.id)
+      .then((n) => {
+        if (!cancelled) setHasItems(n > 0);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [deal?.id]);
   const [currency, setCurrency] = useState(
     deal?.currency || defaultCurrency,
   );
@@ -162,7 +177,8 @@ export function DealFormBody({
 
     const payload = {
       title: title.trim(),
-      value: parseFloat(value) || 0,
+      // With product lines the database sets the value (sum of the lines).
+      ...(hasItems ? {} : { value: parseFloat(value) || 0 }),
       currency,
       contact_id: contactId,
       company_id: company?.id ?? null,
@@ -296,17 +312,25 @@ export function DealFormBody({
 
         <div className="grid grid-cols-[1fr_110px] gap-3">
           <div className="grid gap-2">
-            <Label className="text-muted-foreground">{t("Value")}</Label>
+            <Label htmlFor="deal-value" className="text-muted-foreground">{t("Value")}</Label>
             <div className="relative">
               <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
+                id="deal-value"
                 type="number"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder="0"
+                readOnly={hasItems}
+                aria-describedby={hasItems ? "deal-value-hint" : undefined}
                 className="border-border bg-muted pl-7 text-foreground"
               />
             </div>
+            {hasItems && (
+              <p id="deal-value-hint" className="text-xs text-muted-foreground">
+                {t("calculated from the items")}
+              </p>
+            )}
           </div>
           <div className="grid gap-2">
             <Label className="text-muted-foreground">{t("Currency")}</Label>

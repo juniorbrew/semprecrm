@@ -22,8 +22,8 @@ const MAX_CENTS = hundredths(DEAL_VALUE_MAX)
  * two decimals.
  */
 export function lineTotalCents(quantity: number, unitPrice: number, discountPct: number): bigint {
-  const product = hundredths(quantity) * hundredths(unitPrice) * (10_000n - hundredths(discountPct))
-  return (product + 500_000n) / 1_000_000n
+  const product = hundredths(quantity) * hundredths(unitPrice) * (BigInt(10000) - hundredths(discountPct))
+  return (product + BigInt(500000)) / BigInt(1000000)
 }
 
 /** Line total in currency units (2 decimals). */
@@ -36,7 +36,7 @@ export function itemsTotal(lines: { quantity: number; unit_price: number; discou
   total: number
   overflow: boolean
 } {
-  const cents = lines.reduce((acc, l) => acc + lineTotalCents(l.quantity, l.unit_price, l.discount_pct), 0n)
+  const cents = lines.reduce((acc, l) => acc + lineTotalCents(l.quantity, l.unit_price, l.discount_pct), BigInt(0))
   return { total: Number(cents) / 100, overflow: cents > MAX_CENTS }
 }
 

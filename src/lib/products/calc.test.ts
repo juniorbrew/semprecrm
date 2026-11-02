@@ -19,7 +19,7 @@ describe('lineTotal', () => {
     expect(lineTotal(1.5, 33.33, 0)).toBe(50) // 49.995
     expect(lineTotal(1.01, 0.99, 50)).toBe(0.5) // 0.49995
     expect(lineTotal(0.01, 0.01, 0)).toBe(0) // 0.0001
-    expect(lineTotalCents(0.5, 0.01, 0)).toBe(1n) // 0.005 -> 0.01
+    expect(lineTotalCents(0.5, 0.01, 0)).toBe(BigInt(1)) // 0.005 -> 0.01
   })
   it('stays exact at the database ceiling (no float drift)', () => {
     expect(lineTotal(1, 9_999_999_999.99, 0)).toBe(9_999_999_999.99)

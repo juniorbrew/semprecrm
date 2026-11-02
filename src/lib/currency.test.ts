@@ -4,6 +4,7 @@ import {
   DEFAULT_CURRENCY,
   formatCurrency,
   formatCurrencyShort,
+  formatMoney,
 } from "./currency";
 
 describe("formatCurrency", () => {
@@ -61,5 +62,15 @@ describe("formatCurrencyShort", () => {
 
   it("falls back to the code prefix for unknown currencies (no throw)", () => {
     expect(formatCurrencyShort(1_000, "ZZZ")).toBe("ZZZ 1.0k");
+  });
+});
+
+describe("formatMoney", () => {
+  it("keeps the cents that formatCurrency rounds away", () => {
+    expect(formatMoney(19.9, "BRL").replace(/\s/g, " ")).toBe("R$ 19,90");
+    expect(formatCurrency(19.9, "BRL").replace(/\s/g, " ")).toBe("R$ 20");
+  });
+  it("does not throw on a malformed currency code", () => {
+    expect(formatMoney(1234.5, "United States")).toContain("1.234,50");
   });
 });

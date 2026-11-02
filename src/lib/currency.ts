@@ -83,6 +83,28 @@ export function formatCurrency(
 }
 
 /**
+ * Same as formatCurrency but always with cents ("R$ 1.500,50"): for product
+ * lines, where a price of 19,90 must not read as 20.
+ */
+export function formatMoney(value: number, currency: string = DEFAULT_CURRENCY): string {
+  const code = (currency || DEFAULT_CURRENCY).trim();
+  const amount = Number(value) || 0;
+  try {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: code,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${code} ${new Intl.NumberFormat("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount)}`;
+  }
+}
+
+/**
  * Compact currency for tight spaces (donut center, legend rows):
  * "$1.2M" / "€34.5k" / "₹900". Uses the currency's symbol from
  * CURRENCIES, falling back to the code when we don't carry a symbol.
