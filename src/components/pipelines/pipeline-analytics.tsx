@@ -85,7 +85,10 @@ type LossMetric = "count" | "value";
 function LossReasonsBlock({ deals, currency }: { deals: Deal[]; currency: string }) {
   const { t, language } = useLanguage();
   const [metric, setMetric] = useState<LossMetric>("count");
-  const [collapsed, setCollapsed] = useState(false);
+  // Folded on a phone so the board is not pushed below the first screen.
+  const [collapsed, setCollapsed] = useState(
+    () => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 767px)").matches,
+  );
 
   // Reasons ride the join on each deal (`loss_reason`), so no extra
   // query: the aggregation falls back to that name per deal.

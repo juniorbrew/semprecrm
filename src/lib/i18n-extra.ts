@@ -958,6 +958,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
     'Você não tem permissão para iniciar conversas',
   'Delete contact': 'Excluir contato',
   'Copy phone': 'Copiar telefone',
+  'Call': 'Ligar',
   'Add note': 'Adicionar observação',
   'No notes yet.': 'Ainda não há observações.',
   'Delete note': 'Excluir observação',
