@@ -177,6 +177,7 @@ describe("DealItemsSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add item" }))
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
     await waitFor(() => expect((screen.getByRole("button", { name: "Add item" }) as HTMLButtonElement).disabled).toBe(false))
+    expect(toast.success).toHaveBeenCalledWith("Item added")
   })
 
   it("removes a line and refreshes the deal", async () => {

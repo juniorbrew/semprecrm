@@ -284,8 +284,8 @@ export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealI
         toast.error(t(productsErrorMessage(err)));
         return false;
       }
-      await load();
-      await onChanged();
+      // The write is saved; a failed refresh only leaves the view stale until the next load.
+      await Promise.all([load(), onChanged()]).catch(() => undefined);
       toast.success(t(done));
       return true;
     } finally {
