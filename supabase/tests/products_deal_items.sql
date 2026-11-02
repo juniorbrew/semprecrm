@@ -113,6 +113,17 @@ SELECT pg_temp.assert_fails_with(format('INSERT INTO deal_items(account_id, deal
 SELECT pg_temp.assert_fails_with(format('INSERT INTO deal_items(account_id, deal_id, name) VALUES (%L, %L, %L)', (SELECT acc_b FROM ctx), (SELECT deal1 FROM ctx), 'x'), '23503', 'guard: account does not match the deal');
 SELECT pg_temp.assert_fails_with(format('INSERT INTO deal_items(account_id, deal_id, product_id, name) VALUES (%L, %L, %L, %L)', (SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), (SELECT prod_b FROM ctx), 'x'), '23503', 'guard: product of another account');
 
+-- NaN passes a plain >= 0 check; BETWEEN rejects it
+SELECT pg_temp.assert_fails(format('INSERT INTO products(account_id, name, unit_price) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'Nan', 'NaN'), 'product price NaN');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_items(account_id, deal_id, name, unit_price) VALUES (%L, %L, %L, %L)', (SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), 'x', 'NaN'), 'item price NaN');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_items(account_id, deal_id, name, quantity) VALUES (%L, %L, %L, %L)', (SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), 'x', 'NaN'), 'item quantity NaN');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_items(account_id, deal_id, name, discount_pct) VALUES (%L, %L, %L, %L)', (SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), 'x', 'NaN'), 'item discount NaN');
+-- blank means spaces, tabs and newlines too; length counts the padding
+SELECT pg_temp.assert_fails(format('INSERT INTO products(account_id, name) VALUES (%L, E%L)', (SELECT acc_a FROM ctx), ' \t\n '), 'product name of tabs and newlines');
+SELECT pg_temp.assert_fails(format('INSERT INTO products(account_id, name, code) VALUES (%L, %L, E%L)', (SELECT acc_a FROM ctx), 'Com codigo', ' \t '), 'blank product code');
+SELECT pg_temp.assert_fails(format('INSERT INTO products(account_id, name) VALUES (%L, repeat(%L, 79) || repeat(%L, 5))', (SELECT acc_a FROM ctx), 'x', ' '), 'padded name over 80 counts the padding');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_items(account_id, deal_id, name) VALUES (%L, %L, E%L)', (SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), '\r\n'), 'item name of newlines');
+
 -- =====================================================================
 -- recompute: deals.value follows the items
 -- =====================================================================
@@ -165,6 +176,13 @@ SELECT pg_temp.assert_fails_with(format('UPDATE deal_items SET deal_id = %L WHER
 SELECT pg_temp.assert_fails_with(format('UPDATE deal_items SET account_id = %L WHERE id = %L', (SELECT acc_b FROM ctx), '10400000-0000-4000-8000-0000000000e3'), '23514', 'account_id is immutable');
 SELECT pg_temp.assert_fails_with(format('UPDATE deal_items SET product_id = %L WHERE id = %L', (SELECT prod_b FROM ctx), '10400000-0000-4000-8000-0000000000e3'), '23503', 'guard on product change');
 DELETE FROM deal_items WHERE id = '10400000-0000-4000-8000-0000000000e3';
+
+-- ---- at most 200 items per deal ----------------------------------------------
+INSERT INTO deal_items(account_id, deal_id, name, unit_price) SELECT (SELECT acc_a FROM ctx), (SELECT deal2 FROM ctx), 'L' || g, 1 FROM generate_series(1, 200) g;
+SELECT pg_temp.assert_eq((SELECT value FROM deals WHERE id = (SELECT deal2 FROM ctx)), 200, '200 lines sum');
+SELECT pg_temp.assert_fails_with(format('INSERT INTO deal_items(account_id, deal_id, name) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), (SELECT deal2 FROM ctx), 'L201'), '54000', 'the 201st item is refused');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM deal_items WHERE deal_id = (SELECT deal1 FROM ctx)), 0, 'other deals unaffected by the limit');
+DELETE FROM deal_items WHERE deal_id = (SELECT deal2 FROM ctx);
 
 -- ---- overflow: rejected, never clamped -------------------------------------------
 INSERT INTO deal_items(id, account_id, deal_id, name, unit_price, quantity)
@@ -294,7 +312,8 @@ SELECT pg_temp.assert_true(NOT has_function_privilege('authenticated', 'public.d
   AND NOT has_function_privilege('authenticated', 'public.products_guard()', 'EXECUTE')
   AND NOT has_function_privilege('authenticated', 'public.deal_items_recompute()', 'EXECUTE')
   AND NOT has_function_privilege('authenticated', 'public.deals_value_from_items()', 'EXECUTE'), 'trigger functions are closed');
-SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.deal_items_sum(uuid)', 'EXECUTE'), 'anon cannot run the sum helper');
+SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'private.deal_items_sum(uuid)', 'EXECUTE'), 'anon cannot run the sum helper');
+SELECT pg_temp.assert_true(to_regprocedure('public.deal_items_sum(uuid)') IS NULL, 'the sum helper is not in the exposed public schema');
 SET ROLE anon;
 SELECT pg_temp.assert_fails('SELECT count(*) FROM public.deal_items', 'anon cannot read deal_items');
 SELECT pg_temp.assert_fails('SELECT count(*) FROM public.products', 'anon cannot read products');

@@ -7,7 +7,7 @@ DROP TABLE IF EXISTS public.deal_items;  -- takes its policies, triggers and ind
 DROP TABLE IF EXISTS public.products;
 DROP FUNCTION IF EXISTS public.deals_value_from_items();
 DROP FUNCTION IF EXISTS public.deal_items_recompute();
-DROP FUNCTION IF EXISTS public.deal_items_sum(uuid);
+DROP FUNCTION IF EXISTS private.deal_items_sum(uuid);
 DROP FUNCTION IF EXISTS public.deal_items_guard();
 DROP FUNCTION IF EXISTS public.products_guard();
 NOTIFY pgrst, 'reload schema';

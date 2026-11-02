@@ -46,11 +46,11 @@ CREATE TABLE IF NOT EXISTS public.products (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_name_check;
-ALTER TABLE public.products ADD CONSTRAINT products_name_check CHECK (char_length(btrim(name)) BETWEEN 1 AND 80);
+ALTER TABLE public.products ADD CONSTRAINT products_name_check CHECK (char_length(name) <= 80 AND btrim(name, E' \t\r\n') <> '');
 ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_code_check;
-ALTER TABLE public.products ADD CONSTRAINT products_code_check CHECK (code IS NULL OR char_length(code) <= 40);
+ALTER TABLE public.products ADD CONSTRAINT products_code_check CHECK (code IS NULL OR (char_length(code) <= 40 AND btrim(code, E' \t\r\n') <> ''));
 ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_price_check;
-ALTER TABLE public.products ADD CONSTRAINT products_price_check CHECK (unit_price >= 0);
+ALTER TABLE public.products ADD CONSTRAINT products_price_check CHECK (unit_price BETWEEN 0 AND 9999999999.99);
 ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_description_check;
 ALTER TABLE public.products ADD CONSTRAINT products_description_check CHECK (description IS NULL OR char_length(description) <= 300);
 
@@ -77,13 +77,13 @@ CREATE TABLE IF NOT EXISTS public.deal_items (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE public.deal_items DROP CONSTRAINT IF EXISTS deal_items_name_check;
-ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_name_check CHECK (char_length(btrim(name)) BETWEEN 1 AND 120);
+ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_name_check CHECK (char_length(name) <= 120 AND btrim(name, E' \t\r\n') <> '');
 ALTER TABLE public.deal_items DROP CONSTRAINT IF EXISTS deal_items_price_check;
-ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_price_check CHECK (unit_price >= 0);
+ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_price_check CHECK (unit_price BETWEEN 0 AND 9999999999.99);
 ALTER TABLE public.deal_items DROP CONSTRAINT IF EXISTS deal_items_quantity_check;
-ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_quantity_check CHECK (quantity > 0 AND quantity <= 1000000);
+ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_quantity_check CHECK (quantity > 0 AND quantity BETWEEN 0 AND 1000000);
 ALTER TABLE public.deal_items DROP CONSTRAINT IF EXISTS deal_items_discount_check;
-ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_discount_check CHECK (discount_pct >= 0 AND discount_pct <= 100);
+ALTER TABLE public.deal_items ADD CONSTRAINT deal_items_discount_check CHECK (discount_pct BETWEEN 0 AND 100);
 
 CREATE INDEX IF NOT EXISTS idx_deal_items_deal ON public.deal_items (deal_id, position);
 CREATE INDEX IF NOT EXISTS idx_deal_items_product ON public.deal_items (product_id) WHERE product_id IS NOT NULL;
@@ -127,6 +127,10 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'deal does not belong to this account' USING ERRCODE = '23503';
   END IF;
+  -- At most 200 lines per deal (the drawer and the sum stay small).
+  IF TG_OP = 'INSERT' AND (SELECT count(*) FROM public.deal_items i WHERE i.deal_id = NEW.deal_id) >= 200 THEN
+    RAISE EXCEPTION 'deal_items_limit: a deal can have at most 200 items' USING ERRCODE = '54000';
+  END IF;
   IF NEW.product_id IS NOT NULL AND (TG_OP = 'INSERT' OR NEW.product_id IS DISTINCT FROM OLD.product_id) AND NOT EXISTS (
     SELECT 1 FROM public.products p WHERE p.id = NEW.product_id AND p.account_id = NEW.account_id
   ) THEN
@@ -143,7 +147,7 @@ CREATE TRIGGER deal_items_guard BEFORE INSERT OR UPDATE ON public.deal_items
 -- ---- deals.value = sum of the items -------------------------------------------
 -- Sum of the items of a deal, NULL when it has none. Raises 22003 when the sum
 -- does not fit deals.value (NUMERIC(12,2)). Internal helper for the triggers.
-CREATE OR REPLACE FUNCTION public.deal_items_sum(p_deal_id uuid)
+CREATE OR REPLACE FUNCTION private.deal_items_sum(p_deal_id uuid)
 RETURNS NUMERIC
 LANGUAGE plpgsql
 STABLE
@@ -159,9 +163,10 @@ BEGIN
   RETURN v_sum;
 END;
 $$;
--- Called by the invoker's triggers, so authenticated needs EXECUTE; it reads under RLS.
-REVOKE ALL ON FUNCTION public.deal_items_sum(uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.deal_items_sum(uuid) TO authenticated, service_role;
+-- In schema private (not exposed by PostgREST, like private.account_is_writable, 094). The
+-- invoker's triggers call it, so authenticated needs USAGE on the schema (094) and EXECUTE; it reads under RLS.
+REVOKE ALL ON FUNCTION private.deal_items_sum(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.deal_items_sum(uuid) TO authenticated, service_role;
 
 -- AFTER an item changes: lock the deal row (so two concurrent edits queue and the
 -- second sums with the first committed), then write the sum. No items left = the
@@ -175,9 +180,20 @@ DECLARE
   v_deal uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.deal_id ELSE NEW.deal_id END;
   v_sum  NUMERIC;
 BEGIN
-  PERFORM 1 FROM public.deals d WHERE d.id = v_deal FOR UPDATE;
-  IF NOT FOUND THEN RETURN NULL; END IF;
-  v_sum := public.deal_items_sum(v_deal);
+  -- NO KEY UPDATE, not UPDATE: the FK check of an item INSERT holds KEY SHARE on the deal, and two
+  -- concurrent inserts on one deal would deadlock waiting for each other with FOR UPDATE.
+  -- NO KEY UPDATE conflicts with itself (edits queue) but not with KEY SHARE.
+  PERFORM 1 FROM public.deals d WHERE d.id = v_deal FOR NO KEY UPDATE;
+  IF NOT FOUND THEN
+    -- Cascade from a deleted deal: nothing to recompute. Anything else means the deal is
+    -- invisible to this caller (deals_update RLS tighter than deal_items policies): fail loudly
+    -- instead of letting deals.value drift. Keep the deal_items policies in step with deals_*.
+    -- (An item DELETE cannot tell the cascade from a hidden deal: pg_trigger_depth() is 1 in both,
+    -- and RLS hides a deleted row the same way. It returns quietly; writes still raise.)
+    IF TG_OP = 'DELETE' THEN RETURN NULL; END IF;
+    RAISE EXCEPTION 'deal not found or not editable by the caller' USING ERRCODE = '42501';
+  END IF;
+  v_sum := private.deal_items_sum(v_deal);
   IF v_sum IS NOT NULL THEN
     UPDATE public.deals d SET value = v_sum WHERE d.id = v_deal AND d.value IS DISTINCT FROM v_sum;
   END IF;
@@ -203,7 +219,7 @@ AS $$
 DECLARE
   v_sum NUMERIC;
 BEGIN
-  v_sum := public.deal_items_sum(NEW.id);
+  v_sum := private.deal_items_sum(NEW.id);
   IF v_sum IS NOT NULL THEN NEW.value := v_sum; END IF;
   RETURN NEW;
 END;
@@ -235,7 +251,8 @@ DROP POLICY IF EXISTS products_delete ON public.products;
 CREATE POLICY products_delete ON public.products FOR DELETE USING (public.is_account_member(account_id, 'admin'));
 
 ALTER TABLE public.deal_items ENABLE ROW LEVEL SECURITY;
--- Same tiers as deals (017): every member reads, agent and above write.
+-- Same tiers as deals (017: deals_select / deals_insert / deals_update / deals_delete). Keep them in
+-- step: deal_items_recompute updates deals.value as the caller and raises if it cannot see the deal.
 DROP POLICY IF EXISTS deal_items_select ON public.deal_items;
 CREATE POLICY deal_items_select ON public.deal_items FOR SELECT USING (public.is_account_member(account_id));
 DROP POLICY IF EXISTS deal_items_insert ON public.deal_items;
