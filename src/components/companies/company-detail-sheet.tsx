@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { companyInitials, companyMetaLine } from './company-list-row';
 import { SearchPicker } from './search-picker';
 import { contactLabel } from '@/lib/contacts/label';
+import { formatPhoneDisplay } from '@/lib/whatsapp/phone-utils';
 
 /** Small muted uppercase section title — same as the inbox contact panel. */
 const SECTION_TITLE = 'text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground';
@@ -296,7 +297,7 @@ export function CompanyDetailSheet({
                       renderItem={(c) => (
                         <span className="block min-w-0">
                           <span className="block truncate font-medium">{contactLabel(c)}</span>
-                          <span className="block truncate text-[11px] tabular-nums text-muted-foreground">{c.phone}</span>
+                          <span className="block truncate text-[11px] tabular-nums text-muted-foreground">{formatPhoneDisplay(c.phone)}</span>
                         </span>
                       )}
                       onPick={(c) => void link(c.id)}
@@ -319,7 +320,7 @@ export function CompanyDetailSheet({
                         >
                           <span className="block truncate text-sm font-medium">{contactLabel(l.contact)}</span>
                           <span className="block truncate text-xs tabular-nums text-muted-foreground">
-                            {l.contact.phone}
+                            {formatPhoneDisplay(l.contact.phone)}
                           </span>
                         </Link>
                         {l.is_primary ? (

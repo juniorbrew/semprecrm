@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatPhoneDisplay,
   isRecipientNotAllowedError,
   isValidE164,
   normalizePhone,
@@ -184,5 +185,22 @@ describe('normalizeTypedPhone (numbers a person types)', () => {
     expect(normalizeTypedPhone('0123456789')).toBe('0123456789') // zero-led, not a trunk prefix: stays invalid
     expect(normalizeTypedPhone('   ')).toBe('')
     expect(normalizeTypedPhone('')).toBe('')
+  })
+})
+
+describe('formatPhoneDisplay (for people to read)', () => {
+  it('formats Brazilian mobiles and landlines with the country code', () => {
+    expect(formatPhoneDisplay('5511987654321')).toBe('+55 (11) 98765-4321')
+    expect(formatPhoneDisplay('555136354333')).toBe('+55 (51) 3635-4333')
+  })
+  it('keeps other countries as +digits (grouping varies by country)', () => {
+    expect(formatPhoneDisplay('12025550123')).toBe('+12025550123')
+    expect(formatPhoneDisplay('37063949836')).toBe('+37063949836')
+  })
+  it('leaves empty, short or non-numeric values alone', () => {
+    expect(formatPhoneDisplay(null)).toBe('')
+    expect(formatPhoneDisplay('')).toBe('')
+    expect(formatPhoneDisplay('1234')).toBe('1234')
+    expect(formatPhoneDisplay('ramal 12')).toBe('ramal 12')
   })
 })

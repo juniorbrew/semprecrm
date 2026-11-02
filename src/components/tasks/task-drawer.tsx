@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 
 import { useTaskMembers, useTaskStatuses } from "./hooks";
 import { AssigneeAvatar, PRIORITY_LABELS, StatusChip, memberLabel, statusName } from "./task-chips";
+import { formatPhoneDisplay } from "@/lib/whatsapp/phone-utils";
 
 /**
  * "Created … / Completed …" line under the title. Language-keyed (not
@@ -869,7 +870,7 @@ function ContactPicker({
         </span>
         <span className="min-w-0 flex-1 truncate">{contact.name || contact.phone}</span>
         {contact.name && (
-          <span className="hidden text-xs text-muted-foreground sm:inline">{contact.phone}</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">{formatPhoneDisplay(contact.phone)}</span>
         )}
         {!disabled && (
           <button
@@ -920,7 +921,7 @@ function ContactPicker({
                   {(c.name || c.phone).charAt(0).toUpperCase()}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{c.name || c.phone}</span>
-                {c.name && <span className="text-xs text-muted-foreground">{c.phone}</span>}
+                {c.name && <span className="text-xs text-muted-foreground">{formatPhoneDisplay(c.phone)}</span>}
               </button>
             </li>
           ))}

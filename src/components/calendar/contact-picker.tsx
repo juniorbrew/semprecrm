@@ -8,6 +8,7 @@ import { useLanguage } from "@/hooks/use-language";
 import type { CalendarContactRef } from "@/lib/calendar";
 import { Input } from "@/components/ui/input";
 import { contactLabel } from "@/lib/contacts/label";
+import { formatPhoneDisplay } from "@/lib/whatsapp/phone-utils";
 
 /**
  * Search a contact by name / phone and show the pick as a chip. Same
@@ -64,7 +65,7 @@ export function ContactPicker({
         </span>
         <span className="min-w-0 flex-1 truncate">{contactLabel(contact)}</span>
         {contact.name && contact.phone && !compact && (
-          <span className="hidden text-xs text-muted-foreground sm:inline">{contact.phone}</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">{formatPhoneDisplay(contact.phone)}</span>
         )}
         {!disabled && (
           <button
@@ -116,7 +117,7 @@ export function ContactPicker({
                   {contactLabel(c).charAt(0).toUpperCase()}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{contactLabel(c)}</span>
-                {c.name && c.phone && <span className="text-xs text-muted-foreground">{c.phone}</span>}
+                {c.name && c.phone && <span className="text-xs text-muted-foreground">{formatPhoneDisplay(c.phone)}</span>}
               </button>
             </li>
           ))}

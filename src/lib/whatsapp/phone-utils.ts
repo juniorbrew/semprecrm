@@ -59,6 +59,24 @@ export function isValidE164(phone: string): boolean {
 }
 
 /**
+ * A stored contact phone (digits with the country code, see
+ * normalizeTypedPhone) for people to read. Display only — never store or
+ * send it. Brazil gets "+55 (11) 98765-4321"; other countries "+<digits>",
+ * since their grouping varies. Anything not digit-like comes back as is.
+ */
+export function formatPhoneDisplay(phone: string | null | undefined): string {
+  const raw = phone ?? ''
+  const d = raw.replace(/\D/g, '')
+  if (d.length < 8) return raw
+  if (d.startsWith('55') && (d.length === 12 || d.length === 13)) {
+    const rest = d.slice(4)
+    const split = rest.length - 4
+    return `+55 (${d.slice(2, 4)}) ${rest.slice(0, split)}-${rest.slice(split)}`
+  }
+  return `+${d}`
+}
+
+/**
  * Generate plausible phone number variants for retry when Meta's
  * sandbox rejects a number with error #131030 ("not in allowed list").
  *

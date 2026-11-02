@@ -137,6 +137,7 @@ import {
   resyncLimit,
   withinLoadedWindow,
 } from "@/lib/inbox/message-paging";
+import { formatPhoneDisplay } from "@/lib/whatsapp/phone-utils";
 
 interface ReplyDraft {
   id: string;
@@ -1977,7 +1978,7 @@ export function MessageThread({
                     className="min-w-0 truncate tabular-nums"
                     title={contact.phone}
                   >
-                    {contact.phone}
+                    {formatPhoneDisplay(contact.phone)}
                   </span>
                 </>
               )}

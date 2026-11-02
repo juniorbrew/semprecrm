@@ -51,6 +51,7 @@ describe('contactMetaLine', () => {
     expect(contactMetaLine({ company: 'Acme', phone: '55119' })).toBe('Acme · 55119');
     expect(contactMetaLine({ company: '  ', phone: '55119' })).toBe('55119');
     expect(contactMetaLine({ company: undefined, phone: '55119' })).toBe('55119');
+    expect(contactMetaLine({ company: 'Acme', phone: '5511987654321' })).toBe('Acme · +55 (11) 98765-4321');
   });
 });
 
@@ -58,7 +59,7 @@ describe('ContactListRow', () => {
   it('shows name, meta line and an accessible open button', () => {
     const html = render(contact());
     expect(html).toContain('Marina Souza');
-    expect(html).toContain('Acme · 5511999990000');
+    expect(html).toContain('Acme · +55 (11) 99999-0000'); // stored digits, shown formatted
     expect(html).toContain('aria-label="Abrir Marina Souza"');
     expect(html).toContain('aria-label="Mais ações para Marina Souza"');
   });

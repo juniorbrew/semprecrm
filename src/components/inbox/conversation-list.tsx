@@ -108,6 +108,7 @@ import { FilterChips, FilterPopover, useInboxFacets } from "./conversation-filte
 import { ConversationSnooze } from "./conversation-snooze";
 import { ScheduledOverview } from "./scheduled-overview";
 import { SCHEDULED_COPY } from "./scheduled-copy";
+import { formatPhoneDisplay } from "@/lib/whatsapp/phone-utils";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -1886,7 +1887,7 @@ export const ConversationItem = memo(function ConversationItem({
   const messaging = isMetaMessagingChannel(conversation.channel) ? conversation.channel : null;
   const channel: WhatsAppChannel = conversation.channel === "qr" ? "qr" : "official";
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || "Unknown contact";
+  const displayName = contact?.name || formatPhoneDisplay(contact?.phone) || "Unknown contact";
   const isUnread = conversation.unread_count > 0;
   const status = conversation.status;
   const { language } = useLanguage();
