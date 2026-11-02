@@ -13,7 +13,7 @@ import {
 import { LinkedEvents } from "@/components/calendar";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatMoney } from "@/lib/currency";
 import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import {
   advanceToLabel,
@@ -275,7 +275,9 @@ export function DealDetails({
 
         <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-2xl font-bold tracking-tight text-primary">
-            {formatCurrency(deal.value, deal.currency)}
+            {itemCount > 0
+              ? formatMoney(deal.value, deal.currency)
+              : formatCurrency(deal.value, deal.currency)}
           </span>
           {itemCount > 0 && (
             <span className="text-xs text-muted-foreground">

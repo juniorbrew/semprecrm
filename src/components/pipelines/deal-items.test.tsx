@@ -168,6 +168,17 @@ describe("DealItemsSection", () => {
     expect(onChanged).not.toHaveBeenCalled()
   })
 
+  it("shows the decimal hint, and the busy state resets even when the refresh fails", async () => {
+    const { onChanged } = setup([item()])
+    onChanged.mockRejectedValue(new Error("refetch failed"))
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }))
+    expect(screen.getByText("Use a comma for decimals, like 1,5")).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("Product or service name"), { target: { value: "X" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+    await waitFor(() => expect((screen.getByRole("button", { name: "Add item" }) as HTMLButtonElement).disabled).toBe(false))
+  })
+
   it("removes a line and refreshes the deal", async () => {
     const { onChanged } = setup([item()])
     fireEvent.click(await screen.findByRole("button", { name: "Remove item: Plano Mensal" }))

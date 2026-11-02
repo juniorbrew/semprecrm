@@ -104,6 +104,7 @@ describe('productsErrorMessage', () => {
   it('maps the database errors to plain messages', () => {
     expect(productsErrorMessage({ code: '23505' })).toContain('already exists')
     expect(productsErrorMessage({ code: '22003', message: 'deal_items_total_too_large: x' })).toContain('limit')
+    expect(productsErrorMessage({ code: '54000', message: 'deal_items_limit: x' })).toContain('200 items')
     expect(productsErrorMessage({ code: '42501' })).toContain('permission')
     expect(productsErrorMessage(new Error('boom'))).toContain('Something went wrong')
   })

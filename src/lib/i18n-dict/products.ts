@@ -24,6 +24,8 @@ export const DICT_PRODUCTS: Record<string, string> = {
   'Price per unit': 'Preço de cada unidade',
   'Number of units': 'Quantidade de unidades',
   'Discount in percent': 'Desconto em porcentagem',
+  'Use a comma for decimals, like 1,5': 'Use vírgula para decimais, ex.: 1,5',
+  'A deal can have at most 200 items': 'Um negócio pode ter no máximo 200 itens',
 
   // ---- Validation (items and catalog) ----
   'Type the name of the product or service': 'Digite o nome do produto ou serviço',

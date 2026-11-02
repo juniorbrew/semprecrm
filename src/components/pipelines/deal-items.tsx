@@ -56,17 +56,24 @@ const ERROR_TEXT: Record<ItemError, string> = {
 interface FieldProps {
   label: string;
   error?: string;
+  hint?: string;
   children: (p: { id: string; "aria-invalid": boolean; "aria-describedby"?: string }) => React.ReactNode;
 }
-function Field({ label, error, children }: FieldProps) {
+function Field({ label, error, hint, children }: FieldProps) {
   const id = useId();
   const errId = `${id}-err`;
+  const hintId = `${id}-hint`;
   return (
     <div className="grid gap-1">
       <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>
-      {children({ id, "aria-invalid": !!error, "aria-describedby": error ? errId : undefined })}
+      {children({ id, "aria-invalid": !!error, "aria-describedby": error ? errId : hint ? hintId : undefined })}
+      {hint && !error && (
+        <p id={hintId} className="text-[11px] text-muted-foreground">
+          {hint}
+        </p>
+      )}
       {error && (
         <p id={errId} role="alert" className="text-xs text-destructive">
           {error}
@@ -173,7 +180,7 @@ function ItemForm({ initial, products, currency, busy, submitLabel, onSubmit, on
         <Field label={t("Price per unit")} error={errorFor("price")}>
           {(a) => <Input {...a} inputMode="decimal" value={price} placeholder="0,00" onChange={(e) => setPrice(e.target.value)} />}
         </Field>
-        <Field label={t("Number of units")} error={errorFor("quantity")}>
+        <Field label={t("Number of units")} error={errorFor("quantity")} hint={t("Use a comma for decimals, like 1,5")}>
           {(a) => <Input {...a} inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} />}
         </Field>
         <Field label={t("Discount in percent")} error={errorFor("discount")}>
@@ -271,17 +278,19 @@ export function DealItemsSection({ dealId, currency, onChanged, onCount }: DealI
   async function run(write: () => Promise<void>, done: string): Promise<boolean> {
     setBusy(true);
     try {
-      await write();
-    } catch (err) {
-      toast.error(t(productsErrorMessage(err)));
+      try {
+        await write();
+      } catch (err) {
+        toast.error(t(productsErrorMessage(err)));
+        return false;
+      }
+      await load();
+      await onChanged();
+      toast.success(t(done));
+      return true;
+    } finally {
       setBusy(false);
-      return false;
     }
-    await load();
-    await onChanged();
-    toast.success(t(done));
-    setBusy(false);
-    return true;
   }
 
   async function add(values: ItemValues, productId: string | null) {

@@ -121,6 +121,7 @@ export function productsErrorMessage(err: unknown): string {
   if (e.code === '22003' || e.message?.includes('deal_items_total_too_large')) {
     return 'The items add up to more than the deal value limit'
   }
+  if (e.code === '54000' || e.message?.includes('deal_items_limit')) return 'A deal can have at most 200 items'
   if (e.code === '42501') return 'You do not have permission to change this, or the account is read-only'
   if (e.code === '23514' || e.code === '23503') return 'The data was rejected. Check the values and try again'
   return 'Something went wrong. Please try again.'
