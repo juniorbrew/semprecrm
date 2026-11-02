@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import type { BusinessHours, BusinessHoursRange, Weekday } from "@/types";
 import { SettingsGroup } from "./settings-group";
 
-const SELECT_CLASS =
+export const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60";
 
 /**

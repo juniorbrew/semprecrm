@@ -2220,4 +2220,42 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Sign in again and retry the connection.': 'Entre novamente e tente conectar de novo.',
   'Synced from Google Calendar': 'Sincronizado do Google Agenda',
   'Synced from Outlook': 'Sincronizado do Outlook',
+  'Customer waiting for a reply':
+    'Cliente esperando resposta',
+  'When any customer has been waiting longer than the reply target set in Settings → Service, in anyone\'s conversation.':
+    'Quando qualquer cliente estiver esperando mais que o tempo de resposta definido em Configurações → Atendimento, na conversa de qualquer pessoa.',
+  'Conversation with nobody assigned':
+    'Conversa sem responsável',
+  'When a customer has been waiting without anyone taking the conversation for the minutes set in Settings → Service.':
+    'Quando um cliente estiver esperando sem ninguém assumir a conversa pelos minutos definidos em Configurações → Atendimento.',
+  'Team deadline missed':
+    'Prazo estourado da equipe',
+  'When a conversation assigned to someone on the team misses its deadline.':
+    'Quando uma conversa de alguém da equipe estourar o prazo.',
+  'Copy of every customer message':
+    'Cópia de todas as mensagens',
+  'Every message a customer sends, in any conversation. Can be a lot on a busy team.':
+    'Toda mensagem que um cliente enviar, em qualquer conversa. Pode ser muita coisa numa equipe movimentada.',
+  'Nobody took this conversation':
+    'Ninguém assumiu esta conversa',
+  'Team monitoring':
+    'Acompanhamento da equipe',
+  'Alerts about the whole team, for owners and admins. All off until you turn them on. The waiting times come from Settings → Service.':
+    'Alertas sobre a equipe toda, para donos e administradores. Todos desligados até você ligar. Os tempos de espera vêm de Configurações → Atendimento.',
+  'Unassigned conversations':
+    'Conversas sem responsável',
+  'Who gets the new-message notification while nobody has taken the conversation. Each person can still turn notifications off for themselves.':
+    'Quem recebe a notificação de mensagem nova enquanto ninguém assumiu a conversa. Cada pessoa ainda pode desligar as notificações para si.',
+  'Notify about new messages':
+    'Avisar sobre mensagens novas',
+  'Every available agent':
+    'Todos os atendentes disponíveis',
+  'Only owners and admins':
+    'Só donos e administradores',
+  'Nobody':
+    'Ninguém',
+  'Alert managers after (minutes)':
+    'Alertar gestores depois de (minutos)',
+  'Owners and admins who turned on “Conversation with nobody assigned” are notified after this wait.':
+    'Donos e administradores que ligaram “Conversa sem responsável” são avisados depois dessa espera.',
 };

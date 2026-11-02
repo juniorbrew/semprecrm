@@ -9,20 +9,28 @@ import { useLanguage } from "@/hooks/use-language";
 import {
   normalizeOptOutKeyword,
   PREFERENCE_LIMITS,
+  UNASSIGNED_PUSH_TO,
 } from "@/lib/account-preferences";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import type { BusinessHours } from "@/types";
+import type { BusinessHours, UnassignedPushTo } from "@/types";
 import { SettingsGroup } from "./settings-group";
 import { SettingsPanelHead } from "./settings-panel-head";
 import {
   AutoAssignCard,
   BusinessHoursEditor,
   OutOfHoursCard,
+  SELECT_CLASS,
   businessHoursValid,
 } from "./business-hours-editor";
+
+const UNASSIGNED_PUSH_LABELS: Record<UnassignedPushTo, string> = {
+  available: "Every available agent",
+  managers: "Only owners and admins",
+  none: "Nobody",
+};
 
 /**
  * Settings → Atendimento (spec §3 / §5): the account's inbox SLA, the
@@ -46,6 +54,9 @@ export function InboxSettings() {
   const [oohEnabled, setOohEnabled] = useState(preferences.out_of_hours_enabled);
   const [oohMessage, setOohMessage] = useState(preferences.out_of_hours_message);
   const [autoAssign, setAutoAssign] = useState(preferences.auto_assign_enabled);
+  // Unassigned conversations: who is pushed, and the managers' alert delay.
+  const [unassignedPushTo, setUnassignedPushTo] = useState<UnassignedPushTo>(preferences.unassigned_push_to);
+  const [unassignedMinutes, setUnassignedMinutes] = useState(String(preferences.unassigned_alert_minutes));
 
   // Re-seed the form when the account row (re)loads — e.g. after another
   // admin saved, or on first render before the profile resolved.
@@ -57,6 +68,8 @@ export function InboxSettings() {
     setOohEnabled(preferences.out_of_hours_enabled);
     setOohMessage(preferences.out_of_hours_message);
     setAutoAssign(preferences.auto_assign_enabled);
+    setUnassignedPushTo(preferences.unassigned_push_to);
+    setUnassignedMinutes(String(preferences.unassigned_alert_minutes));
   }, [preferences]);
 
   const slaNum = Number(sla);
@@ -70,6 +83,12 @@ export function InboxSettings() {
     coolingNum >= PREFERENCE_LIMITS.cooling_hours.min &&
     coolingNum <= PREFERENCE_LIMITS.cooling_hours.max;
 
+  const unassignedNum = Number(unassignedMinutes);
+  const unassignedValid =
+    Number.isInteger(unassignedNum) &&
+    unassignedNum >= PREFERENCE_LIMITS.unassigned_alert_minutes.min &&
+    unassignedNum <= PREFERENCE_LIMITS.unassigned_alert_minutes.max;
+
   const hoursValid = businessHoursValid(businessHours);
   const oohValid = !oohEnabled || oohMessage.trim().length > 0;
 
@@ -81,8 +100,21 @@ export function InboxSettings() {
       JSON.stringify(businessHours) !== JSON.stringify(preferences.business_hours) ||
       oohEnabled !== preferences.out_of_hours_enabled ||
       oohMessage !== preferences.out_of_hours_message ||
-      autoAssign !== preferences.auto_assign_enabled,
-    [slaNum, coolingNum, keywords, businessHours, oohEnabled, oohMessage, autoAssign, preferences],
+      autoAssign !== preferences.auto_assign_enabled ||
+      unassignedPushTo !== preferences.unassigned_push_to ||
+      unassignedNum !== preferences.unassigned_alert_minutes,
+    [
+      slaNum,
+      coolingNum,
+      keywords,
+      businessHours,
+      oohEnabled,
+      oohMessage,
+      autoAssign,
+      unassignedPushTo,
+      unassignedNum,
+      preferences,
+    ],
   );
 
   const disabled = profileLoading || !canEditSettings;
@@ -114,7 +146,7 @@ export function InboxSettings() {
   }
 
   async function save() {
-    if (!account?.id || !slaValid || !coolingValid || !hoursValid || !oohValid) return;
+    if (!account?.id || !slaValid || !coolingValid || !unassignedValid || !hoursValid || !oohValid) return;
     setSaving(true);
     try {
       // Saved through the API so the change is audited
@@ -133,6 +165,8 @@ export function InboxSettings() {
           out_of_hours_enabled: oohEnabled,
           out_of_hours_message: oohMessage,
           auto_assign_enabled: autoAssign,
+          unassigned_push_to: unassignedPushTo,
+          unassigned_alert_minutes: unassignedNum,
         }),
       });
       if (!res.ok) {
@@ -281,6 +315,52 @@ export function InboxSettings() {
 
         <AutoAssignCard enabled={autoAssign} onEnabledChange={setAutoAssign} disabled={disabled} />
 
+        <SettingsGroup
+          title={t("Unassigned conversations")}
+          description={t(
+            "Who gets the new-message notification while nobody has taken the conversation. Each person can still turn notifications off for themselves.",
+          )}
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="unassigned-push-to">{t("Notify about new messages")}</Label>
+              <select
+                id="unassigned-push-to"
+                value={unassignedPushTo}
+                onChange={(e) => setUnassignedPushTo(e.target.value as UnassignedPushTo)}
+                disabled={disabled}
+                className={cn(SELECT_CLASS, "w-full")}
+              >
+                {UNASSIGNED_PUSH_TO.map((v) => (
+                  <option key={v} value={v}>
+                    {t(UNASSIGNED_PUSH_LABELS[v])}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unassigned-alert-minutes">{t("Alert managers after (minutes)")}</Label>
+              <Input
+                id="unassigned-alert-minutes"
+                type="number"
+                inputMode="numeric"
+                min={PREFERENCE_LIMITS.unassigned_alert_minutes.min}
+                max={PREFERENCE_LIMITS.unassigned_alert_minutes.max}
+                value={unassignedMinutes}
+                onChange={(e) => setUnassignedMinutes(e.target.value)}
+                disabled={disabled}
+                aria-invalid={!unassignedValid || undefined}
+                className="tabular-nums"
+              />
+              <p className="text-xs text-muted-foreground">
+                {unassignedValid
+                  ? t("Owners and admins who turned on “Conversation with nobody assigned” are notified after this wait.")
+                  : `${t("Enter a value between")} ${PREFERENCE_LIMITS.unassigned_alert_minutes.min} ${t("and")} ${PREFERENCE_LIMITS.unassigned_alert_minutes.max}.`}
+              </p>
+            </div>
+          </div>
+        </SettingsGroup>
+
         <div className="flex items-center justify-between gap-3 border-t border-border pt-6">
           <p className="text-xs text-muted-foreground">
             {!canEditSettings && !profileLoading
@@ -294,6 +374,7 @@ export function InboxSettings() {
               saving ||
               !slaValid ||
               !coolingValid ||
+              !unassignedValid ||
               !hoursValid ||
               !oohValid ||
               (!dirty && !keywordDraft.trim())

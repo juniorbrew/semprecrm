@@ -126,7 +126,19 @@ export interface AccountPreferences {
    * Read by the `conversations_sla_stamp` trigger under the same key.
    */
   sla_count_only_business_hours: boolean;
+  /**
+   * Who gets the "new message" push of an unassigned conversation:
+   * every available agent+, only owners/admins, or nobody.
+   */
+  unassigned_push_to: UnassignedPushTo;
+  /**
+   * Minutes a customer waits with nobody assigned before the owners/admins
+   * who turned on "Conversation with nobody assigned" are pushed (migration 105).
+   */
+  unassigned_alert_minutes: number;
 }
+
+export type UnassignedPushTo = 'available' | 'managers' | 'none';
 
 /** `"HH:MM"` 24h local time. */
 export type BusinessHoursRange = { start: string; end: string };

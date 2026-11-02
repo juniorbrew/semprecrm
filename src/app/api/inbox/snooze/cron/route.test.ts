@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const runSpy = vi.hoisted(() => vi.fn(async () => ({ woken: 3, notified: 2, errors: 0 })))
 vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => ({ admin: true }) }))
+const alertsSpy = vi.hoisted(() => vi.fn(async () => ({ claimed: 1, notified: 1, errors: 0 })))
 vi.mock('@/lib/conversations/snooze-wake', () => ({ runSnoozeWake: runSpy }))
+vi.mock('@/lib/conversations/manager-alerts', () => ({ runManagerAlerts: alertsSpy }))
 
 import { GET, POST } from './route'
 
@@ -35,12 +37,27 @@ describe('GET /api/inbox/snooze/cron', () => {
     expect(runSpy).not.toHaveBeenCalled()
   })
 
-  it('runs the wake with the service client and returns the summary (GET and POST)', async () => {
+  it('runs the wake and the manager alerts with the service client (GET and POST)', async () => {
     const res = await GET(req('s3cret'))
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ woken: 3, notified: 2, errors: 0 })
+    expect(await res.json()).toEqual({
+      woken: 3,
+      notified: 2,
+      errors: 0,
+      alerts: { claimed: 1, notified: 1, errors: 0 },
+    })
     expect(runSpy).toHaveBeenCalledWith({ admin: true })
+    expect(alertsSpy).toHaveBeenCalledWith({ admin: true })
     expect((await POST(req('s3cret'))).status).toBe(200)
+  })
+
+  it('a failing alerts run never fails the wake', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    alertsSpy.mockRejectedValueOnce(new Error('boom'))
+    const res = await GET(req('s3cret'))
+    expect(res.status).toBe(200)
+    expect((await res.json()).alerts).toEqual({ claimed: 0, notified: 0, errors: 1 })
+    err.mockRestore()
   })
 
   it('500 without leaking the error detail', async () => {
