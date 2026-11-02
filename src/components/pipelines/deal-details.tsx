@@ -13,7 +13,7 @@ import {
 import { LinkedEvents } from "@/components/calendar";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatMoney } from "@/lib/currency";
 import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import {
   advanceToLabel,
@@ -35,6 +35,7 @@ import {
   type CompanySummary,
 } from "@/lib/companies";
 import { DealCompanyField } from "@/components/companies/deal-company-field";
+import { DealItemsSection } from "./deal-items";
 import { toast } from "sonner";
 import {
   ArrowRight,
@@ -64,6 +65,8 @@ interface DealDetailsProps {
   onAdvance: (stage: PipelineStage) => void;
   /** The deal's company changed here (the board refetches). */
   onCompanyChanged?: () => void | Promise<void>;
+  /** The product/service lines changed here (the deal value is recomputed by the database; the board refetches). */
+  onItemsChanged?: () => void | Promise<void>;
 }
 
 function initials(name?: string, fallback?: string) {
@@ -107,6 +110,7 @@ export function DealDetails({
   onStatus,
   onAdvance,
   onCompanyChanged,
+  onItemsChanged,
 }: DealDetailsProps) {
   const { t, language } = useLanguage();
   // Tasks section — hidden when the plan has no Tasks module; the "+"
@@ -125,6 +129,8 @@ export function DealDetails({
     deal.company ?? null,
   );
   const [savingCompany, setSavingCompany] = useState(false);
+  // Product lines (migration 104): with lines, the value is their sum.
+  const [itemCount, setItemCount] = useState(0);
 
   async function changeCompany(next: CompanySummary | null) {
     const previous = company;
@@ -269,8 +275,15 @@ export function DealDetails({
 
         <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-2xl font-bold tracking-tight text-primary">
-            {formatCurrency(deal.value, deal.currency)}
+            {itemCount > 0
+              ? formatMoney(deal.value, deal.currency)
+              : formatCurrency(deal.value, deal.currency)}
           </span>
+          {itemCount > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {t("calculated from the items")}
+            </span>
+          )}
           {close && (
             <span
               className={cn(
@@ -431,6 +444,14 @@ export function DealDetails({
             </div>
           </section>
         )}
+
+        {/* Products and services — the value of the deal is their sum */}
+        <DealItemsSection
+          dealId={deal.id}
+          currency={deal.currency || "BRL"}
+          onChanged={() => onItemsChanged?.()}
+          onCount={setItemCount}
+        />
 
         {/* Contact */}
         <section>

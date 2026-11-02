@@ -33,7 +33,11 @@ const STAY_WRITABLE = [
 ]
 
 /** Tables created after 094 that bring their own RESTRICTIVE read-only policies (checked in their own migration). */
-const BLOCKED_IN_OWN_MIGRATION: Record<string, string> = { sales_goals: '103_sales_goals.sql' }
+const BLOCKED_IN_OWN_MIGRATION: Record<string, string> = {
+  sales_goals: '103_sales_goals.sql',
+  products: '104_products_deal_items.sql',
+  deal_items: '104_products_deal_items.sql',
+}
 
 /** Tables that carry a write policy (INSERT/UPDATE/DELETE/ALL) after all migrations before 094. */
 function writableTables(): Set<string> {

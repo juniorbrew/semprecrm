@@ -16,6 +16,7 @@ import { MetaMessagingPanel } from '@/components/settings/meta-messaging-panel';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
+import { ProductsSettings } from '@/components/settings/products-settings';
 import { TaskStatusesSettings } from '@/components/settings/task-statuses-settings';
 import { QuickRepliesSettings } from '@/components/settings/quick-replies-settings';
 import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings';
@@ -84,6 +85,7 @@ export default function SettingsPage() {
     templates: <TemplateManager />,
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
+    products: <ProductsSettings />,
     tasks: <TaskStatusesSettings />,
     quick_replies: <QuickRepliesSettings />,
     inbox: <InboxSettings />,

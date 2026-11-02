@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server';
 import { requireModule, requireRole } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { contactAnonymizedResponse, loadAiConversation, loadPromptMessages } from '@/lib/ai/conversation-context';
+import { countDealItems } from '@/lib/products/data';
 import { buildDealSummaryPrompt, parseDealSummary, summaryText, todayInSaoPaulo, type SummaryDeal } from '@/lib/ai/deal-summary';
 import { loadPipelineStages } from '@/lib/ai/deal-summary-apply';
 import { AiError } from '@/lib/ai/errors';
@@ -94,6 +95,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           expected_close_date: row.expected_close_date?.slice(0, 10) ?? null,
           stage_id: row.stage_id,
           stage_name: stageEmbed?.name ?? null,
+          has_items: (await countDealItems(ctx.supabase, row.id)) > 0,
         }
       : null;
 

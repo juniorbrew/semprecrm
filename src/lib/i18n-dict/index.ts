@@ -20,6 +20,7 @@ import { DICT_INBOX } from './inbox';
 import { DICT_MISC } from './misc';
 import { DICT_SETTINGS } from './settings';
 import { DICT_PLATFORM } from './platform';
+import { DICT_PRODUCTS } from './products';
 
 export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_API_WEBHOOKS,
@@ -35,4 +36,5 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_MISC,
   ...DICT_SETTINGS,
   ...DICT_PLATFORM,
+  ...DICT_PRODUCTS,
 };
