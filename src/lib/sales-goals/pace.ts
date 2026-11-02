@@ -71,11 +71,12 @@ export function paceStatus(g: GoalNumbers, phase: MonthPhase, day: number, total
 export const MAX_TARGET = 1_000_000_000
 
 /**
- * Parse what a person typed as a goal ("12.500", "12500,50"). null when it is
- * not a usable target: not positive, above the database ceiling, more than two
- * decimals, or not a whole number for a count goal.
+ * Parse a pt-BR amount typed by a person ("R$ 1.500,00", "1,5", "12.500", "99.5"):
+ * a leading currency symbol or code is ignored, dots group thousands, the comma is
+ * the decimal separator. null when it is not a plain non-negative number with at most
+ * two decimals. Shared by goals, deal products and prices.
  */
-export function parseTarget(text: string, metric: GoalMetric): number | null {
+export function parsePtBrAmount(text: string): number | null {
   // a leading currency symbol or code (R$, US$, $, BRL ...) is ignored
   let s = text.trim().replace(/^(?:R\$|US\$|[$€£]|BRL|USD|EUR)\s*/i, '').replace(/\s/g, '')
   if (!s) return null
@@ -83,8 +84,17 @@ export function parseTarget(text: string, metric: GoalMetric): number | null {
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.')
   else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '')
   if (!/^\d+(\.\d{1,2})?$/.test(s)) return null
-  const n = Number(s)
-  if (!(n > 0) || n > MAX_TARGET) return null
+  return Number(s)
+}
+
+/**
+ * Parse what a person typed as a goal ("12.500", "12500,50"). null when it is
+ * not a usable target: not positive, above the database ceiling, more than two
+ * decimals, or not a whole number for a count goal.
+ */
+export function parseTarget(text: string, metric: GoalMetric): number | null {
+  const n = parsePtBrAmount(text)
+  if (n === null || !(n > 0) || n > MAX_TARGET) return null
   if (metric === 'won_count' && !Number.isInteger(n)) return null
   return n
 }
