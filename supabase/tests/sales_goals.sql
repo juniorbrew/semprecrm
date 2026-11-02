@@ -26,12 +26,21 @@ BEGIN
   RAISE EXCEPTION 'FAIL (accepted): %', label;
 END $$;
 -- rows of the progress function for (scope, metric) as "target/achieved", or NULL when absent
-CREATE FUNCTION pg_temp.prog(p_acc uuid, p_month date, p_scope text, p_ref uuid, p_metric text) RETURNS text LANGUAGE sql AS $$
-  SELECT target::text || '/' || achieved::text
+-- The function refuses callers that are not members; with no JWT subject set (superuser
+-- sections) the call is made as owner A for that one read.
+CREATE FUNCTION pg_temp.prog(p_acc uuid, p_month date, p_scope text, p_ref uuid, p_metric text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  v_anon boolean := coalesce(current_setting('request.jwt.claim.sub', true), '') = '';
+  v_out text;
+BEGIN
+  IF v_anon THEN PERFORM set_config('request.jwt.claim.sub', '10300000-0000-4000-8000-00000000000a', true); END IF;
+  SELECT r.target::text || '/' || r.achieved::text INTO v_out
     FROM public.sales_goal_progress(p_acc, p_month) r
    WHERE r.scope = p_scope AND r.metric = p_metric
-     AND COALESCE(r.team_id, r.user_id) IS NOT DISTINCT FROM p_ref
-$$;
+     AND COALESCE(r.team_id, r.user_id) IS NOT DISTINCT FROM p_ref;
+  IF v_anon THEN PERFORM set_config('request.jwt.claim.sub', '', true); END IF;
+  RETURN v_out;
+END $$;
 -- 076 closes new functions by default: open this script's pg_temp helpers.
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 
@@ -75,7 +84,7 @@ SELECT i.*,
        (SELECT id FROM profiles WHERE user_id = i.ag1) AS p1,
        (SELECT id FROM profiles WHERE user_id = i.ag2) AS p2
   FROM ids i;
-GRANT SELECT ON ctx TO authenticated, service_role;
+GRANT SELECT ON ctx TO authenticated, service_role, anon;
 DO $$
 DECLARE c record; v_contact uuid; v_pipe uuid; v_stage uuid;
 BEGIN
