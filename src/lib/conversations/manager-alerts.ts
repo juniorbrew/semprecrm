@@ -16,7 +16,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { notifyManagerAlert } from '@/lib/push/notify'
 import { isPushConfigured } from '@/lib/push/send'
 
-export const ALERT_BATCH = 100
+// Each row costs a few queries inside the cron request; the rest of a burst
+// waits for the next tick (claims skip what is already pushed).
+export const ALERT_BATCH = 50
 const PUSH_CONCURRENCY = 5
 
 export interface ManagerAlertRow {

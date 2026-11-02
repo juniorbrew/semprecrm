@@ -25,11 +25,11 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 
 -- Only this script's rows count (the local DB has demo data).
 CREATE TEMP TABLE due_rows (conversation_id uuid, account_id uuid, contact_id uuid, assigned_agent_id uuid, kind text, wait_started_at timestamptz);
-CREATE FUNCTION pg_temp.tick(p_now timestamptz) RETURNS bigint LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.tick(p_now timestamptz, p_lim integer DEFAULT 500) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE n bigint;
 BEGIN
   DELETE FROM due_rows;
-  INSERT INTO due_rows SELECT * FROM public.manager_alerts_due(p_now, 500) d WHERE d.conversation_id::text LIKE '10500000-%';
+  INSERT INTO due_rows SELECT * FROM public.manager_alerts_due(p_now, p_lim) d WHERE d.conversation_id::text LIKE '10500000-%';
   SELECT count(*) INTO n FROM due_rows;
   RETURN n;
 END $$;
@@ -68,7 +68,7 @@ INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
 -- c2 unassigned, waiting 4 min                  → unassigned only (4 < 10)
 -- c3 assigned, agent replied after the customer → nothing
 -- c4 closed, waiting 30 min                     → nothing
--- c5 unassigned, waiting 2 days                 → nothing (stale)
+-- c5 unassigned, waiting 3 days                 → nothing (stale)
 -- c6 assigned, waiting 12 min but snoozed       → nothing
 -- cb account B, waiting 30 min, nobody opted in → nothing
 INSERT INTO conversations(id, user_id, account_id, contact_id, status, assigned_agent_id, last_customer_message_at, last_agent_message_at)
@@ -77,7 +77,7 @@ SELECT ('10500000-0000-4000-8000-0000000000c' || n)::uuid, '10500000-0000-4000-8
        CASE WHEN n = 4 THEN 'closed' ELSE 'open' END,
        CASE WHEN n IN (2, 5) THEN NULL ELSE (SELECT agent FROM ids) END,
        (SELECT t0 FROM ids) - CASE n WHEN 1 THEN interval '12 min' WHEN 2 THEN interval '4 min' WHEN 3 THEN interval '20 min'
-                                    WHEN 4 THEN interval '30 min' WHEN 5 THEN interval '2 days' ELSE interval '12 min' END,
+                                    WHEN 4 THEN interval '30 min' WHEN 5 THEN interval '3 days' ELSE interval '12 min' END,
        CASE WHEN n = 3 THEN (SELECT t0 FROM ids) - interval '5 min' END
   FROM generate_series(1, 6) n;
 -- Snoozing goes through the 079 guard: done by the assigned agent.
@@ -105,6 +105,13 @@ UPDATE conversations SET last_customer_message_at = (SELECT t0 FROM ids) - inter
  WHERE id = '10500000-0000-4000-8000-0000000000c1';
 
 -- ---- 1. first tick ------------------------------------------------------
+-- One claim per call: the already-claimed oldest wait (c1) must not take the
+-- only slot of the next call and starve c2.
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids), 1), 1, 'limit 1: first claim');
+SELECT pg_temp.assert_true((SELECT conversation_id = '10500000-0000-4000-8000-0000000000c1' FROM due_rows), 'limit 1: oldest first');
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids), 1), 1, 'limit 1: next call reaches the newer wait');
+SELECT pg_temp.assert_true((SELECT conversation_id = '10500000-0000-4000-8000-0000000000c2' FROM due_rows), 'limit 1: c2 not starved');
+DELETE FROM conversation_alerts WHERE conversation_id::text LIKE '10500000-%';
 SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids)), 2, 'tick 1: two alerts');
 SELECT pg_temp.assert_true((SELECT kind = 'waiting' AND wait_started_at = (SELECT t0 FROM ids) - interval '15 min'
   AND assigned_agent_id = (SELECT agent FROM ids) AND contact_id = '10500000-0000-4000-8000-0000000000d1'
@@ -114,9 +121,9 @@ SELECT pg_temp.assert_true((SELECT kind = 'unassigned' AND assigned_agent_id IS 
 
 -- ---- 2. same wait is never pushed twice --------------------------------
 SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '1 min'), 0, 'tick 2: nothing new');
--- c2 keeps waiting past the reply target → now also "waiting", once.
-SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '7 min'), 1, 'tick 3: c2 crosses the reply target');
-SELECT pg_temp.assert_true((SELECT kind = 'waiting' FROM due_rows WHERE conversation_id = '10500000-0000-4000-8000-0000000000c2'), 'c2: waiting');
+-- c2 keeps waiting past the reply target: already pushed as "nobody
+-- assigned" for this same wait, so no second push.
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '7 min'), 0, 'tick 3: c2 is not pushed twice');
 
 -- ---- 3. a reply ends the wait; a new customer message starts a new one ---
 INSERT INTO messages(conversation_id, sender_type, content_text, created_at) VALUES
@@ -140,7 +147,20 @@ UPDATE conversations SET last_agent_message_at = (SELECT t0 FROM ids) + interval
  WHERE id = '10500000-0000-4000-8000-0000000000c2';
 SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '1 hour'), 0, 'opted out: nothing');
 
--- ---- 5. privileges ------------------------------------------------------
+-- ---- 5. malformed settings never break the scan --------------------------
+UPDATE profiles SET notification_prefs = '{"manager_waiting":"yes","manager_unassigned":1}'
+ WHERE user_id = '10500000-0000-4000-8000-00000000000a';
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '2 hours'), 0, 'non-boolean prefs read as off');
+UPDATE profiles SET notification_prefs = '{"manager_waiting":true}'
+ WHERE user_id = '10500000-0000-4000-8000-00000000000a';
+UPDATE accounts SET preferences = preferences || '{"inbox_sla_minutes":1e30,"unassigned_alert_minutes":-5}'
+ WHERE id = (SELECT acc_a FROM ids);
+-- 1e30 is clamped to 1440 min: c2 (waiting since t0+22min) is not due yet at t0+2h.
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '2 hours'), 0, 'huge minutes clamped, no overflow');
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '24 hours'), 0, 'clamped to a day: not before');
+SELECT pg_temp.assert_eq(pg_temp.tick((SELECT t0 FROM ids) + interval '24 hours 30 min'), 1, 'clamped to a day: due after');
+
+-- ---- 6. privileges ------------------------------------------------------
 SET ROLE authenticated;
 SELECT pg_temp.assert_state('SELECT * FROM public.manager_alerts_due(now(), 10)', '42501', 'authenticated cannot run the RPC');
 SELECT pg_temp.assert_state('SELECT * FROM public.conversation_alerts', '42501', 'authenticated cannot read the table');

@@ -18,8 +18,9 @@
 --      tick. Claims the due waits with INSERT … ON CONFLICT DO NOTHING
 --      RETURNING (overlapping ticks never claim the same wait twice) and
 --      only for accounts where some owner/admin turned the alert on.
---      Waits older than a day are ignored (no burst of stale alerts on the
---      first run); rows older than 7 days are pruned.
+--      Waits older than two days are ignored (no burst of stale alerts on
+--      the first run; the longest limit is one day); rows older than 7 days
+--      are pruned.
 --   3. Partial index for the live-conversation scan.
 --
 -- Does NOT touch handle_new_user.
@@ -59,7 +60,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -68,33 +69,37 @@ BEGIN
   RETURN QUERY
   WITH watched AS (
     -- Accounts with at least one manager who wants each kind.
+    -- Compared as jsonb, never cast: a malformed value is just "off".
     SELECT p.account_id,
-           bool_or(COALESCE((p.notification_prefs->>'manager_waiting')::boolean, false)) AS want_waiting,
-           bool_or(COALESCE((p.notification_prefs->>'manager_unassigned')::boolean, false)) AS want_unassigned
+           bool_or(COALESCE(p.notification_prefs->'manager_waiting' = 'true'::jsonb, false)) AS want_waiting,
+           bool_or(COALESCE(p.notification_prefs->'manager_unassigned' = 'true'::jsonb, false)) AS want_unassigned
       FROM profiles p
      WHERE p.account_role IN ('owner', 'admin')
        AND p.account_id IS NOT NULL
      GROUP BY p.account_id
-    HAVING bool_or(COALESCE((p.notification_prefs->>'manager_waiting')::boolean, false))
-        OR bool_or(COALESCE((p.notification_prefs->>'manager_unassigned')::boolean, false))
+    HAVING bool_or(COALESCE(p.notification_prefs->'manager_waiting' = 'true'::jsonb, false))
+        OR bool_or(COALESCE(p.notification_prefs->'manager_unassigned' = 'true'::jsonb, false))
   ),
   live AS (
     -- The Radar's "customer spoke last" rule (src/lib/radar/classify.ts).
+    -- Unlike the Radar (latest customer message), the wait is measured from
+    -- the FIRST unanswered customer message — see `waits`.
+    -- Minutes are clamped to PREFERENCE_LIMITS (1..1440) before any cast.
     SELECT c.id, c.account_id, c.contact_id, c.assigned_agent_id, c.status,
            c.last_agent_message_at, c.last_customer_message_at,
            w.want_waiting, w.want_unassigned,
            COALESCE(
              CASE WHEN jsonb_typeof(a.preferences->'inbox_sla_minutes') = 'number'
-                  THEN (a.preferences->>'inbox_sla_minutes')::numeric END, 15) AS sla_minutes,
+                  THEN LEAST(GREATEST((a.preferences->>'inbox_sla_minutes')::numeric, 1), 1440) END, 15)::int AS sla_minutes,
            COALESCE(
              CASE WHEN jsonb_typeof(a.preferences->'unassigned_alert_minutes') = 'number'
-                  THEN (a.preferences->>'unassigned_alert_minutes')::numeric END, 5) AS unassigned_minutes
+                  THEN LEAST(GREATEST((a.preferences->>'unassigned_alert_minutes')::numeric, 1), 1440) END, 5)::int AS unassigned_minutes
       FROM conversations c
       JOIN watched w ON w.account_id = c.account_id
       JOIN accounts a ON a.id = c.account_id
      WHERE c.status <> 'closed'
        AND c.snoozed_until IS NULL
-       AND c.last_customer_message_at > p_now - interval '1 day'
+       AND c.last_customer_message_at > p_now - interval '2 days'
        AND (c.last_agent_message_at IS NULL OR c.last_agent_message_at < c.last_customer_message_at)
   ),
   waits AS (
@@ -111,20 +116,30 @@ BEGIN
     SELECT w.id, w.account_id, 'waiting'::text AS kind, w.started
       FROM waits w
      WHERE w.want_waiting
-       AND w.started <= p_now - make_interval(mins => GREATEST(w.sla_minutes, 1)::int)
+       AND w.started <= p_now - make_interval(mins => w.sla_minutes)
+       -- Already pushed as "nobody assigned": one push per wait is enough.
+       AND NOT EXISTS (SELECT 1 FROM conversation_alerts x
+                        WHERE x.conversation_id = w.id AND x.kind = 'unassigned'
+                          AND x.wait_started_at = w.started)
     UNION ALL
     SELECT w.id, w.account_id, 'unassigned'::text, w.started
       FROM waits w
      WHERE w.want_unassigned
        AND w.status = 'open'
        AND w.assigned_agent_id IS NULL
-       AND w.started <= p_now - make_interval(mins => GREATEST(w.unassigned_minutes, 1)::int)
+       AND w.started <= p_now - make_interval(mins => w.unassigned_minutes)
   ),
   claimed AS (
     INSERT INTO conversation_alerts AS ca (conversation_id, account_id, kind, wait_started_at)
     SELECT d.id, d.account_id, d.kind, d.started
       FROM due d
-     WHERE d.started > p_now - interval '1 day'
+     WHERE d.started > p_now - interval '2 days'
+       -- Skip what is already claimed BEFORE the limit, or old waits that are
+       -- still open would fill every batch and starve the new ones. ON
+       -- CONFLICT still guards overlapping ticks.
+       AND NOT EXISTS (SELECT 1 FROM conversation_alerts x
+                        WHERE x.conversation_id = d.id AND x.kind = d.kind
+                          AND x.wait_started_at = d.started)
      ORDER BY d.started
      LIMIT GREATEST(p_limit, 0)
     ON CONFLICT DO NOTHING
