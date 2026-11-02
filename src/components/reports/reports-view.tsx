@@ -8,6 +8,7 @@ import { useCan } from "@/hooks/use-can";
 import { useConversationCategories } from "@/hooks/use-conversation-categories";
 import { useLanguage } from "@/hooks/use-language";
 import { useTeams } from "@/hooks/use-teams";
+import { safeTimezone } from "@/lib/calendar/range";
 import { createClient } from "@/lib/supabase/client";
 import {
   DEFAULT_TIMEZONE,
@@ -54,7 +55,7 @@ export function ReportsView() {
   const copy = reportsCopy(language);
   const { accountId, preferences, profileLoading } = useAuth();
   const allowed = useCan("view-reports");
-  const timezone = preferences.business_hours?.timezone ?? DEFAULT_TIMEZONE;
+  const timezone = safeTimezone(preferences.business_hours?.timezone);
 
   const [preset, setPreset] = useState<Preset>(30);
   const [custom, setCustom] = useState<ReportPeriod>(() => lastDays(30, DEFAULT_TIMEZONE));
