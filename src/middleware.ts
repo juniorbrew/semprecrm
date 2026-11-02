@@ -122,6 +122,9 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // api/v1/ = public API (Bearer key, no session): skip the Supabase session work.
-    '/((?!_next/static|_next/image|favicon.ico|api/v1/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Installed-app files (manifest + generated icons, no file extension) are
+    // public too: a pending MFA challenge must not redirect them, or Chrome
+    // drops the app's installability.
+    '/((?!_next/static|_next/image|favicon.ico|api/v1/|manifest\\.webmanifest$|icon$|icons/|apple-icon$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -1,16 +1,26 @@
 'use client';
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
+
+import { INSTALL_PROMPT_EVENT, INSTALL_PROMPT_KEY } from '@/lib/pwa/install-prompt';
 
 // "Install the app" state for the phone. Android/Chrome hands us a
-// `beforeinstallprompt` event we can replay from our own button; iOS has
-// no such event, so the UI shows the Share → "Adicionar à Tela de Início"
-// steps instead. Server snapshots assume "installed / dismissed" so
-// nothing flashes before hydration.
+// `beforeinstallprompt` event — parked on `window` by the root layout's
+// boot script (lib/pwa/install-prompt.ts), since it fires before the
+// dashboard mounts — which our own button replays. iOS has no such
+// event, so the UI shows the Share → "Adicionar à Tela de Início" steps
+// instead. Server snapshots assume "installed / dismissed" so nothing
+// flashes before hydration.
 
-interface BeforeInstallPromptEvent extends Event {
+export interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+declare global {
+  interface Window {
+    [INSTALL_PROMPT_KEY]?: BeforeInstallPromptEvent | null;
+  }
 }
 
 type NavLike = { userAgent: string; maxTouchPoints?: number; standalone?: boolean };
@@ -19,6 +29,11 @@ type NavLike = { userAgent: string; maxTouchPoints?: number; standalone?: boolea
 export function isIosDevice(nav: NavLike): boolean {
   if (/iPad|iPhone|iPod/.test(nav.userAgent)) return true;
   return /Macintosh/.test(nav.userAgent) && (nav.maxTouchPoints ?? 0) > 1;
+}
+
+/** Facebook/Instagram/WhatsApp-style in-app browsers: no Share → Home Screen there. */
+export function isInAppBrowser(nav: NavLike): boolean {
+  return /FBAN|FBAV|Instagram|WhatsApp|Line\//.test(nav.userAgent);
 }
 
 /** Opened from the home-screen icon (any platform). */
@@ -31,6 +46,11 @@ const DISMISS_EVENT = 'semprecrm:install-app-dismissed';
 
 // Fallback when localStorage throws (private mode): hidden for this page view.
 let dismissedThisPage = false;
+
+/** Test-only: forget an in-memory dismissal. */
+export function resetInstallPromptForTests() {
+  dismissedThisPage = false;
+}
 
 function readDismissed(): boolean {
   if (dismissedThisPage) return true;
@@ -60,6 +80,16 @@ function subscribeDisplayMode(cb: () => void) {
   };
 }
 
+function subscribePrompt(cb: () => void) {
+  window.addEventListener(INSTALL_PROMPT_EVENT, cb);
+  return () => window.removeEventListener(INSTALL_PROMPT_EVENT, cb);
+}
+
+function setParkedPrompt(e: BeforeInstallPromptEvent | null) {
+  window[INSTALL_PROMPT_KEY] = e;
+  window.dispatchEvent(new Event(INSTALL_PROMPT_EVENT));
+}
+
 const noopSubscribe = () => () => {};
 
 export function useInstallPrompt() {
@@ -69,29 +99,25 @@ export function useInstallPrompt() {
     () => true,
   );
   const ios = useSyncExternalStore(noopSubscribe, () => isIosDevice(navigator), () => false);
+  const inApp = useSyncExternalStore(noopSubscribe, () => isInAppBrowser(navigator), () => false);
   const dismissed = useSyncExternalStore(subscribeDismissed, readDismissed, () => true);
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-
-  useEffect(() => {
-    const onPrompt = (e: Event) => {
-      e.preventDefault(); // keep it for our own button instead of Chrome's mini-bar
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => setDeferred(null);
-    window.addEventListener('beforeinstallprompt', onPrompt);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onPrompt);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
-  }, []);
+  const deferred = useSyncExternalStore(
+    subscribePrompt,
+    () => window[INSTALL_PROMPT_KEY] ?? null,
+    () => null,
+  );
 
   const install = useCallback(async () => {
-    if (!deferred) return;
-    await deferred.prompt();
-    await deferred.userChoice;
-    setDeferred(null); // the event can be used only once
-  }, [deferred]);
+    const e = window[INSTALL_PROMPT_KEY];
+    if (!e) return;
+    setParkedPrompt(null); // usable once: a double tap must not replay it
+    try {
+      await e.prompt();
+      await e.userChoice;
+    } catch (err) {
+      console.error('[install] prompt failed:', err);
+    }
+  }, []);
 
   const dismiss = useCallback(() => {
     dismissedThisPage = true;
@@ -103,5 +129,5 @@ export function useInstallPrompt() {
     window.dispatchEvent(new Event(DISMISS_EVENT));
   }, []);
 
-  return { standalone, ios, dismissed, canInstall: deferred !== null, install, dismiss };
+  return { standalone, ios, inApp, dismissed, canInstall: deferred !== null, install, dismiss };
 }

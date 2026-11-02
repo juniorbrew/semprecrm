@@ -5,6 +5,7 @@ import './globals.css';
 import { ThemeProvider } from '@/hooks/use-theme';
 import { LanguageProvider } from '@/hooks/use-language';
 import { ThemedToaster } from '@/components/themed-toaster';
+import { INSTALL_PROMPT_BOOT_SCRIPT } from '@/lib/pwa/install-prompt';
 import {
   DEFAULT_MODE,
   DEFAULT_THEME,
@@ -110,6 +111,11 @@ export default function RootLayout({
           id="theme-boot"
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
+        />
+        <Script
+          id="install-prompt-boot"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: INSTALL_PROMPT_BOOT_SCRIPT }}
         />
       </head>
       <body className="bg-background text-foreground min-h-full font-sans">
