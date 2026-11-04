@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   },
   fetch: vi.fn(),
   set: vi.fn(),
+  forecast: vi.fn(),
 }))
 
 vi.mock('@/hooks/use-auth', () => ({ useAuth: () => h.auth }))
@@ -23,7 +24,7 @@ vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({
     from: () => ({
       select: () => ({
-        eq: () => Promise.resolve({ data: [{ user_id: 'u-ana', full_name: 'Ana' }, { user_id: 'u-agent', full_name: 'Beto' }], error: null }),
+        eq: () => Promise.resolve({ data: [{ id: 'p-ana', user_id: 'u-ana', full_name: 'Ana' }, { id: 'p-agent', user_id: 'u-agent', full_name: 'Beto' }], error: null }),
       }),
     }),
   }),
@@ -32,6 +33,7 @@ vi.mock('@/lib/sales-goals/data', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/sales-goals/data')>()
   return { ...actual, fetchGoalProgress: h.fetch, setGoal: h.set }
 })
+vi.mock('@/lib/sales-forecast/data', () => ({ fetchSalesForecast: h.forecast }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { SalesGoalsCard } from './sales-goals-card'
@@ -45,6 +47,8 @@ beforeEach(() => {
   h.fetch.mockReset()
   h.set.mockReset()
   h.set.mockResolvedValue(undefined)
+  h.forecast.mockReset()
+  h.forecast.mockResolvedValue([])
 })
 afterEach(cleanup)
 
@@ -149,5 +153,54 @@ describe('SalesGoalsCard', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Remover: Empresa/ }))
     await waitFor(() => expect(h.set).toHaveBeenCalled())
     expect(h.set.mock.calls[0][2]).toMatchObject({ scope: 'account', metric: 'won_value', target: null })
+  })
+
+  describe('Previsão do mês', () => {
+    const frow = (assigned_to: string | null, won: number, weighted: number) => ({
+      month: '2026-11-01', assigned_to, won_value: won, weighted_value: weighted, best_case_value: 0,
+      open_count: 0, overdue_count: 0, overdue_value: 0, other_currency_count: 0,
+    })
+
+    it('value goals of the company and of a seller show the forecast and its share of the goal', async () => {
+      h.fetch.mockResolvedValue([company, mine, team])
+      h.forecast.mockResolvedValue([frow('p-agent', 500, 1500), frow('p-ana', 1000, 3000)])
+      render(<SalesGoalsCard />)
+      // company 10.000: (500+1500+1000+3000) = 6.000 = 60%; Beto 4.000: 2.000 = 50%
+      expect(await screen.findByText(/Previsão do mês: R\$\s6\.000 \(60% da meta\)/)).toBeTruthy()
+      expect(screen.getByText(/Previsão do mês: R\$\s2\.000 \(50% da meta\)/)).toBeTruthy()
+      // the team goal (count) gets no forecast line
+      expect(screen.getAllByText(/Previsão do mês:/)).toHaveLength(2)
+      expect(h.forecast).toHaveBeenCalledWith(expect.anything(), 'acc-1', null, expect.stringMatching(/^\d{4}-\d{2}-01$/), 1)
+    })
+
+    it('count goals never show a forecast', async () => {
+      h.fetch.mockResolvedValue([team])
+      h.forecast.mockResolvedValue([frow(null, 100, 100)])
+      render(<SalesGoalsCard />)
+      await screen.findAllByRole('progressbar')
+      await waitFor(() => expect(h.forecast).toHaveBeenCalled())
+      expect(screen.queryByText(/Previsão do mês:/)).toBeNull()
+    })
+
+    it('a failed forecast read leaves the goal as it was', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      h.fetch.mockResolvedValue([company])
+      h.forecast.mockRejectedValue(new Error('boom'))
+      render(<SalesGoalsCard />)
+      await screen.findAllByRole('progressbar')
+      await waitFor(() => expect(spy).toHaveBeenCalled())
+      expect(screen.queryByText(/Previsão do mês:/)).toBeNull()
+      spy.mockRestore()
+    })
+
+    it('past months have no forecast line', async () => {
+      h.fetch.mockResolvedValue([company])
+      h.forecast.mockResolvedValue([frow(null, 100, 100)])
+      render(<SalesGoalsCard />)
+      await screen.findByText(/Previsão do mês:/)
+      fireEvent.click(screen.getByRole('button', { name: 'Mês anterior' }))
+      await screen.findByText('Somente leitura: este mês já fechou')
+      expect(screen.queryByText(/Previsão do mês:/)).toBeNull()
+    })
   })
 })

@@ -37,6 +37,7 @@ import {
 import { toast } from "sonner";
 
 import { useLanguage } from "@/hooks/use-language";
+import { automaticStageProbability } from "@/lib/pipelines/board";
 import { dndAccessibility } from "@/lib/dnd-accessibility";
 
 const STAGE_COLORS = [
@@ -118,6 +119,7 @@ export function PipelineSettings({
       name: s.name,
       color: s.color,
       position: i,
+      win_probability: s.win_probability ?? null,
     }));
 
     const [renameRes, stagesRes] = await Promise.all([
@@ -278,6 +280,14 @@ export function PipelineSettings({
                             updated[index] = { ...updated[index], color: v };
                             setLocalStages(updated);
                           }}
+                          onChanceChange={(v) => {
+                            const updated = [...localStages];
+                            updated[index] = { ...updated[index], win_probability: v };
+                            setLocalStages(updated);
+                          }}
+                          autoChance={Math.round(
+                            automaticStageProbability(stage, localStages) * 100,
+                          )}
                           onRemove={() => handleRemoveStage(stage.id)}
                           colors={STAGE_COLORS}
                         />
@@ -373,17 +383,26 @@ function SortableStageRow({
   stage,
   onNameChange,
   onColorChange,
+  onChanceChange,
+  autoChance,
   onRemove,
   colors,
 }: {
   stage: PipelineStage;
   onNameChange: (v: string) => void;
   onColorChange: (v: string) => void;
+  /** null = back to the automatic chance. */
+  onChanceChange: (v: number | null) => void;
+  /** Automatic chance (0-100) for the stage's current position. */
+  autoChance: number;
   onRemove: () => void;
   colors: string[];
 }) {
+  const { t } = useLanguage();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: stage.id });
+  const chanceId = `stage-chance-${stage.id}`;
+  const hasChance = typeof stage.win_probability === "number";
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -395,8 +414,9 @@ function SortableStageRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 rounded-lg border border-border bg-muted p-2"
+      className="rounded-lg border border-border bg-muted p-2"
     >
+      <div className="flex items-center gap-2">
       <button
         type="button"
         {...attributes}
@@ -420,6 +440,43 @@ function SortableStageRow({
       >
         <Trash2 className="h-3 w-3" />
       </Button>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-6">
+        <label htmlFor={chanceId} className="text-xs text-muted-foreground">
+          {t("% chance to close")}
+        </label>
+        <Input
+          id={chanceId}
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={100}
+          step={1}
+          value={stage.win_probability ?? ""}
+          placeholder={String(autoChance)}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") return onChanceChange(null);
+            const n = Number(raw);
+            if (Number.isFinite(n)) onChanceChange(Math.min(100, Math.max(0, Math.round(n))));
+          }}
+          className="h-7 w-16 border-border bg-background text-right text-xs tabular-nums text-foreground"
+        />
+        <span className="text-xs text-muted-foreground" aria-hidden>
+          %
+        </span>
+        {hasChance ? (
+          <button
+            type="button"
+            onClick={() => onChanceChange(null)}
+            className="rounded text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t("Back to automatic")} ({autoChance}%)
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">{t("Automatic chance")}</span>
+        )}
+      </div>
     </div>
   );
 }

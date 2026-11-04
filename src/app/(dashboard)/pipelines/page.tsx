@@ -9,6 +9,7 @@ import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
 import { DealDrawer } from "@/components/pipelines/deal-drawer";
 import { PipelineAnalytics } from "@/components/pipelines/pipeline-analytics";
+import { SalesForecast } from "@/components/pipelines/sales-forecast";
 import {
   LostDealDialog,
   type LostDealInput,
@@ -30,7 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings, Rows4 } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, Rows4, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
@@ -121,6 +122,8 @@ export default function PipelinesPage() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
+  // "Previsão" replaces the board while on (a view of the same pipeline, not a route).
+  const [showForecast, setShowForecast] = useState(false);
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -527,6 +530,23 @@ export default function PipelinesPage() {
           {pipelines.length > 0 && (
             <button
               type="button"
+              onClick={() => setShowForecast((v) => !v)}
+              aria-pressed={showForecast}
+              data-testid="forecast-toggle"
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                showForecast
+                  ? "bg-primary/10 font-medium text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <TrendingUp className="size-4" aria-hidden />
+              {t("Forecast view")}
+            </button>
+          )}
+          {pipelines.length > 0 && !showForecast && (
+            <button
+              type="button"
               onClick={toggleDensity}
               aria-pressed={density === "compact"}
               aria-label={copy.compact}
@@ -580,6 +600,9 @@ export default function PipelinesPage() {
           </GatedButton>
         </div>
       ) : (
+        showForecast && selectedPipeline ? (
+        <SalesForecast pipeline={selectedPipeline} />
+        ) : (
         <>
           <PipelineAnalytics stages={stages} deals={deals} />
           <PipelineBoard
@@ -592,6 +615,7 @@ export default function PipelinesPage() {
             onStatus={canCreateDeals ? handleQuickStatus : undefined}
           />
         </>
+        )
       )}
 
       {/* New Pipeline Dialog */}

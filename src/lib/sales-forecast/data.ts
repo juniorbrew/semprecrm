@@ -4,6 +4,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { DEAL_BOARD_SELECT, DEAL_BOARD_SELECT_FALLBACK } from '@/lib/pipelines/load-deals'
+import type { Deal } from '@/types'
+
 import type { ForecastRow } from './types'
 
 type Client = Pick<SupabaseClient, 'rpc'>
@@ -34,4 +37,29 @@ export async function fetchSalesForecast(
     overdue_value: Number(r.overdue_value),
     other_currency_count: Number(r.other_currency_count),
   }))
+}
+
+/**
+ * The deals behind the forecast numbers: every open deal plus the ones won
+ * since `wonSince` (ISO instant, a day before the first month so the account
+ * time zone never cuts one off; the exact month is decided by dealsOfColumn).
+ * ponytail: one page of rows (PostgREST max-rows, 1000); paginate if an account
+ * ever has more open deals than that.
+ */
+export async function loadForecastDeals(
+  db: Pick<SupabaseClient, 'from'>,
+  accountId: string,
+  pipelineId: string | null,
+  wonSince: string,
+): Promise<Deal[]> {
+  const run = async (select: string) => {
+    let q = db.from('deals').select(select).eq('account_id', accountId)
+    if (pipelineId) q = q.eq('pipeline_id', pipelineId)
+    return q.or(`status.eq.open,and(status.eq.won,closed_at.gte.${wonSince})`).order('created_at', { ascending: false })
+  }
+  const first = await run(DEAL_BOARD_SELECT)
+  if (!first.error) return (first.data ?? []) as unknown as Deal[]
+  const second = await run(DEAL_BOARD_SELECT_FALLBACK)
+  if (second.error) throw second.error
+  return (second.data ?? []) as unknown as Deal[]
 }
