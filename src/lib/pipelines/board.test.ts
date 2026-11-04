@@ -23,6 +23,31 @@ describe('stageProbability', () => {
     expect(stageProbability(stage('x', 9), stages)).toBe(0)
     expect(stageProbability(stages[0], [stages[0]])).toBe(1)
   })
+
+  // Same cases as supabase/tests/sales_forecast.sql (private.stage_win_probability), in percent.
+  it.each([
+    [1, [100]],
+    [2, [10, 100]],
+    [3, [10, 90, 100]],
+    [5, [10, 36.666666666667, 63.333333333333, 90, 100]],
+  ])('automatic rule with %i stage(s) matches the SQL function', (n, expected) => {
+    const list = Array.from({ length: n }, (_, i) => stage(`s${i}`, i))
+    list.forEach((s, i) => expect(stageProbability(s, list) * 100).toBeCloseTo(expected[i], 6))
+  })
+
+  it('uses the chance set on the stage, including 0 and 100, else the automatic one', () => {
+    const list = [{ ...stage('a', 0), win_probability: 0 }, { ...stage('b', 1), win_probability: 100 }, stage('c', 2), stage('d', 3)]
+    expect(stageProbability(list[0], list)).toBe(0)
+    expect(stageProbability(list[1], list)).toBe(1)
+    expect(stageProbability(list[2], list)).toBeCloseTo(0.9)
+    expect(stageProbability({ ...list[2], win_probability: null }, list)).toBeCloseTo(0.9)
+    expect(stageProbability({ ...list[0], win_probability: 35 }, list)).toBeCloseTo(0.35)
+  })
+
+  it('ignores an out-of-range value (the database refuses it anyway)', () => {
+    const list = [stage('a', 0), stage('b', 1)]
+    expect(stageProbability({ ...list[0], win_probability: 250 }, list)).toBeCloseTo(0.1)
+  })
 })
 
 describe('pipelineStats', () => {
@@ -44,6 +69,11 @@ describe('pipelineStats', () => {
     expect(s.weightedValue).toBeCloseTo(10) // 100 × 10% (first of two stages)
     expect(s.wonThisMonth).toBe(1)
     expect(s.lostThisMonth).toBe(0)
+  })
+  it('weights open deals by the chance set on the stage', () => {
+    const custom = [{ ...stage('a', 0), win_probability: 50 }, stage('b', 1)]
+    const s = pipelineStats([deal({ stage_id: 'a', value: 100 })], custom, now)
+    expect(s.weightedValue).toBeCloseTo(50)
   })
   it('is all zeros on an empty board', () => {
     expect(pipelineStats([], stages, now)).toEqual({

@@ -4,10 +4,24 @@
 import type { Deal, PipelineStage } from '@/types'
 
 /**
- * Stage probability for the weighted value: first stage ≈ 10%, stages
- * interpolate up to 90% before the final stage, final stage (Won) = 100%.
+ * Stage probability for the weighted value and the forecast: the chance the
+ * admin set on the stage (0-100) or, when empty, the automatic one.
  */
 export function stageProbability(
+  stage: Pick<PipelineStage, 'id' | 'win_probability'>,
+  sortedStages: readonly Pick<PipelineStage, 'id'>[],
+): number {
+  const set = stage.win_probability
+  if (typeof set === 'number' && set >= 0 && set <= 100) return set / 100
+  return automaticStageProbability(stage, sortedStages)
+}
+
+/**
+ * Automatic chance of a stage (0-1): first stage ≈ 10%, stages interpolate up
+ * to 90% before the final stage, final stage (Won) = 100%. Mirrored in SQL by
+ * private.stage_probs (migration 106); both are tested with the same cases.
+ */
+export function automaticStageProbability(
   stage: Pick<PipelineStage, 'id'>,
   sortedStages: readonly Pick<PipelineStage, 'id'>[],
 ): number {

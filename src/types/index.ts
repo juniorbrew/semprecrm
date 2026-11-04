@@ -691,6 +691,8 @@ export interface PipelineStage {
   name: string;
   position: number;
   color: string;
+  /** Chance (0-100) of closing a deal in this stage; null/absent = automatic by position (migration 106). */
+  win_probability?: number | null;
   created_at: string;
 }
 
@@ -725,6 +727,8 @@ export interface Deal {
   notes?: string;
   expected_close_date?: string;
   status?: DealStatus;
+  /** When the deal was won / lost (stamped by the database). */
+  closed_at?: string | null;
   /** Why the deal was lost (migration 031). Cleared on reopen / won. */
   loss_reason_id?: string | null;
   lost_note?: string | null;
