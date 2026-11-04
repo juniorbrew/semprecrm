@@ -12,7 +12,7 @@ import { formatCurrency, formatMoney } from "@/lib/currency";
 import { safeTimezone } from "@/lib/calendar/range";
 import { currentMonth } from "@/lib/sales-goals/pace";
 import { buildForecastColumns, dealsOfColumn } from "@/lib/sales-forecast/columns";
-import { fetchSalesForecast, loadForecastDeals } from "@/lib/sales-forecast/data";
+import { fetchSalesForecast, loadForecastDeals, loadForecastStages } from "@/lib/sales-forecast/data";
 import type { ForecastColumn, ForecastRow, SellerFilter } from "@/lib/sales-forecast/types";
 import type { Deal, Pipeline, PipelineStage } from "@/types";
 import { EmptyState } from "@/components/dashboard/empty-state";
@@ -36,7 +36,7 @@ const COPY: Record<Language, Record<string, string>> = {
     bestCase: "Melhor caso", openDeals: "Negócios abertos", pastOne: "negócio com data vencida",
     pastMany: "negócios com data vencida", inOther: "em outra moeda", dealsIn: "Negócios de", retry: "Tentar novamente",
     colDeal: "Negócio", colStage: "Etapa", colChance: "Chance", colValue: "Valor", colWeighted: "Valor ponderado",
-    colDate: "Data", datePassed: "data vencida", wonTag: "ganho", otherCurrency: "outra moeda",
+    colDate: "Data", dealOne: "negócio", dealMany: "negócios", inWord: "em", datePassed: "data vencida", wonTag: "ganho", otherCurrency: "outra moeda",
   },
   "en-US": {
     pipeline: "Pipeline", allPipelines: "All pipelines", salesperson: "Salesperson", allSellers: "All salespeople",
@@ -44,7 +44,7 @@ const COPY: Record<Language, Record<string, string>> = {
     bestCase: "Best case", openDeals: "Open deals", pastOne: "deal past its date",
     pastMany: "deals past their date", inOther: "in another currency", dealsIn: "Deals in", retry: "Try again",
     colDeal: "Deal", colStage: "Stage", colChance: "Chance", colValue: "Value", colWeighted: "Weighted value",
-    colDate: "Date", datePassed: "date passed", wonTag: "won", otherCurrency: "other currency",
+    colDate: "Date", dealOne: "deal", dealMany: "deals", inWord: "in", datePassed: "date passed", wonTag: "won", otherCurrency: "other currency",
   },
 };
 
@@ -78,13 +78,15 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [drawerId, setDrawerId] = useState<string | null>(null);
+  // The deal the drawer shows: kept as a snapshot so a change (stage, status) never unmounts it mid-edit.
+  const [drawerSnapshot, setDrawerSnapshot] = useState<Deal | null>(null);
 
-  // Rows keep the key they were loaded for: another scope's numbers are never shown.
-  const key = `${accountId}|${pipelineId ?? "all"}|${current}|${tick}`;
-  const [data, setData] = useState<{ key: string; rows: ForecastRow[]; failed: boolean } | null>(null);
-  const rows = data?.key === key ? data.rows : null;
-  const failed = data?.key === key && data.failed;
+  // Stale-while-revalidate: rows stay on screen while a change is re-read (`tick`).
+  // They are dropped (skeleton) only when the scope / month they were loaded for changes.
+  const scopeKey = `${accountId}|${pipelineId ?? "all"}|${current}`;
+  const [data, setData] = useState<{ scopeKey: string; tick: number; rows: ForecastRow[]; failed: boolean } | null>(null);
+  const rows = data?.scopeKey === scopeKey ? data.rows : null;
+  const failed = data?.scopeKey === scopeKey && data.failed;
 
   useEffect(() => {
     if (!accountId) return;
@@ -111,44 +113,45 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
     let cancelled = false;
     fetchSalesForecast(createClient(), accountId, pipelineId, current, MONTHS)
       .then((r) => {
-        if (!cancelled) setData({ key, rows: r, failed: false });
+        if (!cancelled) setData({ scopeKey, tick, rows: r, failed: false });
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("[pipelines] sales forecast failed:", err);
-        setData({ key, rows: [], failed: true });
+        // A failed refresh keeps what is on screen; only a first load shows the error.
+        setData((prev) => (prev?.scopeKey === scopeKey && !prev.failed ? { ...prev, tick } : { scopeKey, tick, rows: [], failed: true }));
       });
     return () => {
       cancelled = true;
     };
-  }, [accountId, pipelineId, current, key]);
+  }, [accountId, pipelineId, current, scopeKey, tick]);
 
-  // The deals behind a column are read when one is opened (and again after a change).
-  const dealsKey = `${key}|${selected === null ? "-" : "on"}`;
-  const [dealData, setDealData] = useState<{ key: string; deals: Deal[]; stages: PipelineStage[]; failed: boolean } | null>(null);
-  const dealsReady = dealData?.key === dealsKey ? dealData : null;
+  // The deals behind the clicked column only (paged), read when it is opened and re-read after a change.
+  const dealsScope = `${scopeKey}|${selected}`;
+  const [dealData, setDealData] = useState<{ scope: string; deals: Deal[]; stages: PipelineStage[]; failed: boolean } | null>(null);
+  const dealsReady = dealData?.scope === dealsScope ? dealData : null;
   useEffect(() => {
     if (!accountId || selected === null) return;
     let cancelled = false;
     const db = createClient();
-    const wonSince = new Date(Date.parse(`${current}T00:00:00Z`) - 86_400_000).toISOString();
+    const month = selected === NO_DATE ? null : selected;
     (async () => {
       try {
-        let stageQuery = db.from("pipeline_stages").select("*");
-        if (pipelineId) stageQuery = stageQuery.eq("pipeline_id", pipelineId);
-        const [deals, stagesRes] = await Promise.all([loadForecastDeals(db, accountId, pipelineId, wonSince), stageQuery]);
-        if (stagesRes.error) throw stagesRes.error;
-        if (!cancelled) setDealData({ key: dealsKey, deals, stages: (stagesRes.data ?? []) as PipelineStage[], failed: false });
+        const [deals, stages] = await Promise.all([
+          loadForecastDeals(db, accountId, pipelineId, { month, currentMonth: current, timezone }),
+          loadForecastStages(db, accountId, pipelineId),
+        ]);
+        if (!cancelled) setDealData({ scope: dealsScope, deals, stages, failed: false });
       } catch (err) {
         if (cancelled) return;
         console.error("[pipelines] forecast deals failed:", err);
-        setDealData({ key: dealsKey, deals: [], stages: [], failed: true });
+        setDealData((prev) => (prev?.scope === dealsScope && !prev.failed ? prev : { scope: dealsScope, deals: [], stages: [], failed: true }));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [accountId, pipelineId, current, dealsKey, selected]);
+  }, [accountId, pipelineId, current, timezone, dealsScope, selected, tick]);
 
   const filter = useMemo<SellerFilter>(() => (seller === "all" ? "all" : seller === "none" ? "none" : { id: seller }), [seller]);
   const columns = useMemo(() => buildForecastColumns(rows ?? [], current, MONTHS, filter), [rows, current, filter]);
@@ -170,7 +173,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
     return dealsOfColumn(dealsReady.deals, dealsReady.stages, selectedColumn.month, { currentMonth: current, timezone, currency, seller: filter });
   }, [dealsReady, selectedColumn, current, timezone, currency, filter]);
 
-  const drawerDeal = drawerId ? dealsReady?.deals.find((d) => d.id === drawerId) ?? null : null;
+  const drawerDeal = drawerSnapshot ? dealsReady?.deals.find((d) => d.id === drawerSnapshot.id) ?? drawerSnapshot : null;
   const drawerStages = drawerDeal ? (dealsReady?.stages ?? []).filter((s) => s.pipeline_id === drawerDeal.pipeline_id) : [];
   const reload = useCallback(() => setTick((n) => n + 1), []);
   const moveDeal = useCallback(
@@ -185,6 +188,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
     [reload, t],
   );
 
+  const chancePct = useMemo(() => new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 0 }), [language]);
   const money = (n: number) => formatCurrency(n, currency);
   const dateLabel = (d: { date: string | null; deal: Deal }) => {
     if (!d.date) return "—";
@@ -222,7 +226,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
               onChange={(e) => {
                 setScope(e.target.value as "current" | "all");
                 setSelected(null);
-                setDrawerId(null);
+                setDrawerSnapshot(null);
               }}
             >
               <option value="current">{pipeline.name}</option>
@@ -279,23 +283,28 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
             const other = c.otherCurrencyCount;
             return (
               <li key={id}>
-                <button
-                  type="button"
-                  aria-pressed={isSelected}
-                  aria-controls="forecast-deals"
-                  onClick={() => {
-                    setSelected(isSelected ? null : id);
-                    setDrawerId(null);
-                  }}
+                <div
                   className={cn(
-                    "flex h-full w-full flex-col rounded-xl border bg-card p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                    "relative flex h-full flex-col rounded-xl border bg-card p-4 transition-colors motion-reduce:transition-none",
                     isSelected ? "border-primary" : "border-border hover:border-primary/50",
                   )}
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    {/* The button holds text only; its ::after stretches over the whole card. */}
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      aria-controls="forecast-deals"
+                      onClick={() => {
+                        setSelected(isSelected ? null : id);
+                        setDrawerSnapshot(null);
+                      }}
+                      className="rounded text-[11px] font-semibold uppercase tracking-wide text-muted-foreground after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+                    >
+                      {title}
+                    </button>
                     {c.month === current && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">{copy.thisMonth}</span>}
-                  </span>
+                  </div>
                   {c.month ? (
                     <>
                       <span className="mt-2 text-2xl font-semibold tabular-nums text-foreground">{money(c.forecast)}</span>
@@ -325,14 +334,14 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
                     </span>
                   )}
                   {!c.month && <span className="mt-2 text-xs text-muted-foreground">{t("Fill in the expected close date so these deals enter the forecast.")}</span>}
-                </button>
+                </div>
               </li>
             );
           })}
         </ul>
       )}
 
-      <div id="forecast-deals" aria-live="polite">
+      <div id="forecast-deals">
         {selectedColumn && (
           <div className="rounded-xl border border-border bg-card">
             <h3 className="border-b border-border px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -348,8 +357,12 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
                 {t("Could not load the deals.")}
               </p>
             ) : listed.length === 0 ? (
-              <p className="p-4 text-sm text-muted-foreground">{t("No deals in this column.")}</p>
+              <p role="status" className="p-4 text-sm text-muted-foreground">{t("No deals in this column.")}</p>
             ) : (
+              <>
+              <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">
+                {listed.length} {listed.length === 1 ? copy.dealOne : copy.dealMany} {copy.inWord} {selectedColumn.month ? monthLabel(selectedColumn.month) : copy.noDate}
+              </p>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[40rem] text-left text-xs">
                   <caption className="sr-only">{t("Deals behind the forecast numbers")}</caption>
@@ -369,7 +382,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
                         <td className="max-w-64 px-4 py-2">
                           <button
                             type="button"
-                            onClick={() => setDrawerId(d.deal.id)}
+                            onClick={() => setDrawerSnapshot(d.deal)}
                             className="max-w-full truncate rounded text-left font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {d.deal.title}
@@ -378,7 +391,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
                           {d.deal.status === "won" && <span className="ml-2 text-emerald-700 dark:text-emerald-400">{copy.wonTag}</span>}
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">{d.stageName}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{d.deal.status === "won" ? "100%" : `${d.chance}%`}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{d.deal.status === "won" ? chancePct.format(1) : chancePct.format(d.chance / 100)}</td>
                         <td className="px-2 py-2 text-right tabular-nums">
                           {d.otherCurrency ? <span className="text-muted-foreground">{copy.otherCurrency}</span> : formatMoney(Number(d.deal.value || 0), currency)}
                         </td>
@@ -389,6 +402,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         )}
@@ -397,7 +411,7 @@ export function SalesForecast({ pipeline }: SalesForecastProps) {
       <DealDrawer
         open={!!drawerDeal}
         onOpenChange={(next) => {
-          if (!next) setDrawerId(null);
+          if (!next) setDrawerSnapshot(null);
         }}
         deal={drawerDeal}
         pipelineId={drawerDeal?.pipeline_id ?? pipeline.id}

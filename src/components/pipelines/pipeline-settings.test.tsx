@@ -56,19 +56,50 @@ describe('PipelineSettings: chance to close per stage', () => {
     expect(screen.getAllByText('Chance automática')).toHaveLength(3)
   })
 
-  it('accepts 0 to 100 only (rounds and clamps what is typed)', () => {
+  it('accepts a whole number 0-100 and does not rewrite what is typed', () => {
     setup()
     const [a] = fields()
     fireEvent.change(a, { target: { value: '35' } })
     expect(a.value).toBe('35')
-    fireEvent.change(a, { target: { value: '250' } })
+    // typing "150" is left alone while typing (no jump), and Save waits
+    fireEvent.change(a, { target: { value: '150' } })
+    expect(a.value).toBe('150')
+    expect(screen.getByRole('button', { name: /Salvar alterações|Save Changes/ }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('on blur an out-of-range or fractional number is clamped / rounded', () => {
+    setup()
+    const [a] = fields()
+    fireEvent.change(a, { target: { value: '150' } })
+    fireEvent.blur(a)
     expect(a.value).toBe('100')
     fireEvent.change(a, { target: { value: '-5' } })
+    fireEvent.blur(a)
     expect(a.value).toBe('0')
-    fireEvent.change(a, { target: { value: '12.6' } })
+    fireEvent.change(a, { target: { value: '12,6' } })
+    fireEvent.blur(a)
     expect(a.value).toBe('13')
-    expect(a.min).toBe('0')
-    expect(a.max).toBe('100')
+    expect(screen.getByRole('button', { name: /Salvar alterações|Save Changes/ }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('text that is not a number is flagged accessibly on blur, never silently turned into automatic', () => {
+    setup()
+    const [a, b] = fields()
+    expect(b.value).toBe('40')
+    fireEvent.change(b, { target: { value: '-' } })
+    expect(b.value).toBe('-')
+    expect(screen.queryByRole('alert')).toBeNull() // not while typing
+    fireEvent.blur(b)
+    const msg = screen.getByRole('alert')
+    expect(msg.textContent).toMatch(/número inteiro de 0 a 100/)
+    expect(b.getAttribute('aria-invalid')).toBe('true')
+    expect(b.getAttribute('aria-describedby')).toBe(msg.id)
+    expect(a.getAttribute('aria-invalid')).toBeNull()
+    expect(screen.getByRole('button', { name: /Salvar alterações|Save Changes/ }).hasAttribute('disabled')).toBe(true)
+    // fixing it clears the flag
+    fireEvent.change(b, { target: { value: '55' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: /Salvar alterações|Save Changes/ }).hasAttribute('disabled')).toBe(false)
   })
 
   it('"voltar ao automático" empties the field', () => {

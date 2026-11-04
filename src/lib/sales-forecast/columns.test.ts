@@ -65,6 +65,7 @@ describe('dealsOfColumn', () => {
     deal({ title: 'overdue', stage_id: 's2', value: 200, expected_close_date: '2026-09-10', assigned_to: 'p2' }),
     deal({ title: 'nodate' }),
     deal({ title: 'usd', currency: 'USD', value: 999, expected_close_date: '2026-11-05' }),
+    deal({ title: 'nocurrency', currency: undefined, value: 55, expected_close_date: '2026-11-07' }),
     deal({ title: 'lost', status: 'lost', expected_close_date: '2026-11-05' }),
     // closed 02:59 UTC on Dec 1 = Nov 30, 23:59 in Sao Paulo -> November
     deal({ title: 'won-edge', stage_id: 's3', status: 'won', closed_at: '2026-12-01T02:59:00Z', value: 70 }),
@@ -74,7 +75,7 @@ describe('dealsOfColumn', () => {
 
   it('current month: open dated deals, the overdue one (flagged), the won one by closed_at in the account zone; lost out', () => {
     const list = dealsOfColumn(deals, stages, '2026-11-01', opts)
-    expect(list.map((d) => d.deal.title).sort()).toEqual(['in-month', 'overdue', 'usd', 'won-edge'])
+    expect(list.map((d) => d.deal.title).sort()).toEqual(['in-month', 'nocurrency', 'overdue', 'usd', 'won-edge'])
     const overdue = list.find((d) => d.deal.title === 'overdue')!
     expect(overdue).toMatchObject({ overdue: true, chance: 90, weighted: 180 })
     expect(list.find((d) => d.deal.title === 'in-month')).toMatchObject({ chance: 10, weighted: 10, stageName: 'Novo', overdue: false })
@@ -86,6 +87,23 @@ describe('dealsOfColumn', () => {
     expect(usd).toMatchObject({ otherCurrency: true, value: 0, weighted: 0 })
   })
 
+  it('a deal without a currency is another currency (not summed), as in the database', () => {
+    const d = dealsOfColumn(deals, stages, '2026-11-01', opts).find((x) => x.deal.title === 'nocurrency')!
+    expect(d).toMatchObject({ otherCurrency: true, value: 0, weighted: 0 })
+  })
+
+  it('orders stages by position, created_at, id like the database', () => {
+    const tied = [
+      { id: 'b', pipeline_id: 'pl', name: 'B', position: 0, created_at: '2026-01-02T00:00:00Z' },
+      { id: 'a', pipeline_id: 'pl', name: 'A', position: 0, created_at: '2026-01-01T00:00:00Z' },
+      { id: 'c', pipeline_id: 'pl', name: 'C', position: 0, created_at: '2026-01-02T00:00:00Z' },
+    ] as PipelineStage[]
+    const open = (stage_id: string) => deal({ title: stage_id, stage_id, expected_close_date: '2026-11-20' })
+    const list = dealsOfColumn([open('a'), open('b'), open('c')], tied, '2026-11-01', opts)
+    // a (first), b, c (last = 100%): 10 / 90 / 100
+    expect(Object.fromEntries(list.map((d) => [d.deal.title, d.chance]))).toEqual({ a: 10, b: 90, c: 100 })
+  })
+
   it('sorted by weighted value, then no date and next month', () => {
     expect(dealsOfColumn(deals, stages, '2026-11-01', opts)[0].deal.title).toBe('overdue')
     expect(dealsOfColumn(deals, stages, null, opts).map((d) => d.deal.title)).toEqual(['nodate'])
@@ -94,7 +112,7 @@ describe('dealsOfColumn', () => {
 
   it('respects the seller filter', () => {
     expect(dealsOfColumn(deals, stages, '2026-11-01', { ...opts, seller: { id: 'p2' } }).map((d) => d.deal.title)).toEqual(['overdue'])
-    expect(dealsOfColumn(deals, stages, '2026-11-01', { ...opts, seller: 'none' }).map((d) => d.deal.title).sort()).toEqual(['usd', 'won-edge'])
+    expect(dealsOfColumn(deals, stages, '2026-11-01', { ...opts, seller: 'none' }).map((d) => d.deal.title).sort()).toEqual(['nocurrency', 'usd', 'won-edge'])
   })
 
   it('uses the chance defined on the stage', () => {

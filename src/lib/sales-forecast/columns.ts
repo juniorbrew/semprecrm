@@ -1,7 +1,7 @@
 // Pure builders for the forecast view: columns from the RPC rows and the
 // deal lists behind each column. No React, no Supabase.
 
-import { stageProbability } from '@/lib/pipelines/board'
+import { compareStages, stageProbability } from '@/lib/pipelines/board'
 import { zonedParts } from '@/lib/calendar/range'
 import { shiftMonth } from '@/lib/sales-goals/pace'
 import type { Deal, PipelineStage } from '@/types'
@@ -78,7 +78,7 @@ export function dealsOfColumn(
   const seller = opts.seller ?? 'all'
   const byPipeline = new Map<string, PipelineStage[]>()
   for (const s of stages) byPipeline.set(s.pipeline_id, [...(byPipeline.get(s.pipeline_id) ?? []), s])
-  for (const list of byPipeline.values()) list.sort((a, b) => a.position - b.position)
+  for (const list of byPipeline.values()) list.sort(compareStages)
   const stageById = new Map(stages.map((s) => [s.id, s]))
 
   const out: ForecastDeal[] = []
@@ -102,7 +102,8 @@ export function dealsOfColumn(
 
     const stage = stageById.get(deal.stage_id)
     const chance = stage ? Math.round(stageProbability(stage, byPipeline.get(stage.pipeline_id) ?? []) * 10000) / 100 : 0
-    const otherCurrency = (deal.currency ?? opts.currency) !== opts.currency
+    // A deal without a currency counts as another one, like in the database (and in 103).
+    const otherCurrency = deal.currency !== opts.currency
     const value = otherCurrency ? 0 : Number(deal.value || 0)
     out.push({
       deal,

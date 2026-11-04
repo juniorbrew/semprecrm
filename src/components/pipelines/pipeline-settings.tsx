@@ -82,6 +82,8 @@ export function PipelineSettings({
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Stages whose "% chance" field holds text that is not a whole number 0-100 (Save waits for a fix).
+  const [badChances, setBadChances] = useState<Set<string>>(new Set());
 
   // Reset form state when the dialog opens or its prop inputs change
   // — legitimate prop-driven sync.
@@ -91,6 +93,7 @@ export function PipelineSettings({
     setName(pipeline.name);
     setLocalStages([...stages].sort((a, b) => a.position - b.position));
     setShowDeleteConfirm(false);
+    setBadChances(new Set());
   }, [open, pipeline, stages]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -280,6 +283,14 @@ export function PipelineSettings({
                             updated[index] = { ...updated[index], color: v };
                             setLocalStages(updated);
                           }}
+                          onChanceInvalid={(bad) =>
+                            setBadChances((prev) => {
+                              const next = new Set(prev);
+                              if (bad) next.add(stage.id);
+                              else next.delete(stage.id);
+                              return next;
+                            })
+                          }
                           onChanceChange={(v) => {
                             const updated = [...localStages];
                             updated[index] = { ...updated[index], win_probability: v };
@@ -366,7 +377,7 @@ export function PipelineSettings({
               </Button>
               <Button
                 onClick={handleSave}
-                disabled={saving || !name.trim()}
+                disabled={saving || !name.trim() || badChances.size > 0}
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 {saving ? "Salvando..." : "Save Changes"}
@@ -384,6 +395,7 @@ function SortableStageRow({
   onNameChange,
   onColorChange,
   onChanceChange,
+  onChanceInvalid,
   autoChance,
   onRemove,
   colors,
@@ -393,6 +405,8 @@ function SortableStageRow({
   onColorChange: (v: string) => void;
   /** null = back to the automatic chance. */
   onChanceChange: (v: number | null) => void;
+  /** The field holds text that is not a whole number 0-100. */
+  onChanceInvalid: (bad: boolean) => void;
   /** Automatic chance (0-100) for the stage's current position. */
   autoChance: number;
   onRemove: () => void;
@@ -403,6 +417,41 @@ function SortableStageRow({
     useSortable({ id: stage.id });
   const chanceId = `stage-chance-${stage.id}`;
   const hasChance = typeof stage.win_probability === "number";
+  // What is typed, until it is a valid chance: null = show the stage's value. Nothing is
+  // rewritten while typing ("-", "150"); out-of-range numbers are clamped on blur and text
+  // that is not a number is flagged.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [blurred, setBlurred] = useState(false);
+  const shown = draft ?? (stage.win_probability ?? "").toString();
+  const invalid = draft !== null && !/^(100|[0-9]{1,2})$/.test(draft) && draft !== "";
+  const errorId = `${chanceId}-error`;
+  const showError = invalid && blurred;
+  function commitDraft(raw: string) {
+    setDraft(raw);
+    if (raw === "") {
+      onChanceInvalid(false);
+      return onChanceChange(null);
+    }
+    if (/^(100|[0-9]{1,2})$/.test(raw)) {
+      onChanceInvalid(false);
+      return onChanceChange(Number(raw));
+    }
+    onChanceInvalid(true);
+  }
+  function settle() {
+    if (draft === null) return;
+    if (/^-?[0-9]+([.,][0-9]+)?$/.test(draft)) {
+      const n = Math.min(100, Math.max(0, Math.round(Number(draft.replace(",", ".")))));
+      setDraft(null);
+      setBlurred(false);
+      onChanceInvalid(false);
+      onChanceChange(n);
+    } else if (draft === "" || !invalid) {
+      setDraft(null);
+    } else {
+      setBlurred(true);
+    }
+  }
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -447,19 +496,17 @@ function SortableStageRow({
         </label>
         <Input
           id={chanceId}
-          type="number"
+          type="text"
           inputMode="numeric"
-          min={0}
-          max={100}
-          step={1}
-          value={stage.win_probability ?? ""}
+          value={shown}
           placeholder={String(autoChance)}
+          aria-invalid={showError || undefined}
+          aria-describedby={showError ? errorId : undefined}
           onChange={(e) => {
-            const raw = e.target.value;
-            if (raw === "") return onChanceChange(null);
-            const n = Number(raw);
-            if (Number.isFinite(n)) onChanceChange(Math.min(100, Math.max(0, Math.round(n))));
+            setBlurred(false);
+            commitDraft(e.target.value.trim());
           }}
+          onBlur={settle}
           className="h-7 w-16 border-border bg-background text-right text-xs tabular-nums text-foreground"
         />
         <span className="text-xs text-muted-foreground" aria-hidden>
@@ -468,13 +515,23 @@ function SortableStageRow({
         {hasChance ? (
           <button
             type="button"
-            onClick={() => onChanceChange(null)}
+            onClick={() => {
+              setDraft(null);
+              setBlurred(false);
+              onChanceInvalid(false);
+              onChanceChange(null);
+            }}
             className="rounded text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {t("Back to automatic")} ({autoChance}%)
           </button>
         ) : (
           <span className="text-xs text-muted-foreground">{t("Automatic chance")}</span>
+        )}
+        {showError && (
+          <p id={errorId} role="alert" className="basis-full text-xs text-red-500">
+            {t("Enter a whole number from 0 to 100, or go back to automatic.")}
+          </p>
         )}
       </div>
     </div>

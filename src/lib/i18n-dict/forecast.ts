@@ -5,6 +5,7 @@ export const DICT_FORECAST: Record<string, string> = {
   '% chance to close': '% de chance de fechar',
   'Back to automatic': 'Voltar ao automático',
   'Automatic chance': 'Chance automática',
+  'Enter a whole number from 0 to 100, or go back to automatic.': 'Digite um número inteiro de 0 a 100, ou volte ao automático.',
   "Expected revenue: each open deal's value × the chance of its stage. Set the chance of each stage in the pipeline settings; stages left empty use the automatic chance (first stage ≈ 10%, up to 90%, last stage = 100%). Lost deals are excluded.":
     'Receita esperada: o valor de cada negócio aberto × a chance da etapa dele. Defina a chance de cada etapa nas configurações do funil; etapas sem valor usam a chance automática (1ª etapa ≈ 10%, subindo até 90%, última etapa = 100%). Negócios perdidos ficam de fora.',
   // ---- Forecast view ----

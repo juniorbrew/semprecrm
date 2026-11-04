@@ -36,6 +36,18 @@ export function automaticStageProbability(
   return 0.1 + t * (0.9 - 0.1)
 }
 
+/** Stage order everywhere (and in SQL, private.stage_probs): position, then created_at, then id. */
+export function compareStages(
+  a: Pick<PipelineStage, 'position' | 'created_at' | 'id'>,
+  b: Pick<PipelineStage, 'position' | 'created_at' | 'id'>,
+): number {
+  return (
+    a.position - b.position ||
+    (a.created_at ?? '').localeCompare(b.created_at ?? '') ||
+    a.id.localeCompare(b.id)
+  )
+}
+
 export interface PipelineStats {
   /** Deals not marked lost (won included). */
   totalCount: number
@@ -52,7 +64,7 @@ export function pipelineStats(
   stages: readonly PipelineStage[],
   now: Date = new Date(),
 ): PipelineStats {
-  const sorted = [...stages].sort((a, b) => a.position - b.position)
+  const sorted = [...stages].sort(compareStages)
   const active = deals.filter((d) => d.status !== 'lost')
   const totalCount = active.length
   const totalValue = active.reduce((sum, d) => sum + Number(d.value || 0), 0)
