@@ -45,6 +45,16 @@ BEGIN
   IF v_anon THEN PERFORM set_config('request.jwt.claim.sub', '', true); END IF;
   RETURN v_out;
 END $$;
+CREATE FUNCTION pg_temp.fc_fails(p_acc uuid, p_month date) RETURNS boolean LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claim.sub', '10600000-0000-4000-8000-00000000000a', true);
+  PERFORM * FROM public.sales_forecast(p_acc, NULL, p_month, 1);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  RETURN false;
+EXCEPTION WHEN SQLSTATE '22023' THEN
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  RETURN true;
+END $$;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_temp TO PUBLIC;
 
 -- ---- tenants -----------------------------------------------------------
@@ -123,7 +133,10 @@ END $$;
 -- stage chance: same numbers as the TypeScript rule (src/lib/pipelines/board.test.ts)
 -- =====================================================================
 CREATE FUNCTION pg_temp.chance(p_pipeline uuid, p_pos int) RETURNS numeric LANGUAGE sql AS $$
-  SELECT private.stage_win_probability(id) FROM pipeline_stages WHERE pipeline_id = p_pipeline ORDER BY position OFFSET p_pos LIMIT 1
+  SELECT sp.probability
+    FROM private.stage_probs((SELECT account_id FROM pipelines WHERE id = p_pipeline)) sp
+    JOIN pipeline_stages s ON s.id = sp.stage_id
+   WHERE sp.pipeline_id = p_pipeline ORDER BY s.position OFFSET p_pos LIMIT 1
 $$;
 SELECT pg_temp.assert_eq(pg_temp.chance((SELECT pipe1 FROM ctx), 0), 100, '1 stage: 100');
 SELECT pg_temp.assert_eq(pg_temp.chance((SELECT pipe2 FROM ctx), 0), 10, '2 stages: first is 10');
@@ -171,6 +184,14 @@ SELECT pg_temp.assert_true(pg_temp.fc((SELECT acc_a FROM ctx), (SELECT pipe FROM
 SELECT pg_temp.assert_true(pg_temp.fc((SELECT acc_a FROM ctx), (SELECT pipe FROM ctx), (SELECT cur FROM ctx), 3, NULL, NULL, false) = '0/30.00/300.00/1/0/0/0', 'no seller: the unassigned deal is its own row');
 -- pipeline filter: all pipelines adds the single-stage pipeline deal (100%)
 SELECT pg_temp.assert_true(pg_temp.fc((SELECT acc_a FROM ctx), NULL, (SELECT cur FROM ctx), 3, (SELECT cur FROM ctx)) = '100.00/340.00/1360.00/3/1/200.00/2', 'all pipelines: + p1-open 60 at 100%');
+-- a deal with no currency counts as "another currency" (same as 103: it is not summed)
+INSERT INTO deals(user_id, account_id, pipeline_id, stage_id, contact_id, title, value, currency, status, assigned_to, expected_close_date)
+  SELECT c.owner, c.acc_a, c.pipe, c.s1, (SELECT id FROM contacts WHERE phone = '5511106000001'), 'o-null', 77, NULL, 'open', c.p1, (c.cur + 14) FROM ctx c;
+SELECT pg_temp.assert_true(pg_temp.fc((SELECT acc_a FROM ctx), (SELECT pipe FROM ctx), (SELECT cur FROM ctx), 3, (SELECT cur FROM ctx)) = '100.00/280.00/1300.00/2/1/200.00/3', 'NULL currency: counted as another currency, not summed');
+DELETE FROM deals WHERE title = 'o-null';
+-- p_month sanity: a clear error, not a raw timestamp overflow
+SELECT pg_temp.assert_true(pg_temp.fc_fails((SELECT acc_a FROM ctx), DATE '1900-01-01'), 'month before 2000 refused (22023)');
+SELECT pg_temp.assert_true(pg_temp.fc_fails((SELECT acc_a FROM ctx), DATE '2300-01-01'), 'month after 2200 refused (22023)');
 -- a defined chance moves the forecast
 UPDATE pipeline_stages SET win_probability = 50 WHERE id = (SELECT s1 FROM ctx);
 SELECT pg_temp.assert_true(pg_temp.fc((SELECT acc_a FROM ctx), (SELECT pipe FROM ctx), (SELECT cur FROM ctx), 3, (SELECT cur FROM ctx)) = '100.00/680.00/1300.00/2/1/200.00/2', 'stage chance 50%: o1 500 + o3 180');
@@ -222,7 +243,6 @@ SELECT set_config('request.jwt.claim.sub', '', true);
 -- ---- grants (076 rule) ---------------------------------------------------------------------
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.sales_forecast(uuid, uuid, date, int)', 'EXECUTE'), 'anon cannot run the forecast');
 SELECT pg_temp.assert_true(has_function_privilege('authenticated', 'public.sales_forecast(uuid, uuid, date, int)', 'EXECUTE'), 'authenticated runs the forecast');
-SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'private.stage_win_probability(uuid)', 'EXECUTE'), 'anon cannot run the stage chance');
 SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'private.stage_probs(uuid)', 'EXECUTE'), 'anon cannot run stage_probs');
 
 SELECT 'sales_forecast: all assertions passed' AS result;

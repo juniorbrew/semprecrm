@@ -8,8 +8,9 @@
 --    10 + 80 * index / (n - 2) for the stage at 0-based index (first is 10,
 --    the one before the last is 90); with only 2 stages the first is 10.
 --    The rule is mirrored in TypeScript and both are tested with the same cases.
--- 2. private.stage_probs(account) / private.stage_win_probability(stage):
---    the chance of each stage (defined or automatic), a numeric 0-100.
+-- 2. private.stage_probs(account): the chance of each stage (defined or
+--    automatic), a numeric 0-100. Stages order by position, created_at, id
+--    (the TypeScript side uses the same tie-break).
 -- 3. sales_forecast(account, pipeline | NULL = all, month, months): one row
 --    per month x seller, plus month NULL = "no date". SECURITY INVOKER: deals
 --    and stages are read under the caller's RLS; the caller must be a member
@@ -20,7 +21,8 @@
 --      open_count      those open deals
 --      overdue_*       open deals dated BEFORE the current month: they count in
 --                      the CURRENT month (and are also in open_count/weighted/best case)
---      other_currency_count  deals (won or open) not in the account currency: counted, never summed
+--      other_currency_count  deals (won or open) not in the account currency (a NULL
+--                      deal currency counts as another one, like 103): counted, never summed
 --    The "no date" row (month NULL) holds open deals without expected_close_date:
 --    open_count, weighted_value and best_case_value (= full value); won_value 0.
 --    Lost deals never count. assigned_to is a profiles.id (NULL = unassigned).
@@ -67,21 +69,6 @@ $$;
 REVOKE ALL ON FUNCTION private.stage_probs(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION private.stage_probs(uuid) TO authenticated, service_role;
 
-CREATE OR REPLACE FUNCTION private.stage_win_probability(p_stage_id uuid)
-RETURNS numeric
-LANGUAGE sql
-STABLE
-SET search_path = public, pg_temp
-AS $$
-  SELECT sp.probability
-    FROM public.pipeline_stages s
-    JOIN public.pipelines p ON p.id = s.pipeline_id
-    CROSS JOIN LATERAL private.stage_probs(p.account_id) sp
-   WHERE s.id = p_stage_id AND sp.stage_id = s.id;
-$$;
-REVOKE ALL ON FUNCTION private.stage_win_probability(uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION private.stage_win_probability(uuid) TO authenticated, service_role;
-
 CREATE OR REPLACE FUNCTION public.sales_forecast(
   p_account_id  uuid,
   p_pipeline_id uuid,
@@ -107,6 +94,8 @@ AS $$
 DECLARE
   v_tz       text;
   v_cur      date;
+  v_from_ts  timestamptz;
+  v_to_ts    timestamptz;
   v_first    date;
   v_last     date;
   v_months   int := LEAST(GREATEST(COALESCE(p_months, 3), 1), 6);
@@ -115,12 +104,19 @@ BEGIN
   IF NOT public.is_account_member(p_account_id) THEN
     RAISE EXCEPTION 'not a member of this account' USING ERRCODE = '42501';
   END IF;
+  IF p_month IS NOT NULL AND (p_month < DATE '2000-01-01' OR p_month > DATE '2200-01-01') THEN
+    RAISE EXCEPTION 'month out of range' USING ERRCODE = '22023';
+  END IF;
 
   v_tz := public.report_timezone(p_account_id);
   v_cur := date_trunc('month', now() AT TIME ZONE v_tz)::date;
   v_first := date_trunc('month', COALESCE(p_month, v_cur))::date;
   v_last := (v_first + ((v_months - 1) * INTERVAL '1 month'))::date;
-  SELECT a.default_currency INTO v_currency FROM public.accounts a WHERE a.id = p_account_id;
+  -- Same fallback as the UI (DEFAULT_CURRENCY); the column is NOT NULL, so this is only a guard.
+  SELECT COALESCE(a.default_currency, 'BRL') INTO v_currency FROM public.accounts a WHERE a.id = p_account_id;
+  -- Won deals only matter inside the window: lets idx_deals_account_won_closed (103) be used.
+  v_from_ts := v_first::timestamp AT TIME ZONE v_tz;
+  v_to_ts := (v_last + INTERVAL '1 month')::timestamp AT TIME ZONE v_tz;
 
   -- Output columns share names with the CTE columns, so every reference is aliased.
   RETURN QUERY
@@ -130,7 +126,7 @@ BEGIN
     SELECT d.assigned_to AS seller,
            d.status AS st,
            d.value AS val,
-           (d.currency IS NOT DISTINCT FROM v_currency) AS same_cur,
+           COALESCE(d.currency = v_currency, false) AS same_cur,
            CASE
              WHEN d.status = 'won' THEN date_trunc('month', d.closed_at AT TIME ZONE v_tz)::date
              WHEN d.expected_close_date IS NULL THEN NULL
@@ -142,7 +138,7 @@ BEGIN
       FROM public.deals d
       LEFT JOIN sp ON sp.sid = d.stage_id
      WHERE d.account_id = p_account_id
-       AND d.status IN ('open', 'won')
+       AND (d.status = 'open' OR (d.status = 'won' AND d.closed_at >= v_from_ts AND d.closed_at < v_to_ts))
        AND (p_pipeline_id IS NULL OR d.pipeline_id = p_pipeline_id)
   )
   SELECT b.mth,

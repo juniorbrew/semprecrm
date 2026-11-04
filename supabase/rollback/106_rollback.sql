@@ -3,7 +3,7 @@
 -- Drops the chance chosen for each stage (data loss); stages fall back to the automatic rule.
 BEGIN;
 DROP FUNCTION IF EXISTS public.sales_forecast(uuid, uuid, date, int);
-DROP FUNCTION IF EXISTS private.stage_win_probability(uuid);
+DROP FUNCTION IF EXISTS private.stage_win_probability(uuid);  -- only in the first draft of 106
 DROP FUNCTION IF EXISTS private.stage_probs(uuid);
 DROP INDEX IF EXISTS public.idx_deals_account_open_expected;
 ALTER TABLE public.pipeline_stages DROP CONSTRAINT IF EXISTS pipeline_stages_win_probability_check;
