@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   advanceToLabel,
   closeDateInfo,
+  lastContact,
   movedToLabel,
   parseDateOnly,
   relativeTime,
@@ -84,5 +85,54 @@ describe('stage labels', () => {
     expect(movedToLabel('Negotiation', 'en-US')).toBe('Moved to Negotiation')
     expect(advanceToLabel('Proposta', 'pt-BR')).toBe('Avançar para Proposta')
     expect(advanceToLabel('Proposal', 'en-US')).toBe('Advance to Proposal')
+  })
+})
+
+describe('lastContact', () => {
+  it('is null without any message', () => {
+    expect(lastContact(null, 'pt-BR', now)).toBeNull()
+    expect(lastContact({ last_message_at: null }, 'pt-BR', now)).toBeNull()
+  })
+
+  it('says the customer spoke last', () => {
+    const c = lastContact(
+      { last_message_at: ago(3 * 86_400), last_customer_message_at: ago(3 * 86_400), last_agent_message_at: ago(5 * 86_400) },
+      'pt-BR',
+      now,
+    )
+    expect(c?.speaker).toBe('customer')
+    expect(c?.label).toBe('O cliente falou por último, há 3 d')
+    expect(c?.quietLabel).toBe('3 dias sem conversa')
+    expect(c?.quiet).toBe(false)
+  })
+
+  it('says the team spoke last and flags a quiet week', () => {
+    const c = lastContact(
+      { last_message_at: ago(9 * 86_400), last_customer_message_at: ago(12 * 86_400), last_agent_message_at: ago(9 * 86_400) },
+      'en-US',
+      now,
+    )
+    expect(c?.speaker).toBe('team')
+    expect(c?.label).toBe('Your team spoke last, 9d ago')
+    expect(c?.quietLabel).toBe('9 days without talking')
+    expect(c?.quiet).toBe(true)
+  })
+
+  it('has no quiet label under a day and handles one day', () => {
+    expect(lastContact({ last_message_at: ago(7200) }, 'pt-BR', now)?.quietLabel).toBeNull()
+    expect(lastContact({ last_message_at: ago(7200) }, 'pt-BR', now)?.label).toBe('Última mensagem há 2 h')
+    expect(lastContact({ last_message_at: ago(86_400) }, 'pt-BR', now)?.quietLabel).toBe('1 dia sem conversa')
+  })
+
+  it('reads a date as "em <data>" after 30 days', () => {
+    const c = lastContact({ last_message_at: ago(40 * 86_400), last_customer_message_at: ago(40 * 86_400) }, 'pt-BR', now)
+    expect(c?.label).toMatch(/^O cliente falou por último, em \d{2} de /)
+    expect(c?.quietLabel).toBe('40 dias sem conversa')
+  })
+
+  it('falls back to the side stamps when last_message_at is missing', () => {
+    const c = lastContact({ last_agent_message_at: ago(2 * 86_400) }, 'pt-BR', now)
+    expect(c?.speaker).toBe('team')
+    expect(c?.quietDays).toBe(2)
   })
 })

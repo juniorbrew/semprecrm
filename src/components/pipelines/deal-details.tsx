@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import type { Conversation, Deal, DealStatus, PipelineStage } from "@/types";
 import type { Task } from "@/lib/tasks";
 import {
+  DueChip,
   LinkedTaskRows,
   TaskDrawer,
   TaskQuickCreate,
@@ -18,6 +19,7 @@ import { inboxConversationHref } from "@/lib/conversations/find-by-contact";
 import {
   advanceToLabel,
   closeDateInfo,
+  lastContact,
   longDateTime,
   relativeTime,
   type CloseDateTone,
@@ -40,6 +42,7 @@ import { toast } from "sonner";
 import {
   ArrowRight,
   CalendarClock,
+  CircleArrowRight,
   Check,
   Loader2,
   MessageSquareX,
@@ -125,6 +128,7 @@ export function DealDetails({
   const [taskAddOpen, setTaskAddOpen] = useState(false);
   const [taskDrawerTask, setTaskDrawerTask] = useState<Task | null>(null);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  const tasksSectionRef = useRef<HTMLElement>(null);
   // Company (migration 054) — changed / removed in place, agent+.
   const [company, setCompany] = useState<CompanySummary | null>(
     deal.company ?? null,
@@ -170,6 +174,21 @@ export function DealDetails({
   const conversationHref = conversation
     ? inboxConversationHref(conversation.id)
     : null;
+  // "Before you talk": where it stopped + the next step, from what the
+  // drawer already loads (no AI, no extra query). Linked tasks are open
+  // tasks sorted by due date, so the first one is the next step.
+  const last = lastContact(conversation, language);
+  const nextTask = linkedTasks.tasks[0] ?? null;
+
+  function openTask(task: Task) {
+    setTaskDrawerTask(task);
+    setTaskDrawerOpen(true);
+  }
+
+  function addNextStep() {
+    setTaskAddOpen(true);
+    tasksSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
 
   // Timeline — the schema stores no per-stage history, so the events
   // are the ones we can vouch for: creation, expected close, the last
@@ -446,6 +465,127 @@ export function DealDetails({
           </section>
         )}
 
+        {/* Before you talk — where it stopped and the next step */}
+        <section>
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("Before you talk")}
+          </h3>
+          <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border bg-card">
+            {conversation ? (
+              <Link
+                href={conversationHref ?? "/inbox"}
+                className="flex gap-2.5 p-3 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    {last ? (
+                      <p
+                        className="text-sm font-medium text-foreground"
+                        title={longDateTime(last.at, language)}
+                        data-no-translate
+                      >
+                        {last.label}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">{t("No messages yet")}</p>
+                    )}
+                    <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          conversation.status === "open"
+                            ? "bg-emerald-500"
+                            : conversation.status === "pending"
+                              ? "bg-amber-500"
+                              : "bg-muted-foreground/60",
+                        )}
+                      />
+                      <span data-no-translate>
+                        {CONVERSATION_STATUS_LABEL[language][conversation.status]}
+                      </span>
+                      {conversation.unread_count > 0 && (
+                        <span className="rounded-full bg-primary px-1.5 py-px text-[10px] font-semibold text-primary-foreground">
+                          {conversation.unread_count}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {last?.quietLabel && (
+                    <p
+                      className={cn(
+                        "text-xs",
+                        last.quiet
+                          ? "font-medium text-amber-600 dark:text-amber-400"
+                          : "text-muted-foreground",
+                      )}
+                      data-no-translate
+                    >
+                      {last.quietLabel}
+                    </p>
+                  )}
+                  {conversation.last_message_text && (
+                    <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground" data-no-translate>
+                      {conversation.last_message_text}
+                    </p>
+                  )}
+                </div>
+              </Link>
+            ) : (
+              <p className="flex gap-2.5 p-3 text-xs text-muted-foreground">
+                <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                {conversationLoading
+                  ? t("Loading...")
+                  : contact
+                    ? t("No conversation with this contact yet")
+                    : t("No contact linked to this deal")}
+              </p>
+            )}
+            {tasksEnabled && isOpen && (
+              <div className="flex items-start gap-2.5 p-3">
+                <CircleArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-medium text-muted-foreground">
+                    {t("Next step")}
+                  </p>
+                  {linkedTasks.loading ? (
+                    <p className="text-sm text-muted-foreground">{t("Loading...")}</p>
+                  ) : nextTask ? (
+                    <div className="flex flex-wrap items-center gap-x-1">
+                      <button
+                        type="button"
+                        onClick={() => openTask(nextTask)}
+                        className="min-w-0 rounded-sm text-left text-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        data-no-translate
+                      >
+                        {nextTask.title}
+                      </button>
+                      <DueChip dueAt={nextTask.due_at} />
+                    </div>
+                  ) : (
+                    <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                      {t("No next step set")}
+                    </p>
+                  )}
+                </div>
+                {!linkedTasks.loading && !nextTask && canWriteTasks && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={addNextStep}
+                    className="shrink-0 border-border bg-card text-foreground hover:bg-muted"
+                  >
+                    <Plus />
+                    {t("Set next step")}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Products and services — the value of the deal is their sum */}
         <DealItemsSection
           dealId={deal.id}
@@ -522,58 +662,6 @@ export function DealDetails({
           />
         </section>
 
-        {/* Conversation preview */}
-        {conversation && (
-          <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {t("Conversation")}
-            </h3>
-            <Link
-              href={conversationHref ?? "/inbox"}
-              className="block rounded-xl border border-border bg-card p-3 transition-colors hover:border-primary/40 hover:bg-muted/60"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      conversation.status === "open"
-                        ? "bg-emerald-500"
-                        : conversation.status === "pending"
-                          ? "bg-amber-500"
-                          : "bg-muted-foreground/60",
-                    )}
-                  />
-                  <span data-no-translate>
-                    {CONVERSATION_STATUS_LABEL[language][conversation.status]}
-                  </span>
-                  {conversation.unread_count > 0 && (
-                    <span className="ml-1 rounded-full bg-primary px-1.5 py-px text-[10px] font-semibold text-primary-foreground">
-                      {conversation.unread_count}
-                    </span>
-                  )}
-                </span>
-                {conversation.last_message_at && (
-                  <span
-                    className="shrink-0 text-[11px] text-muted-foreground"
-                    title={longDateTime(conversation.last_message_at, language)}
-                  >
-                    {relativeTime(conversation.last_message_at, language)}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1.5 line-clamp-2 text-sm text-foreground">
-                {conversation.last_message_text || (
-                  <span className="text-muted-foreground">
-                    {t("No messages yet")}
-                  </span>
-                )}
-              </p>
-            </Link>
-          </section>
-        )}
-
         {/* Assignee — the person handling the deal ("Responsável"). Not
             the catalogue's `Owner`, which is the account role. */}
         <section>
@@ -598,7 +686,7 @@ export function DealDetails({
         {/* Tasks — open tasks of this deal; checkbox completes, "+"
             reveals the inline creator prefilled with deal + contact. */}
         {tasksEnabled && (
-          <section>
+          <section ref={tasksSectionRef} className="scroll-mt-4">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h3 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {t("Tasks")}
@@ -637,10 +725,7 @@ export function DealDetails({
                 readOnly={!canWriteTasks}
                 emptyLabel={linkedTasks.loading ? t("Loading...") : t("No open tasks")}
                 onComplete={(task) => void linkedTasks.complete(task)}
-                onOpen={(task) => {
-                  setTaskDrawerTask(task);
-                  setTaskDrawerOpen(true);
-                }}
+                onOpen={openTask}
               />
             </div>
             <TaskDrawer
