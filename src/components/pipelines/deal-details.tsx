@@ -187,7 +187,10 @@ export function DealDetails({
 
   function addNextStep() {
     setTaskAddOpen(true);
-    tasksSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    // After the quick-create form renders, so the scroll lands on it.
+    requestAnimationFrame(() =>
+      tasksSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }),
+    );
   }
 
   // Timeline — the schema stores no per-stage history, so the events
@@ -466,6 +469,7 @@ export function DealDetails({
         )}
 
         {/* Before you talk — where it stopped and the next step */}
+        {(conversation || (tasksEnabled && isOpen)) && (
         <section>
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {t("Before you talk")}
@@ -508,18 +512,16 @@ export function DealDetails({
                       {conversation.unread_count > 0 && (
                         <span className="rounded-full bg-primary px-1.5 py-px text-[10px] font-semibold text-primary-foreground">
                           {conversation.unread_count}
+                          <span className="sr-only" data-no-translate>
+                            {language === "pt-BR" ? " não lidas" : " unread"}
+                          </span>
                         </span>
                       )}
                     </span>
                   </div>
                   {last?.quietLabel && (
                     <p
-                      className={cn(
-                        "text-xs",
-                        last.quiet
-                          ? "font-medium text-amber-600 dark:text-amber-400"
-                          : "text-muted-foreground",
-                      )}
+                      className="text-xs font-medium text-amber-700 dark:text-amber-400"
                       data-no-translate
                     >
                       {last.quietLabel}
@@ -533,14 +535,12 @@ export function DealDetails({
                 </div>
               </Link>
             ) : (
-              <p className="flex gap-2.5 p-3 text-xs text-muted-foreground">
-                <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                {conversationLoading
-                  ? t("Loading...")
-                  : contact
-                    ? t("No conversation with this contact yet")
-                    : t("No contact linked to this deal")}
-              </p>
+              conversationLoading && (
+                <p className="flex gap-2.5 p-3 text-xs text-muted-foreground">
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                  {t("Loading...")}
+                </p>
+              )
             )}
             {tasksEnabled && isOpen && (
               <div className="flex items-start gap-2.5 p-3">
@@ -551,6 +551,8 @@ export function DealDetails({
                   </p>
                   {linkedTasks.loading ? (
                     <p className="text-sm text-muted-foreground">{t("Loading...")}</p>
+                  ) : linkedTasks.error && !nextTask ? (
+                    <p className="text-sm text-muted-foreground">{t("Could not load the tasks.")}</p>
                   ) : nextTask ? (
                     <div className="flex flex-wrap items-center gap-x-1">
                       <button
@@ -564,12 +566,19 @@ export function DealDetails({
                       <DueChip dueAt={nextTask.due_at} />
                     </div>
                   ) : (
-                    <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                    <p
+                      className={cn(
+                        "text-sm font-medium",
+                        canWriteTasks
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-muted-foreground",
+                      )}
+                    >
                       {t("No next step set")}
                     </p>
                   )}
                 </div>
-                {!linkedTasks.loading && !nextTask && canWriteTasks && (
+                {!linkedTasks.loading && !linkedTasks.error && !nextTask && canWriteTasks && (
                   <Button
                     type="button"
                     size="xs"
@@ -585,6 +594,7 @@ export function DealDetails({
             )}
           </div>
         </section>
+        )}
 
         {/* Products and services — the value of the deal is their sum */}
         <DealItemsSection

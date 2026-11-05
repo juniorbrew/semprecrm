@@ -102,7 +102,7 @@ describe('lastContact', () => {
     )
     expect(c?.speaker).toBe('customer')
     expect(c?.label).toBe('O cliente falou por último, há 3 d')
-    expect(c?.quietLabel).toBe('3 dias sem conversa')
+    expect(c?.quietLabel).toBeNull()
     expect(c?.quiet).toBe(false)
   })
 
@@ -118,10 +118,20 @@ describe('lastContact', () => {
     expect(c?.quiet).toBe(true)
   })
 
-  it('has no quiet label under a day and handles one day', () => {
-    expect(lastContact({ last_message_at: ago(7200) }, 'pt-BR', now)?.quietLabel).toBeNull()
+  it('flags quiet only from a week on', () => {
     expect(lastContact({ last_message_at: ago(7200) }, 'pt-BR', now)?.label).toBe('Última mensagem há 2 h')
-    expect(lastContact({ last_message_at: ago(86_400) }, 'pt-BR', now)?.quietLabel).toBe('1 dia sem conversa')
+    expect(lastContact({ last_message_at: ago(6 * 86_400) }, 'pt-BR', now)?.quietLabel).toBeNull()
+    expect(lastContact({ last_message_at: ago(7 * 86_400) }, 'pt-BR', now)?.quietLabel).toBe('7 dias sem conversa')
+  })
+
+  it('names no speaker when the last message is newer than both sides', () => {
+    const c = lastContact(
+      { last_message_at: ago(3600), last_customer_message_at: ago(3 * 86_400), last_agent_message_at: ago(5 * 86_400) },
+      'pt-BR',
+      now,
+    )
+    expect(c?.speaker).toBeNull()
+    expect(c?.label).toBe('Última mensagem há 1 h')
   })
 
   it('reads a date as "em <data>" after 30 days', () => {

@@ -32,4 +32,5 @@ export const DICT_FORECAST: Record<string, string> = {
   'Next step': 'Próximo passo',
   'No next step set': 'Nenhum próximo passo marcado',
   'Set next step': 'Marcar próximo passo',
+  'Could not load the tasks.': 'Não foi possível carregar as tarefas.',
 };

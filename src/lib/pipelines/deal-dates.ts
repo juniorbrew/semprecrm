@@ -169,7 +169,7 @@ export interface LastContact {
   quiet: boolean
   /** "O cliente falou por último, há 3 d" / "Your team spoke last, 2h ago". */
   label: string
-  /** "9 dias sem conversa" / "9 days without talking"; null under a day. */
+  /** "9 dias sem conversa" / "9 days without talking"; only from a week on. */
   quietLabel: string | null
 }
 
@@ -192,8 +192,10 @@ export function lastContact(
   const last = stamp(conv?.last_message_at) ?? Math.max(customer ?? -Infinity, team ?? -Infinity)
   if (!Number.isFinite(last)) return null
 
+  const side = Math.max(customer ?? -Infinity, team ?? -Infinity)
+  // The last message must be one of the two sides (a minute of slack for clock skew).
   const speaker =
-    customer === null && team === null
+    !Number.isFinite(side) || last - side > 60_000
       ? null
       : (customer ?? -Infinity) >= (team ?? -Infinity)
         ? 'customer'
@@ -210,12 +212,13 @@ export function lastContact(
       : speaker === 'team'
         ? pt ? `Sua equipe falou por último, ${rel}` : `Your team spoke last, ${rel}`
         : pt ? `Última mensagem ${rel}` : `Last message ${rel}`
+  const quiet = quietDays >= 7
   const quietLabel =
-    quietDays < 1
+    !quiet
       ? null
       : pt
         ? `${quietDays} ${quietDays === 1 ? 'dia' : 'dias'} sem conversa`
         : `${quietDays} ${quietDays === 1 ? 'day' : 'days'} without talking`
 
-  return { speaker, at, quietDays, quiet: quietDays >= 7, label, quietLabel }
+  return { speaker, at, quietDays, quiet, label, quietLabel }
 }

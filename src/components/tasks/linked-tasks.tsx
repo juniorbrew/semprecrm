@@ -37,6 +37,8 @@ export interface LinkedTasksState {
   tasks: Task[];
   statuses: TaskStatus[];
   loading: boolean;
+  /** The list could not be loaded (an empty `tasks` then means "unknown", not "none"). */
+  error: boolean;
   refresh: () => Promise<void>;
   /** Optimistic complete via the account's done status. */
   complete: (task: Task) => Promise<void>;
@@ -59,24 +61,35 @@ export function useLinkedTasks({
 }: UseLinkedTasksOptions): LinkedTasksState {
   const { t } = useLanguage();
   const active = enabled && !!(contactId || dealId);
-  const { statuses } = useTaskStatuses({ enabled: active });
+  const { statuses, loading: statusesLoading } = useTaskStatuses({ enabled: active });
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(active);
+  const [error, setError] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!active || statuses.length === 0) return;
+    if (!active) return;
+    if (statuses.length === 0) {
+      // Statuses failed to load: open vs done is unknown, so stop the spinner and say so.
+      if (!statusesLoading) {
+        setError(true);
+        setLoading(false);
+      }
+      return;
+    }
     try {
       const db = createClient();
       const rows = dealId
         ? await listTasksByDeal(db, dealId, statuses)
         : await listTasksByContact(db, contactId as string, statuses);
       setTasks(sortTasks(rows, statuses));
+      setError(false);
     } catch (err) {
       console.error("[tasks] linked list:", err);
+      setError(true);
     } finally {
       setLoading(false);
     }
-  }, [active, statuses, dealId, contactId]);
+  }, [active, statuses, statusesLoading, dealId, contactId]);
 
   useEffect(() => {
     void refresh();
@@ -124,8 +137,8 @@ export function useLinkedTasks({
   }, []);
 
   return useMemo(
-    () => ({ tasks, statuses, loading, refresh, complete, add, patch, remove }),
-    [tasks, statuses, loading, refresh, complete, add, patch, remove],
+    () => ({ tasks, statuses, loading, error, refresh, complete, add, patch, remove }),
+    [tasks, statuses, loading, error, refresh, complete, add, patch, remove],
   );
 }
 
