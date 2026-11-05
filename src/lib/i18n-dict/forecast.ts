@@ -27,4 +27,10 @@ export const DICT_FORECAST: Record<string, string> = {
   'Deals behind the forecast numbers': 'Negócios por trás dos números da previsão',
   // ---- Goals card ----
   'of the goal': 'da meta',
+  // ---- Deal drawer: "Before you talk" (4.5) ----
+  'Before you talk': 'Antes de falar',
+  'Next step': 'Próximo passo',
+  'No next step set': 'Nenhum próximo passo marcado',
+  'Set next step': 'Marcar próximo passo',
+  'Could not load the tasks.': 'Não foi possível carregar as tarefas.',
 };

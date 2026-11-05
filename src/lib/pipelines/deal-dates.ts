@@ -158,3 +158,67 @@ export function movedToLabel(stageName: string, lang: Language): string {
 export function advanceToLabel(stageName: string, lang: Language): string {
   return isPt(lang) ? `Avançar para ${stageName}` : `Advance to ${stageName}`
 }
+
+export interface LastContact {
+  /** Who sent the last message; null when the conversation doesn't say. */
+  speaker: 'customer' | 'team' | null
+  at: string
+  /** Whole days since the last message. */
+  quietDays: number
+  /** A week or more without talking. */
+  quiet: boolean
+  /** "O cliente falou por último, há 3 d" / "Your team spoke last, 2h ago". */
+  label: string
+  /** "9 dias sem conversa" / "9 days without talking"; only from a week on. */
+  quietLabel: string | null
+}
+
+/** "Before you talk" line of the deal drawer: who spoke last and how long ago. Null without messages. */
+export function lastContact(
+  conv: {
+    last_message_at?: string | null
+    last_customer_message_at?: string | null
+    last_agent_message_at?: string | null
+  } | null,
+  lang: Language,
+  now: number = Date.now(),
+): LastContact | null {
+  const stamp = (iso?: string | null) => {
+    const t = iso ? new Date(iso).getTime() : NaN
+    return Number.isNaN(t) ? null : t
+  }
+  const customer = stamp(conv?.last_customer_message_at)
+  const team = stamp(conv?.last_agent_message_at)
+  const last = stamp(conv?.last_message_at) ?? Math.max(customer ?? -Infinity, team ?? -Infinity)
+  if (!Number.isFinite(last)) return null
+
+  const side = Math.max(customer ?? -Infinity, team ?? -Infinity)
+  // The last message must be one of the two sides (a minute of slack for clock skew).
+  const speaker =
+    !Number.isFinite(side) || last - side > 60_000
+      ? null
+      : (customer ?? -Infinity) >= (team ?? -Infinity)
+        ? 'customer'
+        : 'team'
+  const at = new Date(last).toISOString()
+  const quietDays = Math.max(0, Math.floor((now - last) / DAY_MS))
+  const pt = isPt(lang)
+  // Past 30 days relativeTime gives a date: "em 22 de ago." / "on Aug 22".
+  const ago = relativeTime(at, lang, now)
+  const rel = quietDays >= 30 ? (pt ? `em ${ago}` : `on ${ago}`) : ago
+  const label =
+    speaker === 'customer'
+      ? pt ? `O cliente falou por último, ${rel}` : `The customer spoke last, ${rel}`
+      : speaker === 'team'
+        ? pt ? `Sua equipe falou por último, ${rel}` : `Your team spoke last, ${rel}`
+        : pt ? `Última mensagem ${rel}` : `Last message ${rel}`
+  const quiet = quietDays >= 7
+  const quietLabel =
+    !quiet
+      ? null
+      : pt
+        ? `${quietDays} ${quietDays === 1 ? 'dia' : 'dias'} sem conversa`
+        : `${quietDays} ${quietDays === 1 ? 'day' : 'days'} without talking`
+
+  return { speaker, at, quietDays, quiet, label, quietLabel }
+}
