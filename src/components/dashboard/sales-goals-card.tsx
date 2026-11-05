@@ -10,6 +10,9 @@ import { useTeams } from '@/hooks/use-teams'
 import { formatCurrency } from '@/lib/currency'
 import { safeTimezone } from '@/lib/calendar/range'
 import { fetchGoalProgress, goalKey, type GoalProgress } from '@/lib/sales-goals/data'
+import { forecastOfMonth } from '@/lib/sales-forecast/columns'
+import { fetchSalesForecast } from '@/lib/sales-forecast/data'
+import type { ForecastRow } from '@/lib/sales-forecast/types'
 import {
   currentMonth,
   dayOfMonth,
@@ -68,6 +71,9 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
   const rows = data && data.month === shown ? data.rows : null
   const failed = data?.month === shown && data.failed
   const [members, setMembers] = useState<Member[]>([])
+  // profiles.id by auth user id: deals.assigned_to holds the profile id, goals hold the user id.
+  const [profileIds, setProfileIds] = useState<Record<string, string>>({})
+  const [forecast, setForecast] = useState<{ month: string; rows: ForecastRow[] } | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [tick, setTick] = useState(0)
 
@@ -76,11 +82,13 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
     let cancelled = false
     createClient()
       .from('profiles')
-      .select('user_id, full_name')
+      .select('id, user_id, full_name')
       .eq('account_id', accountId)
       .then(({ data, error }) => {
         if (cancelled || error || !data) return
-        setMembers((data as { user_id: string; full_name: string | null }[]).map((p) => ({ user_id: p.user_id, name: p.full_name || '' })))
+        const list = data as { id?: string; user_id: string; full_name: string | null }[]
+        setMembers(list.map((p) => ({ user_id: p.user_id, name: p.full_name || '' })))
+        setProfileIds(Object.fromEntries(list.filter((p) => p.id).map((p) => [p.user_id, p.id as string])))
       })
     return () => {
       cancelled = true
@@ -103,6 +111,30 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
       cancelled = true
     }
   }, [accountId, shown, refreshToken, tick])
+
+  // "Previsão do mês" only exists for the running month; a failed read just leaves the line out.
+  useEffect(() => {
+    if (!accountId || shown !== current) return
+    let cancelled = false
+    fetchSalesForecast(createClient(), accountId, null, current, 1)
+      .then((r) => {
+        if (!cancelled) setForecast({ month: current, rows: r })
+      })
+      .catch((err) => console.error('[dashboard] sales forecast failed:', err))
+    return () => {
+      cancelled = true
+    }
+  }, [accountId, shown, current, refreshToken, tick])
+  const forecastRows = forecast?.month === shown ? forecast.rows : null
+  const forecastOf = (g: GoalProgress): number | null => {
+    if (!forecastRows || g.metric !== 'won_value') return null
+    if (g.scope === 'account') return forecastOfMonth(forecastRows, shown)
+    if (g.scope === 'member') {
+      const pid = g.user_id ? profileIds[g.user_id] : undefined
+      return pid ? forecastOfMonth(forecastRows, shown, { id: pid }) : null
+    }
+    return null
+  }
 
   const memberName = useCallback(
     (id: string | null) => members.find((m) => m.user_id === id)?.name || t('Unnamed salesperson'),
@@ -255,6 +287,14 @@ export function SalesGoalsCard({ refreshToken = 0 }: { refreshToken?: number }) 
                     </span>
                   )}
                 </div>
+                {(() => {
+                  const f = forecastOf(g)
+                  return f === null ? null : (
+                    <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                      {t('Month forecast')}: {money(f)} ({percent({ target: g.target, achieved: f })}% {t('of the goal')})
+                    </p>
+                  )
+                })()}
               </li>
             )
           })}

@@ -48,7 +48,7 @@ export function PipelineAnalytics({ stages, deals }: PipelineAnalyticsProps) {
           <Metric
             label="Weighted Value"
             value={formatCurrency(stats.weightedValue, defaultCurrency)}
-            tooltip="Expected revenue: each open deal's value × its stage probability. First stage ≈ 10%, stages progress up to 90%, Won = 100%. Lost deals are excluded."
+            tooltip="Expected revenue: each open deal's value × the chance of its stage. Set the chance of each stage in the pipeline settings; stages left empty use the automatic chance (first stage ≈ 10%, up to 90%, last stage = 100%). Lost deals are excluded."
           />
           <Metric
             label="Avg Deal Size"
