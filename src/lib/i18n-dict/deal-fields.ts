@@ -2,8 +2,8 @@
  *  Field names, values and formula text are user data: the components mark them data-no-translate. */
 export const DICT_DEAL_FIELDS: Record<string, string> = {
   // ---- Settings: tabs and list ----
-  'Contact fields': 'Contato',
-  'Deal fields': 'Negócio',
+  'Contact fields': 'Campos do contato',
+  'Deal fields': 'Campos do negócio',
   'Numbers each deal carries, like cost or freight. A formula field calculates from them.':
     'Números que cada negócio carrega, como custo ou frete. Um campo com fórmula faz a conta a partir deles.',
   'New deal field': 'Novo campo do negócio',
@@ -28,8 +28,8 @@ export const DICT_DEAL_FIELDS: Record<string, string> = {
   'Show on the pipeline card': 'Mostrar no cartão do Funil',
   'At most 2 fields can show on the card': 'No máximo 2 campos podem aparecer no cartão',
   'Save field': 'Salvar campo',
-  'Field updated': 'Campo atualizado',
-  'Field deleted': 'Campo excluído',
+  'Field updated': 'O campo foi atualizado',
+  'Field deleted': 'O campo foi excluído',
   'This also removes the value of this field on every deal. This cannot be undone.':
     'Isso também apaga o valor deste campo em todos os negócios. Não dá para desfazer.',
   'These formulas use this field and will stop working until you edit them:':
@@ -37,13 +37,14 @@ export const DICT_DEAL_FIELDS: Record<string, string> = {
   // ---- Formula editor ----
   'Calculation formula': 'Fórmula do cálculo',
   'Insert a field into the formula': 'Inserir um campo na fórmula',
-  'You can use + − × ÷ and parentheses. A percentage counts as a fraction: 5% is 0,05.':
-    'Você pode usar + − × ÷ e parênteses. A porcentagem conta como fração: 5% é 0,05.',
+  'You can use + − × ÷ and parentheses. Type 0,05 for 5%.':
+    'Você pode usar + − × ÷ e parênteses. Digite 0,05 para 5%.',
   'Preview with sample numbers': 'Prévia com números de exemplo',
   // ---- Validation ----
   'Type a name for the field': 'Digite um nome para o campo',
   'The name can have at most 40 characters': 'O nome pode ter no máximo 40 caracteres',
-  'The name cannot contain { or }': 'O nome não pode ter { ou }',
+  'The name cannot contain { } or control characters': 'O nome não pode ter { }, nem caracteres de controle',
+  'Two fields have this name. Rename one of them': 'Dois campos têm este nome. Renomeie um deles',
   'This name is used by a number of the deal (Valor, Chance, Itens, Dias para fechar)':
     'Este nome já é usado por um número do negócio (Valor, Chance, Itens, Dias para fechar)',
   'A field with this name already exists': 'Já existe um campo com este nome',
@@ -65,9 +66,9 @@ export const DICT_DEAL_FIELDS: Record<string, string> = {
     'A conta está incompleta: falta um número depois de uma operação',
   'Put an operator (+ − × ÷) between the values': 'Coloque uma operação (+ − × ÷) entre os valores',
   // ---- Deal drawer and form ----
-  'Fields of this deal': 'Campos',
+  'Fields of this deal': 'Campos deste negócio',
   'Edit value': 'Editar valor',
-  'Fill in': 'Preencha',
+  'Fill in': 'Preencha o campo',
   'Deleted field': 'Campo excluído',
   'Cannot divide by zero': 'Não dá para dividir por zero',
   'The number is too large': 'O número é grande demais',
