@@ -14,7 +14,7 @@
 --    field_id). The guard stamps account_id from the deal, refuses a field of
 --    another account and a formula field (formulas are computed in the app,
 --    never stored). Whoever edits the deal (agent and above) writes values.
---    Deleting a field or a deal cascades to the values.
+--    Deleting a field or a deal cascades to the values. Values have at most 4 decimals.
 -- 3. Billing block (094): RESTRICTIVE INSERT/UPDATE/DELETE policies with
 --    private.account_is_writable on both tables.
 --
@@ -45,6 +45,11 @@ ALTER TABLE public.deal_fields DROP CONSTRAINT IF EXISTS deal_fields_name_check;
 ALTER TABLE public.deal_fields ADD CONSTRAINT deal_fields_name_check CHECK (
   char_length(name) <= 40 AND btrim(name, E' \t\r\n') <> ''
   AND name !~ '[{}]'
+  -- no control characters and no leading/trailing Unicode whitespace: what the app trims is what is stored,
+  -- so the reserved-name and unique checks see the same text the formula editor matches on
+  AND name !~ '[\x01-\x1f\x7f]'
+  AND name !~ '^[\s\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]'
+  AND name !~ '[\s\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]$'
   AND lower(btrim(name)) NOT IN ('valor', 'chance', 'itens', 'dias para fechar')  -- names of the built-in formula variables
 );
 ALTER TABLE public.deal_fields DROP CONSTRAINT IF EXISTS deal_fields_kind_check;
@@ -76,7 +81,7 @@ CREATE TABLE IF NOT EXISTS public.deal_field_values (
 );
 -- BETWEEN rejects NaN (a plain comparison would let it through) and infinity.
 ALTER TABLE public.deal_field_values DROP CONSTRAINT IF EXISTS deal_field_values_value_check;
-ALTER TABLE public.deal_field_values ADD CONSTRAINT deal_field_values_value_check CHECK (value BETWEEN -999999999999 AND 999999999999);
+ALTER TABLE public.deal_field_values ADD CONSTRAINT deal_field_values_value_check CHECK (value BETWEEN -999999999999 AND 999999999999 AND scale(value) <= 4);
 
 CREATE INDEX IF NOT EXISTS idx_deal_field_values_field ON public.deal_field_values (field_id);
 CREATE INDEX IF NOT EXISTS idx_deal_field_values_account ON public.deal_field_values (account_id);
@@ -92,6 +97,12 @@ LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  -- created_by is who really created it: the session user, never what the client sent.
+  IF TG_OP = 'INSERT' THEN
+    NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
+  ELSE
+    NEW.created_by := OLD.created_by;
+  END IF;
   IF TG_OP = 'UPDATE' THEN
     IF NEW.account_id IS DISTINCT FROM OLD.account_id THEN
       RAISE EXCEPTION 'the account of a field never changes' USING ERRCODE = '23514';
@@ -151,6 +162,23 @@ REVOKE ALL ON FUNCTION public.deal_field_values_guard() FROM PUBLIC, anon, authe
 DROP TRIGGER IF EXISTS deal_field_values_guard ON public.deal_field_values;
 CREATE TRIGGER deal_field_values_guard BEFORE INSERT OR UPDATE ON public.deal_field_values
   FOR EACH ROW EXECUTE FUNCTION public.deal_field_values_guard();
+
+-- ---- sums of the item lines for many deals ({Itens} on the board cards) ----------------
+-- One row per deal that has items, aggregated here: a plain select of the lines would be cut at
+-- PostgREST max_rows. SECURITY INVOKER: deal_items RLS decides what the caller sees.
+CREATE OR REPLACE FUNCTION public.deal_items_sums(p_deal_ids uuid[])
+RETURNS TABLE (deal_id uuid, total numeric)
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT i.deal_id, sum(i.line_total)
+  FROM public.deal_items i
+  WHERE i.deal_id = ANY (p_deal_ids)
+  GROUP BY i.deal_id
+$$;
+REVOKE ALL ON FUNCTION public.deal_items_sums(uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.deal_items_sums(uuid[]) TO authenticated, service_role;
 
 -- ---- grants (076 / 104 style) ----------------------------------------------------
 REVOKE ALL ON public.deal_fields FROM PUBLIC, anon, authenticated;

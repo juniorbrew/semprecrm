@@ -97,7 +97,13 @@ SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, ki
 SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), ' Valor ', 'number'), 'built-in name Valor is reserved');
 SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'Dias para FECHAR', 'number'), 'built-in name Dias para fechar is reserved');
 SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'Com {chaves}', 'number'), 'braces in a name');
-SELECT pg_temp.assert_fails_with(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), ' CUSTO ', 'number'), '23505', 'name is unique ignoring case and spaces');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, E%L, %L)', (SELECT acc_a FROM ctx), '\tValor', 'number'), 'leading tab');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'Custo ', 'number'), 'trailing space');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), ' Frete2', 'number'), 'leading space');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), chr(160) || 'Nbsp', 'number'), 'leading no-break space');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'Fim' || chr(8203), 'number'), 'trailing zero-width space');
+SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'Com' || chr(7) || 'ctl', 'number'), 'control character inside');
+SELECT pg_temp.assert_fails_with(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'CUSTO', 'number'), '23505', 'name is unique ignoring case');
 -- formula shape
 SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind) VALUES (%L, %L, %L)', (SELECT acc_a FROM ctx), 'F1', 'formula'), 'formula needs expression and format');
 SELECT pg_temp.assert_fails(format('INSERT INTO deal_fields(account_id, name, kind, expression) VALUES (%L, %L, %L, %L)', (SELECT acc_a FROM ctx), 'F2', 'formula', '{valor}'), 'formula needs result_format');
@@ -154,6 +160,9 @@ SELECT pg_temp.assert_fails(format('UPDATE deal_field_values SET value = %L WHER
 SELECT pg_temp.assert_fails(format('UPDATE deal_field_values SET value = %L WHERE deal_id = %L', 'Infinity', (SELECT deal1 FROM ctx)), 'infinity');
 SELECT pg_temp.assert_fails(format('UPDATE deal_field_values SET value = 1000000000000 WHERE deal_id = %L', (SELECT deal1 FROM ctx)), 'value above the ceiling');
 SELECT pg_temp.assert_fails(format('UPDATE deal_field_values SET value = -1000000000000 WHERE deal_id = %L', (SELECT deal1 FROM ctx)), 'value below the floor');
+SELECT pg_temp.assert_fails(format('UPDATE deal_field_values SET value = 1.00001 WHERE deal_id = %L', (SELECT deal1 FROM ctx)), 'more than 4 decimals');
+SELECT pg_temp.assert_fails(format('UPDATE deal_field_values SET value = %L WHERE deal_id = %L', '0.' || repeat('1', 5000), (SELECT deal1 FROM ctx)), 'thousands of decimals');
+UPDATE deal_field_values SET value = 1.2345 WHERE deal_id = (SELECT deal1 FROM ctx);   -- 4 decimals fit
 UPDATE deal_field_values SET value = -999999999999 WHERE deal_id = (SELECT deal1 FROM ctx);   -- edges fit
 UPDATE deal_field_values SET value = 12.5 WHERE deal_id = (SELECT deal1 FROM ctx);
 
@@ -244,6 +253,29 @@ SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT pg_temp.assert_eq((SELECT value FROM deal_field_values WHERE deal_id = (SELECT deal2 FROM ctx)), 31, 'past_due: value update/delete touched 0 rows');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM deal_fields WHERE account_id = (SELECT acc_a FROM ctx) AND name <> 'Bloqueado'), 3, 'past_due: field update/delete touched 0 rows');
 UPDATE accounts SET plan_status = 'active' WHERE id = (SELECT acc_a FROM ctx);
+
+-- created_by is stamped from the session, never taken from the client
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10700000-0000-4000-8000-00000000000e', true);
+INSERT INTO deal_fields(id, account_id, name, kind, created_by) VALUES ('10700000-0000-4000-8000-0000000000a9', (SELECT acc_a FROM ctx), 'Forjado', 'number', (SELECT owner FROM ctx));
+UPDATE deal_fields SET created_by = (SELECT owner FROM ctx), name = 'Forjado 2' WHERE id = '10700000-0000-4000-8000-0000000000a9';
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_true((SELECT created_by = (SELECT adm FROM ctx) FROM deal_fields WHERE id = '10700000-0000-4000-8000-0000000000a9'), 'created_by is the session user on insert and kept on update');
+DELETE FROM deal_fields WHERE id = '10700000-0000-4000-8000-0000000000a9';
+
+-- deal_items_sums: aggregated in the database, RLS applies
+INSERT INTO deal_items(account_id, deal_id, name, unit_price, quantity) VALUES
+  ((SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), 'a', 10, 2), ((SELECT acc_a FROM ctx), (SELECT deal1 FROM ctx), 'b', 5.5, 1);
+SELECT pg_temp.assert_eq((SELECT total FROM deal_items_sums(ARRAY[(SELECT deal1 FROM ctx), (SELECT deal2 FROM ctx)]) WHERE deal_id = (SELECT deal1 FROM ctx)), 25.5, 'sum of the lines of a deal');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM deal_items_sums(ARRAY[(SELECT deal1 FROM ctx), (SELECT deal2 FROM ctx)])), 1, 'deals without items are absent');
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10700000-0000-4000-8000-00000000000b', true);
+SELECT pg_temp.assert_eq((SELECT count(*) FROM deal_items_sums(ARRAY[(SELECT deal1 FROM ctx)])), 0, 'tenant B sums nothing of A');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT pg_temp.assert_true(NOT has_function_privilege('anon', 'public.deal_items_sums(uuid[])', 'EXECUTE') AND has_function_privilege('authenticated', 'public.deal_items_sums(uuid[])', 'EXECUTE'), 'sums function: authenticated only');
+DELETE FROM deal_items WHERE deal_id = (SELECT deal1 FROM ctx);
 
 -- =====================================================================
 -- cascade: deleting a field drops its values; deleting a deal drops its values
