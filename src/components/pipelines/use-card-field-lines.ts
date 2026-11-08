@@ -29,7 +29,12 @@ export function useCardFieldLines(deals: Deal[], sortedStages: PipelineStage[]):
 
   const [fields, setFields] = useState<DealField[]>([]);
   const [version, setVersion] = useState(0);
-  const [loaded, setLoaded] = useState<{ values: Record<string, FieldValues>; sums: Record<string, number> } | null>(null);
+  const [loaded, setLoaded] = useState<{
+    values: Record<string, FieldValues>;
+    sums: Record<string, number>;
+    /** When it was read: the day count of {Dias para fechar} is worked out against this. */
+    at: number;
+  } | null>(null);
 
   // A field edited elsewhere (settings, drawer) shows up on the next read.
   useEffect(() => onDealFieldsChanged(() => setVersion((v) => v + 1)), []);
@@ -67,7 +72,7 @@ export function useCardFieldLines(deals: Deal[], sortedStages: PipelineStage[]):
     const fieldIds = fieldKey ? fieldKey.split(',') : [];
     Promise.all([listValuesForDeals(db, ids, fieldIds), needItems ? listItemSums(db, ids) : Promise.resolve({})])
       .then(([values, sums]) => {
-        if (!cancelled) setLoaded({ values, sums });
+        if (!cancelled) setLoaded({ values, sums, at: Date.now() });
       })
       .catch(() => {});
     return () => {
@@ -79,7 +84,6 @@ export function useCardFieldLines(deals: Deal[], sortedStages: PipelineStage[]):
     const out = new Map<string, CardFieldLine[]>();
     if (!enabled || !hasCardFields || !loaded) return out;
     const stageById = new Map(sortedStages.map((s) => [s.id, s]));
-    const now = Date.now();
     for (const deal of deals) {
       const stage = stageById.get(deal.stage_id);
       const lines = computeCardLines(
@@ -92,7 +96,7 @@ export function useCardFieldLines(deals: Deal[], sortedStages: PipelineStage[]):
           expectedCloseDate: deal.expected_close_date,
         },
         deal.currency || defaultCurrency,
-        now,
+        loaded.at,
       );
       if (lines.length > 0) out.set(deal.id, lines);
     }

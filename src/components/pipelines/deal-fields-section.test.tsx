@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { toast } from 'sonner';
 
-import type { DealField } from '@/lib/deal-fields/types';
+import type { DealField, FieldValues } from '@/lib/deal-fields/types';
 import type { Deal, PipelineStage } from '@/types';
 
 const h = vi.hoisted(() => ({ canEdit: true, readOnly: false, pipelines: true, ready: true }));
@@ -212,7 +212,7 @@ describe('DealFieldsSection', () => {
 
   it('switching deals starts clean: no editor, no values of the previous deal', async () => {
     const other = { ...deal, id: 'd2' } as Deal;
-    vi.mocked(listDealFieldValues).mockImplementation(async (_db, id) => (id === 'd1' ? { [CUSTO]: 500 } : {}));
+    vi.mocked(listDealFieldValues).mockImplementation(async (_db, id): Promise<FieldValues> => (id === 'd1' ? { [CUSTO]: 500 } : {}));
     const { rerender } = render(<DealFieldsSection deal={deal} stages={[stage]} />);
     fireEvent.click(await screen.findByRole('button', { name: /^Edit value: Custo/ }));
     expect(screen.getByLabelText('Custo')).toBeTruthy();

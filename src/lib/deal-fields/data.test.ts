@@ -29,7 +29,9 @@ function builder(result: { data?: unknown; error?: unknown; count?: number }) {
 }
 function client(results: Record<string, { data?: unknown; error?: unknown }[]>, rpcResults: { data?: unknown; error?: unknown }[] = []) {
   const used: Record<string, ReturnType<typeof builder>[]> = {}
-  const rpc = vi.fn(async (_fn: string, _args: unknown) => rpcResults.shift() ?? { data: [], error: null })
+  const rpc = vi.fn<(fn: string, args: unknown) => Promise<{ data?: unknown; error?: unknown }>>(
+    async () => rpcResults.shift() ?? { data: [], error: null },
+  )
   const from = vi.fn((table: string) => {
     const next = results[table]?.shift() ?? {}
     const q = builder(next)
