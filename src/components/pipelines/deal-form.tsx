@@ -9,6 +9,10 @@ import { CURRENCIES } from "@/lib/currency";
 import { AUDIT_ACTIONS } from "@/lib/audit";
 import { recordAudit } from "@/lib/audit-client";
 import { countDealItems } from "@/lib/products/data";
+import { diffFieldInputs } from "@/lib/deal-fields/compute";
+import { setDealFieldValue } from "@/lib/deal-fields/data";
+import { notifyDealFieldsChanged } from "@/lib/deal-fields/events";
+import { DealFieldInputs, initialTexts, useDealFormFields } from "./deal-fields-form";
 import { getPrimaryCompany, type CompanySummary } from "@/lib/companies";
 import { DealCompanyField } from "@/components/companies/deal-company-field";
 import type { Contact, Deal, PipelineStage, Profile } from "@/types";
@@ -66,6 +70,15 @@ export function DealFormBody({
   const { accountId, defaultCurrency } = useAuth();
   const { t, language } = useLanguage();
 
+  // Deal fields (migration 107): the number boxes of the form. `edited` holds only what was typed;
+  // the other boxes show the values the deal already has.
+  const { fields: numberFields, values: fieldValues, ready: fieldsReady } = useDealFormFields(deal?.id);
+  const [edited, setEdited] = useState<Record<string, string>>({});
+  const [badFields, setBadFields] = useState<string[]>([]);
+  const fieldTexts = useMemo(
+    () => ({ ...initialTexts(numberFields, fieldValues), ...edited }),
+    [numberFields, fieldValues, edited],
+  );
   const [title, setTitle] = useState(deal?.title ?? "");
   const [value, setValue] = useState(String(deal?.value ?? ""));
   // Product lines (migration 104): the value is calculated, not typed.
@@ -173,7 +186,18 @@ export function DealFormBody({
       toast.error(t("Title, contact, and stage are required"));
       return;
     }
+    // A box that is not a number blocks the save, so nothing is half written.
+    const fieldDiff = fieldsReady
+      ? diffFieldInputs(numberFields, fieldTexts, fieldValues)
+      : { changes: [], invalid: [] as string[] };
+    if (fieldDiff.invalid.length > 0) {
+      setBadFields(fieldDiff.invalid);
+      toast.error(t("Check the deal fields"));
+      return;
+    }
+    setBadFields([]);
     setSaving(true);
+    let savedDealId = deal?.id;
 
     const payload = {
       title: title.trim(),
@@ -214,8 +238,11 @@ export function DealFormBody({
         setSaving(false);
         return;
       }
+      // The id is chosen here only when field values must be stored for the new deal.
+      if (fieldDiff.changes.length > 0) savedDealId = crypto.randomUUID();
       const { error } = await supabase.from("deals").insert({
         ...payload,
+        ...(savedDealId ? { id: savedDealId } : {}),
         user_id: user.id,
         account_id: accountId,
         status: "open",
@@ -224,6 +251,17 @@ export function DealFormBody({
         toast.error(t("Failed to create deal"));
         setSaving(false);
         return;
+      }
+    }
+
+    if (savedDealId && accountId && fieldDiff.changes.length > 0) {
+      try {
+        await Promise.all(
+          fieldDiff.changes.map((c) => setDealFieldValue(supabase, accountId, savedDealId as string, c.fieldId, c.value)),
+        );
+        notifyDealFieldsChanged();
+      } catch {
+        toast.error(t("The deal was saved, but some field values were not"));
       }
     }
 
@@ -347,6 +385,13 @@ export function DealFormBody({
             </select>
           </div>
         </div>
+
+        <DealFieldInputs
+          fields={numberFields}
+          texts={fieldTexts}
+          invalid={badFields}
+          onChange={(id, text) => setEdited((prev) => ({ ...prev, [id]: text }))}
+        />
 
         <div className="grid gap-2">
           <Label className="text-muted-foreground">

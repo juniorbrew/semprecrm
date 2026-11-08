@@ -11,7 +11,10 @@ const h = vi.hoisted(() => ({ updates: [] as Record<string, unknown>[], count: 0
 vi.mock("@/hooks/use-language", () => ({
   useLanguage: () => ({ language: "pt-BR", t: (s: string) => s }),
 }))
-vi.mock("@/hooks/use-auth", () => ({ useAuth: () => ({ accountId: "acc-1", defaultCurrency: "BRL" }) }))
+vi.mock("@/hooks/use-auth", () => ({
+  useAuth: () => ({ accountId: "acc-1", defaultCurrency: "BRL" }),
+  useEntitlements: () => ({ ready: true, modules: { pipelines: false } }),
+}))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock("@/lib/audit-client", () => ({ recordAudit: vi.fn() }))
 vi.mock("@/lib/companies", () => ({ getPrimaryCompany: vi.fn(async () => null) }))

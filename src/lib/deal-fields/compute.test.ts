@@ -5,6 +5,7 @@ import {
   cardFields,
   cardNeedsItems,
   computeFieldRows,
+  diffFieldInputs,
   daysToClose,
   fieldIdsForCard,
   formatFieldNumber,
@@ -161,5 +162,26 @@ describe('parseFieldInput', () => {
     expect(valueToInput(12.5)).toBe('12,5')
     expect(valueToInput(undefined)).toBe('')
     expect(ok(valueToInput(1234.5678))).toBe(1234.5678)
+  })
+})
+
+describe('diffFieldInputs', () => {
+  it('lists only what changed, clears empties, flags bad numbers and skips formulas', () => {
+    const initial = { [CUSTO.id]: 500, [FRETE.id]: 20 }
+    const r = diffFieldInputs(
+      FIELDS,
+      { [CUSTO.id]: '500,00', [FRETE.id]: '', [COM.id]: '5', [MARGEM.id]: '999' },
+      initial,
+    )
+    expect(r.invalid).toEqual([])
+    expect(r.changes).toEqual([
+      { fieldId: FRETE.id, value: null },
+      { fieldId: COM.id, value: 5 },
+    ])
+  })
+  it('an untouched empty field is not a change; a bad text is invalid', () => {
+    expect(diffFieldInputs([CUSTO], { [CUSTO.id]: '' }, {})).toEqual({ changes: [], invalid: [] })
+    expect(diffFieldInputs([CUSTO], { [CUSTO.id]: 'abc' }, {})).toEqual({ changes: [], invalid: [CUSTO.id] })
+    expect(diffFieldInputs([CUSTO], {}, { [CUSTO.id]: 1 })).toEqual({ changes: [], invalid: [] })
   })
 })

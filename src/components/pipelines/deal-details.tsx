@@ -37,6 +37,7 @@ import {
   type CompanySummary,
 } from "@/lib/companies";
 import { DealCompanyField } from "@/components/companies/deal-company-field";
+import { DealFieldsSection } from "./deal-fields-section";
 import { DealItemsSection } from "./deal-items";
 import { toast } from "sonner";
 import {
@@ -603,6 +604,9 @@ export function DealDetails({
           onChanged={() => onItemsChanged?.()}
           onCount={setItemCount}
         />
+
+        {/* Deal fields (migration 107): numbers the admin defined and the formulas over them */}
+        <DealFieldsSection deal={deal} stages={stages} />
 
         {/* Contact */}
         <section>

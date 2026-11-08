@@ -172,3 +172,33 @@ export function parseFieldInput(text: string): ParsedValue {
 export function valueToInput(n: number | undefined): string {
   return n === undefined ? '' : String(n).replace('.', ',')
 }
+
+export interface FieldChange {
+  fieldId: string
+  /** null clears the value. */
+  value: number | null
+}
+
+/**
+ * What the form changed: for each number field, the typed text against what the deal had.
+ * Unchanged fields are not written. A text that is not a number blocks the save (`invalid`).
+ */
+export function diffFieldInputs(
+  fields: DealField[],
+  texts: Record<string, string>,
+  initial: FieldValues,
+): { changes: FieldChange[]; invalid: string[] } {
+  const changes: FieldChange[] = []
+  const invalid: string[] = []
+  for (const f of fields) {
+    if (f.kind === 'formula' || !(f.id in texts)) continue
+    const parsed = parseFieldInput(texts[f.id])
+    if (!parsed.ok) {
+      invalid.push(f.id)
+      continue
+    }
+    const before = initial[f.id] ?? null
+    if (parsed.value !== before) changes.push({ fieldId: f.id, value: parsed.value })
+  }
+  return { changes, invalid }
+}
