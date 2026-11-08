@@ -45,7 +45,7 @@ export type DraftResult = { ok: true; input: DealFieldInput } | { ok: false; err
 export const NAME_ERROR_TEXT: Record<NameError, string> = {
   name: 'Type a name for the field',
   'name-max': 'The name can have at most 40 characters',
-  'name-chars': 'The name cannot contain { or }',
+  'name-chars': 'The name cannot contain { } or control characters',
   'name-reserved': 'This name is used by a number of the deal (Valor, Chance, Itens, Dias para fechar)',
   'name-dup': 'A field with this name already exists',
 }
@@ -60,6 +60,7 @@ export const FORMULA_ERROR_TEXT: Record<FormulaErrorCode, string> = {
   bad_number: 'This number is not valid. Use one comma or dot for decimals, like 0,05',
   unterminated_ref: 'A field name is missing its closing brace }',
   unknown_field: 'This field does not exist',
+  ambiguous_field: 'Two fields have this name. Rename one of them',
   formula_reference: 'A formula cannot use another formula',
   dangling_operator: 'The calculation is incomplete: an operator is missing a number',
   missing_operator: 'Put an operator (+ − × ÷) between the values',
@@ -67,6 +68,14 @@ export const FORMULA_ERROR_TEXT: Record<FormulaErrorCode, string> = {
 
 export function toFieldRefs(fields: DealField[]): FieldRef[] {
   return fields.map((f) => ({ id: f.id, name: f.name, kind: f.kind }))
+}
+
+function hasControlChar(text: string): boolean {
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0
+    if (c < 32 || c === 127) return true
+  }
+  return false
 }
 
 /** `editing` is the field being edited (its own name is not a duplicate of itself). */
@@ -77,7 +86,7 @@ export function validateFieldDraft(draft: FieldDraft, fields: DealField[], editi
 
   if (!name) errors.name = 'name'
   else if (name.length > FIELD_NAME_MAX) errors.name = 'name-max'
-  else if (/[{}]/.test(name)) errors.name = 'name-chars'
+  else if (/[{}]/.test(name) || hasControlChar(name)) errors.name = 'name-chars'
   else if (isReservedFieldName(name)) errors.name = 'name-reserved'
   else if (others.some((f) => f.name.trim().toLowerCase() === name.toLowerCase())) errors.name = 'name-dup'
 

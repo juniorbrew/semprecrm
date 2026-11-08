@@ -90,7 +90,6 @@ describe('DealFieldsSettings', () => {
       'acc-1',
       { name: 'Frete', kind: 'number', expression: null, result_format: null, show_on_card: false },
       2,
-      'u1',
     );
     expect(toast.success).toHaveBeenCalledWith('Field created');
   });
@@ -223,6 +222,14 @@ describe('DealFieldsSettings', () => {
     await waitFor(() => expect(reorderDealFields).toHaveBeenCalled());
     expect(vi.mocked(reorderDealFields).mock.calls[0][2]).toEqual([MARGEM.id, CUSTO_ID]);
     expect((screen.getByRole('button', { name: 'Move up: Custo' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('a failed reorder still reloads what the database holds', async () => {
+    vi.mocked(reorderDealFields).mockRejectedValue({ code: '42501' });
+    render(<DealFieldsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Move down: Custo' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    await waitFor(() => expect(listDealFields).toHaveBeenCalledTimes(2));
   });
 
   it('an agent sees the fields but no way to change them', async () => {

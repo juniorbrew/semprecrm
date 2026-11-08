@@ -210,6 +210,19 @@ describe('DealFieldsSection', () => {
     await waitFor(() => expect(rowOf('Esperado').textContent).toMatch(/R\$\s400,00/));
   });
 
+  it('switching deals starts clean: no editor, no values of the previous deal', async () => {
+    const other = { ...deal, id: 'd2' } as Deal;
+    vi.mocked(listDealFieldValues).mockImplementation(async (_db, id) => (id === 'd1' ? { [CUSTO]: 500 } : {}));
+    const { rerender } = render(<DealFieldsSection deal={deal} stages={[stage]} />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit value: Custo/ }));
+    expect(screen.getByLabelText('Custo')).toBeTruthy();
+    rerender(<DealFieldsSection deal={other} stages={[stage]} />);
+    expect(screen.queryByLabelText('Custo')).toBeNull();
+    await waitFor(() => expect(listDealFieldValues).toHaveBeenCalledWith(expect.anything(), 'd2'));
+    await waitFor(() => expect(rowOf('Custo').textContent).not.toMatch(/500/));
+    expect(rowOf('Custo').textContent).toContain('—');
+  });
+
   it('a formula whose field was deleted says so', async () => {
     vi.mocked(listDealFields).mockResolvedValue(fields.filter((f) => f.id !== CUSTO));
     render(<DealFieldsSection deal={deal} stages={[stage]} />);

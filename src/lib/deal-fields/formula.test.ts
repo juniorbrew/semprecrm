@@ -9,6 +9,7 @@ import {
   sampleVars,
   storedFieldIds,
   stringify,
+  storedRefs,
   toDisplay,
   FORMULA_MAX_CHARS,
   type FieldRef,
@@ -317,5 +318,26 @@ describe('evaluateStored and sampleVars', () => {
     expect(isReservedFieldName(' VALOR ')).toBe(true)
     expect(isReservedFieldName('Dias para fechar')).toBe(true)
     expect(isReservedFieldName('Custo')).toBe(false)
+  })
+})
+
+describe('ambiguous names and cached parsing', () => {
+  it('two fields with the same name are refused, never last-wins', () => {
+    const twins: FieldRef[] = [
+      { id: ID_CUSTO, name: 'Custo', kind: 'currency' },
+      { id: ID_FRETE, name: 'custo', kind: 'number' },
+    ]
+    expect(compileFormula('{Custo} + 1', twins)).toMatchObject({ ok: false, error: { code: 'ambiguous_field', detail: 'Custo' } })
+    // the other names still work
+    expect(compileFormula('{Valor} + 1', twins).ok).toBe(true)
+  })
+  it('lists every ref and evaluates the same text repeatedly with the same result', () => {
+    const c = compileFormula('{Valor} + {Dias para fechar} - {Custo}', FIELDS)
+    if (!c.ok) throw new Error('compile')
+    expect(storedRefs(c.stored)).toEqual(['valor', 'dias', fieldRef(ID_CUSTO)])
+    expect(storedRefs('junk')).toEqual([])
+    for (let i = 0; i < 3; i++) {
+      expect(evaluateStored(c.stored, { valor: 10, dias: 2, [fieldRef(ID_CUSTO)]: 4 }).value).toBe(8)
+    }
   })
 })

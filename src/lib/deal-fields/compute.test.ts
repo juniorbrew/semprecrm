@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildVars,
   cardFields,
+  cardPlan,
+  computeCardLines,
   cardNeedsItems,
   computeFieldRows,
   diffFieldInputs,
@@ -183,5 +185,39 @@ describe('diffFieldInputs', () => {
     expect(diffFieldInputs([CUSTO], { [CUSTO.id]: '' }, {})).toEqual({ changes: [], invalid: [] })
     expect(diffFieldInputs([CUSTO], { [CUSTO.id]: 'abc' }, {})).toEqual({ changes: [], invalid: [CUSTO.id] })
     expect(diffFieldInputs([CUSTO], {}, { [CUSTO.id]: 1 })).toEqual({ changes: [], invalid: [] })
+  })
+})
+
+describe('cardPlan and computeCardLines', () => {
+  const on = (f: DealField): DealField => ({ ...f, show_on_card: true })
+  it('works out once what the card needs: fields, items, days', () => {
+    const diasF = { ...formula('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'D', '{Dias para fechar} + {Itens}', 'number'), show_on_card: true }
+    const plan = cardPlan([on(CUSTO), FRETE, on(MARGEM), diasF])
+    // only two fit on the card: Custo and Margem
+    expect(plan.shown.map((f) => f.name)).toEqual(['Custo', 'Margem'])
+    expect(plan.fieldIds.sort()).toEqual([CUSTO.id, FRETE.id].sort())
+    expect(plan.varFields.map((f) => f.name).sort()).toEqual(['Custo', 'Frete'])
+    expect(plan.needsItems).toBe(false)
+    expect(plan.needsDays).toBe(false)
+    const plan2 = cardPlan([on(diasF)])
+    expect(plan2).toMatchObject({ needsItems: true, needsDays: true, fieldIds: [] })
+  })
+  it('gives a line only for what has a value, and nothing when nothing has', () => {
+    const plan = cardPlan([on(CUSTO), on(MARGEM), FRETE])
+    expect(computeCardLines(plan, {}, DEAL, 'BRL', NOW)).toEqual([])
+    const lines = computeCardLines(plan, { [CUSTO.id]: 500, [FRETE.id]: 20 }, DEAL, 'BRL', NOW)
+    expect(lines.map((l) => l.name)).toEqual(['Custo', 'Margem'])
+    expect(lines[0].text).toMatch(/R\$\s500$/)
+    // 2000 - 500 - 20
+    expect(lines[1].text).toMatch(/R\$\s1\.480$/)
+    // Custo empty but Frete present: Margem has no value, so only nothing shows for it
+    expect(computeCardLines(plan, { [FRETE.id]: 20 }, DEAL, 'BRL', NOW)).toEqual([])
+  })
+  it('does not parse the close date unless a card formula reads {dias}', () => {
+    const noDias = cardPlan([CUSTO, FRETE, on(MARGEM)])
+    const withDias = cardPlan([on(formula('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'X', '{Dias para fechar}', 'number'))])
+    expect(computeCardLines(noDias, { [CUSTO.id]: 1, [FRETE.id]: 1 }, { ...DEAL, expectedCloseDate: 'garbage' }, 'BRL', NOW)).toHaveLength(1)
+    expect(computeCardLines(withDias, {}, DEAL, 'BRL', NOW)[0].text).toBe('3')
+    expect(buildVars([], {}, DEAL, NOW, false).dias).toBeNull()
   })
 })

@@ -7,10 +7,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { DealField, DealFieldInput, FieldValues } from './types'
 
 type Client = Pick<SupabaseClient, 'from'>
+type RpcClient = Pick<SupabaseClient, 'from' | 'rpc'>
 
 const FIELD_COLS = 'id, account_id, name, kind, expression, result_format, show_on_card, position'
 /** .in() filters travel in the URL: keep each request small. */
 const CHUNK = 100
+/** PostgREST cuts a response at max_rows (1000) without saying so: no request may ask for more. */
+const MAX_ROWS = 1000
 
 function toField(r: Record<string, unknown>): DealField {
   return {
@@ -25,9 +28,9 @@ function toField(r: Record<string, unknown>): DealField {
   }
 }
 
-function chunked<T>(items: T[]): T[][] {
+function chunked<T>(items: T[], size: number = CHUNK): T[][] {
   const out: T[][] = []
-  for (let i = 0; i < items.length; i += CHUNK) out.push(items.slice(i, i + CHUNK))
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
   return out
 }
 
@@ -47,7 +50,6 @@ export async function createDealField(
   accountId: string,
   input: DealFieldInput,
   position: number,
-  userId?: string | null,
 ): Promise<void> {
   const { error } = await db.from('deal_fields').insert({
     account_id: accountId,
@@ -57,7 +59,7 @@ export async function createDealField(
     result_format: input.kind === 'formula' ? input.result_format ?? null : null,
     show_on_card: input.show_on_card ?? false,
     position,
-    created_by: userId ?? null,
+    // created_by is stamped by the database from the session.
   })
   if (error) throw error
 }
@@ -109,8 +111,9 @@ export async function listDealFieldValues(db: Client, dealId: string): Promise<F
 }
 
 /**
- * The values of many deals in a few requests (board cards): only the fields asked for,
- * one request per CHUNK deals. Deals with no values are absent from the result.
+ * The values of many deals in a few requests (board cards): only the fields asked for.
+ * Each request covers as many deals as keep it under MAX_ROWS (deals x fields), so nothing is
+ * cut silently. Deals with no values are absent from the result.
  */
 export async function listValuesForDeals(
   db: Client,
@@ -119,7 +122,7 @@ export async function listValuesForDeals(
 ): Promise<Record<string, FieldValues>> {
   if (dealIds.length === 0 || fieldIds.length === 0) return {}
   const pages = await Promise.all(
-    chunked(dealIds).map((ids) =>
+    chunked(dealIds, Math.max(1, Math.min(CHUNK, Math.floor(MAX_ROWS / fieldIds.length)))).map((ids) =>
       db.from('deal_field_values').select('deal_id, field_id, value').in('deal_id', ids).in('field_id', fieldIds),
     ),
   )
@@ -131,19 +134,16 @@ export async function listValuesForDeals(
   return groupValues(rows)
 }
 
-/** Sum of the item lines per deal ({Itens}); deals without items are absent. */
-export async function listItemSums(db: Client, dealIds: string[]): Promise<Record<string, number>> {
+/** Sum of the item lines per deal ({Itens}), added up in the database (deal_items_sums); deals without items are absent. */
+export async function listItemSums(db: RpcClient, dealIds: string[]): Promise<Record<string, number>> {
   if (dealIds.length === 0) return {}
   const pages = await Promise.all(
-    chunked(dealIds).map((ids) => db.from('deal_items').select('deal_id, line_total').in('deal_id', ids)),
+    chunked(dealIds).map((ids) => db.rpc('deal_items_sums', { p_deal_ids: ids })),
   )
   const sums: Record<string, number> = {}
   for (const p of pages) {
     if (p.error) throw p.error
-    for (const r of (p.data ?? []) as Record<string, unknown>[]) {
-      const id = r.deal_id as string
-      sums[id] = Math.round(((sums[id] ?? 0) + Number(r.line_total)) * 100) / 100
-    }
+    for (const r of (p.data ?? []) as Record<string, unknown>[]) sums[r.deal_id as string] = Number(r.total)
   }
   return sums
 }

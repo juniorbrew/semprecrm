@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe('useCardFieldLines', () => {
-  it('gives each deal its card fields, "—" when empty, loading only the fields they need', async () => {
+  it('gives each deal the card fields that have a value, none when it has none, loading only what they need', async () => {
     vi.mocked(listDealFields).mockResolvedValue([custo(true), frete, margem(`{valor} - {f:${CUSTO}}`)]);
     const { result } = renderHook(() => useCardFieldLines(deals, stages));
     await waitFor(() => expect(result.current.get('d1')).toBeTruthy());
@@ -68,7 +68,8 @@ describe('useCardFieldLines', () => {
       { id: CUSTO, name: 'Custo', text: expect.stringMatching(/R\$\s300$/) },
       { id: '33333333-3333-4333-8333-333333333333', name: 'Margem', text: expect.stringMatching(/R\$\s700$/) },
     ]);
-    expect(result.current.get('d2')?.map((l) => l.text)).toEqual(['—', '—']);
+    // d2 has no numbers: no line at all
+    expect(result.current.has('d2')).toBe(false);
     expect(listValuesForDeals).toHaveBeenCalledTimes(1);
     expect(listValuesForDeals).toHaveBeenCalledWith(expect.anything(), ['d1', 'd2'], [CUSTO]);
     expect(listItemSums).not.toHaveBeenCalled();
@@ -82,6 +83,29 @@ describe('useCardFieldLines', () => {
     // 800 x 50%; d2 has no items: 0 x 50%
     expect(result.current.get('d1')?.[0].text).toMatch(/R\$\s400$/);
     expect(result.current.get('d2')?.[0].text).toMatch(/R\$\s0$/);
+  });
+
+  it('a drag or an edit of the same deals does not read again; a new deal does', async () => {
+    vi.mocked(listDealFields).mockResolvedValue([custo(true)]);
+    const { result, rerender } = renderHook(({ d }) => useCardFieldLines(d, stages), { initialProps: { d: deals } });
+    await waitFor(() => expect(result.current.get('d1')).toBeTruthy());
+    expect(listValuesForDeals).toHaveBeenCalledTimes(1);
+    // same deals, new array, one moved to another stage, another edited: recomputed from the cache
+    rerender({ d: [{ ...deals[1], stage_id: 's2', title: 'x' } as Deal, { ...deals[0], value: 5 } as Deal] });
+    expect(result.current.get('d1')).toBeTruthy();
+    expect(listValuesForDeals).toHaveBeenCalledTimes(1);
+    rerender({ d: [...deals, { id: 'd3', stage_id: 's1', value: 1, currency: 'BRL' } as Deal] });
+    await waitFor(() => expect(listValuesForDeals).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(listValuesForDeals).mock.calls[1][1]).toEqual(['d1', 'd2', 'd3']);
+  });
+
+  it('with {Itens} a changed deal value reads the sums again', async () => {
+    vi.mocked(listDealFields).mockResolvedValue([margem('{itens} * 2')]);
+    const { result, rerender } = renderHook(({ d }) => useCardFieldLines(d, stages), { initialProps: { d: deals } });
+    await waitFor(() => expect(result.current.get('d1')).toBeTruthy());
+    expect(listItemSums).toHaveBeenCalledTimes(1);
+    rerender({ d: [{ ...deals[0], value: 999 } as Deal, deals[1]] });
+    await waitFor(() => expect(listItemSums).toHaveBeenCalledTimes(2));
   });
 
   it('does nothing without the module or without a card field', async () => {

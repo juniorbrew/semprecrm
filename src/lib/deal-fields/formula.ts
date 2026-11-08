@@ -1,8 +1,9 @@
 // Formula engine for deal fields (spec 2026-11-07). Pure: no React, no eval, no Function.
 //
 // Two texts exist for one formula:
-//   - DISPLAY text, what the admin types and sees: `{Valor} − {Custo} × 5%`-style names
-//     (`{Valor}`, `{Chance}`, `{Itens}`, `{Dias para fechar}`, `{<field name>}`).
+//   - DISPLAY text, what the admin types and sees: names in braces, like `{Valor} − {Custo} × 0,05`
+//     (`{Valor}`, `{Chance}`, `{Itens}`, `{Dias para fechar}`, `{<field name>}`). There is no `%` sign:
+//     type 0,05 for 5%.
 //   - STORED text, what goes in deal_fields.expression: references by stable id
 //     (`{valor}`, `{chance}`, `{itens}`, `{dias}`, `{f:<uuid>}`), ASCII operators, dot decimals.
 // Renaming a field or switching language never breaks a formula, and a deleted field shows
@@ -30,6 +31,7 @@ export type FormulaErrorCode =
   | 'bad_number'
   | 'unterminated_ref'
   | 'unknown_field'
+  | 'ambiguous_field'
   | 'formula_reference'
   | 'dangling_operator'
   | 'missing_operator'
@@ -257,6 +259,25 @@ export function parseStored(stored: string): ParseResult {
   return parseWith(stored, storedResolver, STORED_MAX_CHARS)
 }
 
+// The board evaluates the same few expressions for every card: parse each text once.
+const parsed = new Map<string, ParseResult>()
+const PARSED_MAX = 500
+
+function parseCached(stored: string): ParseResult {
+  const hit = parsed.get(stored)
+  if (hit) return hit
+  const result = parseStored(stored)
+  if (parsed.size >= PARSED_MAX) parsed.clear()
+  parsed.set(stored, result)
+  return result
+}
+
+/** Every ref (`valor`, `dias`, `f:<uuid>`) a stored formula reads; empty when it does not parse. */
+export function storedRefs(stored: string): string[] {
+  const r = parseCached(stored)
+  return r.ok ? r.refs : []
+}
+
 /** Plain decimal text (String(1e-10) would give an exponent the tokenizer refuses). */
 const trimNum = (n: number): string => n.toFixed(10).replace(/\.?0+$/, '')
 
@@ -318,10 +339,17 @@ export type CompileResult =
  */
 export function compileFormula(display: string, fields: FieldRef[]): CompileResult {
   const byName = new Map<string, FieldRef>()
-  for (const f of fields) byName.set(norm(f.name), f)
+  // Two fields that read the same name must not resolve by luck (last one wins): refuse the name.
+  const ambiguous = new Set<string>()
+  for (const f of fields) {
+    const key = norm(f.name)
+    if (byName.has(key)) ambiguous.add(key)
+    byName.set(key, f)
+  }
   const resolve: Resolver = (name, pos) => {
     const b = BUILTIN_BY_NAME.get(norm(name))
     if (b) return b
+    if (ambiguous.has(norm(name))) return { code: 'ambiguous_field', pos, detail: name }
     const f = byName.get(norm(name))
     if (!f) return { code: 'unknown_field', pos, detail: name }
     if (f.kind === 'formula') return { code: 'formula_reference', pos, detail: f.name }
@@ -357,9 +385,9 @@ export function toDisplay(stored: string, fields: Pick<FieldRef, 'id' | 'name'>[
 
 /** Field ids a stored formula points to (empty when it does not parse). */
 export function storedFieldIds(stored: string): string[] {
-  const parsed = parseStored(stored)
-  if (!parsed.ok) return []
-  return parsed.refs.filter(isFieldRef).map((r) => r.slice(FIELD_REF_PREFIX.length))
+  return storedRefs(stored)
+    .filter(isFieldRef)
+    .map((r) => r.slice(FIELD_REF_PREFIX.length))
 }
 
 // ---- evaluation ----------------------------------------------------------------------------------------
@@ -444,9 +472,9 @@ export function evaluate(ast: Ast, vars: Vars): EvalResult {
 
 /** Parse + evaluate stored text in one go (card and drawer). Parse failures read as a deleted field. */
 export function evaluateStored(stored: string, vars: Vars): EvalResult {
-  const parsed = parseStored(stored)
-  if (!parsed.ok) return { value: null, missing: [], deleted: [], reason: 'deleted' }
-  return evaluate(parsed.ast, vars)
+  const result = parseCached(stored)
+  if (!result.ok) return { value: null, missing: [], deleted: [], reason: 'deleted' }
+  return evaluate(result.ast, vars)
 }
 
 /** Sample numbers for the editor preview: 1000 value, 50% chance, 800 items, 10 days; fields by kind. */

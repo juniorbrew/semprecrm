@@ -85,7 +85,8 @@ function ValueEditor({
   }
 
   return (
-    <div className="grid gap-1">
+    // data-no-translate on the wrapper: the field name in aria-label is user data, not UI copy.
+    <div className="grid gap-1" data-no-translate>
       <input
         id={id}
         autoFocus
@@ -285,5 +286,6 @@ function FieldsList({ deal, stages }: { deal: Deal; stages: PipelineStage[] }) {
 export function DealFieldsSection({ deal, stages }: { deal: Deal; stages: PipelineStage[] }) {
   const { ready, modules } = useEntitlements();
   if (!ready || !modules.pipelines) return null;
-  return <FieldsList deal={deal} stages={stages} />;
+  // Keyed by deal: switching deals in the drawer starts clean (no values, sums or open editor of the previous one).
+  return <FieldsList key={deal.id} deal={deal} stages={stages} />;
 }

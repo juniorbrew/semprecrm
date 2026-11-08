@@ -74,7 +74,7 @@ function FieldDialog({
   onSaved: () => Promise<void>;
 }) {
   const { t } = useLanguage();
-  const { accountId, user, defaultCurrency } = useAuth();
+  const { accountId, defaultCurrency } = useAuth();
   const nameId = useId();
   const kindId = useId();
   const formatId = useId();
@@ -128,7 +128,7 @@ function FieldDialog({
         });
       } else {
         const next = fields.reduce((m, f) => Math.max(m, f.position), -1) + 1;
-        await createDealField(db, accountId, result.input, next, user?.id);
+        await createDealField(db, accountId, result.input, next);
       }
       toast.success(t(initial ? 'Field updated' : 'Field created'));
       await onSaved();
@@ -363,10 +363,11 @@ export function DealFieldsSettings() {
     setMoving(true);
     try {
       await reorderDealFields(createClient(), fields, ids);
-      await load();
     } catch (err) {
       toast.error(t(dealFieldsErrorMessage(err)));
     } finally {
+      // The writes are separate requests: whatever happened, show what the database really holds.
+      await load();
       setMoving(false);
     }
   }

@@ -27,15 +27,16 @@ function builder(result: { data?: unknown; error?: unknown; count?: number }) {
   b.then = (resolve: (v: unknown) => unknown) => resolve({ data: null, error: null, ...result })
   return { b, calls }
 }
-function client(results: Record<string, { data?: unknown; error?: unknown }[]>) {
+function client(results: Record<string, { data?: unknown; error?: unknown }[]>, rpcResults: { data?: unknown; error?: unknown }[] = []) {
   const used: Record<string, ReturnType<typeof builder>[]> = {}
+  const rpc = vi.fn(async (_fn: string, _args: unknown) => rpcResults.shift() ?? { data: [], error: null })
   const from = vi.fn((table: string) => {
     const next = results[table]?.shift() ?? {}
     const q = builder(next)
     ;(used[table] ??= []).push(q)
     return q.b
   })
-  return { db: { from } as never, from, used }
+  return { db: { from, rpc } as never, from, rpc, used }
 }
 
 const FIELD = (over: Partial<DealField> = {}): DealField => ({
@@ -60,12 +61,12 @@ describe('listDealFields', () => {
 describe('createDealField / updateDealField / deleteDealField', () => {
   it('trims the name and only sends expression for formulas', async () => {
     const { db, used } = client({ deal_fields: [{}, {}] })
-    await createDealField(db, 'acc', { name: '  Frete ', kind: 'number', expression: '{valor}', result_format: 'number' }, 3, 'u1')
+    await createDealField(db, 'acc', { name: '  Frete ', kind: 'number', expression: '{valor}', result_format: 'number' }, 3)
     expect(used.deal_fields[0].calls[0]).toEqual(['insert', [{
-      account_id: 'acc', name: 'Frete', kind: 'number', expression: null, result_format: null, show_on_card: false, position: 3, created_by: 'u1',
+      account_id: 'acc', name: 'Frete', kind: 'number', expression: null, result_format: null, show_on_card: false, position: 3,
     }]])
     await createDealField(db, 'acc', { name: 'Margem', kind: 'formula', expression: '{valor}', result_format: 'currency', show_on_card: true }, 4)
-    expect(used.deal_fields[1].calls[0][1][0]).toMatchObject({ kind: 'formula', expression: '{valor}', result_format: 'currency', show_on_card: true, created_by: null })
+    expect(used.deal_fields[1].calls[0][1][0]).toMatchObject({ kind: 'formula', expression: '{valor}', result_format: 'currency', show_on_card: true })
   })
   it('surfaces insert errors', async () => {
     const { db } = client({ deal_fields: [{ error: { code: '23505' } }] })
@@ -131,11 +132,33 @@ describe('values', () => {
     expect(await listItemSums(db, [])).toEqual({})
     expect(from).not.toHaveBeenCalled()
   })
-  it('sums item lines per deal in cents', async () => {
-    const { db } = client({ deal_items: [{ data: [
-      { deal_id: 'd1', line_total: '0.1' }, { deal_id: 'd1', line_total: '0.2' }, { deal_id: 'd2', line_total: 5 },
-    ] }] })
-    expect(await listItemSums(db, ['d1', 'd2', 'd3'])).toEqual({ d1: 0.3, d2: 5 })
+  it('sums item lines per deal in the database, 100 deals per call, and merges the pages', async () => {
+    const ids = Array.from({ length: 230 }, (_, i) => `d${i}`)
+    const { db, rpc } = client({}, [
+      { data: [{ deal_id: 'd1', total: '30.5' }] },
+      { data: [{ deal_id: 'd150', total: 5 }] },
+      { data: [] },
+    ])
+    expect(await listItemSums(db, ids)).toEqual({ d1: 30.5, d150: 5 })
+    expect(rpc).toHaveBeenCalledTimes(3)
+    expect(rpc.mock.calls[0][0]).toBe('deal_items_sums')
+    expect((rpc.mock.calls[0][1] as { p_deal_ids: string[] }).p_deal_ids).toHaveLength(100)
+    expect((rpc.mock.calls[2][1] as { p_deal_ids: string[] }).p_deal_ids).toHaveLength(30)
+  })
+  it('throws when the sums call fails', async () => {
+    const { db } = client({}, [{ error: new Error('rpc down') }])
+    await expect(listItemSums(db, ['d'])).rejects.toThrow('rpc down')
+  })
+  it('never asks for more than 1000 rows in one request (PostgREST cuts there silently)', async () => {
+    // 50 fields x 400 deals = 20000 rows: every request must cover at most 1000 / 50 = 20 deals
+    const ids = Array.from({ length: 400 }, (_, i) => `d${i}`)
+    const fields = Array.from({ length: 50 }, (_, i) => `f${i}`)
+    const { db, used } = client({ deal_field_values: Array.from({ length: 20 }, () => ({ data: [] })) })
+    await listValuesForDeals(db, ids, fields)
+    const sizes = used.deal_field_values.map((q) => (q.calls.find((c) => c[0] === 'in')![1][1] as string[]).length)
+    expect(sizes.length).toBe(20)
+    for (const n of sizes) expect(n * fields.length).toBeLessThanOrEqual(1000)
+    expect(sizes.reduce((a, b) => a + b, 0)).toBe(400)
   })
   it('throws when a chunk fails', async () => {
     const { db } = client({ deal_field_values: [{ error: new Error('bad') }] })

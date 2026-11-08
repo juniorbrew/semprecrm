@@ -8,7 +8,10 @@ import {
   BUILTIN_VARS,
   evaluateStored,
   fieldRef,
+  isFieldRef,
+  FIELD_REF_PREFIX,
   storedFieldIds,
+  storedRefs,
   type EvalResult,
   type Vars,
 } from './formula'
@@ -34,12 +37,19 @@ export function daysToClose(date: string | null | undefined, now: number = Date.
  * The variables of one deal. Percent fields enter as fractions (5 -> 0.05); a field with
  * no value is null; a formula field is not a variable (formulas cannot use formulas).
  */
-export function buildVars(fields: DealField[], values: FieldValues, deal: DealFacts, now: number = Date.now()): Vars {
+export function buildVars(
+  fields: DealField[],
+  values: FieldValues,
+  deal: DealFacts,
+  now: number = Date.now(),
+  /** false when no formula reads {dias}: the date is then not parsed at all. */
+  withDays = true,
+): Vars {
   const vars: Vars = {
     valor: Number.isFinite(deal.value) ? deal.value : null,
     chance: deal.chance,
     itens: deal.itemsSum,
-    dias: daysToClose(deal.expectedCloseDate, now),
+    dias: withDays ? daysToClose(deal.expectedCloseDate, now) : null,
   }
   for (const f of fields) {
     if (f.kind === 'formula') continue
@@ -119,19 +129,84 @@ export function cardFields(fields: DealField[]): DealField[] {
   return fields.filter((f) => f.show_on_card).slice(0, MAX_CARD_FIELDS)
 }
 
+/** What the board needs to draw the card fields, worked out once per field list (not per deal). */
+export interface CardPlan {
+  /** The (up to two) fields shown on the card. */
+  shown: DealField[]
+  /** The number fields their values come from: the shown ones and the ones their formulas read. */
+  varFields: DealField[]
+  /** Ids to load values for. */
+  fieldIds: string[]
+  needsItems: boolean
+  needsDays: boolean
+}
+
+export function cardPlan(fields: DealField[]): CardPlan {
+  const shown = cardFields(fields)
+  const ids = new Set<string>()
+  let needsItems = false
+  let needsDays = false
+  for (const f of shown) {
+    if (f.kind !== 'formula') {
+      ids.add(f.id)
+      continue
+    }
+    for (const ref of storedRefs(f.expression ?? '')) {
+      if (ref === 'itens') needsItems = true
+      else if (ref === 'dias') needsDays = true
+      else if (isFieldRef(ref)) ids.add(ref.slice(FIELD_REF_PREFIX.length))
+    }
+  }
+  return {
+    shown,
+    varFields: fields.filter((f) => f.kind !== 'formula' && ids.has(f.id)),
+    fieldIds: [...ids],
+    needsItems,
+    needsDays,
+  }
+}
+
 /** Field ids to load values for so the card fields (and the fields their formulas use) can be computed. */
 export function fieldIdsForCard(fields: DealField[]): string[] {
-  const ids = new Set<string>()
-  for (const f of cardFields(fields)) {
-    if (f.kind === 'formula') for (const id of storedFieldIds(f.expression ?? '')) ids.add(id)
-    else ids.add(f.id)
-  }
-  return [...ids]
+  return cardPlan(fields).fieldIds
 }
 
 /** True when a card field's formula needs the item sum ({itens}). */
 export function cardNeedsItems(fields: DealField[]): boolean {
-  return cardFields(fields).some((f) => f.kind === 'formula' && /\{itens\}/.test(f.expression ?? ''))
+  return cardPlan(fields).needsItems
+}
+
+export interface CardLine {
+  id: string
+  name: string
+  text: string
+}
+
+/**
+ * The card lines of one deal: only the fields that have a value (a formula with an empty input,
+ * a division by zero or a deleted field shows nothing). Nothing at all when none has one, so a
+ * card with no numbers stays clean. Computes the card fields only, never the whole list.
+ */
+export function computeCardLines(
+  plan: CardPlan,
+  values: FieldValues,
+  deal: DealFacts,
+  currency: string,
+  now: number = Date.now(),
+): CardLine[] {
+  const vars = buildVars(plan.varFields, values, deal, now, plan.needsDays)
+  const out: CardLine[] = []
+  for (const f of plan.shown) {
+    if (f.kind === 'formula') {
+      const r = evaluateStored(f.expression ?? '', vars)
+      if (r.value !== null) {
+        out.push({ id: f.id, name: f.name, text: formatFieldNumber(r.value, f.result_format ?? 'number', currency, 'card', true) })
+      }
+    } else if (values[f.id] !== undefined) {
+      out.push({ id: f.id, name: f.name, text: formatFieldNumber(values[f.id], f.kind, currency, 'card') })
+    }
+  }
+  return out
 }
 
 /** Formula fields (other than `fieldId`) whose expression uses the field: warn before deleting it. */

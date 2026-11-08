@@ -104,7 +104,7 @@ export function FormulaEditor({
         ))}
       </div>
       <p id={`${id}-help`} className="text-xs text-muted-foreground">
-        {t('You can use + − × ÷ and parentheses. A percentage counts as a fraction: 5% is 0,05.')}{' '}
+        {t('You can use + − × ÷ and parentheses. Type 0,05 for 5%.')}{' '}
         {`${value.length}/${FORMULA_MAX_CHARS}`}
       </p>
       {error && (

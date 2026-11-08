@@ -188,7 +188,7 @@ export function DealFormBody({
     }
     // A box that is not a number blocks the save, so nothing is half written.
     const fieldDiff = fieldsReady
-      ? diffFieldInputs(numberFields, fieldTexts, fieldValues)
+      ? diffFieldInputs(numberFields, edited, fieldValues)  // only the boxes the user typed in
       : { changes: [], invalid: [] as string[] };
     if (fieldDiff.invalid.length > 0) {
       setBadFields(fieldDiff.invalid);

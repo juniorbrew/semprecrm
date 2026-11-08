@@ -53,6 +53,8 @@ describe('validateFieldDraft', () => {
     expect(err('x'.repeat(41))).toBe('name-max')
     expect(err('x'.repeat(40))).toBeNull()
     expect(err('A {B}')).toBe('name-chars')
+    expect(err('A\u0007B')).toBe('name-chars')
+    expect(err('A\tB')).toBe('name-chars')
     expect(err(' valor ')).toBe('name-reserved')
     expect(err('Dias para fechar')).toBe('name-reserved')
     expect(err(' CUSTO ')).toBe('name-dup')
@@ -64,7 +66,7 @@ describe('validateFieldDraft', () => {
   it('formula errors carry the code and every code has a message', () => {
     const r = validateFieldDraft(draft({ name: 'F', kind: 'formula', formulaText: '{Valor} +' }), [CUSTO])
     expect(r).toMatchObject({ ok: false, errors: { formula: { code: 'dangling_operator' } } })
-    const codes: FormulaErrorCode[] = ['empty', 'too_long', 'too_complex', 'unbalanced_paren', 'empty_parens', 'unexpected_char', 'bad_number', 'unterminated_ref', 'unknown_field', 'formula_reference', 'dangling_operator', 'missing_operator']
+    const codes: FormulaErrorCode[] = ['empty', 'too_long', 'too_complex', 'unbalanced_paren', 'empty_parens', 'unexpected_char', 'bad_number', 'unterminated_ref', 'unknown_field', 'formula_reference', 'dangling_operator', 'missing_operator', 'ambiguous_field']
     for (const c of codes) expect(FORMULA_ERROR_TEXT[c]).toBeTruthy()
   })
   it('a formula cannot use another formula, nor a field that does not exist', () => {
