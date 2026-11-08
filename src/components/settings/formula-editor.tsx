@@ -63,7 +63,7 @@ export function FormulaEditor({
   return (
     <div className="grid gap-2">
       <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
-        {t('Formula')}
+        {t('Calculation formula')}
       </label>
       <Textarea
         id={id}

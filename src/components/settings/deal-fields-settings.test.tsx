@@ -117,8 +117,8 @@ describe('DealFieldsSettings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'New deal field' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('Field name'), { target: { value: 'Lucro' } });
-    fireEvent.change(within(dialog).getByLabelText('Type'), { target: { value: 'formula' } });
-    const box = within(dialog).getByLabelText('Formula') as HTMLTextAreaElement;
+    fireEvent.change(within(dialog).getByLabelText('Field type'), { target: { value: 'formula' } });
+    const box = within(dialog).getByLabelText('Calculation formula') as HTMLTextAreaElement;
 
     fireEvent.change(box, { target: { value: '{Valor} −' } });
     expect(within(dialog).getByRole('alert').textContent).toBe(
@@ -155,10 +155,10 @@ describe('DealFieldsSettings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'New deal field' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('Field name'), { target: { value: 'Lucro' } });
-    fireEvent.change(within(dialog).getByLabelText('Type'), { target: { value: 'formula' } });
+    fireEvent.change(within(dialog).getByLabelText('Field type'), { target: { value: 'formula' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save field' }));
     expect(within(dialog).getByRole('alert').textContent).toBe('Type the formula');
-    fireEvent.change(within(dialog).getByLabelText('Formula'), { target: { value: '(1 + 2' } });
+    fireEvent.change(within(dialog).getByLabelText('Calculation formula'), { target: { value: '(1 + 2' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save field' }));
     expect(createDealField).not.toHaveBeenCalled();
   });
@@ -186,9 +186,9 @@ describe('DealFieldsSettings', () => {
     render(<DealFieldsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Edit deal field: Margem' }));
     const dialog = await screen.findByRole('dialog');
-    expect((within(dialog).getByLabelText('Formula') as HTMLTextAreaElement).value).toBe('{Valor} − {Custo}');
-    expect((within(dialog).getByLabelText('Type') as HTMLSelectElement).disabled).toBe(true);
-    fireEvent.change(within(dialog).getByLabelText('Formula'), { target: { value: '{Valor} − {Custo} × 2' } });
+    expect((within(dialog).getByLabelText('Calculation formula') as HTMLTextAreaElement).value).toBe('{Valor} − {Custo}');
+    expect((within(dialog).getByLabelText('Field type') as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Calculation formula'), { target: { value: '{Valor} − {Custo} × 2' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save field' }));
     await waitFor(() => expect(updateDealField).toHaveBeenCalled());
     expect(updateDealField).toHaveBeenCalledWith(expect.anything(), MARGEM.id, {

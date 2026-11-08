@@ -175,8 +175,8 @@ describe('diffFieldInputs', () => {
     )
     expect(r.invalid).toEqual([])
     expect(r.changes).toEqual([
-      { fieldId: FRETE.id, value: null },
       { fieldId: COM.id, value: 5 },
+      { fieldId: FRETE.id, value: null },
     ])
   })
   it('an untouched empty field is not a change; a bad text is invalid', () => {

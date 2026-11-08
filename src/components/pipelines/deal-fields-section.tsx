@@ -259,7 +259,7 @@ function FieldsList({ deal, stages }: { deal: Deal; stages: PipelineStage[] }) {
                   <button
                     type="button"
                     onClick={() => setEditingId(f.id)}
-                    aria-label={`${t('Edit')}: ${f.name}`}
+                    aria-label={`${t('Edit value')}: ${f.name}`}
                     className="group inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-sm font-semibold tabular-nums text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     data-no-translate
                   >

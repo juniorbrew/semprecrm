@@ -34,7 +34,6 @@ export function useCardFieldLines(deals: Deal[], sortedStages: PipelineStage[]):
   const [loaded, setLoaded] = useState<{
     values: Record<string, FieldValues>;
     sums: Record<string, number>;
-    key: string;
   } | null>(null);
 
   // A field edited elsewhere (settings, drawer) shows up on the next read.
@@ -56,29 +55,21 @@ export function useCardFieldLines(deals: Deal[], sortedStages: PipelineStage[]):
   const onCard = useMemo(() => cardFields(fields), [fields]);
   const needIds = useMemo(() => fieldIdsForCard(fields), [fields]);
   const needItems = useMemo(() => cardNeedsItems(fields), [fields]);
-  // The deals the lines depend on: a deal that moved, changed value or date is read again.
-  const dealKey = useMemo(
-    () => deals.map((d) => `${d.id}:${d.value}:${d.expected_close_date ?? ''}:${d.stage_id}`).join('|'),
-    [deals],
-  );
-  const loadKey = `${version}#${needIds.join(',')}#${needItems}#${dealKey}`;
-
   useEffect(() => {
     if (!enabled || onCard.length === 0 || deals.length === 0) return;
     let cancelled = false;
     const db = createClient();
     const ids = deals.map((d) => d.id);
+    // `deals` changes identity on every refetch of the board (a move, an edit, a new deal): read again.
     Promise.all([listValuesForDeals(db, ids, needIds), needItems ? listItemSums(db, ids) : Promise.resolve({})])
       .then(([values, sums]) => {
-        if (!cancelled) setLoaded({ values, sums, key: loadKey });
+        if (!cancelled) setLoaded({ values, sums });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-    // `deals` is covered by dealKey (the array identity changes on every refetch).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, onCard.length, loadKey]);
+  }, [enabled, onCard.length, needIds, needItems, deals, version]);
 
   return useMemo(() => {
     const out = new Map<string, CardFieldLine[]>();

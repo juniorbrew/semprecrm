@@ -170,7 +170,7 @@ function FieldDialog({
 
           <div className="grid gap-1.5">
             <label htmlFor={kindId} className="text-xs font-medium text-muted-foreground">
-              {t('Type')}
+              {t('Field type')}
             </label>
             <select
               id={kindId}

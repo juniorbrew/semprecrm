@@ -15,6 +15,7 @@ import { DICT_BILLING } from './billing';
 import { DICT_COMPANIES } from './companies';
 import { DICT_CONTACTS } from './contacts';
 import { DICT_DASHBOARD } from './dashboard';
+import { DICT_DEAL_FIELDS } from './deal-fields';
 import { DICT_FLOWS } from './flows';
 import { DICT_FORECAST } from './forecast';
 import { DICT_INBOX } from './inbox';
@@ -32,6 +33,7 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_COMPANIES,
   ...DICT_CONTACTS,
   ...DICT_DASHBOARD,
+  ...DICT_DEAL_FIELDS,
   ...DICT_FLOWS,
   ...DICT_FORECAST,
   ...DICT_INBOX,

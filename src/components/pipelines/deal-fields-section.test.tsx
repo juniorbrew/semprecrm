@@ -108,7 +108,7 @@ describe('DealFieldsSection', () => {
 
   it('edits a number in place: Enter saves, the formula recalculates', async () => {
     render(<DealFieldsSection deal={deal} stages={[stage]} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit: % comissão' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit value: % comissão' }));
     const box = screen.getByLabelText('% comissão') as HTMLInputElement;
     fireEvent.change(box, { target: { value: '5' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -122,14 +122,14 @@ describe('DealFieldsSection', () => {
 
   it('accepts pt-BR typing, clears with an empty box, Escape cancels, unchanged does not write', async () => {
     render(<DealFieldsSection deal={deal} stages={[stage]} />);
-    fireEvent.click(await screen.findByRole('button', { name: /^Edit: Custo/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit value: Custo/ }));
     let box = screen.getByLabelText('Custo') as HTMLInputElement;
     expect(box.value).toBe('500');
     fireEvent.change(box, { target: { value: 'R$ 1.250,50' } });
     fireEvent.blur(box);
     await waitFor(() => expect(setDealFieldValue).toHaveBeenLastCalledWith(expect.anything(), 'acc-1', 'd1', CUSTO, 1250.5));
 
-    fireEvent.click(await screen.findByRole('button', { name: /^Edit: Custo/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit value: Custo/ }));
     box = screen.getByLabelText('Custo') as HTMLInputElement;
     fireEvent.change(box, { target: { value: '' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -137,19 +137,19 @@ describe('DealFieldsSection', () => {
     await waitFor(() => expect(rowOf('Margem').textContent).toContain('Fill in Custo'));
 
     const writes = vi.mocked(setDealFieldValue).mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: /^Edit: Custo/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Edit value: Custo/ }));
     box = screen.getByLabelText('Custo') as HTMLInputElement;
     fireEvent.change(box, { target: { value: '99' } });
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(screen.queryByLabelText('Custo')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit: Custo/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Edit value: Custo/ }));
     fireEvent.blur(screen.getByLabelText('Custo'));
     expect(vi.mocked(setDealFieldValue).mock.calls.length).toBe(writes);
   });
 
   it('refuses text that is not a number and keeps the box open', async () => {
     render(<DealFieldsSection deal={deal} stages={[stage]} />);
-    fireEvent.click(await screen.findByRole('button', { name: /^Edit: Custo/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit value: Custo/ }));
     const box = screen.getByLabelText('Custo') as HTMLInputElement;
     fireEvent.change(box, { target: { value: 'abc' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -161,7 +161,7 @@ describe('DealFieldsSection', () => {
   it('a failed save shows the error and keeps the old value', async () => {
     vi.mocked(setDealFieldValue).mockRejectedValue({ code: '42501' });
     render(<DealFieldsSection deal={deal} stages={[stage]} />);
-    fireEvent.click(await screen.findByRole('button', { name: /^Edit: Custo/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit value: Custo/ }));
     const box = screen.getByLabelText('Custo') as HTMLInputElement;
     fireEvent.change(box, { target: { value: '7' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -176,20 +176,20 @@ describe('DealFieldsSection', () => {
     h.canEdit = false;
     const a = render(<DealFieldsSection deal={deal} stages={[stage]} />);
     await screen.findByText('Custo');
-    expect(screen.queryByRole('button', { name: /^Edit:/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Edit value:/ })).toBeNull();
     a.unmount();
     h.canEdit = true;
     h.readOnly = true;
     render(<DealFieldsSection deal={deal} stages={[stage]} />);
     await screen.findByText('Custo');
-    expect(screen.queryByRole('button', { name: /^Edit:/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Edit value:/ })).toBeNull();
   });
 
   it('formulas have no edit button even for an admin', async () => {
     render(<DealFieldsSection deal={deal} stages={[stage]} />);
     await screen.findByText('Margem');
-    expect(screen.queryByRole('button', { name: 'Edit: Margem' })).toBeNull();
-    expect(screen.getAllByRole('button', { name: /^Edit:/ })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Edit value: Margem' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^Edit value:/ })).toHaveLength(2);
   });
 
   it('{Chance} uses the stage chance, {Itens} the item sum', async () => {
