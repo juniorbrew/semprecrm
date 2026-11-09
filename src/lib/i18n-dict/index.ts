@@ -21,6 +21,7 @@ import { DICT_FORECAST } from './forecast';
 import { DICT_INBOX } from './inbox';
 import { DICT_MISC } from './misc';
 import { DICT_SETTINGS } from './settings';
+import { DICT_SITE_BOT } from './site-bot';
 import { DICT_PLATFORM } from './platform';
 import { DICT_PRODUCTS } from './products';
 
@@ -41,4 +42,5 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_SETTINGS,
   ...DICT_PLATFORM,
   ...DICT_PRODUCTS,
+  ...DICT_SITE_BOT,
 };

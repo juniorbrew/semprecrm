@@ -1166,6 +1166,12 @@ export interface LeadSource {
   tag_ids: string[];
   assignee_user_id: string | null;
   field_map: LeadSourceFieldMap;
+  /** `webhook` (default) or `site_bot` (migration 108). */
+  kind?: 'webhook' | 'site_bot';
+  /** Bots only: the public id in the site snippet. */
+  public_key?: string | null;
+  /** Bots only: appearance, questions, end screen, LGPD, domains. */
+  bot_config?: Record<string, unknown>;
   received_count: number;
   last_received_at: string | null;
   created_by: string | null;

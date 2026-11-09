@@ -49,6 +49,8 @@ async function findActiveSource(token: string): Promise<SourceRow | null> {
       'id, account_id, name, is_active, pipeline_id, stage_id, tag_ids, assignee_user_id, field_map, received_count',
     )
     .eq('token', token)
+    // A site bot keeps an unused token; it must never work as a webhook.
+    .eq('kind', 'webhook')
     .maybeSingle()
   if (error) {
     console.error('[lead-webhook] source lookup failed:', error.message)

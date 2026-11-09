@@ -1,0 +1,141 @@
+/** pt-BR copy for the website chat bot editor (Settings -> Integrations, migration 108) — EN key -> pt-BR. Loaded through ./index.ts.
+ *  Keys and values are always more than one word: the translator also maps pt -> en across the page, so a one-word value would leak.
+ *  Bot names, questions and every text the admin writes are user data: the components mark them data-no-translate. */
+export const DICT_SITE_BOT: Record<string, string> = {
+  // ---- list and snippet ----
+  'Site bots': 'Robôs do site',
+  'Site bot': 'Robô do site',
+  'New site bot': 'Novo robô do site',
+  'Edit site bot': 'Editar robô do site',
+  'No site bots yet': 'Ainda não há robôs do site',
+  'A chat bubble for your website. It asks your questions and creates the lead in the pipeline.':
+    'Um balão de conversa para o seu site. Ele faz as suas perguntas e cria o lead no funil.',
+  'Create a bot, copy one line of code and paste it into your website.':
+    'Crie um robô, copie uma linha de código e cole no seu site.',
+  'Code to paste into your website': 'Código para colar no seu site',
+  'The key in this code is public. It only lets visitors talk to this bot, and only from the sites you allowed.':
+    'A chave neste código é pública. Ela só deixa os visitantes conversarem com este robô, e só nos sites que você liberou.',
+  'Copy code': 'Copiar código',
+  'Could not copy. Select the code and copy it by hand.':
+    'Não foi possível copiar. Selecione o código e copie na mão.',
+  'WordPress: open Appearance, then Theme file editor (or a plugin like Insert Headers and Footers) and paste the code before the closing body tag.':
+    'WordPress: abra Aparência, depois Editor de arquivos do tema (ou um plugin como Insert Headers and Footers) e cole o código antes do fim da tag body.',
+  'Wix: open Settings, then Custom code, add the code, choose Body end and apply it to all pages.':
+    'Wix: abra Configurações, depois Código personalizado, adicione o código, escolha Fim do body e aplique em todas as páginas.',
+  'Other sites: paste the code before the closing body tag of each page, or in the footer scripts area of your site builder.':
+    'Outros sites: cole o código antes do fim da tag body de cada página, ou na área de scripts do rodapé do seu construtor de sites.',
+  'No site is allowed yet, so the bot only works in the preview. Edit the bot and add your website address.':
+    'Nenhum site foi liberado ainda, então o robô só funciona na prévia. Edite o robô e coloque o endereço do seu site.',
+
+  // ---- editor ----
+  'The bot asks your questions on your website and turns the answers into a lead in the pipeline.':
+    'O robô faz as suas perguntas no seu site e transforma as respostas em um lead no funil.',
+  'Bot name in this list': 'Nome do robô nesta lista',
+  'e.g. Store website bot': 'ex.: Robô do site da loja',
+  'Bot is on': 'Robô ligado',
+  'Name shown to the visitor': 'Nome que o visitante vê',
+  'Text next to the bubble': 'Texto ao lado do balão',
+  'Main color': 'Cor principal',
+  'Side of the screen': 'Lado da tela',
+  'Right side': 'Lado direito',
+  'Left side': 'Lado esquerdo',
+  'First message of the bot': 'Primeira mensagem do robô',
+  'Bot questions': 'Perguntas do robô',
+  'Name and WhatsApp are always asked. Use the arrows to change the order.':
+    'Nome e WhatsApp são sempre perguntados. Use as setas para mudar a ordem.',
+  'Question text': 'Texto da pergunta',
+  'Write the question': 'Escreva a pergunta',
+  'Move question up': 'Subir a pergunta',
+  'Move question down': 'Descer a pergunta',
+  'Remove question': 'Remover a pergunta',
+  'Type of answer': 'Tipo de resposta',
+  "Visitor's name": 'Nome do visitante',
+  "Visitor's WhatsApp": 'WhatsApp do visitante',
+  'Free text': 'Texto livre',
+  'Buttons to choose from': 'Botões para escolher',
+  'Email address': 'Endereço de e-mail',
+  'Where the answer is saved': 'Onde a resposta é guardada',
+  'Contact phone': 'Telefone do contato',
+  'Contact email': 'E-mail do contato',
+  'Only in the deal note': 'Só na nota do negócio',
+  'A custom contact field': 'Um campo personalizado do contato',
+  'Custom contact field': 'Campo personalizado do contato',
+  'Pick a field': 'Escolha um campo',
+  'Answer buttons, one per line (2 to 6)': 'Botões de resposta, um por linha (de 2 a 6)',
+  'Add at least 2 answer buttons.': 'Coloque pelo menos 2 botões de resposta.',
+  'Always required': 'Sempre obrigatória',
+  'Required answer': 'Resposta obrigatória',
+  'You reached the limit of 10 questions.': 'Você chegou ao limite de 10 perguntas.',
+  'Where the lead goes': 'Para onde vai o lead',
+  'End of the conversation': 'Fim da conversa',
+  'Thank you message': 'Mensagem de agradecimento',
+  'Show the Continue on WhatsApp button': 'Mostrar o botão Continuar no WhatsApp',
+  'WhatsApp number of the company': 'Número de WhatsApp da empresa',
+  'Choose a number': 'Escolha um número',
+  'Another number': 'Outro número',
+  'Ready message (use {nome} for the name)': 'Mensagem pronta (use {nome} para o nome)',
+  'Privacy (LGPD)': 'Privacidade (LGPD)',
+  'Consent text the visitor accepts': 'Texto de consentimento que o visitante aceita',
+  'Privacy policy link (optional)': 'Link da política de privacidade (opcional)',
+  'Sites where the bot may run': 'Sites onde o robô pode funcionar',
+  'Live preview': 'Prévia ao vivo',
+  'This is how visitors see the bot. Nothing you type here is sent or saved.':
+    'É assim que os visitantes veem o robô. Nada do que você digita aqui é enviado ou guardado.',
+
+  // ---- save feedback and what to fix ----
+  'Bot saved': 'Robô salvo',
+  'Bot created': 'Robô criado',
+  'Failed to save the bot': 'Não foi possível salvar o robô',
+  'Some bot settings need attention. Check them and save again.':
+    'Algumas configurações do robô precisam de atenção. Confira e salve de novo.',
+  'Fix these points to save:': 'Corrija estes pontos para salvar:',
+  'Give the bot a name to find it in the list.': 'Dê um nome ao robô para achá-lo na lista.',
+  'Pick the stage where new deals start.': 'Escolha a etapa em que os novos negócios começam.',
+
+  // ---- what the checker says (technical key, friendly pt) ----
+  'Pick the pipeline where new deals land.': 'Escolha o funil onde os novos negócios entram.',
+  'Pick a pipeline': 'Escolha um funil',
+  'One address per line. List each subdomain too (blog.minhaloja.com.br): only the exact address and its www version are accepted. For accented domains, use the xn-- form. With no address the bot only runs in this preview.':
+    'Um endereço por linha. Liste cada subdomínio também (blog.minhaloja.com.br): só o endereço exato e a versão com www são aceitos. Para domínios com acento, use a forma xn--. Sem nenhum endereço o robô só roda nesta prévia.',
+  'Question number': 'Pergunta número',
+  'Invalid site address': 'Endereço de site inválido',
+  'botName is required': 'Escreva o nome que o visitante vê no robô.',
+  'botName must be 40 characters or fewer': 'O nome do robô pode ter no máximo 40 caracteres.',
+  'bubbleText must be 60 characters or fewer': 'O texto do balão pode ter no máximo 60 caracteres.',
+  'color must be #rrggbb': 'A cor precisa ser um código como #2563eb.',
+  'side must be left or right': 'Escolha o lado esquerdo ou o direito.',
+  'greeting is required': 'Escreva a primeira mensagem do robô.',
+  'greeting must be 300 characters or fewer': 'A primeira mensagem pode ter no máximo 300 caracteres.',
+  'questions must be a list': 'As perguntas estão em um formato inválido.',
+  'at most 10 questions': 'O robô aceita no máximo 10 perguntas.',
+  'exactly one name question is required': 'O robô precisa de exatamente uma pergunta de nome.',
+  'exactly one phone question is required': 'O robô precisa de exatamente uma pergunta de WhatsApp.',
+  'at most one email question': 'Só pode haver uma pergunta de e-mail.',
+  'each custom field can be used once': 'Cada campo personalizado só pode guardar uma resposta.',
+  'whatsappNumber must have the country code and area code': 'Escolha ou digite o número de WhatsApp, com código do país e DDD.',
+  'thanks is required': 'Escreva a mensagem de agradecimento.',
+  'thanks must be 300 characters or fewer': 'O agradecimento pode ter no máximo 300 caracteres.',
+  'messageTemplate must be 300 characters or fewer': 'A mensagem pronta pode ter no máximo 300 caracteres.',
+  'consent text is required': 'Escreva o texto de consentimento que o visitante aceita.',
+  'consent text must be 300 characters or fewer': 'O texto de consentimento pode ter no máximo 300 caracteres.',
+  'privacy link must be 300 characters or fewer': 'O link da política pode ter no máximo 300 caracteres.',
+  'privacy link must be an https address': 'O link da política de privacidade precisa começar com https://',
+  'domains must be a list': 'Os endereços estão em um formato inválido.',
+  'at most 10 domains': 'Você pode liberar no máximo 10 endereços de site.',
+  'pipeline is required': 'Escolha o funil onde os novos negócios entram.',
+  'stage is required': 'Escolha a etapa em que os novos negócios começam.',
+  'the question needs a text': 'escreva o texto da pergunta.',
+  'the question text is over 200 characters': 'o texto pode ter no máximo 200 caracteres.',
+  'the question id is invalid': 'o identificador da pergunta é inválido.',
+  'the question id is repeated': 'o identificador da pergunta está repetido.',
+  'the answer type is invalid': 'o tipo de resposta é inválido.',
+  'the question is malformed': 'a pergunta está em um formato inválido.',
+  'pick the contact field for this answer': 'escolha o campo do contato que guarda a resposta.',
+  'choose 2 to 6 answer buttons': 'coloque de 2 a 6 botões de resposta.',
+  'each answer button needs 1 to 60 characters': 'cada botão precisa ter de 1 a 60 caracteres.',
+  'answer buttons must be different': 'os botões de resposta precisam ser diferentes entre si.',
+
+  // ---- latest conversations of a bot ----
+  'Latest conversations': 'Últimas conversas',
+  'No conversations received yet.': 'Ainda não chegou nenhuma conversa.',
+}

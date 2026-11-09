@@ -34,9 +34,25 @@ export interface IngestLeadResult {
   duplicate: boolean
   /** True when this call created the contact row. */
   contactCreated: boolean
+  /**
+   * Only with `options.checkRecentRepeat`: the contact already had an event
+   * from this source inside the window (the caller should not re-fire
+   * automations for it).
+   */
+  recentRepeat?: boolean
   /** Name the contact ended up with — handy for logs / deal titles. */
   contactName?: string | null
 }
+
+export interface IngestLeadOptions {
+  /** Plain text for the new deal's notes (the site bot's Q&A). */
+  dealNotes?: string
+  /** Never replace a custom value the contact already has (public endpoints). */
+  keepExistingCustomValues?: boolean
+  /** Hours: flag `recentRepeat` when the contact already had an event from this source. */
+  checkRecentRepeat?: number
+}
+type IngestOptions = IngestLeadOptions
 
 /** Source columns the ingest reads — everything the route selects. */
 export type IngestLeadSource = Pick<
@@ -188,6 +204,7 @@ async function writeCustomValues(
   source: IngestLeadSource,
   contactId: string,
   custom: Record<string, string>,
+  keepExisting = false,
 ): Promise<void> {
   const ids = Object.keys(custom)
   if (ids.length === 0) return
@@ -209,7 +226,7 @@ async function writeCustomValues(
   if (rows.length === 0) return
   const { error: upErr } = await db
     .from('contact_custom_values')
-    .upsert(rows, { onConflict: 'contact_id,custom_field_id' })
+    .upsert(rows, { onConflict: 'contact_id,custom_field_id', ignoreDuplicates: keepExisting })
   if (upErr) console.error('[lead-capture] custom values upsert failed:', upErr.message)
 }
 
@@ -249,6 +266,7 @@ async function maybeCreateDeal(
   currency: string,
   contactId: string,
   title: string,
+  notes?: string,
 ): Promise<string | null> {
   if (!source.pipeline_id || !source.stage_id) return null
 
@@ -293,6 +311,7 @@ async function maybeCreateDeal(
       currency,
       status: 'open',
       assigned_to: assignedTo,
+      ...(notes ? { notes } : {}),
     })
     .select('id')
     .single()
@@ -312,6 +331,7 @@ export async function ingestLead(
   db: SupabaseClient,
   source: IngestLeadSource,
   payload: LeadPayload,
+  options: IngestOptions = {},
 ): Promise<IngestLeadResult> {
   try {
     const lead = mapLeadFields(payload, source.field_map)
@@ -343,7 +363,20 @@ export async function ingestLead(
       return finish(db, source, payload, fail(contact.error))
     }
 
-    await writeCustomValues(db, source, contact.id, lead.custom)
+    let recentRepeat: boolean | undefined
+    if (options.checkRecentRepeat && !contact.created) {
+      const since = new Date(Date.now() - options.checkRecentRepeat * 3_600_000).toISOString()
+      const { data: prior } = await db
+        .from('lead_source_events')
+        .select('id')
+        .eq('source_id', source.id)
+        .eq('contact_id', contact.id)
+        .gte('created_at', since)
+        .limit(1)
+      recentRepeat = ((prior as Row[] | null) ?? []).length > 0
+    }
+
+    await writeCustomValues(db, source, contact.id, lead.custom, options.keepExistingCustomValues === true)
     await applyTags(db, source, contact.id)
 
     const dealId = await maybeCreateDeal(
@@ -353,6 +386,7 @@ export async function ingestLead(
       currency,
       contact.id,
       leadDealTitle(contact.name, phone, source.name),
+      options.dealNotes,
     )
 
     return finish(db, source, payload, {
@@ -363,6 +397,7 @@ export async function ingestLead(
       duplicate: !contact.created,
       contactCreated: contact.created,
       contactName: contact.name,
+      ...(recentRepeat === undefined ? {} : { recentRepeat }),
     })
   } catch (err) {
     console.error('[lead-capture] ingest failed:', err)
