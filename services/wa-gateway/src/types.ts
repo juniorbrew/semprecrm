@@ -80,6 +80,22 @@ export interface ReactRequest {
   emoji: string;
   /** chat em que a mensagem do cliente chegou (`InboundPayload.chat_jid`), se o app guardou */
   chat_jid?: string;
+  /**
+   * Anúncio Click-to-WhatsApp (melhor esforço): `contextInfo.externalAdReply` e
+   * `contextInfo.conversionSource` do Baileys. Só vai quando algo chegou.
+   */
+  ad?: InboundAd;
+}
+
+export interface InboundAd {
+  title?: string;
+  body?: string;
+  source_type?: string;
+  source_id?: string;
+  source_url?: string;
+  ctwa_clid?: string;
+  source_app?: string;
+  conversion_source?: string;
 }
 
 /** `POST /sessions/:id/presence` — "digitando..." no celular do cliente. */
