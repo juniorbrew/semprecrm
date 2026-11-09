@@ -1,6 +1,6 @@
 # Spec: avisar a Meta dos leads e vendas (origem dos clientes, parte B)
 
-Status: rascunho para aprovação (2026-11-09). Entrega 9 do roteiro vocero (`docs/verification/vocero-evolution/ROADMAP.md`), parte B. Depende da parte A (PR #135: `lead_origins`, `deals.origin_id`).
+Status: aprovado pelo dono do produto (2026-11-09). Entrega 9 do roteiro vocero (`docs/verification/vocero-evolution/ROADMAP.md`), parte B. Depende da parte A (PR #135: `lead_origins`, `deals.origin_id`).
 
 ## Objetivo
 
