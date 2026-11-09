@@ -253,25 +253,36 @@ CREATE TEMP TABLE rec_ids(label text PRIMARY KEY, id uuid);
 INSERT INTO rec_ids VALUES
   ('a', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/a', now() - interval '1 hour', false));
 SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'a'), 'first touch is recorded');
-SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'a') AND first_origin_id IS NULL FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'),
-  'allow_first = false: last moves, first stays empty');
+SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'a') AND first_origin_id = (SELECT id FROM rec_ids WHERE label = 'a')
+   FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'),
+  'an untrusted touch still fills EMPTY pointers');
 -- the same touch inside 24h is nothing new
 SELECT pg_temp.assert_true(pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/a', now(), false) IS NULL, 'same touch inside 24h: dedup');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM lead_origins WHERE contact_id = '10900000-0000-4000-8000-0000000000c6'), 1, 'dedup wrote no row');
--- source_url is part of the identity
-INSERT INTO rec_ids VALUES ('b', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/other', now(), false));
+-- an UNTRUSTED newer touch on a contact that already has a last touch: stored as history, pointers stay
+INSERT INTO rec_ids VALUES ('u', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-U', NULL, now(), false));
+SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'u'), 'an untrusted touch is still stored');
+SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'a') AND first_origin_id = (SELECT id FROM rec_ids WHERE label = 'a')
+   FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'an untrusted touch moves neither pointer');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM lead_origins WHERE contact_id = '10900000-0000-4000-8000-0000000000c6'), 2, 'both rows exist');
+-- a new deal still inherits the TRUSTED last touch, not the untrusted one
+INSERT INTO deals(id, user_id, account_id, pipeline_id, stage_id, contact_id, title) VALUES
+  ('10900000-0000-4000-8000-000000000d08', '10900000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '10900000-0000-4000-8000-0000000000f1', '10900000-0000-4000-8000-0000000000e1',
+   '10900000-0000-4000-8000-0000000000c6', 'D8');
+SELECT pg_temp.assert_true((SELECT origin_id = (SELECT id FROM rec_ids WHERE label = 'a') FROM deals WHERE id = '10900000-0000-4000-8000-000000000d08'), 'the new deal inherits the trusted last touch');
+-- source_url is part of the identity (trusted from here on)
+INSERT INTO rec_ids VALUES ('b', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/other', now(), true));
 SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'b'), 'another source_url is another touch');
-SELECT pg_temp.assert_true(pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/other', now(), false) IS NULL, 'the repeat of that one is dedup again');
--- an older touch is stored but does not move last
-INSERT INTO rec_ids VALUES ('old', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-OLD', NULL, now() - interval '5 hours', false));
+SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'b') FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'a trusted newer touch moves last');
+SELECT pg_temp.assert_true(pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/other', now(), true) IS NULL, 'the repeat of that one is dedup again');
+-- an older trusted touch is stored but does not move last
+INSERT INTO rec_ids VALUES ('old', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-OLD', NULL, now() - interval '5 hours', true));
 SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'old'), 'an older touch is still stored');
 SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'b') FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'an older touch does not move last');
--- allow_first = true fills an empty first, once
-INSERT INTO rec_ids VALUES ('c', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-C', NULL, now(), true));
-SELECT pg_temp.assert_true((SELECT first_origin_id = (SELECT id FROM rec_ids WHERE label = 'c') FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'allow_first = true sets an empty first');
+-- first is never replaced, trusted or not
 INSERT INTO rec_ids VALUES ('d', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-D', NULL, now(), true));
-SELECT pg_temp.assert_true((SELECT first_origin_id = (SELECT id FROM rec_ids WHERE label = 'c') AND last_origin_id = (SELECT id FROM rec_ids WHERE label = 'd')
-   FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'first is never replaced; last follows');
+SELECT pg_temp.assert_true((SELECT first_origin_id = (SELECT id FROM rec_ids WHERE label = 'a') AND last_origin_id = (SELECT id FROM rec_ids WHERE label = 'd')
+   FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'first is never replaced; last follows a trusted touch');
 -- at most 50 touches per contact per 24h
 DO $$
 DECLARE i int;

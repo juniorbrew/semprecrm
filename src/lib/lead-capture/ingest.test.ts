@@ -517,13 +517,13 @@ describe('ingestLead — origin (migration 109)', () => {
     expect(recordTouch).not.toHaveBeenCalled()
   })
 
-  it('only a submission that created the contact may become its first touch', async () => {
+  it('only a submission that created the contact may move its pointers', async () => {
     const body = { ...PAYLOAD, utm_campaign: 'bf' }
     await ingestLead(makeDb(), source(), body)
-    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ allowFirst: true })
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ trustedPointers: true })
     vi.mocked(recordTouch).mockClear()
     await ingestLead(makeDb(), source(), body) // same number again: the contact exists now
-    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ allowFirst: false })
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ trustedPointers: false })
   })
 
   it('a repeat from this source inside the window (checkRecentRepeat) records nothing', async () => {

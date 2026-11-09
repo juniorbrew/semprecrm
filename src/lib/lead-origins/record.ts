@@ -21,11 +21,12 @@ export interface RecordTouchInput {
   /** Defaults to now. */
   at?: Date
   /**
-   * May this touch become the contact's FIRST touch (when it has none)? Messaging channels: yes (default).
-   * Site bot / forms: only when this same submission created the contact, so a stranger who types a known
-   * number cannot claim the first touch of an existing customer.
+   * May this touch move the contact's pointers (last touch; first when empty)? Messaging channels: yes
+   * (default). Site bot / forms: only when this same submission created the contact. Otherwise the touch is
+   * kept as history and a pointer moves only if it was still empty, so a stranger who types a known number
+   * cannot take over the last touch of an existing customer (new deals inherit it for 30 days).
    */
-  allowFirst?: boolean
+  trustedPointers?: boolean
 }
 
 export interface RecordTouchResult {
@@ -55,7 +56,7 @@ async function record(db: SupabaseClient, input: RecordTouchInput): Promise<Reco
     p_click_id_type: touch.clickIdType,
     p_click_id: touch.clickId,
     p_occurred_at: (input.at ?? new Date()).toISOString(),
-    p_allow_first: input.allowFirst ?? true,
+    p_trusted_pointers: input.trustedPointers ?? true,
   })
   if (error) throw new Error(`record_lead_origin failed (${error.code ?? 'error'})`)
   // NULL: a repeat inside 24h, or the 50-a-day cap: nothing was written.

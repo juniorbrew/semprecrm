@@ -303,10 +303,15 @@ GRANT EXECUTE ON FUNCTION private.origin_bucket(text, text, text, text, text, te
 --   * at most 50 touches per contact in 24h (a sender cannot flood the table);
 --   * the same touch (channel, kind, ad / source / source_url / utm_source / utm_campaign / utm_content /
 --     referrer host) in the same conversation inside 24h is not a new touch;
---   * last_origin_id moves only to a touch that is not older than the current last one;
---   * first_origin_id is set only when empty AND p_allow_first (site / form submissions that did not
---     create the contact cannot claim the "first touch" of a customer that already existed).
+--   * pointers: a TRUSTED touch (the contact came through a channel the sender cannot fake, or this very
+--     submission created the contact) moves last_origin_id when it is not older than the current last
+--     touch. An untrusted one (a site / form submission for a customer that already exists) is still
+--     stored as history but moves nothing, so a stranger who types a known number can neither claim the
+--     last touch (new deals inherit it for 30 days) nor the first one. Either pointer is filled when it
+--     is still NULL, trusted or not.
 -- Returns the new touch id, or NULL when nothing was written.
+-- (dropped first: CREATE OR REPLACE cannot rename a parameter, and this migration is re-run while in development)
+DROP FUNCTION IF EXISTS public.record_lead_origin(uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, timestamptz, boolean);
 CREATE OR REPLACE FUNCTION public.record_lead_origin(
   p_account_id      uuid,
   p_contact_id      uuid,
@@ -326,7 +331,7 @@ CREATE OR REPLACE FUNCTION public.record_lead_origin(
   p_click_id_type   text,
   p_click_id        text,
   p_occurred_at     timestamptz,
-  p_allow_first     boolean
+  p_trusted_pointers boolean
 )
 RETURNS uuid
 LANGUAGE plpgsql
@@ -373,13 +378,12 @@ BEGIN
      SET last_origin_id = v_id
    WHERE c.id = p_contact_id AND c.account_id = p_account_id
      AND (c.last_origin_id IS NULL
-          OR p_occurred_at >= (SELECT o.occurred_at FROM public.lead_origins o WHERE o.id = c.last_origin_id));
+          OR (p_trusted_pointers
+              AND p_occurred_at >= (SELECT o.occurred_at FROM public.lead_origins o WHERE o.id = c.last_origin_id)));
 
-  IF p_allow_first THEN
-    UPDATE public.contacts c
-       SET first_origin_id = v_id
-     WHERE c.id = p_contact_id AND c.account_id = p_account_id AND c.first_origin_id IS NULL;
-  END IF;
+  UPDATE public.contacts c
+     SET first_origin_id = v_id
+   WHERE c.id = p_contact_id AND c.account_id = p_account_id AND c.first_origin_id IS NULL;
   RETURN v_id;
 END;
 $$;

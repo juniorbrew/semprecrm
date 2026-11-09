@@ -9,7 +9,8 @@
 // audit row is part of the action — if it cannot be written, nothing is
 // exported (500).
 //
-// Reads with the caller's RLS-scoped client (see src/lib/lgpd/export.ts).
+// Reads with the caller's RLS-scoped client (see src/lib/lgpd/export.ts); only the origins section, which
+// includes the click id the browser cannot select, is read with the service role.
 // ============================================================
 
 import { NextResponse } from 'next/server'
@@ -17,6 +18,7 @@ import { NextResponse } from 'next/server'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { AuditWriteError, auditStrict } from '@/lib/audit-server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { ExportNotFoundError, buildContactExport } from '@/lib/lgpd/export'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
@@ -35,7 +37,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
     let payload
     try {
-      payload = await buildContactExport(ctx.supabase, ctx.accountId, id)
+      payload = await buildContactExport(ctx.supabase, ctx.accountId, id, undefined, supabaseAdmin())
     } catch (err) {
       if (err instanceof ExportNotFoundError) {
         return NextResponse.json({ error: 'Contact not found' }, { status: 404 })

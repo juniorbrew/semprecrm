@@ -18,11 +18,16 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { LEAD_ORIGIN_COLUMNS } from '@/lib/lead-origins/types'
-
 import { chunk, ID_CHUNK, PAGE_SIZE } from './anonymize'
 
 export const EXPORT_FORMAT_VERSION = 2
+
+/**
+ * Touches of the contact (migration 109) with the click id: it belongs to the person, and the export runs
+ * on the server with the service role (the browser's column list leaves click_id out).
+ */
+const ORIGIN_EXPORT_COLUMNS =
+  'id, conversation_id, channel, kind, ad_id, source_id, source_url, headline, utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer_host, click_id_type, click_id, occurred_at, created_at'
 
 type Row = Record<string, unknown>
 
@@ -64,7 +69,7 @@ export interface ContactExport {
   flow_runs: Row[]
   /** Lead-capture submissions (form / webhook payloads) that created or matched the contact. */
   lead_events: Row[]
-  /** Where the contact came from: ad / campaign / site touches (migration 109); the click id is server-side only and not included. */
+  /** Where the contact came from: ad / campaign / site touches (migration 109); with the click id (the person's own data). */
   origins: Row[]
   /** "Memória do contato" facts (AI, migration 064), every status. */
   ai_memories: Row[]
@@ -93,6 +98,11 @@ export async function buildContactExport(
   accountId: string,
   contactId: string,
   now: () => Date = () => new Date(),
+  /**
+   * Service-role client, used ONLY for the origins section: click_id is not selectable by the caller's session
+   * (migration 109). It runs after the contact was read under the caller's RLS, scoped by account and contact.
+   */
+  serverDb: SupabaseClient = db,
 ): Promise<ContactExport> {
   const warnings: string[] = []
   const manifest: Record<string, ManifestEntry> = {}
@@ -203,7 +213,12 @@ export async function buildContactExport(
         ordered(byContact('flow_runs', 'id, flow_id, conversation_id, status, vars, started_at, ended_at, end_reason'), 'started_at'),
       ),
       load('lead_events', () => ordered(byContact('lead_source_events', 'id, source_id, status, deal_id, payload, created_at'))),
-      load('origins', () => ordered(byContact('lead_origins', LEAD_ORIGIN_COLUMNS), 'occurred_at')),
+      load('origins', () =>
+        ordered(
+          serverDb.from('lead_origins').select(ORIGIN_EXPORT_COLUMNS).eq('contact_id', contactId).eq('account_id', accountId),
+          'occurred_at',
+        ),
+      ),
     ])
 
   const conversationIds = convRows.map((r) => r.id as string)

@@ -362,14 +362,14 @@ describe('recordTouch (one rpc: lock, dedup, cap, insert and pointers happen in 
       p_click_id_type: 'ctwa_clid',
       p_click_id: 'AfAbC123_ctwa',
       p_occurred_at: '2026-11-03T12:00:00.000Z',
-      p_allow_first: true,
+      p_trusted_pointers: true,
     })
   })
 
-  it('passes allowFirst through (site / form submissions that did not create the contact)', async () => {
+  it('passes trustedPointers through (site / form submissions that did not create the contact are untrusted)', async () => {
     const rpc = vi.fn<(name: string, args: Record<string, unknown>) => Promise<{ data: null; error: null }>>(async () => ({ data: null, error: null }))
-    await recordTouch({ rpc } as never, { ...RPC_ARGS, allowFirst: false })
-    expect(rpc.mock.calls[0][1]).toMatchObject({ p_allow_first: false })
+    await recordTouch({ rpc } as never, { ...RPC_ARGS, trustedPointers: false })
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_trusted_pointers: false })
   })
 
   it('a NULL answer (repeat inside 24h, or the daily cap) is "nothing written"', async () => {

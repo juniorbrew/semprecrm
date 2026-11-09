@@ -387,10 +387,10 @@ export async function ingestLead(
     // Origin before the deal: the deal takes the contact's last touch (trigger, migration 109).
     // recordTouch never throws and never blocks the lead.
     // A repeat from this source inside the window (public site bot) records nothing, and only a submission
-    // that created the contact may become its first touch (a known number typed by a stranger cannot).
+    // that created the contact may move its pointers (a known number typed by a stranger cannot).
     const origin = options.origin === undefined ? parseBodyOrigin(payload) : options.origin
     if (origin && !recentRepeat) {
-      await recordTouch(db, { accountId: source.account_id, contactId: contact.id, touch: origin, allowFirst: contact.created })
+      await recordTouch(db, { accountId: source.account_id, contactId: contact.id, touch: origin, trustedPointers: contact.created })
     }
 
     await writeCustomValues(db, source, contact.id, lead.custom, options.keepExistingCustomValues === true)
