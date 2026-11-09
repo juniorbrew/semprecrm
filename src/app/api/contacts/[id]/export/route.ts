@@ -18,7 +18,7 @@ import { NextResponse } from 'next/server'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { AuditWriteError, auditStrict } from '@/lib/audit-server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { ExportNotFoundError, buildContactExport } from '@/lib/lgpd/export'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
