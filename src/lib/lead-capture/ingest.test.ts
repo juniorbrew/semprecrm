@@ -219,6 +219,15 @@ describe('ingestLead — new lead', () => {
     expect(state.lead_sources[0].last_received_at).toEqual(expect.any(String))
   })
 
+  it('writes the deal notes only when the caller passes them (site bot)', async () => {
+    await ingestLead(makeDb(), source(), { phone: '5511988887777' })
+    expect(state.deals[0]).not.toHaveProperty('notes')
+    state.contacts.length = 0
+    state.deals.length = 0
+    await ingestLead(makeDb(), source(), { phone: '5511988887777' }, { dealNotes: 'Respostas do robo - Cor?: Azul' })
+    expect(state.deals[0].notes).toBe('Respostas do robo - Cor?: Azul')
+  })
+
   it('names the contact after the phone when the payload has no name', async () => {
     const res = await ingestLead(makeDb(), source({ pipeline_id: null, stage_id: null }), { phone: '+55 (11) 98888-7777' })
     expect(res.status).toBe('ok')

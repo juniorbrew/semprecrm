@@ -249,6 +249,7 @@ async function maybeCreateDeal(
   currency: string,
   contactId: string,
   title: string,
+  notes?: string,
 ): Promise<string | null> {
   if (!source.pipeline_id || !source.stage_id) return null
 
@@ -293,6 +294,7 @@ async function maybeCreateDeal(
       currency,
       status: 'open',
       assigned_to: assignedTo,
+      ...(notes ? { notes } : {}),
     })
     .select('id')
     .single()
@@ -312,6 +314,8 @@ export async function ingestLead(
   db: SupabaseClient,
   source: IngestLeadSource,
   payload: LeadPayload,
+  /** `dealNotes`: plain text for the new deal's notes (the site bot's Q&A). */
+  options: { dealNotes?: string } = {},
 ): Promise<IngestLeadResult> {
   try {
     const lead = mapLeadFields(payload, source.field_map)
@@ -353,6 +357,7 @@ export async function ingestLead(
       currency,
       contact.id,
       leadDealTitle(contact.name, phone, source.name),
+      options.dealNotes,
     )
 
     return finish(db, source, payload, {
