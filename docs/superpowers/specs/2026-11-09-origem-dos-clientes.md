@@ -1,6 +1,6 @@
 # Spec: origem dos clientes (parte A)
 
-Status: rascunho para aprovação (2026-11-09). Entrega 9 do roteiro vocero (`docs/verification/vocero-evolution/ROADMAP.md`), parte A. A parte B (avisar a Meta pela Conversions API) vem num PR separado, depois desta.
+Status: aprovado pelo dono do produto (2026-11-09). Entrega 9 do roteiro vocero (`docs/verification/vocero-evolution/ROADMAP.md`), parte A. A parte B (avisar a Meta pela Conversions API) vem num PR separado, depois desta.
 
 ## Objetivo
 
