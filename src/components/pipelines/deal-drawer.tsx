@@ -171,6 +171,7 @@ export function DealDrawer({
             onAdvance={handleAdvance}
             onCompanyChanged={onChanged}
             onItemsChanged={onChanged}
+            onOriginChanged={onChanged}
           />
         )}
 

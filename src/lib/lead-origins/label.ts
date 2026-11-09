@@ -41,6 +41,13 @@ export const CHANNEL_LABEL: Record<OriginChannel | '', string> = {
   '': '',
 }
 
+const CHANNEL_LABEL_EN: Record<OriginChannel | '', string> = { ...CHANNEL_LABEL, site_bot: 'Website', webhook: 'Form' }
+
+/** Channel name for the screen: brands as they are, "Site" / "Formulário" in the user's language. */
+export function channelLabel(channel: OriginChannel | '', language: string = 'pt-BR'): string {
+  return (language === 'pt-BR' ? CHANNEL_LABEL : CHANNEL_LABEL_EN)[channel]
+}
+
 /** One-line plain text (CSV, tooltips). Brand and channel names are not translated. */
 export function originLabel(o: NameFields | null | undefined): string {
   const n = originName(o)

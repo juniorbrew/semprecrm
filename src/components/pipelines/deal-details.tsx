@@ -38,6 +38,7 @@ import {
 } from "@/lib/companies";
 import { DealCompanyField } from "@/components/companies/deal-company-field";
 import { DealFieldsSection } from "./deal-fields-section";
+import { DealOrigin } from "./deal-origin";
 import { DealItemsSection } from "./deal-items";
 import { toast } from "sonner";
 import {
@@ -72,6 +73,8 @@ interface DealDetailsProps {
   onCompanyChanged?: () => void | Promise<void>;
   /** The product/service lines changed here (the deal value is recomputed by the database; the board refetches). */
   onItemsChanged?: () => void | Promise<void>;
+  /** The origin was changed by hand here (the board refetches). */
+  onOriginChanged?: () => void | Promise<void>;
 }
 
 function initials(name?: string, fallback?: string) {
@@ -116,6 +119,7 @@ export function DealDetails({
   onAdvance,
   onCompanyChanged,
   onItemsChanged,
+  onOriginChanged,
 }: DealDetailsProps) {
   const { t, language } = useLanguage();
   // Tasks section — hidden when the plan has no Tasks module; the "+"
@@ -468,6 +472,8 @@ export function DealDetails({
             </div>
           </section>
         )}
+
+        <DealOrigin deal={deal} onChanged={onOriginChanged} />
 
         {/* Before you talk — where it stopped and the next step */}
         {(conversation || (tasksEnabled && isOpen)) && (

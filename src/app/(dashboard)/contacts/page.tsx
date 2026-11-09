@@ -48,6 +48,8 @@ import { useCan } from '@/hooks/use-can';
 import { useLanguage } from '@/hooks/use-language';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { applyOriginFilter, hasOriginFilter, ORIGIN_EMBED } from '@/lib/lead-origins/filter';
+import { channelLabel, ORIGIN_CHANNELS, type OriginChannel } from '@/lib/lead-origins';
 import '@/lib/i18n-chunks/d-contacts';
 
 const PAGE_SIZE = 25;
@@ -125,6 +127,9 @@ export default function ContactsPage() {
   const [totalCount, setTotalCount] = useState(0);
   // "Descadastrados" — only contacts with opted_out_at set (migration 030).
   const [optedOutOnly, setOptedOutOnly] = useState(false);
+  // Origin of the first touch (migration 109): channel and ad / campaign text.
+  const [originChannel, setOriginChannel] = useState<OriginChannel | ''>('');
+  const [originText, setOriginText] = useState('');
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -164,11 +169,13 @@ export default function ContactsPage() {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
+    const originOn = hasOriginFilter({ channel: originChannel, text: originText });
     let query = supabase
       .from('contacts')
-      .select('*', { count: 'exact' })
+      .select((originOn ? `*, ${ORIGIN_EMBED}` : '*') as '*', { count: 'exact' }) // the embed only filters; its column is not read
       .order('created_at', { ascending: false })
       .range(from, to);
+    if (originOn) query = applyOriginFilter(query, { channel: originChannel, text: originText });
 
     if (search.trim()) {
       const term = `%${search.trim()}%`;
@@ -216,7 +223,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap, optedOutOnly, t]);
+  }, [supabase, page, search, tagsMap, optedOutOnly, originChannel, originText, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -443,6 +450,35 @@ export default function ContactsPage() {
           <Ban className="size-3.5" aria-hidden />
           {copy.optedOut}
         </button>
+        <select
+          value={originChannel}
+          onChange={(e) => {
+            setOriginChannel(e.target.value as OriginChannel | '');
+            setPage(0);
+          }}
+          aria-label={t('Filter by origin channel')}
+          data-testid="contacts-origin-channel"
+          className="h-8 max-w-40 rounded-md border border-border bg-background px-2 text-xs"
+        >
+          <option value="">{t('All origins')}</option>
+          {ORIGIN_CHANNELS.map((c) => (
+            <option key={c} value={c} data-no-translate>
+              {channelLabel(c, language)}
+            </option>
+          ))}
+        </select>
+        <Input
+          type="search"
+          value={originText}
+          onChange={(e) => {
+            setOriginText(e.target.value);
+            setPage(0);
+          }}
+          placeholder={t('Ad or campaign name')}
+          aria-label={t('Ad or campaign name')}
+          data-testid="contacts-origin-text"
+          className="h-8 w-44 text-xs"
+        />
         <button
           type="button"
           onClick={toggleDensity}

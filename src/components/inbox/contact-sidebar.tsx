@@ -57,6 +57,7 @@ import type { Task } from "@/lib/tasks";
 import { NewCustomFieldDialog } from "./new-custom-field-dialog";
 import { CustomFieldValue } from "./custom-field-value";
 import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
+import { ContactOrigin } from "@/components/origins/origin-line";
 import { ContactCompanies } from "@/components/companies/contact-companies";
 import { TeamNoteComposer } from "./team-note-composer";
 import { ContactAvatar } from "./contact-avatar";
@@ -794,6 +795,11 @@ export function ContactSidebar({
                 </span>
               </div>
             )}
+          </div>
+
+          {/* Where the customer came from (ad / campaign / site), migration 109. */}
+          <div className="mt-1.5 px-2">
+            <ContactOrigin contactId={contact.id} />
           </div>
 
           {/* Shortcuts — book an appointment (agenda sheet), open a deal

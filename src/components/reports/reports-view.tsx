@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { BacklogSection, GroupSection, OverviewSection, PrioritySection } from "./report-sections";
+import { OriginSection } from "./origin-section";
 
 type Preset = 7 | 30 | 90 | "custom";
 
@@ -53,7 +54,7 @@ const PILL_OFF = "text-muted-foreground hover:bg-muted hover:text-foreground";
 export function ReportsView() {
   const { language } = useLanguage();
   const copy = reportsCopy(language);
-  const { accountId, preferences, profileLoading } = useAuth();
+  const { accountId, preferences, profileLoading, defaultCurrency } = useAuth();
   const allowed = useCan("view-reports");
   const timezone = safeTimezone(preferences.business_hours?.timezone);
 
@@ -280,6 +281,9 @@ export function ReportsView() {
           </div>
         )}
       </div>
+
+      {/* Where the customers came from (migration 109): its own numbers, same period. */}
+      <OriginSection period={period} periodOk={periodOk} timezone={timezone} currency={defaultCurrency || "BRL"} />
     </div>
   );
 }
