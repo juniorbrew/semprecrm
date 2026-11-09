@@ -416,7 +416,7 @@
       for (var k in S.answers) if (Object.prototype.hasOwnProperty.call(S.answers, k)) answers[k] = S.answers[k];
       var send = o.submit
         ? Promise.resolve().then(function () { return o.submit(answers); }).then(function (b) { return { ok: true, body: b || {} }; })
-        : post(o, { answers: answers, consent: true, contact_ref: hp.value, elapsed_ms: Date.now() - S.t0, page_url: String(location.href).slice(0, 1500), referrer: String(document.referrer || '').slice(0, 1500) });
+        : post(o, { answers: answers, consent: true, contact_ref: hp.value, elapsed_ms: Date.now() - S.t0, page_url: pageUrl(), referrer: referrerHost() });
       send.then(function (res) {
         S.busy = false;
         t.remove();
@@ -521,6 +521,28 @@
         if (host.parentNode) host.parentNode.removeChild(host);
       },
     };
+  }
+
+  /** Origin + path + only the campaign params (utm_*, gclid, fbclid): nothing else of the address leaves the page. */
+  function pageUrl() {
+    try {
+      var keep = [];
+      new URLSearchParams(location.search).forEach(function (v, k) {
+        if (/^(utm_(source|medium|campaign|content|term)|gclid|fbclid)$/.test(k)) keep.push(encodeURIComponent(k) + '=' + encodeURIComponent(v.slice(0, 200)));
+      });
+      return (location.origin + location.pathname + (keep.length ? '?' + keep.join('&') : '')).slice(0, 1500);
+    } catch {
+      return '';
+    }
+  }
+
+  /** Only the host of document.referrer, never its path or query. */
+  function referrerHost() {
+    try {
+      return document.referrer ? new URL(document.referrer).host : '';
+    } catch {
+      return '';
+    }
   }
 
   function post(o, body) {

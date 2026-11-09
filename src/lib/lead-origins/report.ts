@@ -66,6 +66,8 @@ export function originRowLabel(row: Pick<OriginReportRow, 'origin_type' | 'chann
       return `Campanha "${row.name}"${row.source ? ` · ${row.source}` : ''}${channel ? ` · ${channel}` : ''}`
     case 'referrer':
       return `Site de origem ${row.name}`
+    case 'paid':
+      return row.name
     default:
       return DIRECT_LABEL
   }
@@ -81,6 +83,8 @@ export function rowOriginName(row: Pick<OriginReportRow, 'origin_type' | 'channe
       return { type: 'campaign', name: row.name, source: row.source || null, channel }
     case 'referrer':
       return { type: 'referrer', name: row.name, channel }
+    case 'paid':
+      return { type: 'paid', name: row.name }
     default:
       return { type: 'direct' }
   }

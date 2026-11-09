@@ -1,7 +1,8 @@
 // ============================================================
-// recordTouch — server only (service-role client). Stores one touch and moves the contact's
-// pointers (first only when empty, last always). Never throws and never logs personal data:
-// recording an origin must not break or delay message ingestion.
+// recordTouch — server only (service-role client). One rpc call to record_lead_origin (migration
+// 109): lock, 24h dedup, 50-per-day cap, insert and pointers happen in ONE statement, so a slow or
+// killed request never leaves a touch without its pointers. Never throws and never logs personal
+// data: recording an origin must not break or delay message ingestion.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -9,8 +10,6 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { normalizeTouch } from './normalize'
 import type { OriginTouch } from './types'
 
-/** Same ad / source / campaign in the same conversation inside this window is the same touch. */
-export const TOUCH_DEDUP_MS = 24 * 60 * 60 * 1000
 /** Ingestion never waits longer than this for an origin. */
 export const RECORD_TIMEOUT_MS = 3000
 
@@ -21,6 +20,12 @@ export interface RecordTouchInput {
   touch: OriginTouch | null | undefined
   /** Defaults to now. */
   at?: Date
+  /**
+   * May this touch become the contact's FIRST touch (when it has none)? Messaging channels: yes (default).
+   * Site bot / forms: only when this same submission created the contact, so a stranger who types a known
+   * number cannot claim the first touch of an existing customer.
+   */
+  allowFirst?: boolean
 }
 
 export interface RecordTouchResult {
@@ -28,112 +33,33 @@ export interface RecordTouchResult {
   originId?: string
 }
 
-/** What makes two touches "the same one" (channel + what identifies the ad / source / campaign). */
-export function touchIdentity(t: {
-  channel: string
-  kind: string
-  adId: string | null
-  sourceId: string | null
-  utmSource: string | null
-  utmCampaign: string | null
-  utmContent: string | null
-  referrerHost: string | null
-}): string {
-  return [t.channel, t.kind, t.adId, t.sourceId, t.utmSource, t.utmCampaign, t.utmContent, t.referrerHost]
-    .map((v) => v ?? '')
-    .join('|')
-}
-
-interface RecentRow {
-  channel: string
-  kind: string
-  ad_id: string | null
-  source_id: string | null
-  utm_source: string | null
-  utm_campaign: string | null
-  utm_content: string | null
-  referrer_host: string | null
-  conversation_id: string | null
-}
-
-/** True when `recent` already holds this touch for this conversation (null conversation matches null). */
-export function isDuplicateTouch(touch: OriginTouch, conversationId: string | null, recent: RecentRow[]): boolean {
-  const id = touchIdentity(touch)
-  return recent.some(
-    (r) =>
-      (r.conversation_id ?? null) === conversationId &&
-      touchIdentity({
-        channel: r.channel,
-        kind: r.kind,
-        adId: r.ad_id,
-        sourceId: r.source_id,
-        utmSource: r.utm_source,
-        utmCampaign: r.utm_campaign,
-        utmContent: r.utm_content,
-        referrerHost: r.referrer_host,
-      }) === id,
-  )
-}
-
 async function record(db: SupabaseClient, input: RecordTouchInput): Promise<RecordTouchResult> {
   const touch = normalizeTouch(input.touch)
   if (!touch) return { recorded: false }
-  const at = input.at ?? new Date()
-  const conversationId = input.conversationId ?? null
-
-  const since = new Date(at.getTime() - TOUCH_DEDUP_MS).toISOString()
-  const { data: recent, error: recentErr } = await db
-    .from('lead_origins')
-    .select('channel, kind, ad_id, source_id, utm_source, utm_campaign, utm_content, referrer_host, conversation_id')
-    .eq('account_id', input.accountId)
-    .eq('contact_id', input.contactId)
-    .gte('occurred_at', since)
-    .limit(50)
-  if (recentErr) throw new Error(`recent lookup failed (${recentErr.code ?? 'error'})`)
-  if (isDuplicateTouch(touch, conversationId, (recent ?? []) as RecentRow[])) return { recorded: false }
-
-  const { data, error } = await db
-    .from('lead_origins')
-    .insert({
-      account_id: input.accountId,
-      contact_id: input.contactId,
-      conversation_id: conversationId,
-      channel: touch.channel,
-      kind: touch.kind,
-      ad_id: touch.adId,
-      source_id: touch.sourceId,
-      source_url: touch.sourceUrl,
-      headline: touch.headline,
-      utm_source: touch.utmSource,
-      utm_medium: touch.utmMedium,
-      utm_campaign: touch.utmCampaign,
-      utm_content: touch.utmContent,
-      utm_term: touch.utmTerm,
-      referrer_host: touch.referrerHost,
-      click_id_type: touch.clickIdType,
-      click_id: touch.clickId,
-      occurred_at: at.toISOString(),
-    })
-    .select('id')
-    .single()
-  if (error || !data) throw new Error(`insert failed (${error?.code ?? 'no row'})`)
-  const originId = (data as { id: string }).id
-
-  // First touch only when the contact has none; last touch always.
-  const first = await db
-    .from('contacts')
-    .update({ first_origin_id: originId })
-    .eq('id', input.contactId)
-    .eq('account_id', input.accountId)
-    .is('first_origin_id', null)
-  if (first.error) throw new Error(`first pointer failed (${first.error.code ?? 'error'})`)
-  const last = await db
-    .from('contacts')
-    .update({ last_origin_id: originId })
-    .eq('id', input.contactId)
-    .eq('account_id', input.accountId)
-  if (last.error) throw new Error(`last pointer failed (${last.error.code ?? 'error'})`)
-  return { recorded: true, originId }
+  const { data, error } = await db.rpc('record_lead_origin', {
+    p_account_id: input.accountId,
+    p_contact_id: input.contactId,
+    p_conversation_id: input.conversationId ?? null,
+    p_channel: touch.channel,
+    p_kind: touch.kind,
+    p_ad_id: touch.adId,
+    p_source_id: touch.sourceId,
+    p_source_url: touch.sourceUrl,
+    p_headline: touch.headline,
+    p_utm_source: touch.utmSource,
+    p_utm_medium: touch.utmMedium,
+    p_utm_campaign: touch.utmCampaign,
+    p_utm_content: touch.utmContent,
+    p_utm_term: touch.utmTerm,
+    p_referrer_host: touch.referrerHost,
+    p_click_id_type: touch.clickIdType,
+    p_click_id: touch.clickId,
+    p_occurred_at: (input.at ?? new Date()).toISOString(),
+    p_allow_first: input.allowFirst ?? true,
+  })
+  if (error) throw new Error(`record_lead_origin failed (${error.code ?? 'error'})`)
+  // NULL: a repeat inside 24h, or the 50-a-day cap: nothing was written.
+  return typeof data === 'string' ? { recorded: true, originId: data } : { recorded: false }
 }
 
 /** Stores a touch; any failure (or a slow database) is logged without personal data and swallowed. */
@@ -148,7 +74,9 @@ export async function recordTouch(db: SupabaseClient, input: RecordTouchInput): 
       }),
     ])
   } catch (err) {
-    console.error('[lead-origins] record failed:', err instanceof Error ? err.message : 'unknown')
+    // Only our own messages (error code, timeout) are logged: whatever else was thrown may carry payload text.
+    const ours = err instanceof Error && (err.message === 'timeout' || err.message.startsWith('record_lead_origin failed'))
+    console.error('[lead-origins] record failed:', ours ? (err as Error).message : 'unexpected error')
     return { recorded: false }
   } finally {
     if (timer) clearTimeout(timer)

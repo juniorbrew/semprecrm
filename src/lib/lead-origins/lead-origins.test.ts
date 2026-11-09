@@ -13,7 +13,7 @@ import {
   parseWhatsAppReferral,
   type LeadOrigin,
 } from './index'
-import { isDuplicateTouch, recordTouch, TOUCH_DEDUP_MS } from './record'
+import { recordTouch } from './record'
 
 // Anonymized samples shaped like the providers' documented payloads.
 const WA_REFERRAL = {
@@ -93,25 +93,35 @@ describe('parseBaileysAd', () => {
     source_app: 'instagram',
     conversion_source: 'FB_Ads',
   }
-  it('reads the forwarded externalAdReply', () => {
-    expect(parseBaileysAd(AD)).toMatchObject({
-      channel: 'whatsapp_qr',
-      kind: 'ad',
-      adId: '120210000000009',
-      headline: 'Promoção sofás',
-      clickIdType: 'ctwa_clid',
-      clickId: 'AfXyz',
-    })
+  it('reads the forwarded externalAdReply; the sender-written click id is never stored', () => {
+    const t = parseBaileysAd(AD)
+    expect(t).toMatchObject({ channel: 'whatsapp_qr', kind: 'ad', adId: '120210000000009', headline: 'Promoção sofás', sourceUrl: 'https://fb.me/xyz' })
+    expect(t?.clickId).toBeNull()
+    expect(t?.clickIdType).toBeNull()
   })
-  it('an ad is recognised by the conversion source when the type is missing', () => {
-    expect(parseBaileysAd({ conversion_source: 'FB_Ads', source_id: '1' })).toMatchObject({ kind: 'ad' })
+  it('an ad is recognised by an exact conversion source when the type is missing', () => {
+    for (const c of ['FB_Ads', 'fb_ads', 'ads', 'ad', 'Ads']) expect(parseBaileysAd({ conversion_source: c, source_id: '1' }), c).toMatchObject({ kind: 'ad' })
   })
-  it('a plain link preview is a link; nothing at all is null', () => {
-    expect(parseBaileysAd({ source_url: 'https://example.com/promo' })).toMatchObject({ kind: 'link' })
+  it('a conversion source that merely contains "ad" is not an ad ("broadcast")', () => {
+    expect(parseBaileysAd({ conversion_source: 'broadcast', source_id: '1' })).toBeNull()
+    expect(parseBaileysAd({ conversion_source: 'badge', source_id: '1', source_url: 'https://fb.me/x' })).toMatchObject({ kind: 'link' })
+    expect(parseBaileysAd({ conversion_source: 'ads_extra', source_id: '1' })).toBeNull()
+  })
+  it('the link is kept only for a Meta host; the sender controls everything else', () => {
+    for (const ok of ['https://fb.me/xyz', 'https://www.facebook.com/ads/1', 'https://m.facebook.com/x', 'https://instagram.com/p/1', 'https://l.instagram.com/?u=1', 'https://wa.me/5511', 'https://fb.com/x']) {
+      expect(parseBaileysAd({ ...AD, source_url: ok })?.sourceUrl, ok).toBe(ok)
+    }
+    for (const bad of ['https://evil.example/fb.me', 'https://facebook.com.evil.example/x', 'https://notfacebook.com/x', 'https://facebook.com@evil.example/x', 'http://localhost/x', 'javascript:alert(1)']) {
+      expect(parseBaileysAd({ ...AD, source_url: bad })?.sourceUrl ?? null, bad).toBeNull()
+    }
+  })
+  it('a plain link preview to a non-Meta host is nothing; nothing at all is null', () => {
+    expect(parseBaileysAd({ source_url: 'https://example.com/promo' })).toBeNull()
+    expect(parseBaileysAd({ source_url: 'https://fb.me/promo' })).toMatchObject({ kind: 'link' })
     for (const bad of [null, 'x', 3, [], {}, { title: 'só título' }, { body: 'b' }]) expect(parseBaileysAd(bad)).toBeNull()
   })
   it('clamps and validates', () => {
-    expect(parseBaileysAd({ ...AD, title: 't'.repeat(900), source_url: 'ftp://x/y' })).toMatchObject({ sourceUrl: null })
+    expect(parseBaileysAd({ ...AD, title: 't'.repeat(900), source_url: 'ftp://fb.me/y' })).toMatchObject({ sourceUrl: null })
     expect(parseBaileysAd({ ...AD, title: 't'.repeat(900) })?.headline).toHaveLength(300)
   })
 })
@@ -180,6 +190,12 @@ describe('parseUrlOrigin', () => {
   it('fbclid is a click id too', () => {
     expect(parseUrlOrigin('https://loja.com.br/?fbclid=IwAR1', '', 'site_bot')).toMatchObject({ kind: 'campaign', clickIdType: 'fbclid', clickId: 'IwAR1' })
   })
+  it('accepts the bare host robo.js sends as referrer (with or without a port)', () => {
+    expect(parseUrlOrigin('https://loja.com.br/', 'www.google.com', 'site_bot')).toMatchObject({ kind: 'referrer', referrerHost: 'google.com' })
+    expect(parseUrlOrigin('https://loja.com.br/', 'blog.example.org:8443', 'site_bot')).toMatchObject({ referrerHost: 'blog.example.org' })
+    expect(parseUrlOrigin('https://loja.com.br/', 'loja.com.br', 'site_bot')).toBeNull()
+    expect(parseUrlOrigin('https://loja.com.br/', 'not a host/with path', 'site_bot')).toBeNull()
+  })
   it('a referrer without campaign is a referrer touch', () => {
     expect(parseUrlOrigin('https://loja.com.br/', 'https://blog.example.org/post/1?x=2', 'site_bot')).toMatchObject({
       kind: 'referrer',
@@ -224,6 +240,10 @@ describe('parseBodyOrigin (webhook form)', () => {
     expect(parseBodyOrigin(null)).toBeNull()
     expect(parseBodyOrigin([])).toBeNull()
     expect(parseBodyOrigin({ utm_campaign: ['a', 'b'], utm_source: { x: 1 } })).toBeNull()
+  })
+  it('reads page_url only: `url` is often the lead\'s own website', () => {
+    expect(parseBodyOrigin({ url: 'https://meusite.com.br/?utm_campaign=x' })).toBeNull()
+    expect(parseBodyOrigin({ page_url: 'https://loja.com.br/lp?utm_campaign=lp' })).toMatchObject({ utmCampaign: 'lp' })
   })
   it('gclid beats fbclid when both are present (one click id per touch)', () => {
     expect(parseBodyOrigin({ gclid: 'G1', fbclid: 'F1' })).toMatchObject({ clickIdType: 'gclid', clickId: 'G1' })
@@ -293,6 +313,14 @@ describe('originName / originLabel (ad > campaign > referrer > direct)', () => {
     expect(originLabel(null)).toBe(DIRECT_LABEL)
     expect(originName(undefined)).toEqual({ type: 'direct' })
   })
+  it('only a Google / Facebook click id: named after the network (after ad, campaign and referrer)', () => {
+    expect(originName(row({ channel: 'site_bot', kind: 'campaign', click_id_type: 'gclid' }))).toEqual({ type: 'paid', name: 'Google Ads' })
+    expect(originLabel(row({ channel: 'site_bot', kind: 'campaign', click_id_type: 'fbclid' }))).toBe('Facebook/Instagram Ads')
+    expect(originName(row({ channel: 'site_bot', kind: 'campaign', click_id_type: 'gclid', referrer_host: 'google.com' }))).toMatchObject({ type: 'referrer' })
+    expect(originName(row({ channel: 'site_bot', kind: 'campaign', click_id_type: 'gclid', utm_campaign: 'bf' }))).toMatchObject({ type: 'campaign' })
+    // a WhatsApp click id is not a paid-network name
+    expect(originName(row({ channel: 'whatsapp', kind: 'link', click_id_type: 'ctwa_clid' }))).toEqual({ type: 'direct' })
+  })
   it('originLink only returns http(s)', () => {
     expect(originLink(row({ source_url: 'https://fb.me/x' }))).toBe('https://fb.me/x')
     expect(originLink(row({ source_url: 'javascript:alert(1)' }))).toBeNull()
@@ -300,105 +328,81 @@ describe('originName / originLabel (ad > campaign > referrer > direct)', () => {
   })
 })
 
-describe('dedup', () => {
-  const touch = parseWhatsAppReferral(WA_REFERRAL)!
-  const stored = (conv: string | null, over: Record<string, unknown> = {}) => ({
-    channel: 'whatsapp',
-    kind: 'ad',
-    ad_id: '120210000000001',
-    source_id: '120210000000001',
-    utm_source: null,
-    utm_campaign: null,
-    utm_content: null,
-    referrer_host: null,
-    conversation_id: conv,
-    ...over,
-  })
-  it('same ad, same conversation is a duplicate', () => {
-    expect(isDuplicateTouch(touch, 'conv1', [stored('conv1')])).toBe(true)
-  })
-  it('another conversation, another ad or another channel is new', () => {
-    expect(isDuplicateTouch(touch, 'conv2', [stored('conv1')])).toBe(false)
-    expect(isDuplicateTouch(touch, 'conv1', [stored('conv1', { ad_id: '9', source_id: '9' })])).toBe(false)
-    expect(isDuplicateTouch(touch, 'conv1', [stored('conv1', { channel: 'whatsapp_qr' })])).toBe(false)
-    expect(isDuplicateTouch(touch, 'conv1', [])).toBe(false)
-  })
-  it('touches without a conversation (site) match each other', () => {
-    const site = parseUrlOrigin('https://loja.com.br/?utm_campaign=bf', '', 'site_bot')!
-    expect(isDuplicateTouch(site, null, [stored(null, { channel: 'site_bot', kind: 'campaign', ad_id: null, source_id: null, utm_campaign: 'bf' })])).toBe(true)
-  })
-})
-
-/** A scripted stand-in for the two tables recordTouch uses. */
-function fakeDb(opts: { recent?: Record<string, unknown>[]; insertError?: { code: string }; recentError?: { code: string } } = {}) {
-  const calls: { table: string; op: string; payload?: Record<string, unknown>; eq: Record<string, unknown> }[] = []
-  const from = (table: string) => {
-    const call: (typeof calls)[number] = { table, op: 'select', eq: {} }
-    calls.push(call)
-    const b: Record<string, unknown> = {
-      select: () => b,
-      insert: (p: Record<string, unknown>) => ((call.op = 'insert'), (call.payload = p), b),
-      update: (p: Record<string, unknown>) => ((call.op = 'update'), (call.payload = p), b),
-      eq: (c: string, v: unknown) => ((call.eq[c] = v), b),
-      is: (c: string, v: unknown) => ((call.eq[c] = v), b),
-      gte: () => b,
-      limit: () => b,
-      single: () => Promise.resolve(opts.insertError ? { data: null, error: opts.insertError } : { data: { id: 'new-origin' }, error: null }),
-      then: (f: (v: unknown) => unknown) =>
-        Promise.resolve(
-          call.op === 'select'
-            ? { data: opts.recent ?? [], error: opts.recentError ?? null }
-            : { data: null, error: null },
-        ).then(f),
-    }
-    return b
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { db: { from } as any, calls }
+const RPC_ARGS = {
+  accountId: 'acc',
+  contactId: 'c1',
+  conversationId: 'conv1',
+  touch: parseWhatsAppReferral(WA_REFERRAL),
 }
 
-describe('recordTouch', () => {
-  const base = { accountId: 'acc', contactId: 'c1', conversationId: 'conv1', touch: parseWhatsAppReferral(WA_REFERRAL) }
-  it('inserts the touch and moves first (only if empty) and last pointers', async () => {
-    const { db, calls } = fakeDb()
-    const r = await recordTouch(db, { ...base, at: new Date('2026-11-03T12:00:00Z') })
+describe('recordTouch (one rpc: lock, dedup, cap, insert and pointers happen in the database)', () => {
+  const dbWith = (rpc: (...a: unknown[]) => unknown) => ({ rpc: vi.fn(rpc) }) as never
+
+  it('is a single record_lead_origin call with the normalized touch', async () => {
+    const rpc = vi.fn(async () => ({ data: 'new-origin', error: null }))
+    const r = await recordTouch({ rpc } as never, { ...RPC_ARGS, at: new Date('2026-11-03T12:00:00Z') })
     expect(r).toEqual({ recorded: true, originId: 'new-origin' })
-    const insert = calls.find((c) => c.op === 'insert')!
-    expect(insert.payload).toMatchObject({ account_id: 'acc', contact_id: 'c1', conversation_id: 'conv1', channel: 'whatsapp', kind: 'ad', click_id_type: 'ctwa_clid', click_id: 'AfAbC123_ctwa', occurred_at: '2026-11-03T12:00:00.000Z' })
-    const updates = calls.filter((c) => c.op === 'update')
-    expect(updates[0]).toMatchObject({ table: 'contacts', payload: { first_origin_id: 'new-origin' }, eq: { id: 'c1', account_id: 'acc', first_origin_id: null } })
-    expect(updates[1]).toMatchObject({ table: 'contacts', payload: { last_origin_id: 'new-origin' }, eq: { id: 'c1', account_id: 'acc' } })
-  })
-  it('a repeated touch inside the window writes nothing', async () => {
-    const { db, calls } = fakeDb({
-      recent: [{ channel: 'whatsapp', kind: 'ad', ad_id: '120210000000001', source_id: '120210000000001', utm_source: null, utm_campaign: null, utm_content: null, referrer_host: null, conversation_id: 'conv1' }],
+    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(rpc).toHaveBeenCalledWith('record_lead_origin', {
+      p_account_id: 'acc',
+      p_contact_id: 'c1',
+      p_conversation_id: 'conv1',
+      p_channel: 'whatsapp',
+      p_kind: 'ad',
+      p_ad_id: '120210000000001',
+      p_source_id: '120210000000001',
+      p_source_url: 'https://fb.me/1AbCdEf',
+      p_headline: 'Promoção sofás',
+      p_utm_source: null,
+      p_utm_medium: null,
+      p_utm_campaign: null,
+      p_utm_content: null,
+      p_utm_term: null,
+      p_referrer_host: null,
+      p_click_id_type: 'ctwa_clid',
+      p_click_id: 'AfAbC123_ctwa',
+      p_occurred_at: '2026-11-03T12:00:00.000Z',
+      p_allow_first: true,
     })
-    expect(await recordTouch(db, base)).toEqual({ recorded: false })
-    expect(calls.some((c) => c.op !== 'select')).toBe(false)
-    expect(TOUCH_DEDUP_MS).toBe(24 * 3600 * 1000)
   })
-  it('no touch, or a touch that normalizes to nothing, is a no-op', async () => {
-    const { db, calls } = fakeDb()
-    expect(await recordTouch(db, { ...base, touch: null })).toEqual({ recorded: false })
-    expect(await recordTouch(db, { ...base, touch: { channel: 'x' } as never })).toEqual({ recorded: false })
-    expect(calls).toHaveLength(0)
+
+  it('passes allowFirst through (site / form submissions that did not create the contact)', async () => {
+    const rpc = vi.fn<(name: string, args: Record<string, unknown>) => Promise<{ data: null; error: null }>>(async () => ({ data: null, error: null }))
+    await recordTouch({ rpc } as never, { ...RPC_ARGS, allowFirst: false })
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_allow_first: false })
   })
+
+  it('a NULL answer (repeat inside 24h, or the daily cap) is "nothing written"', async () => {
+    expect(await recordTouch(dbWith(async () => ({ data: null, error: null })), RPC_ARGS)).toEqual({ recorded: false })
+  })
+
+  it('no touch, or a touch that normalizes to nothing, never reaches the database', async () => {
+    const rpc = vi.fn()
+    expect(await recordTouch({ rpc } as never, { ...RPC_ARGS, touch: null })).toEqual({ recorded: false })
+    expect(await recordTouch({ rpc } as never, { ...RPC_ARGS, touch: { channel: 'x' } as never })).toEqual({ recorded: false })
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
   it('never throws and logs no personal data when the database fails', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    for (const opts of [{ insertError: { code: '23503' } }, { recentError: { code: '57014' } }]) {
-      const { db } = fakeDb(opts)
-      expect(await recordTouch(db, base)).toEqual({ recorded: false })
-    }
+    expect(await recordTouch(dbWith(async () => ({ data: null, error: { code: '23503', message: 'Promoção AfAbC123' } })), RPC_ARGS)).toEqual({ recorded: false })
+    expect(await recordTouch(dbWith(async () => Promise.reject(new Error('boom Promoção'))), RPC_ARGS)).toEqual({ recorded: false })
+    expect(await recordTouch(dbWith(() => { throw new Error('boom Promoção') }), RPC_ARGS)).toEqual({ recorded: false })
     const logged = spy.mock.calls.map((c) => c.join(' ')).join('\n')
     expect(logged).toContain('[lead-origins] record failed')
+    expect(logged).toContain('23503')
     expect(logged).not.toMatch(/Promoção|AfAbC123|120210000000001/)
     spy.mockRestore()
   })
-  it('never throws when the client itself throws', async () => {
+
+  it('gives up after a few seconds (the write is one statement, so nothing is half-done)', async () => {
+    vi.useFakeTimers()
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = { from: () => { throw new Error('boom Promoção') } } as any
-    expect(await recordTouch(db, base)).toEqual({ recorded: false })
+    const pending = recordTouch(dbWith(() => new Promise(() => {})), RPC_ARGS)
+    await vi.advanceTimersByTimeAsync(3100)
+    expect(await pending).toEqual({ recorded: false })
+    expect(spy.mock.calls.join(' ')).toContain('timeout')
     spy.mockRestore()
+    vi.useRealTimers()
   })
 })

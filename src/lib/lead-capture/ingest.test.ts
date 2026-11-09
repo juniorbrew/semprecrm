@@ -517,6 +517,24 @@ describe('ingestLead — origin (migration 109)', () => {
     expect(recordTouch).not.toHaveBeenCalled()
   })
 
+  it('only a submission that created the contact may become its first touch', async () => {
+    const body = { ...PAYLOAD, utm_campaign: 'bf' }
+    await ingestLead(makeDb(), source(), body)
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ allowFirst: true })
+    vi.mocked(recordTouch).mockClear()
+    await ingestLead(makeDb(), source(), body) // same number again: the contact exists now
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ allowFirst: false })
+  })
+
+  it('a repeat from this source inside the window (checkRecentRepeat) records nothing', async () => {
+    const body = { ...PAYLOAD, utm_campaign: 'bf' }
+    await ingestLead(makeDb(), source(), body, { checkRecentRepeat: 24 })
+    expect(recordTouch).toHaveBeenCalledTimes(1)
+    await ingestLead(makeDb(), source(), body, { checkRecentRepeat: 24 })
+    expect(recordTouch).toHaveBeenCalledTimes(1) // the event of the first submission makes the second a repeat
+    expect(state.deals.length).toBeGreaterThan(0)
+  })
+
   it('records the origin before the deal is created (the deal takes the contact last touch)', async () => {
     let dealsWhenRecorded = -1
     vi.mocked(recordTouch).mockImplementationOnce(async () => {

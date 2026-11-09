@@ -847,7 +847,7 @@ export async function remainingPersonalData(
   await any('deals', byContact('deals').neq('title', ANONYMIZED_DEAL_TITLE))
   await any('tasks', byContact('tasks').neq('title', ANONYMIZED_TASK_TITLE))
   await any('calendar_events', byContact('calendar_events').neq('title', ANONYMIZED_EVENT_TITLE))
-  for (const table of ['contact_notes', 'ai_contact_memories', 'ai_handoffs']) await any(table, byContact(table))
+  for (const table of ['contact_notes', 'ai_contact_memories', 'ai_handoffs', 'lead_origins']) await any(table, byContact(table))
   return [...left]
 }
 

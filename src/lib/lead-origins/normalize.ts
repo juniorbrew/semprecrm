@@ -53,6 +53,16 @@ export function safeHttpUrl(value: unknown, max: number = ORIGIN_LIMITS.sourceUr
   return s.length <= max ? s : null
 }
 
+const META_HOSTS = ['fb.me', 'fb.com', 'facebook.com', 'instagram.com', 'wa.me']
+
+/** http(s) URL whose host is a Meta one (the sender of a QR message writes the link, so nothing else is kept). */
+export function metaHostUrl(value: unknown, max: number = ORIGIN_LIMITS.sourceUrl): string | null {
+  const url = safeHttpUrl(value, max)
+  if (!url) return null
+  const host = new URL(url).hostname.toLowerCase()
+  return META_HOSTS.some((h) => host === h || host.endsWith(`.${h}`)) ? url : null
+}
+
 const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
 
 /** Lower-case hostname, no www., or null. */

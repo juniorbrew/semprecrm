@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({
   rpc: vi.fn(),
@@ -125,6 +125,39 @@ describe('OriginSection', () => {
     await waitFor(() => expect(h.rpc).toHaveBeenLastCalledWith('origin_report', expect.objectContaining({ p_channel: 'instagram', p_pipeline_id: null })))
     fireEvent.change(screen.getByTestId('origin-pipeline'), { target: { value: 'p1' } })
     await waitFor(() => expect(h.rpc).toHaveBeenLastCalledWith('origin_report', expect.objectContaining({ p_channel: 'instagram', p_pipeline_id: 'p1' })))
+  })
+
+  it('explains how the numbers are counted', async () => {
+    renderSection()
+    expect((await screen.findByTestId('origin-note')).textContent).toBe('Os clientes são contados pelo primeiro contato, e os negócios pela origem de cada negócio.')
+  })
+
+  it('a new period keeps the old rows on screen, dimmed and busy, until the answer arrives', async () => {
+    const { rerender } = renderSection()
+    const table = await screen.findByTestId('origin-table')
+    expect(table.closest('[aria-busy]')?.getAttribute('aria-busy')).toBe('false')
+    let finish!: (v: unknown) => void
+    h.rpc.mockReturnValueOnce(new Promise((r) => (finish = r)))
+    rerender(<OriginSection period={{ from: '2026-10-01', to: '2026-10-31' }} periodOk timezone="America/Sao_Paulo" currency="BRL" />)
+    await waitFor(() => expect(screen.getByTestId('origin-table').closest('[aria-busy]')?.getAttribute('aria-busy')).toBe('true'))
+    await act(async () => finish({ data: [ROWS[1]], error: null }))
+    await waitFor(() => expect(screen.getByTestId('origin-table').closest('[aria-busy]')?.getAttribute('aria-busy')).toBe('false'))
+    expect(within(screen.getByTestId('origin-table')).getAllByRole('row')).toHaveLength(2)
+  })
+
+  it('a filter change shows the loading state again (and an old error does not stay)', async () => {
+    h.rpc.mockRejectedValueOnce(new Error('boom'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderSection()
+    await screen.findByRole('alert')
+    let finish!: (v: unknown) => void
+    h.rpc.mockReturnValueOnce(new Promise((r) => (finish = r)))
+    fireEvent.change(screen.getByTestId('origin-channel'), { target: { value: 'instagram' } })
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(screen.getByText('Carregando...')).toBeTruthy()
+    await act(async () => finish({ data: ROWS, error: null }))
+    await screen.findByTestId('origin-table')
+    spy.mockRestore()
   })
 
   it('does not ask while the period is invalid', async () => {

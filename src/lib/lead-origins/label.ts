@@ -8,15 +8,20 @@ import type { LeadOrigin, OriginChannel } from './types'
 
 export const DIRECT_LABEL = 'Direto ou não identificado'
 
+export const PAID_GOOGLE = 'Google Ads'
+export const PAID_META = 'Facebook/Instagram Ads'
+
 export type OriginName =
   | { type: 'ad'; name: string; channel: OriginChannel }
   | { type: 'campaign'; name: string; source: string | null; channel: OriginChannel }
   | { type: 'referrer'; name: string; channel: OriginChannel }
+  /** Only a Google / Facebook click id came with the visit: named after the network. */
+  | { type: 'paid'; name: string }
   | { type: 'direct' }
 
 type NameFields = Pick<
   LeadOrigin,
-  'channel' | 'kind' | 'headline' | 'ad_id' | 'source_id' | 'utm_campaign' | 'utm_source' | 'referrer_host'
+  'channel' | 'kind' | 'headline' | 'ad_id' | 'source_id' | 'utm_campaign' | 'utm_source' | 'referrer_host' | 'click_id_type'
 >
 
 /** Which bucket a touch falls in, and what it is called there. */
@@ -28,6 +33,8 @@ export function originName(o: NameFields | null | undefined): OriginName {
   if (o.utm_campaign) return { type: 'campaign', name: o.utm_campaign, source: o.utm_source, channel: o.channel }
   if (o.kind === 'link' && o.source_id) return { type: 'campaign', name: o.source_id, source: o.utm_source, channel: o.channel }
   if (o.referrer_host) return { type: 'referrer', name: o.referrer_host, channel: o.channel }
+  if (o.click_id_type === 'gclid') return { type: 'paid', name: PAID_GOOGLE }
+  if (o.click_id_type === 'fbclid') return { type: 'paid', name: PAID_META }
   return { type: 'direct' }
 }
 
@@ -58,6 +65,8 @@ export function originLabel(o: NameFields | null | undefined): string {
       return `Campanha "${n.name}"${n.source ? ` · ${n.source}` : ''}`
     case 'referrer':
       return `Site de origem ${n.name}`
+    case 'paid':
+      return n.name
     default:
       return DIRECT_LABEL
   }

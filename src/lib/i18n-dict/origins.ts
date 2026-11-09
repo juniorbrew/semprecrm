@@ -39,4 +39,6 @@ export const DICT_ORIGINS: Record<string, string> = {
   'Deals won': 'Negócios ganhos',
   'Conversion rate': 'Taxa de conversão',
   'Average ticket': 'Ticket médio',
+  'Customers are counted by their first contact, and deals by the origin of each deal.':
+    'Os clientes são contados pelo primeiro contato, e os negócios pela origem de cada negócio.',
 };

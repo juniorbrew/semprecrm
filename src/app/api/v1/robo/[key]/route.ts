@@ -59,6 +59,17 @@ const PER_IP_READ = { limit: 30, windowMs: 60_000 }
 const PER_PHONE_POST = { limit: 2, windowMs: 24 * 60 * 60_000 }
 const REPEAT_WINDOW_HOURS = 24
 
+/** The origin of a visit, or null when page_url is not on a site the bot is registered for. */
+function botOrigin(pageUrl: unknown, referrer: unknown, domains: readonly string[]) {
+  let pageOrigin: string
+  try {
+    pageOrigin = new URL(typeof pageUrl === 'string' ? pageUrl : '').origin
+  } catch {
+    return null
+  }
+  return originAllowed(pageOrigin, domains) ? parseUrlOrigin(pageUrl, referrer, 'site_bot') : null
+}
+
 /** Name of the hidden field in robo.js; neutral so autofill does not fill it for real visitors. */
 const HONEYPOT_FIELD = 'contact_ref'
 
@@ -264,8 +275,9 @@ export async function POST(request: Request, { params }: RouteContext) {
       dealNotes: built.dealNotes,
       keepExistingCustomValues: true,
       checkRecentRepeat: REPEAT_WINDOW_HOURS,
-      // utm_* / gclid / fbclid of the page and the host of the referrer (nothing else is kept).
-      origin: parseUrlOrigin(body.page_url, body.referrer, 'site_bot'),
+      // utm_* / gclid / fbclid of the page and the host of the referrer (nothing else is kept). Only when the
+      // page really is one of the bot's sites (page_url is client text), and not for a throttled number.
+      origin: phoneLimited ? null : botOrigin(body.page_url, body.referrer, config.domains),
     },
   )
   if (result.status === 'error') {

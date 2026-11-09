@@ -82,6 +82,7 @@ describe('buildContactExport — newly covered sections', () => {
       ],
       flow_runs: [{ id: 'fr1', account_id: ACC, contact_id: 'c1', vars: { cpf: '123' } }],
       lead_source_events: [{ id: 'l1', account_id: ACC, contact_id: 'c1', payload: { nome: 'Maria' } }],
+      lead_origins: [{ id: 'lo1', account_id: ACC, contact_id: 'c1', channel: 'instagram', kind: 'ad', headline: 'Promoção sofás', occurred_at: '2026-11-03T15:00:00Z' }, { id: 'lo2', account_id: ACC, contact_id: 'other', headline: 'Outro' }],
       contact_companies: [{ company_id: 'co1', account_id: ACC, contact_id: 'c1', is_primary: true }],
       csat_responses: [{ id: 's1', account_id: ACC, contact_id: 'c1', score: 4, comment: 'Atendimento rápido' }],
     })
@@ -92,6 +93,9 @@ describe('buildContactExport — newly covered sections', () => {
     expect(out.calendar_events.map((e) => e.id)).toEqual(['ev1', 'ev2'])
     expect(out.flow_runs[0].vars).toEqual({ cpf: '123' })
     expect(out.lead_events[0].payload).toEqual({ nome: 'Maria' })
+    // where the contact came from (touches of this contact only; the click id is not a column of the export)
+    expect(out.origins.map((o) => o.id)).toEqual(['lo1'])
+    expect(out.manifest.origins).toEqual({ count: 1, complete: true })
     expect(out.companies).toEqual([{ id: 'co1', name: null, is_primary: true }])
     expect(out.csat).toMatchObject([{ score: 4, comment: 'Atendimento rápido' }])
     expect(out.manifest.tasks).toEqual({ count: 2, complete: true })

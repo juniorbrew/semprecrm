@@ -42,3 +42,11 @@ describe("ContactSidebar — shortcuts and companies", () => {
     expect(html).toContain("Somente leitura — seu perfil não pode criar compromissos, negócios nem tarefas")
   })
 })
+
+describe("ContactSidebar — origin line", () => {
+  it("shows the Veio de line for a contact, and hides it for an anonymized one", () => {
+    expect(renderToString(<ContactSidebar contact={contact} conversationId="conv-1" />)).toContain('data-testid="origin-summary"')
+    const anon = { ...contact, anonymized_at: "2026-10-01T00:00:00Z" }
+    expect(renderToString(<ContactSidebar contact={anon} conversationId="conv-1" />)).not.toContain("origin-summary")
+  })
+})

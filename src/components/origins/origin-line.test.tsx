@@ -2,22 +2,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 
+type Call = { table: string; cols?: string; eq?: [string, unknown]; in?: [string, unknown[]] }
+
 const h = vi.hoisted(() => ({
+  contact: { first_origin_id: null, last_origin_id: null } as { first_origin_id: string | null; last_origin_id: string | null } | null,
+  contactError: null as { message: string } | null,
   rows: [] as unknown[],
-  error: null as { message: string } | null,
-  calls: [] as { cols?: string; eq?: [string, unknown] }[],
+  rowsError: null as { message: string } | null,
+  calls: [] as Call[],
 }))
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({
-    from: () => {
-      const call: { cols?: string; eq?: [string, unknown] } = {}
+    from: (table: string) => {
+      const call: Call = { table }
       h.calls.push(call)
       const b: Record<string, unknown> = {
         select: (cols: string) => ((call.cols = cols), b),
         eq: (c: string, v: unknown) => ((call.eq = [c, v]), b),
-        order: () => b,
-        limit: () => Promise.resolve({ data: h.rows, error: h.error }),
+        in: (c: string, v: unknown[]) => ((call.in = [c, v]), Promise.resolve({ data: h.rows, error: h.rowsError })),
+        maybeSingle: () => Promise.resolve({ data: h.contact, error: h.contactError }),
       }
       return b
     },
@@ -56,55 +60,64 @@ const origin = (over: Partial<LeadOrigin> = {}): LeadOrigin => ({
 })
 
 beforeEach(() => {
+  h.contact = { first_origin_id: null, last_origin_id: null }
+  h.contactError = null
   h.rows = []
-  h.error = null
+  h.rowsError = null
   h.calls.length = 0
 })
 afterEach(cleanup)
 
 describe('OriginSummary', () => {
   it('no touch: "Veio de: Direto ou não identificado"', () => {
-    render(<OriginSummary origins={[]} />)
+    render(<OriginSummary first={null} last={null} />)
     expect(screen.getByTestId('origin-summary').textContent).toBe('Veio de: Direto ou não identificado')
   })
 
-  it('one ad touch: name, channel and date on one line, link to the ad', () => {
-    render(<OriginSummary origins={[origin({ source_url: 'https://fb.me/x' })]} />)
+  it('one ad touch: name, channel and date on one line, link to the ad with its host', () => {
+    const o = origin({ source_url: 'https://fb.me/x' })
+    render(<OriginSummary first={o} last={o} />)
     const text = screen.getByTestId('origin-summary').textContent ?? ''
     expect(text).toContain('Veio de: Anúncio chamado “Promoção sofás” · Instagram · 3 de nov.')
+    expect(text).toContain('(fb.me)')
     const link = screen.getByRole('link', { name: /Ver o anúncio/ })
     expect(link.getAttribute('href')).toBe('https://fb.me/x')
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
     expect(link.getAttribute('target')).toBe('_blank')
   })
 
-  it('never renders a link for a non-http source url', () => {
-    render(<OriginSummary origins={[origin({ source_url: 'javascript:alert(1)' })]} />)
+  it('never renders a link for a non-http source url, nor for anything but an ad or a post', () => {
+    const { rerender } = render(<OriginSummary first={null} last={origin({ source_url: 'javascript:alert(1)' })} />)
     expect(screen.queryByRole('link')).toBeNull()
+    rerender(<OriginSummary first={null} last={origin({ kind: 'campaign', utm_campaign: 'bf', headline: null, ad_id: null, source_url: 'https://loja.com.br/lp' })} />)
+    expect(screen.queryByRole('link')).toBeNull()
+    rerender(<OriginSummary first={null} last={origin({ kind: 'post', source_url: 'https://instagram.com/p/1' })} />)
+    expect(screen.getByRole('link', { name: /Ver o anúncio/ })).toBeTruthy()
   })
 
-  it('a campaign and a referrer read in their own words; the customer text is outside the translator', () => {
+  it('a campaign, a referrer and a bare click id read in their own words; customer text is outside the translator', () => {
     const { container, rerender } = render(
-      <OriginSummary origins={[origin({ channel: 'site_bot', kind: 'campaign', headline: null, ad_id: null, utm_campaign: 'black-friday', utm_source: 'google' })]} />,
+      <OriginSummary first={null} last={origin({ channel: 'site_bot', kind: 'campaign', headline: null, ad_id: null, utm_campaign: 'black-friday', utm_source: 'google' })} />,
     )
     expect(container.textContent).toContain('Campanha chamada “black-friday” · Site · google')
     expect(container.querySelector('[data-no-translate]')?.textContent).toBe('“black-friday”')
-    rerender(<OriginSummary origins={[origin({ channel: 'site_bot', kind: 'referrer', headline: null, ad_id: null, referrer_host: 'blog.example.org' })]} />)
+    rerender(<OriginSummary first={null} last={origin({ channel: 'site_bot', kind: 'referrer', headline: null, ad_id: null, referrer_host: 'blog.example.org' })} />)
     expect(container.textContent).toContain('Visita vinda de blog.example.org')
+    rerender(<OriginSummary first={null} last={origin({ channel: 'site_bot', kind: 'campaign', headline: null, ad_id: null, click_id_type: 'gclid' })} />)
+    expect(container.textContent).toContain('Google Ads')
   })
 
   it('an ad without a title says so', () => {
-    render(<OriginSummary origins={[origin({ headline: null, ad_id: null, source_id: null })]} />)
+    const o = origin({ headline: null, ad_id: null, source_id: null })
+    render(<OriginSummary first={o} last={o} />)
     expect(screen.getByTestId('origin-summary').textContent).toContain('Anúncio sem título · Instagram')
   })
 
-  it('several touches show the first and the last contact (list is newest first)', () => {
+  it('different first and last touch: both lines', () => {
     render(
       <OriginSummary
-        origins={[
-          origin({ id: 'new', headline: 'Anúncio novo', occurred_at: '2026-11-08T12:00:00Z' }),
-          origin({ id: 'old', channel: 'site_bot', kind: 'campaign', headline: null, ad_id: null, utm_campaign: 'bf', occurred_at: '2026-11-01T12:00:00Z' }),
-        ]}
+        first={origin({ id: 'old', channel: 'site_bot', kind: 'campaign', headline: null, ad_id: null, utm_campaign: 'bf', occurred_at: '2026-11-01T12:00:00Z' })}
+        last={origin({ id: 'new', headline: 'Anúncio novo', occurred_at: '2026-11-08T12:00:00Z' })}
       />,
     )
     const text = screen.getByTestId('origin-summary').textContent ?? ''
@@ -113,29 +126,51 @@ describe('OriginSummary', () => {
   })
 
   it('loading and error states', () => {
-    const { rerender } = render(<OriginSummary origins={[]} loading />)
+    const { rerender } = render(<OriginSummary first={null} last={null} loading />)
     expect(screen.getByTestId('origin-summary').textContent).toBe('Carregando...')
-    rerender(<OriginSummary origins={[]} error />)
+    rerender(<OriginSummary first={null} last={null} error />)
     expect(screen.getByTestId('origin-summary').textContent).toBe('Não foi possível carregar a origem.')
   })
 })
 
-describe('ContactOrigin (fetches the contact touches)', () => {
-  it('reads only the columns the browser may see (never click_id) for that contact', async () => {
-    h.rows = [origin()]
+describe('ContactOrigin (reads the contact pointers, then those two touches by id)', () => {
+  it('fetches exactly the two pointed touches, never click_id', async () => {
+    h.contact = { first_origin_id: 'o-first', last_origin_id: 'o-last' }
+    h.rows = [origin({ id: 'o-last', headline: 'Anúncio novo' }), origin({ id: 'o-first', headline: 'Anúncio antigo' })]
     render(<ContactOrigin contactId="c-9" />)
     expect(screen.getByTestId('origin-summary').textContent).toBe('Carregando...')
-    await waitFor(() => expect(screen.getByTestId('origin-summary').textContent).toContain('Anúncio chamado'))
-    expect(h.calls[0].eq).toEqual(['contact_id', 'c-9'])
-    expect(h.calls[0].cols).not.toContain('click_id,')
-    expect(h.calls[0].cols?.split(',').map((c) => c.trim())).not.toContain('click_id')
+    await waitFor(() => expect(screen.getByTestId('origin-summary').textContent).toContain('Primeiro contato: Anúncio chamado “Anúncio antigo”'))
+    expect(screen.getByTestId('origin-summary').textContent).toContain('Último contato: Anúncio chamado “Anúncio novo”')
+    expect(h.calls[0]).toMatchObject({ table: 'contacts', eq: ['id', 'c-9'], cols: 'first_origin_id, last_origin_id' })
+    expect(h.calls[1].table).toBe('lead_origins')
+    expect(h.calls[1].in).toEqual(['id', ['o-first', 'o-last']])
+    expect(h.calls[1].cols?.split(',').map((c) => c.trim())).not.toContain('click_id')
   })
 
-  it('shows the error line when the read fails and renders nothing without a contact', async () => {
-    h.error = { message: 'boom' }
+  it('one pointer (or both equal) is one line and one id', async () => {
+    h.contact = { first_origin_id: 'o1', last_origin_id: 'o1' }
+    h.rows = [origin({ id: 'o1' })]
+    render(<ContactOrigin contactId="c-9" />)
+    await waitFor(() => expect(screen.getByTestId('origin-summary').textContent).toContain('Veio de: Anúncio chamado'))
+    expect(h.calls[1].in).toEqual(['id', ['o1']])
+  })
+
+  it('a contact without pointers is direct and never reads lead_origins', async () => {
+    render(<ContactOrigin contactId="c-9" />)
+    await waitFor(() => expect(screen.getByTestId('origin-summary').textContent).toBe('Veio de: Direto ou não identificado'))
+    expect(h.calls.map((c) => c.table)).toEqual(['contacts'])
+  })
+
+  it('shows the error line when a read fails, and renders nothing without a contact', async () => {
+    h.contact = { first_origin_id: 'o1', last_origin_id: 'o1' }
+    h.rowsError = { message: 'boom' }
     const { container, rerender } = render(<ContactOrigin contactId="c-9" />)
     await waitFor(() => expect(screen.getByTestId('origin-summary').textContent).toBe('Não foi possível carregar a origem.'))
     rerender(<ContactOrigin contactId={null} />)
     expect(container.textContent).toBe('')
+    cleanup()
+    h.contactError = { message: 'boom' }
+    render(<ContactOrigin contactId="c-10" />)
+    await waitFor(() => expect(screen.getByTestId('origin-summary').textContent).toBe('Não foi possível carregar a origem.'))
   })
 })

@@ -798,9 +798,11 @@ export function ContactSidebar({
           </div>
 
           {/* Where the customer came from (ad / campaign / site), migration 109. */}
-          <div className="mt-1.5 px-2">
-            <ContactOrigin contactId={contact.id} />
-          </div>
+          {!contact.anonymized_at && (
+            <div className="mt-1.5 px-2">
+              <ContactOrigin contactId={contact.id} />
+            </div>
+          )}
 
           {/* Shortcuts — book an appointment (agenda sheet), open a deal
               (deal sheet; its company defaults to the contact's primary

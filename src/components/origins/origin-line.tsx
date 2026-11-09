@@ -14,7 +14,7 @@ import {
   type OriginName,
 } from "@/lib/lead-origins";
 
-/** Touches of a contact, newest first. click_id is not selectable by the browser (migration 109). */
+/** Touches of a contact, newest first (the deal drawer's dropdown). click_id is not selectable by the browser (migration 109). */
 export function useContactOrigins(contactId: string | null | undefined) {
   const [state, setState] = useState<{ id: string | null; origins: LeadOrigin[]; error: boolean }>({
     id: null,
@@ -46,10 +46,58 @@ export function useContactOrigins(contactId: string | null | undefined) {
   };
 }
 
+/** The first and the last touch of a contact: its two pointers, then those two rows by id. */
+export function useContactOriginPair(contactId: string | null | undefined) {
+  const [state, setState] = useState<{ id: string | null; first: LeadOrigin | null; last: LeadOrigin | null; error: boolean }>({
+    id: null,
+    first: null,
+    last: null,
+    error: false,
+  });
+  useEffect(() => {
+    if (!contactId) return;
+    let cancelled = false;
+    const done = (first: LeadOrigin | null, last: LeadOrigin | null, error: boolean) => {
+      if (!cancelled) setState({ id: contactId, first, last, error });
+    };
+    const db = createClient();
+    db.from("contacts")
+      .select("first_origin_id, last_origin_id")
+      .eq("id", contactId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        const ptr = data as { first_origin_id: string | null; last_origin_id: string | null } | null;
+        if (error) return done(null, null, true);
+        const ids = [...new Set([ptr?.first_origin_id, ptr?.last_origin_id].filter((v): v is string => !!v))];
+        if (ids.length === 0) return done(null, null, false);
+        db.from("lead_origins")
+          .select(LEAD_ORIGIN_COLUMNS)
+          .in("id", ids)
+          .then(({ data: rows, error: err }) => {
+            if (err) return done(null, null, true);
+            const byId = new Map(((rows ?? []) as unknown as LeadOrigin[]).map((o) => [o.id, o]));
+            done(byId.get(ptr?.first_origin_id ?? "") ?? null, byId.get(ptr?.last_origin_id ?? "") ?? null, false);
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contactId]);
+  const ready = !contactId || state.id === contactId;
+  return {
+    first: ready && contactId ? state.first : null,
+    last: ready && contactId ? state.last : null,
+    loading: !!contactId && !ready,
+    error: ready && state.error,
+  };
+}
+
 /** "Anúncio chamado “X” · Instagram · 3 nov." — the names are the customer's own data. */
 export function OriginNameText({ n, date = null }: { n: OriginName; date?: string | null }) {
   const { t, language } = useLanguage();
   if (n.type === "direct") return <>{t("Direct or not identified")}</>;
+  if (n.type === "paid") return <span data-no-translate>{n.name}</span>;
   const hasName = n.type !== "ad" || !!n.name;
   return (
     <>
@@ -71,10 +119,13 @@ export function OriginNameText({ n, date = null }: { n: OriginName; date?: strin
   );
 }
 
-/** A stored touch as one line, with the date and a link to the ad when there is one. */
+/**
+ * A stored touch as one line, with the date. The "see the ad" link exists only for an ad or a post, always
+ * shows where it goes (the host), and opens with noopener noreferrer: the address came with the message.
+ */
 export function OriginText({ origin, showDate = true }: { origin: LeadOrigin | null; showDate?: boolean }) {
   const { t, language } = useLanguage();
-  const link = originLink(origin);
+  const link = origin && (origin.kind === "ad" || origin.kind === "post") ? originLink(origin) : null;
   const date =
     showDate && origin
       ? new Intl.DateTimeFormat(language, { day: "numeric", month: "short" }).format(new Date(origin.occurred_at))
@@ -94,6 +145,7 @@ export function OriginText({ origin, showDate = true }: { origin: LeadOrigin | n
             {t("See the ad")}
             <ExternalLink className="h-3 w-3" aria-hidden />
           </a>
+          <span className="text-muted-foreground" data-no-translate>{` (${new URL(link).hostname})`}</span>
         </>
       )}
     </span>
@@ -101,28 +153,30 @@ export function OriginText({ origin, showDate = true }: { origin: LeadOrigin | n
 }
 
 /**
- * "Veio de: …" for the inbox panel and the contact page. One touch: one line. Several: the first
- * and the last contact. No touch at all is "Direto ou não identificado".
+ * "Veio de: …" for the inbox panel and the contact page. First and last touch the same (or only one):
+ * one line. Different: "Primeiro contato" and "Último contato". No touch at all is "Direto ou não
+ * identificado".
  */
 export function OriginSummary({
-  origins,
+  first,
+  last,
   loading = false,
   error = false,
 }: {
-  origins: LeadOrigin[];
+  first: LeadOrigin | null;
+  last: LeadOrigin | null;
   loading?: boolean;
   error?: boolean;
 }) {
   const { t } = useLanguage();
-  const last = origins[0] ?? null;
-  const first = origins.length > 1 ? origins[origins.length - 1] : null;
+  const both = first && last && first.id !== last.id;
   return (
     <div className="space-y-0.5 text-xs leading-snug" data-testid="origin-summary">
       {loading ? (
         <p className="text-muted-foreground">{t("Loading...")}</p>
       ) : error ? (
         <p className="text-muted-foreground">{t("Could not load the origin.")}</p>
-      ) : first ? (
+      ) : both ? (
         <>
           <p>
             <span className="text-muted-foreground">{t("First contact")}: </span>
@@ -136,7 +190,7 @@ export function OriginSummary({
       ) : (
         <p>
           <span className="text-muted-foreground">{t("Came from")}: </span>
-          <OriginText origin={last} />
+          <OriginText origin={last ?? first} />
         </p>
       )}
     </div>
@@ -145,7 +199,7 @@ export function OriginSummary({
 
 /** The summary of one contact, fetched by the component itself. */
 export function ContactOrigin({ contactId }: { contactId: string | null | undefined }) {
-  const { origins, loading, error } = useContactOrigins(contactId);
+  const { first, last, loading, error } = useContactOriginPair(contactId);
   if (!contactId) return null;
-  return <OriginSummary origins={origins} loading={loading} error={error} />;
+  return <OriginSummary first={first} last={last} loading={loading} error={error} />;
 }

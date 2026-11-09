@@ -25,7 +25,10 @@ describe('parseQrMessageBody — ad from the gateway (migration 109)', () => {
       ...BASE,
       ad: { title: 'Promoção sofás', source_type: 'ad', source_id: '120210000000009', source_url: 'https://fb.me/x', ctwa_clid: 'AfX' },
     })
-    expect(body?.origin).toMatchObject({ channel: 'whatsapp_qr', kind: 'ad', adId: '120210000000009', headline: 'Promoção sofás', clickId: 'AfX' })
+    expect(body?.origin).toMatchObject({ channel: 'whatsapp_qr', kind: 'ad', adId: '120210000000009', headline: 'Promoção sofás', sourceUrl: 'https://fb.me/x' })
+    // the click id is written by the sender: never stored on this channel
+    expect(body?.origin?.clickId).toBeNull()
+    expect(body?.origin?.clickIdType).toBeNull()
   })
 
   it('an old gateway (no ad field), junk or an empty ad carry no origin and the message still parses', () => {
@@ -34,6 +37,11 @@ describe('parseQrMessageBody — ad from the gateway (migration 109)', () => {
       expect(body?.origin, JSON.stringify(ad)).toBeNull()
       expect(body?.messageId).toBe('M1')
     }
+  })
+
+  it('a link to a stranger\'s site is dropped, a "broadcast" conversion source is not an ad', () => {
+    expect(parseQrMessageBody({ ...BASE, ad: { source_type: 'ad', source_id: '1', source_url: 'https://evil.example/x' } })?.origin?.sourceUrl).toBeNull()
+    expect(parseQrMessageBody({ ...BASE, ad: { conversion_source: 'broadcast', source_id: '1' } })?.origin).toBeNull()
   })
 
   it('giant ad texts are clamped', () => {

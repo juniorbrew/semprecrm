@@ -319,6 +319,38 @@ describe('POST', () => {
     }
   })
 
+  it('records no origin when page_url is not on a site the bot is registered for (page_url is client text)', async () => {
+    for (const page_url of ['https://evil.example/?utm_campaign=fake', 'https://minhaloja.com.br.evil.example/?utm_campaign=fake', 'nada', undefined]) {
+      h.ingest.mockClear()
+      const res = await POST(post({ ...GOOD, page_url, referrer: 'google.com' }), ctx())
+      expect(res.status).toBe(200)
+      expect(h.ingest.mock.calls[0][3].origin, String(page_url)).toBeNull()
+    }
+    // the www. variant of a registered site is fine
+    h.ingest.mockClear()
+    await POST(post({ ...GOOD, answers: { ...GOOD.answers, fone: '(31) 97777-6666' }, page_url: 'https://www.minhaloja.com.br/x?utm_campaign=bf' }), ctx())
+    expect(h.ingest.mock.calls[0][3].origin).toMatchObject({ utmCampaign: 'bf' })
+  })
+
+  it('accepts the bare referrer host robo.js sends', async () => {
+    await POST(post({ ...GOOD, page_url: `${ORIGIN}/`, referrer: 'blog.example.org' }), ctx())
+    expect(h.ingest.mock.calls[0][3].origin).toMatchObject({ kind: 'referrer', referrerHost: 'blog.example.org' })
+  })
+
+  it('a number past the daily limit records no origin (the lead is still kept)', async () => {
+    const page_url = `${ORIGIN}/?utm_campaign=bf`
+    const origins: unknown[] = []
+    for (let n = 0; n < 4; n++) {
+      await POST(post({ ...GOOD, page_url }, { ip: `198.51.100.${200 + n}` }), ctx())
+      origins.push(h.ingest.mock.calls[n][3].origin)
+    }
+    expect(h.ingest).toHaveBeenCalledTimes(4)
+    expect(origins[0]).toMatchObject({ utmCampaign: 'bf' })
+    expect(origins[1]).toMatchObject({ utmCampaign: 'bf' })
+    expect(origins[2]).toBeNull()
+    expect(origins[3]).toBeNull()
+  })
+
   it('never takes account, pipeline, stage, tags, assignee or field ids from the request', async () => {
     const evil = {
       ...GOOD,

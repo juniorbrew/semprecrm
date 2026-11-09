@@ -49,9 +49,15 @@ export function OriginSection({
   const [channel, setChannel] = useState<OriginChannel | "">("");
   const [pipelineId, setPipelineId] = useState("");
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
-  const [rows, setRows] = useState<OriginReportRow[] | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  // The last answer and the question it answered. When the period or a filter changes, the old rows stay
+  // on screen dimmed (aria-busy) until the new answer arrives; rows null = that question failed.
+  const [result, setResult] = useState<{ key: string; rows: OriginReportRow[] | null } | null>(null);
   const [tick, setTick] = useState(0);
+  const key = `${period.from}|${period.to}|${timezone}|${channel}|${pipelineId}|${tick}`;
+  const answered = result?.key === key;
+  const failed = answered && result.rows === null;
+  const rows = result?.rows ?? null;
+  const loading = periodOk && !answered;
 
   useEffect(() => {
     if (!enabled) return;
@@ -73,18 +79,16 @@ export function OriginSection({
     let cancelled = false;
     fetchOriginReport(createClient(), period, timezone, { channel: channel || null, pipelineId: pipelineId || null })
       .then((data) => {
-        if (cancelled) return;
-        setRows(data);
-        setState("ready");
+        if (!cancelled) setResult({ key, rows: data });
       })
       .catch((err) => {
         console.error("[reports] origin report failed:", err instanceof Error ? err.message : "error");
-        if (!cancelled) setState("error");
+        if (!cancelled) setResult({ key, rows: null });
       });
     return () => {
       cancelled = true;
     };
-  }, [enabled, period, periodOk, timezone, channel, pipelineId, tick]);
+  }, [enabled, period, periodOk, timezone, channel, pipelineId, key]);
 
   const top = useMemo(() => topSellingOrigins(rows ?? [], 10), [rows]);
   const maxWon = Math.max(0, ...top.map((r) => r.won_value));
@@ -101,11 +105,6 @@ export function OriginSection({
     URL.revokeObjectURL(url);
   }
 
-  function pick(next: () => void) {
-    setState("loading");
-    next();
-  }
-
   return (
     <section className="space-y-3 border-t border-border pt-6" data-testid="reports-origin">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -114,7 +113,7 @@ export function OriginSection({
           <select
             aria-label={t("Filter by origin channel")}
             value={channel}
-            onChange={(e) => pick(() => setChannel(e.target.value as OriginChannel | ""))}
+            onChange={(e) => setChannel(e.target.value as OriginChannel | "")}
             className={SELECT}
             data-testid="origin-channel"
           >
@@ -128,7 +127,7 @@ export function OriginSection({
           <select
             aria-label={t("Filter by pipeline")}
             value={pipelineId}
-            onChange={(e) => pick(() => setPipelineId(e.target.value))}
+            onChange={(e) => setPipelineId(e.target.value)}
             className={SELECT}
             data-testid="origin-pipeline"
           >
@@ -147,15 +146,12 @@ export function OriginSection({
       </div>
 
       <div aria-live="polite">
-        {!periodOk ? null : state === "error" ? (
+        {!periodOk ? null : failed ? (
           <p role="alert" className="text-sm text-muted-foreground">
             {t("Could not load the customer origins.")}{" "}
             <button
               type="button"
-              onClick={() => {
-                setState("loading");
-                setTick((n) => n + 1);
-              }}
+              onClick={() => setTick((n) => n + 1)}
               className="text-foreground underline underline-offset-2"
             >
               {t("Try again")}
@@ -168,7 +164,7 @@ export function OriginSection({
             {t("No customers or deals in this period.")}
           </p>
         ) : (
-          <div className={state === "loading" ? "space-y-6 opacity-60" : "space-y-6"}>
+          <div className={loading ? "space-y-6 opacity-60" : "space-y-6"} aria-busy={loading}>
             {top.length > 0 && (
               <figure data-testid="origin-chart" className="space-y-1.5">
                 <figcaption className="text-xs text-muted-foreground">{t("Origins that sold the most")}</figcaption>
@@ -228,6 +224,9 @@ export function OriginSection({
                 </tbody>
               </table>
             </div>
+            <p className="text-xs text-muted-foreground" data-testid="origin-note">
+              {t("Customers are counted by their first contact, and deals by the origin of each deal.")}
+            </p>
           </div>
         )}
       </div>

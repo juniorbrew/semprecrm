@@ -14,7 +14,7 @@
 //    gclid, fbclid) and document.referrer (only its host is kept).
 // ============================================================
 
-import { cleanHost, clip, normalizeTouch, ORIGIN_LIMITS, safeHttpUrl } from './normalize'
+import { cleanHost, clip, metaHostUrl, normalizeTouch, ORIGIN_LIMITS, safeHttpUrl } from './normalize'
 import type { ClickIdType, OriginChannel, OriginKind, OriginTouch } from './types'
 
 type Obj = Record<string, unknown>
@@ -60,24 +60,26 @@ export function parseWhatsAppReferral(referral: unknown): OriginTouch | null {
   })
 }
 
-/** The gateway's `ad` object (Baileys externalAdReply + conversionSource), QR channel. */
+/** What Baileys calls the conversion source of a real Click-to-WhatsApp ad ("FB_Ads", "ads"); "broadcast" and the like are not. */
+const AD_CONVERSION = /^(fb_)?ads?$/i
+
+/**
+ * The gateway's `ad` object (Baileys externalAdReply + conversionSource), QR channel. Everything in it is
+ * written by the sender, so: the link is kept only when it points at a Meta host, and the click id is never
+ * stored (the sender can put anything there and part B cannot trust it).
+ */
 export function parseBaileysAd(ad: unknown): OriginTouch | null {
   if (!isObj(ad)) return null
   const conversion = clip(ad.conversion_source, 120)
-  const kind =
-    adKind(ad.source_type) ??
-    (conversion && /ad/i.test(conversion) ? 'ad' : null) ??
-    (typeof ad.source_url === 'string' ? 'link' : null)
+  const sourceUrl = metaHostUrl(ad.source_url)
+  const kind = adKind(ad.source_type) ?? (conversion && AD_CONVERSION.test(conversion) ? 'ad' : null) ?? (sourceUrl ? 'link' : null)
   if (!kind) return null
   const sourceId = clip(ad.source_id, ORIGIN_LIMITS.sourceId)
-  const ctwa = clip(ad.ctwa_clid, ORIGIN_LIMITS.clickId)
   return build('whatsapp_qr', kind, {
     adId: kind === 'ad' ? sourceId : null,
     sourceId,
-    sourceUrl: safeHttpUrl(ad.source_url),
+    sourceUrl,
     headline: clip(ad.title, ORIGIN_LIMITS.headline),
-    clickIdType: ctwa ? 'ctwa_clid' : null,
-    clickId: ctwa,
   })
 }
 
@@ -122,6 +124,19 @@ function parseHttpUrl(value: unknown): URL | null {
   }
 }
 
+/** Host of a referrer: a full URL, or the bare host[:port] robo.js sends (it never sends the path or query). */
+function referrerHostOf(value: unknown): string | null {
+  const url = parseHttpUrl(value)
+  if (url) return cleanHost(url.hostname)
+  const s = clip(value, 300)
+  if (!s || !/^[a-z0-9.-]+(:\d{1,5})?$/i.test(s)) return null
+  try {
+    return cleanHost(new URL(`https://${s}`).hostname)
+  } catch {
+    return null
+  }
+}
+
 /**
  * Site visitor (bot) or form: utm_* / gclid / fbclid from the page URL, the host of the referrer.
  * `extra` carries the same keys sent explicitly (webhook body) and wins over the URL. Null when
@@ -138,8 +153,7 @@ export function parseUrlOrigin(
   const gclid = param('gclid')
   const fbclid = param('fbclid')
   const clickIdType: ClickIdType | null = gclid ? 'gclid' : fbclid ? 'fbclid' : null
-  const ref = parseHttpUrl(referrer)
-  let referrerHost = ref ? cleanHost(ref.hostname) : null
+  let referrerHost = referrerHostOf(referrer)
   if (referrerHost && page && referrerHost === cleanHost(page.hostname)) referrerHost = null // same-site navigation
   const utm = Object.fromEntries(CAMPAIGN_PARAMS.map((k) => [k, param(k)])) as Record<(typeof CAMPAIGN_PARAMS)[number], string | null>
   const hasCampaign = Object.values(utm).some(Boolean) || !!clickIdType
@@ -157,8 +171,11 @@ export function parseUrlOrigin(
   })
 }
 
-/** Webhook form body: utm_*, gclid, fbclid, page_url / referrer (or referer) when the form sends them. */
+/**
+ * Webhook form body: utm_*, gclid, fbclid, page_url / referrer (or referer) when the form sends them.
+ * `url` is NOT read: forms often send the lead's own website under that name.
+ */
 export function parseBodyOrigin(payload: unknown): OriginTouch | null {
   if (!isObj(payload)) return null
-  return parseUrlOrigin(payload.page_url ?? payload.url, payload.referrer ?? payload.referer, 'webhook', payload)
+  return parseUrlOrigin(payload.page_url, payload.referrer ?? payload.referer, 'webhook', payload)
 }

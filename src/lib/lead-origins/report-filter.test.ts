@@ -66,6 +66,8 @@ describe('naming and ranking', () => {
     expect(originRowLabel(row({ origin_type: 'referrer', channel: 'site_bot', name: 'blog.example.org' }))).toBe('Site de origem blog.example.org')
     expect(originRowLabel(row({ origin_type: 'direct', channel: '', name: '' }))).toBe('Direto ou não identificado')
     expect(rowOriginName(row({ origin_type: 'campaign', source: '' }))).toMatchObject({ type: 'campaign', source: null })
+    expect(originRowLabel(row({ origin_type: 'paid', channel: 'site_bot', name: 'Google Ads' }))).toBe('Google Ads')
+    expect(rowOriginName(row({ origin_type: 'paid', channel: 'site_bot', name: 'Facebook/Instagram Ads' }))).toEqual({ type: 'paid', name: 'Facebook/Instagram Ads' })
   })
   it('top selling: by value then by won deals, only what sold, capped', () => {
     const rows = [

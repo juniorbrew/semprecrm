@@ -59,7 +59,7 @@ export const LEAD_ORIGIN_COLUMNS =
 
 /** One row of origin_report(). */
 export interface OriginReportRow {
-  origin_type: 'ad' | 'campaign' | 'referrer' | 'direct'
+  origin_type: 'ad' | 'campaign' | 'referrer' | 'paid' | 'direct'
   /** '' for the direct bucket. */
   channel: OriginChannel | ''
   name: string

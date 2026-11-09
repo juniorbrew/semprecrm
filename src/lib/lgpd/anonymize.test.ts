@@ -268,6 +268,14 @@ describe('anonymizeContact', () => {
     expect(tables.tasks[0].title).toBe(ANONYMIZED_TASK_TITLE)
   })
 
+  it('reports the touches as left over when their delete failed (the leftover check covers lead_origins)', async () => {
+    const { db, tables } = makeFakeDb(seed(), { fail: (table, op) => (table === 'lead_origins' && op === 'delete' ? { message: 'boom' } : null) })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(false)
+    expect(res.warnings.join(' ')).toContain('lead_origins')
+    expect(tables.contacts[0].anonymization_completed_at).toBeNull()
+  })
+
   it('keeps an opt-out across the anonymisation through the suppression list (hash only)', async () => {
     const tables = seed()
     tables.contacts[0].opted_out_at = '2026-01-01T00:00:00.000Z'
