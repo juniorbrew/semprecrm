@@ -180,6 +180,8 @@ export async function GET(request: Request, { params }: RouteContext) {
   if ('denied' in gate) return gate.denied
   return json({ ok: true, config: publicBotConfig(bot.config) }, 200, {
     ...gate.headers,
+    // Always, even without Origin: a cached copy without CORS must not reach a browser that sends one.
+    Vary: 'Origin',
     'Cache-Control': 'public, max-age=60',
   })
 }
@@ -240,14 +242,13 @@ export async function POST(request: Request, { params }: RouteContext) {
     return json({ ok: false, error: checked.error, question: checked.questionId ?? null }, 400, headers)
   }
 
-  // The typed number triggers the tenant's automations: twice a day per bot, then
-  // the same success and nothing else.
+  // The typed number triggers the tenant's automations: twice a day per bot. Past
+  // that the lead is still kept (a stranger who knows the number can't make the real
+  // visitor's lead vanish) and only the automations are skipped.
   const phoneAnswer = config.questions.find((q) => q.type === 'phone')
   const phone = phoneAnswer ? (checked.answers[phoneAnswer.id] ?? '') : ''
-  if (!checkRateLimit(`site-bot:phone:${key}:${phone}`, PER_PHONE_POST).success) {
-    console.info(`[site-bot] dropped key=${key.slice(0, 8)} reason=phone_limit`)
-    return json({ ok: true, whatsapp_url: link(cleanText(typedName)) }, 200, headers)
-  }
+  const phoneLimited = !checkRateLimit(`site-bot:phone:${key}:${phone}`, PER_PHONE_POST).success
+  if (phoneLimited) console.info(`[site-bot] automations skipped key=${key.slice(0, 8)} reason=phone_limit`)
 
   const built = buildLeadFromAnswers(config, checked.answers, {
     at: new Date().toISOString(),
@@ -270,6 +271,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   // through this bot in the last 24 h does not fire them again.
   const contactId = result.contactId ?? null
   after(async () => {
+    if (phoneLimited) return
     if (result.contactCreated) {
       await runAutomationsForTrigger({
         accountId: source.account_id,

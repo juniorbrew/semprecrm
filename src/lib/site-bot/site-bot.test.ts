@@ -295,10 +295,15 @@ describe('validateAnswers', () => {
     for (const bad of [null, [], 'x', 5]) expect(validateAnswers(config, bad)).toMatchObject({ error: 'invalid_answers' })
   })
   it('rejects names that carry a link, a domain, an address or a long number', () => {
-    for (const nome of ['http://x.co', 'www.golpe.com', 'ana@x.com', 'Ligue 11999990000', 'veja bit.ly/abc', 'ganhe.xyz agora', 'Ana 12345678']) {
+    for (const nome of [
+      'http://x.co', 'www.golpe.com', 'ana@x.com', 'Ligue 11999990000', 'veja bit.ly/abc', 'ganhe.xyz agora', 'Ana 12345678',
+      // bypasses found by the security pass
+      'Ana goo.gl/AbC12', 'pix.gg/ana', 'golpe.pw', 'amazon.de/x', 'Ana s.id/x', 'bit\u2024ly/x', 'golpe\u3002com/pix',
+      'Ligue 1234/5678', 'Ligue 1234_5678', 'Ana.Coelho', '\uFF57\uFF57\uFF57',
+    ]) {
       expect(validateAnswers(config, { ...base, nome }), nome).toMatchObject({ ok: false, error: 'invalid_name', questionId: 'nome' })
     }
-    for (const nome of ['Ana Souza', "D'Ávila Júnior", 'Ana.Coelho', 'José 2º', 'Maria (Mari)']) {
+    for (const nome of ['Ana Souza', "D'Ávila Júnior", 'J. Silva', 'José 2º', 'Maria (Mari)']) {
       expect(validateAnswers(config, { ...base, nome }).ok, nome).toBe(true)
     }
   })

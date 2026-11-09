@@ -470,20 +470,29 @@ describe('abuse limits', () => {
     expect((await GET(get(ORIGIN, '198.51.100.10'), ctx())).status).toBe(200)
   })
 
-  it('sends a typed number to the automations at most twice a day per bot, with the same answer', async () => {
+  it('sends a typed number to the automations at most twice a day per bot, but keeps every lead', async () => {
     const sameNumber = (n: number) => post(GOOD, { ip: `198.51.100.${100 + n}` })
     const bodies = []
     for (let n = 0; n < 4; n++) {
       const res = await POST(sameNumber(n), ctx())
       expect(res.status).toBe(200)
       bodies.push(await res.json())
+      await flushAfter()
     }
-    expect(h.ingest).toHaveBeenCalledTimes(2)
+    // the lead is never dropped (a stranger can't make the real visitor's lead vanish)
+    expect(h.ingest).toHaveBeenCalledTimes(4)
     expect(bodies[3]).toEqual(bodies[0])
+    // automations ran only for the first two
+    const fired = h.automations.length
+    expect(fired).toBeGreaterThan(0)
+    await POST(sameNumber(9), ctx())
+    await flushAfter()
+    expect(h.automations).toHaveLength(fired)
     // another number is not affected
     const other = { ...GOOD, answers: { ...GOOD.answers, fone: '(21) 98888-7777' } }
     await POST(post(other, { ip: '198.51.100.150' }), ctx())
-    expect(h.ingest).toHaveBeenCalledTimes(3)
+    await flushAfter()
+    expect(h.automations.length).toBeGreaterThan(fired)
   })
 
   it('does not fire lead_captured again for a contact that came through this bot in the last 24 h', async () => {
@@ -525,5 +534,8 @@ describe('abuse limits', () => {
     const res = await GET(get(), ctx())
     expect(res.headers.get('cache-control')).toBe('public, max-age=60')
     expect(res.headers.get('vary')).toBe('Origin')
+    // without Origin too, so a CORS-less copy is never served to a browser that sends one
+    const bare = await GET(new Request('http://localhost/api/v1/robo/x'), ctx())
+    expect(bare.headers.get('vary')).toBe('Origin')
   })
 })

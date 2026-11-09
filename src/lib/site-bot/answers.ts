@@ -29,10 +29,13 @@ export function cleanText(v: string): string {
  * A name is shown to staff and to the WhatsApp the bot may message: it must not
  * carry a link, a domain, an address or a long number (spam / phishing payload).
  */
-export function looksLikeName(v: string): boolean {
+export function looksLikeName(raw: string): boolean {
+  // Look-alike dots (one-dot leader, ideographic and fullwidth full stops) count as dots.
+  const v = raw.normalize('NFKC').replace(/[\u2024\u3002\uFF0E\uFE52]/g, '.')
   if (/https?|www|ftp|:\/\/|@/i.test(v)) return false
-  if (/[a-z0-9-]+\.(com|net|org|br|io|me|co|app|xyz|ly|info|biz|link|site|online|shop|top|club|click|cc|ru|tk)(?![a-z])/i.test(v)) return false
-  return !/\d{5,}/.test(v.replace(/[\s().+-]/g, ''))
+  // Any word.word is a domain whatever the TLD ("J. Silva" passes: a space follows the dot).
+  if (/[\p{L}\p{N}-]\.\p{L}{2,}/u.test(v)) return false
+  return (v.match(/\d/g) ?? []).length < 5
 }
 
 function checkOne(q: BotQuestion, raw: string): { ok: true; value: string } | { ok: false; error: string } {

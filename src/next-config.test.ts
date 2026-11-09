@@ -41,12 +41,9 @@ describe('next.config security', () => {
     expect(withCors.map((r) => r.source)).toEqual(['/robo.js'])
   })
 
-  it('lets browsers cache the public bot config for a minute, after the no-store API rule', async () => {
+  it('has no config rule making the bot route cacheable (only its GET 200 sets that itself)', async () => {
     const rules = await nextConfig.headers!()
-    const noStore = rules.findIndex((r) => r.source === '/api/:path*')
-    const cfg = rules.findIndex((r) => r.source === '/api/v1/robo/:key')
-    expect(cfg).toBeGreaterThan(noStore)
-    expect(rules[cfg].headers).toEqual([{ key: 'Cache-Control', value: 'public, max-age=60' }])
+    expect(rules.some((r) => r.source.startsWith('/api/v1/robo'))).toBe(false)
   })
 
   it('keeps /robo.js out of the session middleware', () => {
