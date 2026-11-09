@@ -56,8 +56,9 @@ INSERT INTO lead_sources(id, account_id, name, token) VALUES
 SELECT pg_temp.assert_true((SELECT kind = 'webhook' AND public_key IS NULL AND bot_config = '{}'::jsonb
                               FROM lead_sources WHERE id = '10800000-0000-4000-8000-0000000000a1'),
   'a webhook source defaults to kind webhook, no key, empty config');
-SELECT pg_temp.assert_true((SELECT bool_and(kind = 'webhook' AND public_key IS NULL) FROM lead_sources WHERE name <> 'Bot'),
-  'every pre-existing row is a webhook');
+-- (the local DB may already hold bots made in the UI: the rule is about rows without a key)
+SELECT pg_temp.assert_true((SELECT coalesce(bool_and(kind = 'webhook'), true) FROM lead_sources WHERE public_key IS NULL),
+  'every row without a public key is a webhook');
 
 -- ---- site bot ------------------------------------------------------------
 INSERT INTO lead_sources(id, account_id, name, token, kind, public_key, bot_config) VALUES
