@@ -6,6 +6,7 @@
 // deliveries, postbacks, reactions and unsends are ignored in part A.
 // ============================================================
 
+import { parseMessagingReferral, type OriginTouch } from '@/lib/lead-origins'
 import type { MetaMessagingChannel } from '@/types'
 
 export interface MessagingAttachment {
@@ -29,6 +30,8 @@ export interface MessagingEvent {
   text: string | null
   attachments: MessagingAttachment[]
   replyToMid: string | null
+  /** Ad / ref link that opened the conversation (messaging[].referral), when this message carried one. */
+  origin: OriginTouch | null
 }
 
 type Obj = Record<string, unknown>
@@ -82,6 +85,9 @@ export function parseMessagingWebhook(body: unknown): MessagingEvent[] {
         text,
         attachments,
         replyToMid: replyTo,
+        // Customer messages only; the referral sits on the event or on the message itself.
+        // (A referral-only event, with no message, is ignored like every non-message event.)
+        origin: echo ? null : parseMessagingReferral(m.referral ?? msg.referral, kind),
       })
     }
   }

@@ -329,6 +329,32 @@ describe('status webhook — forward-only messages.status (review fix)', () => {
   })
 })
 
+describe('inbound — Click-to-WhatsApp referral (migration 109)', () => {
+  it('parses message.referral into the origin handed to the pipeline', async () => {
+    await post(
+      messagePayload({
+        type: 'text',
+        text: { body: 'Oi, vi o anúncio' },
+        referral: { source_url: 'https://fb.me/x', source_id: '120210000000001', source_type: 'ad', headline: 'Promoção sofás', ctwa_clid: 'AfAbC' },
+      }),
+    )
+    await settle()
+    expect(h.ingest.mock.calls[0][0]).toMatchObject({
+      accountId: 'acct-1',
+      origin: { channel: 'whatsapp', kind: 'ad', adId: '120210000000001', headline: 'Promoção sofás', clickIdType: 'ctwa_clid', clickId: 'AfAbC' },
+    })
+  })
+
+  it('a message without referral (or with a junk one) carries no origin and is still ingested', async () => {
+    await post(messagePayload({ type: 'text', text: { body: 'oi' } }))
+    await post(messagePayload({ type: 'text', text: { body: 'oi' }, referral: 'junk' }))
+    await settle()
+    expect(h.ingest).toHaveBeenCalledTimes(2)
+    expect(h.ingest.mock.calls[0][0]).toMatchObject({ origin: null })
+    expect(h.ingest.mock.calls[1][0]).toMatchObject({ origin: null })
+  })
+})
+
 describe('inbound — template quick-reply tap (wacrm #478)', () => {
   it('hands the tap to the pipeline as an interactive reply, scoped to the config account', async () => {
     await post(

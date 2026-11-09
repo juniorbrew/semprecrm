@@ -102,7 +102,13 @@ vi.mock('@/lib/lgpd/suppression', () => ({
   findSuppressedPhones: vi.fn(async () => new Set<string>()),
 }))
 
+// Lead origins (migration 109): recordTouch has its own tests; here only the wiring.
+vi.mock('@/lib/lead-origins/record', () => ({
+  recordTouch: vi.fn(async () => ({ recorded: true })),
+}))
+
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
+import { recordTouch } from '@/lib/lead-origins/record'
 import { ingestInboundMessage, toContentType, toIsoTimestamp } from './inbound'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
@@ -543,6 +549,36 @@ describe('ingestInboundMessage', () => {
     expect(res.ok).toBe(true)
     expect(res.contactId).toBe('c-raced')
     expect(res.contactCreated).toBe(false)
+  })
+})
+
+describe('ingestInboundMessage — origin (migration 109)', () => {
+  const touch = {
+    channel: 'whatsapp_qr', kind: 'ad', adId: 'AD1', sourceId: 'AD1', sourceUrl: null, headline: 'Promoção sofás',
+    utmSource: null, utmMedium: null, utmCampaign: null, utmContent: null, utmTerm: null, referrerHost: null,
+    clickIdType: null, clickId: null,
+  } as const
+
+  it('records the touch for the contact and conversation it just resolved', async () => {
+    const db = makeDb()
+    const res = await ingestInboundMessage({ ...BASE, origin: touch }, db)
+    expect(res.ok).toBe(true)
+    expect(recordTouch).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({
+      accountId: 'acct-1',
+      contactId: h.state.contacts[0].id,
+      conversationId: h.state.conversations[0].id,
+      touch,
+    })
+  })
+
+  it('no origin, no call; a redelivered message records nothing twice', async () => {
+    await ingestInboundMessage({ ...BASE, messageId: 'plain-1' }, makeDb())
+    expect(recordTouch).not.toHaveBeenCalled()
+    const db = makeDb()
+    await ingestInboundMessage({ ...BASE, origin: touch }, db)
+    await ingestInboundMessage({ ...BASE, origin: touch }, db) // same message id: a duplicate, stops before recording
+    expect(recordTouch).toHaveBeenCalledTimes(1)
   })
 })
 

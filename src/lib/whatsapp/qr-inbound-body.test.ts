@@ -18,3 +18,26 @@ describe('parseQrMessageBody — chat_jid (migration 091)', () => {
     expect(parseQrMessageBody(BASE)?.chatJid).toBeNull()
   })
 })
+
+describe('parseQrMessageBody — ad from the gateway (migration 109)', () => {
+  it('turns the forwarded Click-to-WhatsApp fields into an origin', () => {
+    const body = parseQrMessageBody({
+      ...BASE,
+      ad: { title: 'Promoção sofás', source_type: 'ad', source_id: '120210000000009', source_url: 'https://fb.me/x', ctwa_clid: 'AfX' },
+    })
+    expect(body?.origin).toMatchObject({ channel: 'whatsapp_qr', kind: 'ad', adId: '120210000000009', headline: 'Promoção sofás', clickId: 'AfX' })
+  })
+
+  it('an old gateway (no ad field), junk or an empty ad carry no origin and the message still parses', () => {
+    for (const ad of [undefined, null, 'x', 5, [], {}]) {
+      const body = parseQrMessageBody({ ...BASE, ad })
+      expect(body?.origin, JSON.stringify(ad)).toBeNull()
+      expect(body?.messageId).toBe('M1')
+    }
+  })
+
+  it('giant ad texts are clamped', () => {
+    const body = parseQrMessageBody({ ...BASE, ad: { source_type: 'ad', title: 't'.repeat(10_000) } })
+    expect(body?.origin?.headline).toHaveLength(300)
+  })
+})

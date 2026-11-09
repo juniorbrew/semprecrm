@@ -161,6 +161,7 @@ async function handleEvent(
         storeAvatar,
         // Only the first attachment of a message starts automations / flows / the AI.
         storeOnly: index > 0,
+        origin: index === 0 ? e.origin : null,
       },
       db,
     )

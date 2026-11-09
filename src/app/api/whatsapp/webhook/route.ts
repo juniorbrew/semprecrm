@@ -12,6 +12,7 @@ import {
   listContactConversations,
 } from '@/lib/whatsapp/inbound'
 import { kickAutoReplies } from '@/lib/ai/auto-reply-runtime'
+import { parseWhatsAppReferral } from '@/lib/lead-origins'
 import { scheduleTriageIfDue } from '@/lib/support/triage-trigger'
 import {
   handleTemplateWebhookChange,
@@ -48,6 +49,8 @@ interface WhatsAppMessage {
   from: string
   timestamp: string
   type: string
+  /** Click-to-WhatsApp ad that opened the conversation (parsed by lead-origins). */
+  referral?: unknown
   text?: { body: string }
   image?: { id: string; mime_type: string; caption?: string }
   video?: { id: string; mime_type: string; caption?: string }
@@ -652,6 +655,7 @@ async function processMessage(
     timestamp: message.timestamp,
     interactiveReplyId,
     userId: configOwnerUserId,
+    origin: parseWhatsAppReferral(message.referral),
   })
   // Automatic reply: this handler already runs detached from the
   // response (see POST), so the drain kick is fire-and-forget too; the
