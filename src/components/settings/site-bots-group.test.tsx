@@ -6,6 +6,9 @@ import { defaultBotConfig } from '@/lib/site-bot';
 import type { LeadSource } from '@/types';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const events = vi.hoisted(() => ({ rows: [] as unknown[] }));
+vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({}) }));
+vi.mock('@/lib/lead-capture/client', () => ({ listLeadSourceEvents: async () => events.rows }));
 
 import { SiteBotPreview } from './site-bot-preview';
 import { botSnippet, SiteBotsGroup } from './site-bots-group';
@@ -75,6 +78,32 @@ describe('SiteBotsGroup', () => {
     expect((writeText.mock.calls[0] as unknown as [string])[0]).toMatch(new RegExp(`^<script src=".*/robo\\.js" data-robo="${KEY}" async></script>$`));
     expect(screen.getByText(/WordPress/)).toBeTruthy();
     expect(screen.getByText(/Wix/)).toBeTruthy();
+  });
+
+  it('shows the visitor answers of each conversation as plain text, also for a returning contact', async () => {
+    events.rows = [
+      {
+        id: 'e1', status: 'duplicate', created_at: new Date().toISOString(),
+        payload: { name: 'Ana', phone: '5511987654321', email: 'ana@x.com', _consent: { at: 'x' } },
+      },
+      { id: 'e2', status: 'ok', created_at: new Date().toISOString(), payload: { name: '<img src=x onerror=alert(1)>', phone: '5511900000000' } },
+    ];
+    render(<SiteBotsGroup {...props({ selectedId: 'bot-1' })} />);
+    expect(await screen.findByText('Últimas conversas')).toBeTruthy();
+    const answers = await screen.findAllByText(/Qual é o seu nome\?: /);
+    expect(answers).toHaveLength(2);
+    expect(answers[0].textContent).toContain('Qual é o seu nome?: Ana');
+    expect(answers[0].textContent).toContain('Qual é o seu WhatsApp (com DDD)?: 5511987654321');
+    expect(answers[1].textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByText('Contato existente')).toBeTruthy();
+    events.rows = [];
+  });
+
+  it('says so when a bot has no conversations yet', async () => {
+    events.rows = [];
+    render(<SiteBotsGroup {...props({ selectedId: 'bot-1' })} />);
+    expect(await screen.findByText('Ainda não chegou nenhuma conversa.')).toBeTruthy();
   });
 
   it('warns when no site is allowed yet', () => {

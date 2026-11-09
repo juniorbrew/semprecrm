@@ -1,13 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bot, Check, ChevronDown, ChevronRight, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useLanguage } from '@/hooks/use-language';
+import { listLeadSourceEvents } from '@/lib/lead-capture/client';
 import { resolveSiteUrl } from '@/lib/lead-capture/webhook-url';
+import { createClient } from '@/lib/supabase/client';
+import { eventAnswerLines, validateBotConfig } from '@/lib/site-bot';
 import { formatRelative } from '@/lib/automations/trigger-meta';
-import type { LeadSource } from '@/types';
+import type { LeadSource, LeadSourceEvent } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
@@ -192,6 +195,7 @@ export function SiteBotsGroup({
               {t('Other sites: paste the code before the closing body tag of each page, or in the footer scripts area of your site builder.')}
             </li>
           </ul>
+          <BotEvents key={selected.id} bot={selected} />
           {noDomains ? (
             <p role="note" className="text-xs text-amber-600">
               {t('No site is allowed yet, so the bot only works in the preview. Edit the bot and add your website address.')}
@@ -200,5 +204,65 @@ export function SiteBotsGroup({
         </div>
       ) : null}
     </SettingsGroup>
+  );
+}
+
+const EVENT_LABEL: Record<LeadSourceEvent['status'], string> = {
+  ok: 'Contact created',
+  duplicate: 'Existing contact',
+  error: 'Error',
+};
+
+/**
+ * Latest submissions of a bot, with the visitor's answers as plain text. The
+ * deal note only exists for a NEW deal, so this is where a returning
+ * contact's answers can always be read.
+ */
+function BotEvents({ bot }: { bot: LeadSource }) {
+  const { t, language } = useLanguage();
+  const supabase = useMemo(() => createClient(), []);
+  const [events, setEvents] = useState<LeadSourceEvent[] | null>(null);
+  const parsed = validateBotConfig(bot.bot_config);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listLeadSourceEvents(supabase, bot.id, 20)
+      .then((rows) => !cancelled && setEvents(rows))
+      .catch(() => !cancelled && setEvents([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [bot.id, supabase]);
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-foreground">{t('Latest conversations')}</p>
+      {events === null ? (
+        <div className="h-10 animate-pulse rounded-lg bg-muted/60" />
+      ) : events.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('No conversations received yet.')}</p>
+      ) : (
+        <ul className="divide-y divide-border rounded-lg border border-border">
+          {events.map((ev) => {
+            const lines = parsed.ok ? eventAnswerLines(parsed.config, ev.payload) : [];
+            return (
+              <li key={ev.id} className="space-y-1 px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SettingsChip variant={ev.status === 'ok' ? 'ok' : ev.status === 'duplicate' ? 'warn' : 'bad'}>
+                    {t(EVENT_LABEL[ev.status] ?? 'Error')}
+                  </SettingsChip>
+                  <span className="text-xs text-muted-foreground">{formatRelative(ev.created_at, language)}</span>
+                </div>
+                {lines.length > 0 ? (
+                  <p data-no-translate className="whitespace-pre-wrap break-words text-xs text-foreground">
+                    {lines.join(String.fromCharCode(10))}
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

@@ -95,7 +95,7 @@ describe('validateBotConfig', () => {
       errorsOf({ questions: questions([{ id: 'c', text: 'x', type: 'choice', options, required: false }]) })
     expect(choice(['a'])).not.toEqual([])
     expect(choice(['1', '2', '3', '4', '5', '6', '7'])).not.toEqual([])
-    expect(choice(['a', 'a'])).toContain('question 3: options must be different')
+    expect(choice(['a', 'a'])).toContain('question 3: answer buttons must be different')
     expect(choice(['a', ''])).not.toEqual([])
     expect(choice(['a', 'b'])).toEqual([])
     expect(choice(['1', '2', '3', '4', '5', '6'])).toEqual([])
@@ -103,13 +103,13 @@ describe('validateBotConfig', () => {
 
   it('checks ids, types and text lengths', () => {
     expect(errorsOf({ questions: questions([{ id: 'Nome', text: 'x', type: 'text' }]) })).toContain(
-      'question 3: invalid id',
+      'question 3: the question id is invalid',
     )
     expect(errorsOf({ questions: questions([{ id: 'nome', text: 'x', type: 'text' }]) })).toContain(
-      'question 3: duplicate id',
+      'question 3: the question id is repeated',
     )
     expect(errorsOf({ questions: questions([{ id: 'x', text: 'x', type: 'file' }]) })).toContain(
-      'question 3: invalid type',
+      'question 3: the answer type is invalid',
     )
     expect(
       errorsOf({ questions: questions([{ id: 'x', text: 'a'.repeat(BOT_LIMITS.question + 1), type: 'text' }]) }),
@@ -127,8 +127,8 @@ describe('validateBotConfig', () => {
       target: 'custom',
       customFieldId,
     })
-    expect(errorsOf({ questions: questions([custom(undefined)]) })).toContain('question 3: pick a custom field')
-    expect(errorsOf({ questions: questions([custom('not-a-uuid')]) })).toContain('question 3: pick a custom field')
+    expect(errorsOf({ questions: questions([custom(undefined)]) })).toContain('question 3: pick the contact field for this answer')
+    expect(errorsOf({ questions: questions([custom('not-a-uuid')]) })).toContain('question 3: pick the contact field for this answer')
     expect(errorsOf({ questions: questions([custom(FIELD)]) })).toEqual([])
     expect(errorsOf({ questions: questions([custom(FIELD), custom(FIELD, 'd')]) })).toContain(
       'each custom field can be used once',

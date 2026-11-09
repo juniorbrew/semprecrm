@@ -143,3 +143,17 @@ export function whatsappLink(number: string, template: string, name: string): st
   const clean = cleanText(text)
   return clean ? `https://wa.me/${digits}?text=${encodeURIComponent(clean)}` : `https://wa.me/${digits}`
 }
+
+/**
+ * What a visitor answered, as plain text lines for the events view in Settings
+ * ("Question: answer"), read back from the stored event payload. Text only.
+ */
+export function eventAnswerLines(config: BotConfig, payload: Record<string, unknown>): string[] {
+  const lines: string[] = []
+  for (const q of config.questions) {
+    const key = q.type === 'name' ? 'name' : q.type === 'phone' ? 'phone' : q.type === 'email' ? 'email' : answerKey(q.id)
+    const v = payload[key]
+    if (typeof v === 'string' && v.trim()) lines.push(`${q.text}: ${v.trim().slice(0, BOT_LIMITS.answer)}`)
+  }
+  return lines
+}

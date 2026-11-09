@@ -5,6 +5,7 @@ vi.mock('@/lib/lgpd/suppression', () => ({ findSuppressedPhones: vi.fn(async () 
 
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { ingestLead, leadDealTitle, type IngestLeadSource } from './ingest'
+import { buildLeadFromAnswers, defaultBotConfig, eventAnswerLines, validateAnswers, validateBotConfig } from '@/lib/site-bot'
 
 // ------------------------------------------------------------
 // ingestLead — the DB half of the webhook. The Supabase admin client
@@ -389,5 +390,92 @@ describe('leadDealTitle', () => {
     expect(leadDealTitle('Ana', '5511', 'Site')).toBe('Ana · Site')
     expect(leadDealTitle('  ', '5511', 'Site')).toBe('5511 · Site')
     expect(leadDealTitle(null, '5511', 'Site')).toBe('5511 · Site')
+  })
+})
+
+// ------------------------------------------------------------
+// Site bot -> real mapper + real ingest (R8): the answers a visitor gives end up
+// in the same contact / custom field / deal / event rows a webhook would write.
+// ------------------------------------------------------------
+describe('site bot answers through the real ingest', () => {
+  const CF = '11111111-1111-4111-8111-111111111111'
+  const config = (() => {
+    const r = validateBotConfig({
+      ...defaultBotConfig(),
+      questions: [
+        ...defaultBotConfig().questions,
+        { id: 'mail', text: 'E-mail?', type: 'email', required: false },
+        { id: 'plano', text: 'Qual plano?', type: 'choice', options: ['Ouro', 'Prata'], required: false, target: 'custom', customFieldId: CF },
+        { id: 'obs', text: 'Alguma observação?', type: 'text', required: false },
+      ],
+    })
+    if (!r.ok) throw new Error(r.errors.join('; '))
+    return r.config
+  })()
+
+  function lead(answers: Record<string, string>) {
+    const checked = validateAnswers(config, answers)
+    if (!checked.ok) throw new Error(checked.error)
+    return buildLeadFromAnswers(config, checked.answers, { at: '2026-11-09T12:00:00.000Z', text: config.lgpd.text, linkUrl: '' })
+  }
+
+  const run = (built: ReturnType<typeof lead>, options = {}) =>
+    ingestLead(makeDb(), source({ field_map: built.fieldMap }), built.payload, { dealNotes: built.dealNotes, keepExistingCustomValues: true, ...options })
+
+  const ANSWERS = { nome: 'Ana Souza', whatsapp: '(11) 98765-4321', mail: 'ana@exemplo.com', plano: 'Prata', obs: 'Quero visitar a loja' }
+
+  beforeEach(() => {
+    state.custom_fields.push({ id: CF, account_id: ACCT })
+  })
+
+  it('creates the contact, the custom value, the deal with the Q&A note, and an event holding the answers', async () => {
+    const built = lead(ANSWERS)
+    const res = await run(built)
+    expect(res.status).toBe('ok')
+    expect(state.contacts[0]).toMatchObject({ name: 'Ana Souza', phone: '5511987654321', email: 'ana@exemplo.com' })
+    expect(state.contact_custom_values).toEqual([expect.objectContaining({ custom_field_id: CF, value: 'Prata' })])
+    expect(state.deals[0]).toMatchObject({ pipeline_id: 'pipe-1', stage_id: 'stage-1', title: 'Ana Souza · Landing Inverno' })
+    expect(state.deals[0].notes).toBe('Respostas do robô do site\nE-mail?: ana@exemplo.com\nQual plano?: Prata\nAlguma observação?: Quero visitar a loja')
+    const payload = state.lead_source_events[0].payload as Record<string, unknown>
+    expect(payload).toMatchObject({ name: 'Ana Souza', a_plano: 'Prata', a_obs: 'Quero visitar a loja' })
+    expect(payload._consent).toEqual({ at: '2026-11-09T12:00:00.000Z', text: config.lgpd.text, link: '' })
+    expect(eventAnswerLines(config, payload)).toContain('Alguma observação?: Quero visitar a loja')
+  })
+
+  it('a repeated contact keeps its data and its custom value, creates no second deal, and the answers stay in the event', async () => {
+    state.contacts.push({ id: 'contact-1', account_id: ACCT, phone: '5511987654321', name: 'Ana', email: 'antigo@x.com', company: '' })
+    state.contact_custom_values.push({ contact_id: 'contact-1', custom_field_id: CF, value: 'Ouro' })
+    state.deals.push({ id: 'deal-open', account_id: ACCT, contact_id: 'contact-1', pipeline_id: 'pipe-1', status: 'open', title: 'Antigo' })
+    const res = await run(lead(ANSWERS))
+    expect(res.status).toBe('duplicate')
+    expect(state.contacts).toHaveLength(1)
+    expect(state.contacts[0]).toMatchObject({ name: 'Ana', email: 'antigo@x.com' })
+    expect(state.contact_custom_values).toHaveLength(1)
+    expect(state.contact_custom_values[0].value).toBe('Ouro')
+    expect(state.deals).toHaveLength(1)
+    expect(state.deals[0]).not.toHaveProperty('notes')
+    // the Q&A is not lost: the events view reads it from the payload
+    const payload = state.lead_source_events[0].payload as Record<string, unknown>
+    expect(eventAnswerLines(config, payload)).toEqual([
+      'Qual é o seu nome?: Ana Souza',
+      'Qual é o seu WhatsApp (com DDD)?: 5511987654321',
+      'E-mail?: ana@exemplo.com',
+      'Qual plano?: Prata',
+      'Alguma observação?: Quero visitar a loja',
+    ])
+  })
+
+  it('flags a second visit from the same contact inside 24 hours', async () => {
+    const first = await run(lead(ANSWERS), { checkRecentRepeat: 24 })
+    expect(first.recentRepeat).toBeUndefined()
+    const second = await run(lead(ANSWERS), { checkRecentRepeat: 24 })
+    expect(second).toMatchObject({ duplicate: true, recentRepeat: true })
+  })
+
+  it('does not write a custom value for an id the bot config does not own', async () => {
+    state.custom_fields.length = 0
+    state.custom_fields.push({ id: 'someone-elses', account_id: 'acct-2' })
+    await run(lead(ANSWERS))
+    expect(state.contact_custom_values).toHaveLength(0)
   })
 })

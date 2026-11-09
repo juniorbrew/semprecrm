@@ -39,11 +39,11 @@ O editor do robô tem:
   - **onde a resposta é guardada:** nome do contato, telefone, e-mail, um campo personalizado do contato, ou só na nota do negócio;
   - **obrigatória ou opcional.**
   - **Nome e WhatsApp são sempre obrigatórios.** Sem telefone não há lead, como já acontece nos formulários.
-- **Destino do lead:** funil, etapa, etiquetas e responsável, iguais aos das fontes por webhook.
+- **Destino do lead:** funil, etapa, etiquetas e responsável, iguais aos das fontes por webhook. Funil e etapa são obrigatórios no robô (sem negócio as respostas se perderiam); um robô novo já vem com o primeiro funil e a primeira etapa.
 - **Fim da conversa:**
   - mensagem de agradecimento;
   - liga ou desliga o botão do WhatsApp;
-  - número do WhatsApp: escolhe um dos números conectados da conta ou digita outro;
+  - número do WhatsApp: escolhe um dos números conectados da conta ou digita outro. Num robô novo, se a conta tem número conectado, o botão já vem ligado com ele; ligar o botão sem número é erro;
   - texto da mensagem pronta, com `{nome}`.
 - **Privacidade (LGPD):**
   - texto de consentimento curto, com um link opcional para a política de privacidade do site;
@@ -64,7 +64,7 @@ O editor do robô tem:
 - No fim, o visitante vê o agradecimento e o botão "Continuar no WhatsApp".
 - **No celular,** a janela ocupa a tela inteira e tem botão de fechar.
 - **Acessibilidade:** dá para usar só com o teclado, o leitor de tela anuncia as mensagens novas e as cores têm contraste suficiente.
-- **Se o visitante fechar no meio,** as respostas ficam guardadas só no navegador dele por 1 dia. Se ele voltar, continua de onde parou. Nada é enviado antes do fim.
+- **Se o visitante fechar no meio,** as respostas ficam guardadas só na aba dele (sessionStorage, some ao fechar a aba). Se ele voltar nessa mesma aba, continua de onde parou, desde que as perguntas do robô não tenham mudado. Nada é enviado antes do fim e nada fica guardado no navegador depois que a aba fecha.
 
 ## Técnica
 
@@ -82,7 +82,10 @@ O editor do robô tem:
   - **Limite de envios:** por IP e por robô (ex.: 5 leads a cada 10 minutos por IP e 60 por minuto por robô), no mesmo `checkRateLimit` do webhook.
   - **Anti-robô:**
     - campo escondido "isca": se vier preenchido, o pedido é descartado em silêncio;
-    - tempo mínimo de conversa: menos de 3 segundos é descartado.
+    - tempo mínimo de conversa: menos de 2 segundos é descartado (a digitação do próprio robô conta). O campo isca tem nome neutro (`contact_ref`) para o preenchimento automático do navegador não cair nele;
+    - cada número de telefone só pode ser enviado 2 vezes por dia por robô, e um contato que já passou pelo robô nas últimas 24 horas não dispara a automação de novo (a resposta ao visitante é sempre a mesma);
+    - o nome não pode conter link, endereço de site, e-mail nem número longo;
+    - um contato que já existe nunca tem um valor de campo personalizado sobrescrito pelo robô.
   - **Tamanhos:** cada resposta até 500 caracteres, o pedido inteiro até 8 KB.
   - **Textos:** os textos do visitante são guardados como texto, nunca como HTML, tanto no robô como no CRM.
   - **LGPD:**
@@ -99,6 +102,10 @@ O editor do robô tem:
 - **Configurações:** o editor fica em `src/components/settings/`, ao lado de `lead-sources-settings.tsx`, e reaproveita o seletor de funil, etapa, etiquetas e responsável que já existe.
 - **CSP:** a política do app (`frame-ancestors 'none'`) não muda. O `robo.js` é servido com cache curto (1 hora) e precisa de CORS liberado só para ele.
 - **i18n:** o editor usa o dicionário, com frases de várias palavras e `npm run i18n:split`. O `robo.js` tem os textos próprios dele, porque roda fora do app.
+
+## Contato que volta
+
+Se o contato já tem um negócio aberto no mesmo funil, nenhum negócio novo é criado e a nota com as perguntas e respostas não é gravada (o endpoint é público: acrescentar texto a negócios existentes seria um caminho de spam). As respostas ficam no registro da conversa, em Configurações, Integrações, Robôs do site, "Últimas conversas", como texto simples.
 
 ## Fora do escopo
 

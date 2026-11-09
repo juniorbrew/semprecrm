@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, Loader2, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -58,9 +58,69 @@ function readConfig(source: LeadSource | null): BotConfig {
   return parsed?.ok ? parsed.config : defaultBotConfig();
 }
 
-function nextQuestionId(questions: BotQuestion[]): string {
+/** Random, never reused: a saved chat keyed by a deleted question must not match a new one. */
+function newQuestionId(questions: BotQuestion[]): string {
   const used = new Set(questions.map((q) => q.id));
-  for (let n = questions.length + 1; ; n++) if (!used.has(`q${n}`)) return `q${n}`;
+  for (;;) {
+    const id = `q${Math.random().toString(36).slice(2, 8)}`;
+    if (!used.has(id)) return id;
+  }
+}
+
+/** Every message validateBotConfig / the admin API can send, as the user reads it. */
+const KNOWN_ISSUES = [
+  'botName is required',
+  'botName must be 40 characters or fewer',
+  'bubbleText must be 60 characters or fewer',
+  'color must be #rrggbb',
+  'side must be left or right',
+  'greeting is required',
+  'greeting must be 300 characters or fewer',
+  'questions must be a list',
+  'at most 10 questions',
+  'exactly one name question is required',
+  'exactly one phone question is required',
+  'at most one email question',
+  'each custom field can be used once',
+  'whatsappNumber must have the country code and area code',
+  'thanks is required',
+  'thanks must be 300 characters or fewer',
+  'messageTemplate must be 300 characters or fewer',
+  'consent text is required',
+  'consent text must be 300 characters or fewer',
+  'privacy link must be 300 characters or fewer',
+  'privacy link must be an https address',
+  'domains must be a list',
+  'at most 10 domains',
+  'pipeline is required',
+  'stage is required',
+] as const;
+
+const KNOWN_QUESTION_ISSUES = [
+  'the question needs a text',
+  'the question text is over 200 characters',
+  'the question id is invalid',
+  'the question id is repeated',
+  'the answer type is invalid',
+  'the question is malformed',
+  'pick the contact field for this answer',
+  'choose 2 to 6 answer buttons',
+  'each answer button needs 1 to 60 characters',
+  'answer buttons must be different',
+] as const;
+
+export const BOT_ISSUE_KEYS: readonly string[] = [...KNOWN_ISSUES, ...KNOWN_QUESTION_ISSUES];
+
+/** Translate one validator / admin API message. Unknown ones fall back to the generic sentence. */
+export function describeIssue(msg: string, t: (key: string) => string): string {
+  const q = /^question (\d+): (.+)$/.exec(msg);
+  if (q && (KNOWN_QUESTION_ISSUES as readonly string[]).includes(q[2])) {
+    return `${t('Question number')} ${q[1]}: ${t(q[2])}`;
+  }
+  const d = /^invalid domain: (.*)$/.exec(msg);
+  if (d) return `${t('Invalid site address')}: ${d[1]}`;
+  if ((KNOWN_ISSUES as readonly string[]).includes(msg)) return t(msg);
+  return t('Some bot settings need attention. Check them and save again.');
 }
 
 /** Connected numbers of the account: the QR session and the Meta channel (best effort). */
@@ -130,6 +190,24 @@ export function SiteBotEditor({
   const [domainsText, setDomainsText] = useState(() => readConfig(source).domains.join('\n'));
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [serverIssues, setServerIssues] = useState<string[]>([]);
+  const waTouched = useRef(false);
+
+  // A new bot starts on the first pipeline and its first stage: without a deal
+  // the answers would have nowhere to go.
+  useEffect(() => {
+    if (source || pipelineId || resources.pipelines.length === 0) return;
+    const first = resources.pipelines[0];
+    setPipelineId(first.id);
+    setStageId(resources.stages.find((st) => st.pipeline_id === first.id)?.id ?? '');
+  }, [source, pipelineId, resources.pipelines, resources.stages]);
+
+  // A new bot offers the connected WhatsApp number right away.
+  useEffect(() => {
+    if (source || waTouched.current || numbers.length === 0) return;
+    waTouched.current = true;
+    setCfg((c) => ({ ...c, end: { ...c.end, whatsappEnabled: true, whatsappNumber: numbers[0].digits } }));
+  }, [source, numbers]);
 
   const stages = resources.stages.filter((s) => s.pipeline_id === pipelineId);
 
@@ -146,27 +224,15 @@ export function SiteBotEditor({
   // ---- what to fix, in the user's words ---------------------------------
   const issues: string[] = [];
   if (!name.trim()) issues.push(t('Give the bot a name to find it in the list.'));
-  if (!cfg.appearance.botName.trim()) issues.push(t('Write the name the visitor sees on the bot.'));
-  if (!cfg.greeting.trim()) issues.push(t('Write the first message of the bot.'));
-  if (cfg.questions.some((q) => !q.text.trim())) issues.push(t('Every question needs a text.'));
-  if (cfg.questions.some((q) => q.type === 'choice' && (q.options ?? []).some((o) => !o.trim()))) {
-    issues.push(t('Fill in or remove the empty answer options.'));
+  if (!pipelineId) issues.push(t('Pick the pipeline where new deals land.'));
+  else if (!stageId) issues.push(t('Pick the stage where new deals start.'));
+  const checked = validateBotConfig({ ...cfg, domains: domainTokens });
+  if (!checked.ok) {
+    for (const msg of checked.errors) {
+      const text = describeIssue(msg, t);
+      if (!issues.includes(text)) issues.push(text);
+    }
   }
-  if (cfg.questions.some((q) => q.type === 'choice' && new Set(q.options).size !== (q.options ?? []).length)) {
-    issues.push(t('Answer options must be different from each other.'));
-  }
-  if (cfg.questions.some((q) => q.target === 'custom' && !q.customFieldId)) {
-    issues.push(t('Pick the contact field that stores each answer.'));
-  }
-  if (pipelineId && !stageId) issues.push(t('Pick the stage where new deals start.'));
-  if (cfg.end.whatsappEnabled && !/^[1-9]\d{9,14}$/.test(cfg.end.whatsappNumber)) {
-    issues.push(t('Choose or type the WhatsApp number, with country and area code.'));
-  }
-  if (!cfg.lgpd.text.trim()) issues.push(t('Write the consent text the visitor accepts.'));
-  if (cfg.lgpd.linkUrl.trim() && !/^https:\/\//i.test(cfg.lgpd.linkUrl.trim())) {
-    issues.push(t('The privacy policy link must start with https://'));
-  }
-  if (parsedDomains.some((d) => d === null)) issues.push(t('One of the site addresses is not valid.'));
 
   const set = <K extends keyof BotConfig>(key: K, value: BotConfig[K]) => setCfg((c) => ({ ...c, [key]: value }));
   const setAppearance = (patch: Partial<BotConfig['appearance']>) => set('appearance', { ...cfg.appearance, ...patch });
@@ -194,20 +260,21 @@ export function SiteBotEditor({
     if (cfg.questions.length >= BOT_LIMITS.maxQuestions) return;
     set('questions', [
       ...cfg.questions,
-      { id: nextQuestionId(cfg.questions), text: '', type: 'text', required: false, target: 'note' },
+      { id: newQuestionId(cfg.questions), text: '', type: 'text', required: false, target: 'note' },
     ]);
   }
 
   async function submit() {
     setSubmitted(true);
+    setServerIssues([]);
     if (issues.length > 0 || saving) return;
     setSaving(true);
     try {
       const body = {
         name: name.trim(),
         is_active: isActive,
-        pipeline_id: pipelineId || null,
-        stage_id: pipelineId ? stageId || null : null,
+        pipeline_id: pipelineId,
+        stage_id: stageId,
         tag_ids: tagIds,
         assignee_user_id: assignee || null,
         config,
@@ -218,8 +285,10 @@ export function SiteBotEditor({
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        console.error('[site-bot] save failed', res.status, await res.json().catch(() => ({})));
-        toast.error(t('Some bot settings need attention. Check them and save again.'));
+        const json = (await res.json().catch(() => ({}))) as { details?: unknown };
+        const details = Array.isArray(json.details) ? json.details.filter((d): d is string => typeof d === 'string') : [];
+        setServerIssues(details.length > 0 ? details.map((d) => describeIssue(d, t)) : [t('Some bot settings need attention. Check them and save again.')]);
+        toast.error(t('Failed to save the bot'));
         return;
       }
       const { source: saved } = (await res.json()) as { source: LeadSource };
@@ -526,11 +595,11 @@ export function SiteBotEditor({
                     value={pipelineId}
                     onChange={(e) => {
                       setPipelineId(e.target.value);
-                      setStageId('');
+                      setStageId(resources.stages.find((st) => st.pipeline_id === e.target.value)?.id ?? '');
                     }}
                     className={SELECT_CLASS}
                   >
-                    <option value="">{t("Don't create a deal")}</option>
+                    {pipelineId ? null : <option value="">{t('Pick a pipeline')}</option>}
                     {resources.pipelines.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
@@ -606,7 +675,10 @@ export function SiteBotEditor({
               <div className="flex items-center gap-2">
                 <Switch
                   checked={cfg.end.whatsappEnabled}
-                  onCheckedChange={(on) => setEnd({ whatsappEnabled: on })}
+                  onCheckedChange={(on) => {
+                    waTouched.current = true;
+                    setEnd({ whatsappEnabled: on });
+                  }}
                   aria-label={t('Show the Continue on WhatsApp button')}
                 />
                 <span className="text-sm text-foreground">{t('Show the Continue on WhatsApp button')}</span>
@@ -618,7 +690,10 @@ export function SiteBotEditor({
                     <select
                       id="bot-number"
                       value={numberChoice}
-                      onChange={(e) => setEnd({ whatsappNumber: e.target.value === OTHER_NUMBER ? ' ' : e.target.value })}
+                      onChange={(e) => {
+                        waTouched.current = true;
+                        setEnd({ whatsappNumber: e.target.value === OTHER_NUMBER ? ' ' : e.target.value });
+                      }}
                       className={SELECT_CLASS}
                     >
                       <option value="">{t('Choose a number')}</option>
@@ -689,15 +764,15 @@ export function SiteBotEditor({
                 className="min-h-16 border-border bg-muted font-mono text-foreground"
               />
               <p className="text-xs text-muted-foreground">
-                {t('One address per line. The www version works too. Requests from other sites are refused, and with no address the bot only runs in this preview.')}
+                {t('One address per line. List each subdomain too (blog.minhaloja.com.br): only the exact address and its www version are accepted. For accented domains, use the xn-- form. With no address the bot only runs in this preview.')}
               </p>
             </div>
 
-            {submitted && issues.length > 0 ? (
+            {(submitted && issues.length > 0) || serverIssues.length > 0 ? (
               <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                 <p className="font-medium">{t('Fix these points to save:')}</p>
                 <ul className="mt-1 list-disc pl-5">
-                  {issues.map((issue) => (
+                  {(serverIssues.length > 0 ? serverIssues : issues).map((issue) => (
                     <li key={issue}>{issue}</li>
                   ))}
                 </ul>
@@ -724,7 +799,7 @@ export function SiteBotEditor({
           <aside className="space-y-2 lg:sticky lg:top-0 lg:self-start">
             <p className="text-sm font-medium text-foreground">{t('Live preview')}</p>
             <p className="text-xs text-muted-foreground">{t('This is how visitors see the bot. Nothing you type here is sent or saved.')}</p>
-            <SiteBotPreview config={config} />
+            <SiteBotPreview config={cfg} />
           </aside>
         </div>
       </DialogContent>

@@ -25,6 +25,7 @@ vi.mock('@/lib/supabase/client', () => ({
         select: () => b,
         eq: () => b,
         order: () => b,
+        limit: () => b,
         maybeSingle: async () => ({ data: null }),
         then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: rows[table as 'lead_sources'] ?? [], error: null }).then(ok),
       };

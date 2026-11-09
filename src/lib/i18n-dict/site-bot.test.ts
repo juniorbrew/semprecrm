@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import { translateLiteral } from '@/lib/i18n';
 
+import { BOT_ISSUE_KEYS } from '@/components/settings/site-bot-editor';
+
 import { DICT_SITE_BOT } from './site-bot';
 
 const COMPONENTS = ['site-bot-editor', 'site-bot-preview', 'site-bots-group'].map((f) =>
@@ -38,6 +40,13 @@ describe('site bot dictionary', () => {
       expect(words(pt), pt).toBeGreaterThan(1);
       expect(pt, en).not.toBe(en);
     }
+  });
+
+  it('translates every message the checker can send, and every dictionary entry is used', () => {
+    for (const key of BOT_ISSUE_KEYS) expect(translateLiteral(key, 'pt-BR'), key).not.toBe(key);
+    const used = new Set([...usedKeys(), ...BOT_ISSUE_KEYS]);
+    // Strings the editor composes from parts (see describeIssue) are used by name too.
+    for (const key of Object.keys(DICT_SITE_BOT)) expect(used.has(key), key).toBe(true);
   });
 
   it('keeps what the admin typed out of the translator', () => {

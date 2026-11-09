@@ -95,31 +95,34 @@ export function validateBotConfig(raw: unknown): ConfigResult {
     for (const [i, q] of raw.questions.slice(0, BOT_LIMITS.maxQuestions).entries()) {
       const at = `question ${i + 1}`
       if (!isObj(q)) {
-        errors.push(`${at} must be an object`)
+        errors.push(`${at}: the question is malformed`)
         continue
       }
       const id = typeof q.id === 'string' ? q.id : ''
-      if (!QUESTION_ID_RE.test(id)) errors.push(`${at}: invalid id`)
-      else if (seen.has(id)) errors.push(`${at}: duplicate id`)
+      if (!QUESTION_ID_RE.test(id)) errors.push(`${at}: the question id is invalid`)
+      else if (seen.has(id)) errors.push(`${at}: the question id is repeated`)
       seen.add(id)
       const type = q.type
       if (type !== 'text' && type !== 'choice' && type !== 'name' && type !== 'phone' && type !== 'email') {
-        errors.push(`${at}: invalid type`)
+        errors.push(`${at}: the answer type is invalid`)
         continue
       }
-      const text = str(q.text, BOT_LIMITS.question, `${at} text`, errors, { required: true })
+      const rawText = typeof q.text === 'string' ? q.text.trim() : ''
+      if (!rawText) errors.push(`${at}: the question needs a text`)
+      else if (rawText.length > BOT_LIMITS.question) errors.push(`${at}: the question text is over ${BOT_LIMITS.question} characters`)
+      const text = rawText.slice(0, BOT_LIMITS.question)
       const question: BotQuestion = { id, text, type, required: q.required === true }
       if (type === 'name' || type === 'phone') question.required = true
       if (type === 'choice') {
         const opts = Array.isArray(q.options) ? q.options : []
         const clean = opts.map((o) => (typeof o === 'string' ? o.trim() : ''))
         if (clean.length < BOT_LIMITS.minOptions || clean.length > BOT_LIMITS.maxOptions) {
-          errors.push(`${at}: choose ${BOT_LIMITS.minOptions} to ${BOT_LIMITS.maxOptions} options`)
+          errors.push(`${at}: choose ${BOT_LIMITS.minOptions} to ${BOT_LIMITS.maxOptions} answer buttons`)
         }
         if (clean.some((o) => !o || o.length > BOT_LIMITS.option)) {
-          errors.push(`${at}: each option needs 1 to ${BOT_LIMITS.option} characters`)
+          errors.push(`${at}: each answer button needs 1 to ${BOT_LIMITS.option} characters`)
         }
-        if (new Set(clean).size !== clean.length) errors.push(`${at}: options must be different`)
+        if (new Set(clean).size !== clean.length) errors.push(`${at}: answer buttons must be different`)
         question.options = clean
       }
       if (type === 'text' || type === 'choice') {
@@ -127,7 +130,7 @@ export function validateBotConfig(raw: unknown): ConfigResult {
         question.target = target
         if (target === 'custom') {
           if (typeof q.customFieldId !== 'string' || !UUID_RE.test(q.customFieldId)) {
-            errors.push(`${at}: pick a custom field`)
+            errors.push(`${at}: pick the contact field for this answer`)
           } else {
             question.customFieldId = q.customFieldId
           }
