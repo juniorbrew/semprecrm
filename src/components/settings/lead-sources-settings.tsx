@@ -60,6 +60,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
+import { SiteBotEditor } from './site-bot-editor';
+import { SiteBotsGroup } from './site-bots-group';
 import { SettingsChip } from './settings-chip';
 import { SettingsGroup } from './settings-group';
 import { SettingsPanelHead } from './settings-panel-head';
@@ -78,6 +80,8 @@ type DialogState =
   | { mode: 'closed' }
   | { mode: 'create' }
   | { mode: 'edit'; source: LeadSource };
+
+type BotDialogState = { mode: 'closed' } | { mode: 'create' } | { mode: 'edit'; source: LeadSource };
 
 interface Resources {
   pipelines: Pipeline[];
@@ -111,6 +115,8 @@ export function LeadSourcesSettings() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ mode: 'closed' });
+  const [botDialog, setBotDialog] = useState<BotDialogState>({ mode: 'closed' });
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<LeadSource | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [resources, setResources] = useState<Resources>(EMPTY_RESOURCES);
@@ -166,7 +172,11 @@ export function LeadSourcesSettings() {
     };
   }, [accountId, canManageMembers, supabase]);
 
-  const selected = sources.find((s) => s.id === selectedId) ?? null;
+  // Site bots (migration 108) live in their own group; the webhook list
+  // below is exactly what it was.
+  const webhookSources = sources.filter((s) => s.kind !== 'site_bot');
+  const botSources = sources.filter((s) => s.kind === 'site_bot');
+  const selected = webhookSources.find((s) => s.id === selectedId) ?? null;
 
   function replaceSource(saved: LeadSource) {
     setSources((prev) => {
@@ -196,6 +206,7 @@ export function LeadSourcesSettings() {
       await deleteLeadSource(supabase, toDelete.id);
       setSources((prev) => prev.filter((s) => s.id !== toDelete.id));
       if (selectedId === toDelete.id) setSelectedId(null);
+      if (selectedBotId === toDelete.id) setSelectedBotId(null);
       setToDelete(null);
       toast.success(t('Lead source deleted'));
     } catch (err) {
@@ -278,7 +289,7 @@ export function LeadSourcesSettings() {
                 <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
               ))}
             </div>
-          ) : sources.length === 0 ? (
+          ) : webhookSources.length === 0 ? (
             <div className="py-6 text-center">
               <Webhook className="mx-auto size-5 text-muted-foreground" />
               <p className="mt-2 text-sm font-medium text-foreground">{t('No lead sources yet')}</p>
@@ -308,7 +319,7 @@ export function LeadSourcesSettings() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border border-t border-border">
-                  {sources.map((source) => {
+                  {webhookSources.map((source) => {
                     const isSelected = source.id === selectedId;
                     return (
                       <tr
@@ -375,6 +386,17 @@ export function LeadSourcesSettings() {
         </div>
       </SettingsGroup>
 
+      <SiteBotsGroup
+        bots={botSources}
+        loading={loading}
+        selectedId={selectedBotId}
+        onSelect={setSelectedBotId}
+        onCreate={() => setBotDialog({ mode: 'create' })}
+        onEdit={(bot) => setBotDialog({ mode: 'edit', source: bot })}
+        onDelete={setToDelete}
+        onToggle={(bot, active) => void toggleActive(bot, active)}
+      />
+
       {selected && (
         <SourceDetail
           key={selected.id}
@@ -411,6 +433,18 @@ export function LeadSourcesSettings() {
               setSelectedId(source.id);
               toast.success(t('Lead source created'));
             }
+          }}
+        />
+      )}
+
+      {botDialog.mode !== 'closed' && accountId && (
+        <SiteBotEditor
+          source={botDialog.mode === 'edit' ? botDialog.source : null}
+          resources={resources}
+          onClose={() => setBotDialog({ mode: 'closed' })}
+          onSaved={(saved) => {
+            replaceSource(saved);
+            setSelectedBotId(saved.id);
           }}
         />
       )}
