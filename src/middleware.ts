@@ -125,6 +125,6 @@ export const config = {
     // Installed-app files (manifest + generated icons, no file extension) are
     // public too: a pending MFA challenge must not redirect them, or Chrome
     // drops the app's installability.
-    '/((?!_next/static|_next/image|favicon.ico|api/v1/|manifest\\.webmanifest$|icon$|icons/|apple-icon$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/v1/|manifest\\.webmanifest$|robo\\.js$|icon$|icons/|apple-icon$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -154,6 +154,18 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // The site bot script (public/robo.js) is loaded by OTHER people's
+        // websites: short cache, readable from any origin. Declared after
+        // the public rule above so these values win. The app CSP and
+        // frame-ancestors are untouched.
+        source: "/robo.js",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=3600" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
+        ],
+      },
       // `/:path*` also matches the bare prefix (zero segments).
       ...NO_STORE_PREFIXES.map((prefix) => ({
         source: `/${prefix}/:path*`,
