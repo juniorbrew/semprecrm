@@ -23,8 +23,10 @@
 --                               writer: deal form, automations, lead capture, AI). User roles
 --                               cannot choose it on insert. BEFORE UPDATE: only admin+ (owner
 --                               counts) may change origin_id; stamps origin_set_by / origin_set_at.
---   4. origin_report(): the numbers of Reports -> "Origem dos clientes", SECURITY INVOKER
---      (RLS scopes the rows), grants in the 083-086 style.
+--   4. record_lead_origin(): the single write path of a touch (service_role only): advisory lock,
+--      24h dedup, 50-per-day cap, insert and pointers in ONE statement.
+--   5. origin_report(): the numbers of Reports -> "Origem dos clientes", SECURITY INVOKER
+--      (RLS scopes the rows), grants in the 083-086 style; finite period of at most 400 days.
 --
 -- Billing block (094): authenticated has no write grant on lead_origins, so there is no
 -- read-only RESTRICTIVE policy to add; deals / contacts keep theirs (an origin change on a
@@ -263,15 +265,140 @@ ALTER TABLE public.lead_origins ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lead_origins_select ON public.lead_origins;
 CREATE POLICY lead_origins_select ON public.lead_origins FOR SELECT USING (public.is_account_member(account_id));
 
+-- ---- origin buckets ---------------------------------------------------------------
+-- What a touch is called in the report (ad > campaign > referrer > paid click id > direct). A NULL
+-- kind (no touch) is "direct". Same order as originName() in src/lib/lead-origins/label.ts.
+CREATE OR REPLACE FUNCTION private.origin_bucket(
+  p_kind text, p_channel text, p_headline text, p_ad_id text, p_source_id text,
+  p_utm_campaign text, p_utm_source text, p_referrer_host text, p_click_id_type text
+)
+RETURNS TABLE (t text, ch text, nm text, src text)
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_temp
+AS $$
+  SELECT
+    CASE WHEN p_kind IN ('ad', 'post') THEN 'ad'
+         WHEN p_utm_campaign IS NOT NULL OR (p_kind = 'link' AND p_source_id IS NOT NULL) THEN 'campaign'
+         WHEN p_referrer_host IS NOT NULL THEN 'referrer'
+         WHEN p_click_id_type IN ('gclid', 'fbclid') THEN 'paid'
+         ELSE 'direct' END,
+    CASE WHEN p_kind IS NULL THEN '' ELSE coalesce(p_channel, '') END,
+    CASE WHEN p_kind IN ('ad', 'post') THEN coalesce(p_headline, p_ad_id, p_source_id, '')
+         WHEN p_utm_campaign IS NOT NULL THEN p_utm_campaign
+         WHEN p_kind = 'link' AND p_source_id IS NOT NULL THEN p_source_id
+         WHEN p_referrer_host IS NOT NULL THEN p_referrer_host
+         WHEN p_click_id_type = 'gclid' THEN 'Google Ads'
+         WHEN p_click_id_type = 'fbclid' THEN 'Facebook/Instagram Ads'
+         ELSE '' END,
+    CASE WHEN p_kind IS NOT NULL AND p_kind NOT IN ('ad', 'post') THEN coalesce(p_utm_source, '') ELSE '' END
+$$;
+REVOKE ALL ON FUNCTION private.origin_bucket(text, text, text, text, text, text, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.origin_bucket(text, text, text, text, text, text, text, text, text) TO authenticated, service_role;
+
+-- ---- record_lead_origin ------------------------------------------------------------
+-- The ONE write path of a touch (service_role only; the app's recordTouch is a single rpc call), so a
+-- slow or killed request never leaves a touch without its pointers. Under an advisory lock on the
+-- contact (two deliveries of the same ad never both insert):
+--   * at most 50 touches per contact in 24h (a sender cannot flood the table);
+--   * the same touch (channel, kind, ad / source / source_url / utm_source / utm_campaign / utm_content /
+--     referrer host) in the same conversation inside 24h is not a new touch;
+--   * last_origin_id moves only to a touch that is not older than the current last one;
+--   * first_origin_id is set only when empty AND p_allow_first (site / form submissions that did not
+--     create the contact cannot claim the "first touch" of a customer that already existed).
+-- Returns the new touch id, or NULL when nothing was written.
+CREATE OR REPLACE FUNCTION public.record_lead_origin(
+  p_account_id      uuid,
+  p_contact_id      uuid,
+  p_conversation_id uuid,
+  p_channel         text,
+  p_kind            text,
+  p_ad_id           text,
+  p_source_id       text,
+  p_source_url      text,
+  p_headline        text,
+  p_utm_source      text,
+  p_utm_medium      text,
+  p_utm_campaign    text,
+  p_utm_content     text,
+  p_utm_term        text,
+  p_referrer_host   text,
+  p_click_id_type   text,
+  p_click_id        text,
+  p_occurred_at     timestamptz,
+  p_allow_first     boolean
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_id uuid;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext(p_contact_id::text));
+
+  IF (SELECT count(*) FROM public.lead_origins o
+       WHERE o.contact_id = p_contact_id AND o.occurred_at >= p_occurred_at - interval '24 hours') >= 50 THEN
+    RETURN NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.lead_origins o
+     WHERE o.contact_id = p_contact_id
+       AND o.occurred_at >= p_occurred_at - interval '24 hours'
+       AND o.conversation_id IS NOT DISTINCT FROM p_conversation_id
+       AND o.channel = p_channel AND o.kind = p_kind
+       AND o.ad_id IS NOT DISTINCT FROM p_ad_id
+       AND o.source_id IS NOT DISTINCT FROM p_source_id
+       AND o.source_url IS NOT DISTINCT FROM p_source_url
+       AND o.utm_source IS NOT DISTINCT FROM p_utm_source
+       AND o.utm_campaign IS NOT DISTINCT FROM p_utm_campaign
+       AND o.utm_content IS NOT DISTINCT FROM p_utm_content
+       AND o.referrer_host IS NOT DISTINCT FROM p_referrer_host
+     ORDER BY o.occurred_at DESC
+     LIMIT 1
+  ) THEN
+    RETURN NULL;
+  END IF;
+
+  INSERT INTO public.lead_origins (
+    account_id, contact_id, conversation_id, channel, kind, ad_id, source_id, source_url, headline,
+    utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer_host, click_id_type, click_id, occurred_at
+  ) VALUES (
+    p_account_id, p_contact_id, p_conversation_id, p_channel, p_kind, p_ad_id, p_source_id, p_source_url, p_headline,
+    p_utm_source, p_utm_medium, p_utm_campaign, p_utm_content, p_utm_term, p_referrer_host, p_click_id_type, p_click_id, p_occurred_at
+  ) RETURNING id INTO v_id;
+
+  UPDATE public.contacts c
+     SET last_origin_id = v_id
+   WHERE c.id = p_contact_id AND c.account_id = p_account_id
+     AND (c.last_origin_id IS NULL
+          OR p_occurred_at >= (SELECT o.occurred_at FROM public.lead_origins o WHERE o.id = c.last_origin_id));
+
+  IF p_allow_first THEN
+    UPDATE public.contacts c
+       SET first_origin_id = v_id
+     WHERE c.id = p_contact_id AND c.account_id = p_account_id AND c.first_origin_id IS NULL;
+  END IF;
+  RETURN v_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.record_lead_origin(uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, timestamptz, boolean)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_lead_origin(uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, timestamptz, boolean)
+  TO service_role;
+
 -- ---- origin_report ----------------------------------------------------------
 -- One row per origin bucket. Bucket = what the customer sees (spec): an ad (kind ad / post:
 -- headline, else the ad / source id) per channel; else a campaign (utm_campaign, or the ref of a
--- link) per utm_source; else the referrer host; else "direct" (no touch at all). Cohorts are
+-- link) per utm_source; else the referrer host; else "paid" (only a Google / Facebook click id:
+-- "Google Ads" / "Facebook/Instagram Ads"); else "direct" (no touch at all). Cohorts are
 -- by creation date: customers = contacts created in [p_start, p_end) by their FIRST touch;
 -- deals = deals created in the range by deals.origin_id; won = those of them now won.
--- p_channel keeps only buckets of that channel (direct is dropped); p_pipeline_id narrows the
--- deals and counts only contacts that have a deal in that pipeline. Names are the customer's
--- free text (ad / campaign): the app shows them as data.
+-- Only the touches those rows point at are classified (a lateral join by primary key), never the whole
+-- table. p_channel keeps only buckets of that channel (direct is dropped); p_pipeline_id narrows the
+-- deals and counts only contacts that have a deal in that pipeline. The range must be finite and at
+-- most 400 days. Names are the customer's free text (ad / campaign): the app shows them as data.
 CREATE OR REPLACE FUNCTION public.origin_report(
   p_start       timestamptz,
   p_end         timestamptz,
@@ -290,42 +417,39 @@ RETURNS TABLE (
   conversion_pct numeric,
   avg_ticket     numeric
 )
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SET search_path = public, pg_temp
 AS $$
-  WITH bucket AS (
-    SELECT o.id,
-      CASE WHEN o.kind IN ('ad', 'post') THEN 'ad'
-           WHEN o.utm_campaign IS NOT NULL OR (o.kind = 'link' AND o.source_id IS NOT NULL) THEN 'campaign'
-           WHEN o.referrer_host IS NOT NULL THEN 'referrer'
-           ELSE 'direct' END AS t,
-      o.channel AS ch,
-      CASE WHEN o.kind IN ('ad', 'post') THEN coalesce(o.headline, o.ad_id, o.source_id, '')
-           WHEN o.utm_campaign IS NOT NULL THEN o.utm_campaign
-           WHEN o.kind = 'link' AND o.source_id IS NOT NULL THEN o.source_id
-           WHEN o.referrer_host IS NOT NULL THEN o.referrer_host
-           ELSE '' END AS nm,
-      CASE WHEN o.kind NOT IN ('ad', 'post') THEN coalesce(o.utm_source, '') ELSE '' END AS src
-    FROM public.lead_origins o
-  ),
-  cust AS (
-    SELECT coalesce(b.t, 'direct') AS t, coalesce(b.ch, '') AS ch, coalesce(b.nm, '') AS nm, coalesce(b.src, '') AS src,
-           count(*)::integer AS n
+BEGIN
+  IF p_start IS NULL OR p_end IS NULL OR NOT isfinite(p_start) OR NOT isfinite(p_end) THEN
+    RAISE EXCEPTION 'origin_report needs a finite period' USING ERRCODE = '22023';
+  END IF;
+  IF p_end - p_start > interval '400 days' THEN
+    RAISE EXCEPTION 'origin_report period is limited to 400 days' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
+  WITH cust AS (
+    SELECT b.t, b.ch, b.nm, b.src, count(*)::integer AS n
       FROM public.contacts c
-      LEFT JOIN bucket b ON b.id = c.first_origin_id
+      LEFT JOIN public.lead_origins o ON o.id = c.first_origin_id
+      CROSS JOIN LATERAL (SELECT * FROM private.origin_bucket(o.kind, o.channel, o.headline, o.ad_id, o.source_id,
+                                                              o.utm_campaign, o.utm_source, o.referrer_host, o.click_id_type)) b
      WHERE c.created_at >= p_start AND c.created_at < p_end
        AND (p_pipeline_id IS NULL OR EXISTS (
              SELECT 1 FROM public.deals d WHERE d.contact_id = c.id AND d.pipeline_id = p_pipeline_id))
      GROUP BY 1, 2, 3, 4
   ),
   dl AS (
-    SELECT coalesce(b.t, 'direct') AS t, coalesce(b.ch, '') AS ch, coalesce(b.nm, '') AS nm, coalesce(b.src, '') AS src,
+    SELECT b.t, b.ch, b.nm, b.src,
            count(*)::integer AS created,
            (count(*) FILTER (WHERE d.status = 'won'))::integer AS won,
            coalesce(sum(d.value) FILTER (WHERE d.status = 'won'), 0) AS won_value
       FROM public.deals d
-      LEFT JOIN bucket b ON b.id = d.origin_id
+      LEFT JOIN public.lead_origins o ON o.id = d.origin_id
+      CROSS JOIN LATERAL (SELECT * FROM private.origin_bucket(o.kind, o.channel, o.headline, o.ad_id, o.source_id,
+                                                              o.utm_campaign, o.utm_source, o.referrer_host, o.click_id_type)) b
      WHERE d.created_at >= p_start AND d.created_at < p_end
        AND (p_pipeline_id IS NULL OR d.pipeline_id = p_pipeline_id)
      GROUP BY 1, 2, 3, 4
@@ -344,6 +468,7 @@ AS $$
    WHERE p_channel IS NULL OR j.ch = p_channel
    ORDER BY j.won_value DESC, j.won DESC, j.customers DESC, j.nm
    LIMIT 500;
+END;
 $$;
 REVOKE ALL ON FUNCTION public.origin_report(timestamptz, timestamptz, text, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.origin_report(timestamptz, timestamptz, text, uuid) TO authenticated, service_role;

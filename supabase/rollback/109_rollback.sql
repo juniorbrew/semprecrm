@@ -5,6 +5,8 @@ BEGIN;
 DROP TRIGGER IF EXISTS deals_origin_guard ON public.deals;
 DROP TRIGGER IF EXISTS contacts_origin_guard ON public.contacts;
 DROP FUNCTION IF EXISTS public.origin_report(timestamptz, timestamptz, text, uuid);
+DROP FUNCTION IF EXISTS private.origin_bucket(text, text, text, text, text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.record_lead_origin(uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, timestamptz, boolean);
 DROP FUNCTION IF EXISTS public.deals_origin_guard();
 DROP FUNCTION IF EXISTS public.contacts_origin_guard();
 ALTER TABLE public.deals DROP COLUMN IF EXISTS origin_set_at;

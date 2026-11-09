@@ -145,6 +145,11 @@ SELECT pg_temp.assert_true((SELECT customers = 2 AND deals_created = 3 FROM orig
 SELECT pg_temp.assert_true((SELECT customers = 1 AND deals_created = 2 FROM origin_report(now() - interval '1 day', now() + interval '1 day', NULL, '10900000-0000-4000-8000-0000000000f1') WHERE origin_type = 'direct'), 'pipeline 1 direct');
 -- a range with nothing
 SELECT pg_temp.assert_eq((SELECT count(*) FROM origin_report(now() - interval '10 days', now() - interval '9 days')), 0, 'empty period');
+SELECT pg_temp.assert_fails_with($q$SELECT * FROM origin_report('-infinity', now())$q$, '22023', 'report rejects an infinite start');
+SELECT pg_temp.assert_fails_with($q$SELECT * FROM origin_report(now() - interval '1 day', 'infinity')$q$, '22023', 'report rejects an infinite end');
+SELECT pg_temp.assert_fails_with($q$SELECT * FROM origin_report(NULL, now())$q$, '22023', 'report rejects a missing bound');
+SELECT pg_temp.assert_fails_with($q$SELECT * FROM origin_report(now() - interval '401 days', now())$q$, '22023', 'report rejects a period over 400 days');
+SELECT pg_temp.assert_true((SELECT count(*) >= 0 FROM origin_report(now() - interval '400 days', now())), 'report accepts exactly 400 days');
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', '', true);
 
@@ -234,6 +239,73 @@ RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT pg_temp.assert_true((SELECT origin_id = '10900000-0000-4000-8000-0000000000a1' FROM deals WHERE id = '10900000-0000-4000-8000-000000000d01'), 'origin unchanged on the read-only account');
 UPDATE accounts SET plan_status = 'active' WHERE id = (SELECT acc_a FROM ctx);
+
+-- ---- record_lead_origin: the single write path (run as the superuser = service_role's rights) --------
+INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
+  ('10900000-0000-4000-8000-0000000000c6', '10900000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900010006', 'C6'),
+  ('10900000-0000-4000-8000-0000000000c7', '10900000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900010007', 'C7');
+CREATE FUNCTION pg_temp.rec(p_contact uuid, p_ad text, p_url text, p_at timestamptz, p_first boolean, p_conv uuid DEFAULT NULL, p_account uuid DEFAULT NULL)
+RETURNS uuid LANGUAGE sql AS $$
+  SELECT public.record_lead_origin(coalesce(p_account, (SELECT acc_a FROM ctx)), p_contact, p_conv, 'instagram', 'ad', p_ad, NULL, p_url, 'Anuncio',
+                                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, p_at, p_first)
+$$;
+CREATE TEMP TABLE rec_ids(label text PRIMARY KEY, id uuid);
+INSERT INTO rec_ids VALUES
+  ('a', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/a', now() - interval '1 hour', false));
+SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'a'), 'first touch is recorded');
+SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'a') AND first_origin_id IS NULL FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'),
+  'allow_first = false: last moves, first stays empty');
+-- the same touch inside 24h is nothing new
+SELECT pg_temp.assert_true(pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/a', now(), false) IS NULL, 'same touch inside 24h: dedup');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM lead_origins WHERE contact_id = '10900000-0000-4000-8000-0000000000c6'), 1, 'dedup wrote no row');
+-- source_url is part of the identity
+INSERT INTO rec_ids VALUES ('b', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/other', now(), false));
+SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'b'), 'another source_url is another touch');
+SELECT pg_temp.assert_true(pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-A', 'https://fb.me/other', now(), false) IS NULL, 'the repeat of that one is dedup again');
+-- an older touch is stored but does not move last
+INSERT INTO rec_ids VALUES ('old', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-OLD', NULL, now() - interval '5 hours', false));
+SELECT pg_temp.assert_true((SELECT id IS NOT NULL FROM rec_ids WHERE label = 'old'), 'an older touch is still stored');
+SELECT pg_temp.assert_true((SELECT last_origin_id = (SELECT id FROM rec_ids WHERE label = 'b') FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'an older touch does not move last');
+-- allow_first = true fills an empty first, once
+INSERT INTO rec_ids VALUES ('c', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-C', NULL, now(), true));
+SELECT pg_temp.assert_true((SELECT first_origin_id = (SELECT id FROM rec_ids WHERE label = 'c') FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'allow_first = true sets an empty first');
+INSERT INTO rec_ids VALUES ('d', pg_temp.rec('10900000-0000-4000-8000-0000000000c6', 'AD-D', NULL, now(), true));
+SELECT pg_temp.assert_true((SELECT first_origin_id = (SELECT id FROM rec_ids WHERE label = 'c') AND last_origin_id = (SELECT id FROM rec_ids WHERE label = 'd')
+   FROM contacts WHERE id = '10900000-0000-4000-8000-0000000000c6'), 'first is never replaced; last follows');
+-- at most 50 touches per contact per 24h
+DO $$
+DECLARE i int;
+BEGIN
+  FOR i IN 1..50 LOOP
+    PERFORM pg_temp.rec('10900000-0000-4000-8000-0000000000c7', 'AD-' || i, NULL, now(), false);
+  END LOOP;
+END $$;
+SELECT pg_temp.assert_eq((SELECT count(*) FROM lead_origins WHERE contact_id = '10900000-0000-4000-8000-0000000000c7'), 50, '50 distinct touches are stored');
+SELECT pg_temp.assert_true(pg_temp.rec('10900000-0000-4000-8000-0000000000c7', 'AD-51', NULL, now(), false) IS NULL, 'the 51st touch in 24h is refused');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM lead_origins WHERE contact_id = '10900000-0000-4000-8000-0000000000c7'), 50, 'cap wrote no row');
+-- a contact of another account is refused by the guard
+SELECT pg_temp.assert_fails_with($q$SELECT pg_temp.rec('10900000-0000-4000-8000-0000000000cb', 'AD-X', NULL, now(), true)$q$, '23503', 'record_lead_origin: contact of another account');
+-- who can run it
+SELECT pg_temp.assert_true(has_function_privilege('service_role', 'public.record_lead_origin(uuid,uuid,uuid,text,text,text,text,text,text,text,text,text,text,text,text,text,text,timestamptz,boolean)', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.record_lead_origin(uuid,uuid,uuid,text,text,text,text,text,text,text,text,text,text,text,text,text,text,timestamptz,boolean)', 'EXECUTE')
+  AND NOT has_function_privilege('anon', 'public.record_lead_origin(uuid,uuid,uuid,text,text,text,text,text,text,text,text,text,text,text,text,text,text,timestamptz,boolean)', 'EXECUTE'),
+  'only service_role executes record_lead_origin');
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10900000-0000-4000-8000-00000000000a', true);
+SELECT pg_temp.assert_fails_with(format($q$SELECT public.record_lead_origin(%L, '10900000-0000-4000-8000-0000000000c6', NULL, 'instagram', 'ad', 'AD-Z', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, now(), true)$q$, (SELECT acc_a FROM ctx)),
+  '42501', 'authenticated cannot call record_lead_origin');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
+SET ROLE anon;
+SELECT pg_temp.assert_fails_with(format($q$SELECT public.record_lead_origin(%L, '10900000-0000-4000-8000-0000000000c6', NULL, 'instagram', 'ad', 'AD-Z', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, now(), true)$q$, (SELECT acc_a FROM ctx)),
+  '42501', 'anon cannot call record_lead_origin');
+RESET ROLE;
+
+-- the click id of a Google / Facebook visit with nothing else is named after the network
+SELECT pg_temp.assert_true((SELECT nm = 'Google Ads' AND t = 'paid' FROM private.origin_bucket('campaign', 'site_bot', NULL, NULL, NULL, NULL, NULL, NULL, 'gclid')), 'gclid only: Google Ads');
+SELECT pg_temp.assert_true((SELECT nm = 'Facebook/Instagram Ads' AND t = 'paid' FROM private.origin_bucket('campaign', 'site_bot', NULL, NULL, NULL, NULL, NULL, NULL, 'fbclid')), 'fbclid only: Facebook/Instagram Ads');
+SELECT pg_temp.assert_true((SELECT t = 'referrer' FROM private.origin_bucket('campaign', 'site_bot', NULL, NULL, NULL, NULL, NULL, 'google.com', 'gclid')), 'a referrer beats the click id');
+SELECT pg_temp.assert_true((SELECT t = 'direct' AND ch = '' FROM private.origin_bucket(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)), 'no touch is direct');
 
 -- ---- LGPD: deleting a contact's touches nulls every pointer; a hard delete cascades --------
 DELETE FROM lead_origins WHERE contact_id = '10900000-0000-4000-8000-0000000000c1';
