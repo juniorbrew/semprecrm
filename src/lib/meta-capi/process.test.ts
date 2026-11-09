@@ -62,7 +62,7 @@ const run = (db: SupabaseClient, send: (a: never) => Promise<SendOutcome>) =>
 describe('processCapiBatch', () => {
   it('sends and marks sent, decrypting the token and including the test code', async () => {
     const { db, updates } = fakeDb([claimed({ test_event_code: 'TEST1' })])
-    const send = vi.fn(async (_a: unknown) => ok)
+    const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => ok)
     const s = await run(db, send)
     expect(s).toMatchObject({ claimed: 1, sent: 1 })
     const arg = send.mock.calls[0][0] as { token: string; datasetId: string; body: { test_event_code: string; data: unknown[] } }
@@ -98,7 +98,7 @@ describe('processCapiBatch', () => {
 
   it('error 190 pauses the account settings and does not send the rest of that account', async () => {
     const { db, updates } = fakeDb([claimed({ id: 'e1' }), claimed({ id: 'e2' })])
-    const send = vi.fn(async (_a: unknown) => ({ ok: false, error: 'A chave de acesso é inválida ou venceu.', code: 190, retryable: false }) as SendOutcome)
+    const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => ({ ok: false, error: 'A chave de acesso é inválida ou venceu.', code: 190, retryable: false }) as SendOutcome)
     const s = await run(db, send)
     expect(send).toHaveBeenCalledTimes(1)
     expect(s.paused).toBe(1)
@@ -110,7 +110,7 @@ describe('processCapiBatch', () => {
   })
 
   it('cancels (never sends) an anonymized, deleted or non-Meta contact', async () => {
-    const send = vi.fn(async (_a: unknown) => ok)
+    const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => ok)
     const { db, updates } = fakeDb([
       claimed({ id: 'x1', contact_anonymized: true }),
       claimed({ id: 'x2', contact_id: null }),
@@ -123,7 +123,7 @@ describe('processCapiBatch', () => {
   })
 
   it('fails events older than 7 days without calling Meta', async () => {
-    const send = vi.fn(async (_a: unknown) => ok)
+    const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => ok)
     const { db } = fakeDb([claimed({ occurred_at: '2026-11-01T00:00:00Z' })])
     const s = await run(db, send)
     expect(send).not.toHaveBeenCalled()

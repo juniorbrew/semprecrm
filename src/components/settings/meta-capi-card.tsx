@@ -101,7 +101,7 @@ export function MetaCapiCard() {
   const s = data?.settings ?? null;
   const hasToken = Boolean(s?.token_last4);
 
-  async function save(patch: Record<string, unknown>, okMessage?: string) {
+  async function save(patch: Record<string, unknown>) {
     setSaving(true);
     try {
       const res = await apiJson<{ settings: CapiSettings }>('/api/meta-capi/settings', {
@@ -110,7 +110,6 @@ export function MetaCapiCard() {
       });
       setData((d) => ({ settings: res.settings, events: d?.events ?? [] }));
       if ('token' in patch) setToken('');
-      if (okMessage) toast.success(t(okMessage));
       return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('Could not save.'));
@@ -130,7 +129,7 @@ export function MetaCapiCard() {
   async function onSave() {
     const patch: Record<string, unknown> = { dataset_id: trimmed.dataset, test_event_code: trimmed.code };
     if (trimmed.token) patch.token = trimmed.token;
-    await save(patch, 'Meta settings saved.');
+    if (await save(patch)) toast.success(t('Meta settings saved.'));
   }
 
   async function onTest() {

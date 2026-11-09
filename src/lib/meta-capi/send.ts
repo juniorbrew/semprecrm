@@ -42,12 +42,7 @@ export async function sendCapiEvents(opts: {
       signal: controller.signal,
       redirect: 'error',
     })
-    let json: { error?: { code?: unknown } } | null = null
-    try {
-      json = (await res.json()) as typeof json
-    } catch {
-      json = null
-    }
+    const json = (await res.json().catch(() => null)) as { error?: { code?: unknown } } | null
     if (res.ok && !json?.error) return { ok: true, error: null, code: null, retryable: false }
     const code = typeof json?.error?.code === 'number' ? json.error.code : null
     const { error, retryable } = explainMetaError(code, res.status)
