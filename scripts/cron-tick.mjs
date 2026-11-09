@@ -15,7 +15,8 @@
 // (GET /api/support/csat/cron, migration 074) and the snoozed conversations
 // whose time is up (GET /api/inbox/snooze/cron, migration 079), the scheduled messages
 // that are due (GET /api/inbox/scheduled/cron, migration 092) and the outbound webhooks
-// that are due (GET /api/webhooks/cron, migration 093) and the WhatsApp appointment
+// that are due (GET /api/webhooks/cron, migration 093), the Meta Conversions API events
+// (GET /api/meta-capi/cron, migration 110) and the WhatsApp appointment
 // reminders that are due (GET /api/agenda/reminders/cron, migration 097), and every 6 h the Instagram token
 // renewal (GET /api/meta/messaging/cron, part B).
 //
@@ -66,6 +67,7 @@ const ENDPOINTS = [
   { path: '/api/support/sla/cron', method: 'GET', everyMs: null },
   { path: '/api/support/csat/cron', method: 'GET', everyMs: null },
   { path: '/api/webhooks/cron', method: 'GET', everyMs: null },
+  { path: '/api/meta-capi/cron', method: 'GET', everyMs: null },
   { path: '/api/integrations/calendar/sync', method: 'POST', everyMs: CALENDAR_SYNC_INTERVAL_MS },
   { path: '/api/billing/cron', method: 'GET', everyMs: 60 * 60_000 },
   // Instagram token renewal (migration 101 / part B): every 6 h is plenty for 60-day tokens.
@@ -98,7 +100,7 @@ function summarise(body) {
     if (i.errors) parts.push(`inactive_errors=${i.errors}`)
   }
   if (body.lead_events_purged != null) parts.push(`lead_events_purged=${body.lead_events_purged}`)
-  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped', 'failed', 'delivered', 'retrying', 'purged', 'refreshed', 'checked', 'sessions_purged']) {
+  for (const k of ['advanced', 'timed_out', 'expired', 'runs', 'connections', 'synced', 'errors', 'revoked', 'claimed', 'replied', 'handoff', 'woken', 'warnings', 'breaches', 'notified', 'attempted', 'sent', 'skipped', 'failed', 'delivered', 'retrying', 'purged', 'refreshed', 'checked', 'sessions_purged', 'cancelled', 'paused']) {
     if (k in body) parts.push(`${k}=${body[k]}`)
   }
   return parts.join(' ')
