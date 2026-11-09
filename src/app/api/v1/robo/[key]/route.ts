@@ -25,9 +25,7 @@
 // Personal data is never logged and no IP address is stored.
 // ============================================================
 
-import { createHash } from 'node:crypto'
-
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -56,6 +54,12 @@ const PER_KEY_POST = { limit: 60, windowMs: 60_000 }
 const PER_IP_POST = { limit: 5, windowMs: 10 * 60_000 }
 const PER_KEY_READ = { limit: 600, windowMs: 60_000 }
 const PER_IP_READ = { limit: 30, windowMs: 60_000 }
+/** One number can be sent to twice a day per bot: a typed number triggers the tenant's automations. */
+const PER_PHONE_POST = { limit: 2, windowMs: 24 * 60 * 60_000 }
+const REPEAT_WINDOW_HOURS = 24
+
+/** Name of the hidden field in robo.js; neutral so autofill does not fill it for real visitors. */
+const HONEYPOT_FIELD = 'contact_ref'
 
 type RouteContext = { params: Promise<{ key: string }> }
 
@@ -91,6 +95,11 @@ async function findBot(key: string): Promise<Bot | null> {
     console.error('[site-bot] stored bot_config is invalid for source', row.id)
     return null
   }
+  // A bot without a destination would create contacts and lose the answers.
+  if (!row.pipeline_id || !row.stage_id) {
+    console.error('[site-bot] source has no pipeline and stage', row.id)
+    return null
+  }
   if (!(await accountHasModule(db, row.account_id, 'lead_capture', { allowReadOnly: true }))) return null
   const source: IngestLeadSource = {
     id: row.id,
@@ -122,10 +131,11 @@ function gateOrigin(
   return { headers: corsHeaders(origin) }
 }
 
+/** Per IP first, so one address cannot burn the budget every visitor shares. */
 function readLimit(request: Request, key: string) {
-  const perKey = checkRateLimit(`site-bot:read:${key}`, PER_KEY_READ)
-  if (!perKey.success) return perKey
-  return checkRateLimit(`site-bot:read:${getClientIp(request)}:${key}`, PER_IP_READ)
+  const perIp = checkRateLimit(`site-bot:read:${getClientIp(request)}:${key}`, PER_IP_READ)
+  if (!perIp.success) return perIp
+  return checkRateLimit(`site-bot:read:${key}`, PER_KEY_READ)
 }
 
 /** Body text, or null once it grows past the cap (stops reading early). */
@@ -168,19 +178,16 @@ export async function GET(request: Request, { params }: RouteContext) {
   if (!bot) return notFound()
   const gate = gateOrigin(request, bot.config, { required: false })
   if ('denied' in gate) return gate.denied
-  return json({ ok: true, config: publicBotConfig(bot.config) }, 200, gate.headers)
-}
-
-function consentVersion(text: string): string {
-  return createHash('sha256').update(text).digest('hex').slice(0, 12)
+  return json({ ok: true, config: publicBotConfig(bot.config) }, 200, {
+    ...gate.headers,
+    'Cache-Control': 'public, max-age=60',
+  })
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
   const { key } = await params
   if (!isBotPublicKey(key)) return notFound()
 
-  const perKey = checkRateLimit(`site-bot:post:${key}`, PER_KEY_POST)
-  if (!perKey.success) return rateLimitResponse(perKey)
   const perIp = checkRateLimit(`site-bot:post:${getClientIp(request)}:${key}`, PER_IP_POST)
   if (!perIp.success) return rateLimitResponse(perIp)
 
@@ -189,6 +196,9 @@ export async function POST(request: Request, { params }: RouteContext) {
   const gate = gateOrigin(request, bot.config, { required: true })
   if ('denied' in gate) return gate.denied
   const headers = gate.headers
+  // The shared per-bot budget is only spent by requests that got this far.
+  const perKey = checkRateLimit(`site-bot:post:${key}`, PER_KEY_POST)
+  if (!perKey.success) return rateLimitResponse(perKey)
 
   // ---- body: <= 8 KB, JSON object -------------------------------------
   const declared = Number(request.headers.get('content-length') ?? '0')
@@ -215,9 +225,11 @@ export async function POST(request: Request, { params }: RouteContext) {
     config.end.whatsappEnabled ? whatsappLink(config.end.whatsappNumber, config.end.messageTemplate, name) : null
 
   // ---- anti-bot: same success shape, nothing created or recorded --------
-  const honeypot = typeof body.website === 'string' ? body.website.trim() : ''
+  const honeypot = typeof body[HONEYPOT_FIELD] === 'string' ? (body[HONEYPOT_FIELD] as string).trim() : ''
   const elapsed = typeof body.elapsed_ms === 'number' && Number.isFinite(body.elapsed_ms) ? body.elapsed_ms : 0
   if (honeypot || elapsed < BOT_LIMITS.minConversationMs) {
+    // Counter only: which bot and why, nothing the visitor typed.
+    console.info(`[site-bot] dropped key=${key.slice(0, 8)} reason=${honeypot ? 'honeypot' : 'too_fast'}`)
     return json({ ok: true, whatsapp_url: link(cleanText(typedName)) }, 200, headers)
   }
 
@@ -228,43 +240,58 @@ export async function POST(request: Request, { params }: RouteContext) {
     return json({ ok: false, error: checked.error, question: checked.questionId ?? null }, 400, headers)
   }
 
+  // The typed number triggers the tenant's automations: twice a day per bot, then
+  // the same success and nothing else.
+  const phoneAnswer = config.questions.find((q) => q.type === 'phone')
+  const phone = phoneAnswer ? (checked.answers[phoneAnswer.id] ?? '') : ''
+  if (!checkRateLimit(`site-bot:phone:${key}:${phone}`, PER_PHONE_POST).success) {
+    console.info(`[site-bot] dropped key=${key.slice(0, 8)} reason=phone_limit`)
+    return json({ ok: true, whatsapp_url: link(cleanText(typedName)) }, 200, headers)
+  }
+
   const built = buildLeadFromAnswers(config, checked.answers, {
     at: new Date().toISOString(),
-    textVersion: consentVersion(config.lgpd.text),
+    text: config.lgpd.text,
+    linkUrl: config.lgpd.linkUrl,
   })
   const result = await ingestLead(
     supabaseAdmin(),
     { ...source, field_map: built.fieldMap },
     built.payload,
-    { dealNotes: built.dealNotes },
+    { dealNotes: built.dealNotes, keepExistingCustomValues: true, checkRecentRepeat: REPEAT_WINDOW_HOURS },
   )
   if (result.status === 'error') {
     const status = result.httpStatus === 400 ? 400 : 500
     return json({ ok: false, error: status === 400 ? 'invalid_phone' : 'server_error' }, status, headers)
   }
 
-  // Same automations as the webhook (the engine never throws).
+  // Same automations as the webhook, but AFTER the response is sent: a new and
+  // a repeated contact then take the same time. A contact that already came
+  // through this bot in the last 24 h does not fire them again.
   const contactId = result.contactId ?? null
-  if (result.contactCreated) {
+  after(async () => {
+    if (result.contactCreated) {
+      await runAutomationsForTrigger({
+        accountId: source.account_id,
+        triggerType: 'new_contact_created',
+        contactId,
+        context: { vars: { source_id: source.id, source_name: source.name } },
+      })
+    }
+    if (result.duplicate && result.recentRepeat) return
     await runAutomationsForTrigger({
       accountId: source.account_id,
-      triggerType: 'new_contact_created',
+      triggerType: 'lead_captured',
       contactId,
-      context: { vars: { source_id: source.id, source_name: source.name } },
-    })
-  }
-  await runAutomationsForTrigger({
-    accountId: source.account_id,
-    triggerType: 'lead_captured',
-    contactId,
-    context: {
-      vars: {
-        source_id: source.id,
-        source_name: source.name,
-        deal_id: result.dealId ?? null,
-        duplicate: result.duplicate,
+      context: {
+        vars: {
+          source_id: source.id,
+          source_name: source.name,
+          deal_id: result.dealId ?? null,
+          duplicate: result.duplicate,
+        },
       },
-    },
+    })
   })
 
   // Never says whether the contact existed: no ids, no `duplicate`.

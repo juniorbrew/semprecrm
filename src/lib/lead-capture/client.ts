@@ -14,9 +14,14 @@ import { normalizeFieldMap } from './map-fields'
 export const LEAD_SOURCE_COLUMNS =
   'id, account_id, name, token, is_active, pipeline_id, stage_id, tag_ids, assignee_user_id, field_map, kind, public_key, bot_config, received_count, last_received_at, created_by, created_at, updated_at'
 
+/** Same columns without the (unused) token: what the bot admin API returns. */
+export const BOT_SOURCE_COLUMNS = LEAD_SOURCE_COLUMNS.replace(' token,', '')
+
 function normalizeSource(row: Record<string, unknown>): LeadSource {
   return {
     ...(row as unknown as LeadSource),
+    // A bot's token is unused: the settings UI never needs it.
+    ...(row.kind === 'site_bot' ? { token: '' } : {}),
     tag_ids: Array.isArray(row.tag_ids) ? (row.tag_ids as string[]) : [],
     field_map: normalizeFieldMap(row.field_map),
   }

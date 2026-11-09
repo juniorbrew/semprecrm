@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   },
   ingest: vi.fn(),
   automations: [] as Record<string, unknown>[],
+  after: [] as (() => unknown)[],
 }))
 
 vi.mock('@/lib/flows/admin-client', () => ({
@@ -56,6 +57,14 @@ vi.mock('@/lib/lead-capture/ingest', () => ({
   ingestLead: (...args: unknown[]) => h.ingest(...args),
 }))
 
+// `after()` only runs inside a real request: collect the callbacks and run them by hand.
+vi.mock('next/server', async (orig) => ({
+  ...(await orig<typeof import('next/server')>()),
+  after: (fn: () => unknown) => {
+    h.after.push(fn)
+  },
+}))
+
 vi.mock('@/lib/automations/engine', () => ({
   runAutomationsForTrigger: vi.fn(async (args: Record<string, unknown>) => {
     h.automations.push(args)
@@ -66,6 +75,10 @@ import { __resetRateLimitForTests } from '@/lib/rate-limit'
 import { defaultBotConfig } from '@/lib/site-bot'
 
 import { GET, OPTIONS, POST } from './route'
+
+async function flushAfter() {
+  for (const fn of h.after.splice(0)) await fn()
+}
 
 const ctx = (key = KEY) => ({ params: Promise.resolve({ key }) })
 
@@ -87,7 +100,7 @@ function botConfig(over: Record<string, unknown> = {}) {
 const GOOD = {
   answers: { nome: 'Ana Souza', fone: '(11) 98765-4321', mail: 'ana@exemplo.com', cor: 'Azul' },
   consent: true,
-  website: '',
+  contact_ref: '',
   elapsed_ms: 12_000,
 }
 
@@ -128,6 +141,7 @@ beforeEach(() => {
   h.state.account = { plan: 'trial', plan_status: 'trial', plan_expires_at: null, module_overrides: {}, limit_overrides: {} }
   h.state.filters.length = 0
   h.automations.length = 0
+  h.after.length = 0
   h.ingest.mockReset()
   h.ingest.mockResolvedValue({
     status: 'ok',
@@ -262,9 +276,13 @@ describe('POST', () => {
       field_map: { name: 'name', phone: 'phone', email: 'email', custom: { [FIELD]: 'a_cor' } },
     })
     expect(payload).toMatchObject({ name: 'Ana Souza', phone: '5511987654321', email: 'ana@exemplo.com', a_cor: 'Azul' })
-    expect(payload._consent).toMatchObject({ at: expect.any(String), text_version: expect.stringMatching(/^[0-9a-f]{12}$/) })
+    expect(payload._consent).toEqual({ at: expect.any(String), text: defaultBotConfig().lgpd.text, link: '' })
+    expect(options).toMatchObject({ keepExistingCustomValues: true, checkRecentRepeat: 24 })
     expect(JSON.stringify(payload)).not.toMatch(/203\.0\.113/)
     expect(options.dealNotes).toBe('Respostas do robô do site\nE-mail?: ana@exemplo.com\nCor?: Azul')
+    // automations run after the response, not inside it
+    expect(h.automations).toHaveLength(0)
+    await flushAfter()
     expect(h.automations.map((a) => a.triggerType)).toEqual(['new_contact_created', 'lead_captured'])
   })
 
@@ -319,7 +337,7 @@ describe('POST', () => {
     const real = await (await POST(post(GOOD), ctx())).json()
     h.ingest.mockClear()
     h.automations.length = 0
-    const res = await POST(post({ ...GOOD, website: 'http://spam' }, { ip: '198.51.100.3' }), ctx())
+    const res = await POST(post({ ...GOOD, contact_ref: 'http://spam' }, { ip: '198.51.100.3' }), ctx())
     expect(res.status).toBe(200)
     const dropped = await res.json()
     expect(Object.keys(dropped).sort()).toEqual(Object.keys(real).sort())
@@ -342,7 +360,7 @@ describe('POST', () => {
 
   it('a dropped request does not record anything personal', async () => {
     const spies = [vi.spyOn(console, 'log'), vi.spyOn(console, 'error'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'info')]
-    await POST(post({ ...GOOD, website: 'x' }), ctx())
+    await POST(post({ ...GOOD, contact_ref: 'x' }), ctx())
     await POST(post(GOOD), ctx())
     h.ingest.mockResolvedValueOnce({ status: 'error', httpStatus: 500, error: 'boom', duplicate: false, contactCreated: false })
     await POST(post(GOOD, { ip: '198.51.100.8' }), ctx())
@@ -420,8 +438,92 @@ describe('POST', () => {
 
   it('limits the bot to 60 posts per minute across IPs', async () => {
     for (let i = 0; i < 60; i++) {
-      expect((await POST(post({ ...GOOD, website: 'x' }, { ip: `10.0.${Math.floor(i / 200)}.${i}` }), ctx())).status).toBe(200)
+      expect((await POST(post({ ...GOOD, contact_ref: 'x' }, { ip: `10.0.${Math.floor(i / 200)}.${i}` }), ctx())).status).toBe(200)
     }
     expect((await POST(post(GOOD, { ip: '10.9.9.9' }), ctx())).status).toBe(429)
+  })
+})
+
+describe('abuse limits', () => {
+  it('one IP hammering the endpoint does not spend the budget other visitors share', async () => {
+    for (let i = 0; i < 5; i++) expect((await POST(post(GOOD, { ip: '198.51.100.200' }), ctx())).status).toBe(200)
+    for (let i = 0; i < 100; i++) expect((await POST(post(GOOD, { ip: '198.51.100.200' }), ctx())).status).toBe(429)
+    // 5 used above; 55 more from other addresses still fit in the 60/min of the bot
+    for (let i = 0; i < 55; i++) {
+      const ip = `10.1.0.${i + 1}`
+      const res = await POST(post({ ...GOOD, contact_ref: 'x' }, { ip }), ctx())
+      expect(res.status, ip).toBe(200)
+    }
+    expect((await POST(post(GOOD, { ip: '10.2.0.1' }), ctx())).status).toBe(429)
+  })
+
+  it('requests from a foreign origin do not spend the bot budget', async () => {
+    for (let i = 0; i < 100; i++) {
+      expect((await POST(post(GOOD, { origin: 'https://evil.com', ip: `10.3.${Math.floor(i / 200)}.${i}` }), ctx())).status).toBe(403)
+    }
+    expect((await POST(post(GOOD, { ip: '10.4.0.1' }), ctx())).status).toBe(200)
+  })
+
+  it('GET: one IP over its limit does not block the others', async () => {
+    for (let i = 0; i < 30; i++) await GET(get(ORIGIN, '198.51.100.9'), ctx())
+    for (let i = 0; i < 700; i++) expect((await GET(get(ORIGIN, '198.51.100.9'), ctx())).status).toBe(429)
+    expect((await GET(get(ORIGIN, '198.51.100.10'), ctx())).status).toBe(200)
+  })
+
+  it('sends a typed number to the automations at most twice a day per bot, with the same answer', async () => {
+    const sameNumber = (n: number) => post(GOOD, { ip: `198.51.100.${100 + n}` })
+    const bodies = []
+    for (let n = 0; n < 4; n++) {
+      const res = await POST(sameNumber(n), ctx())
+      expect(res.status).toBe(200)
+      bodies.push(await res.json())
+    }
+    expect(h.ingest).toHaveBeenCalledTimes(2)
+    expect(bodies[3]).toEqual(bodies[0])
+    // another number is not affected
+    const other = { ...GOOD, answers: { ...GOOD.answers, fone: '(21) 98888-7777' } }
+    await POST(post(other, { ip: '198.51.100.150' }), ctx())
+    expect(h.ingest).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not fire lead_captured again for a contact that came through this bot in the last 24 h', async () => {
+    h.ingest.mockResolvedValueOnce({ status: 'duplicate', httpStatus: 200, contactId: 'c-1', duplicate: true, contactCreated: false, recentRepeat: true })
+    const res = await POST(post(GOOD), ctx())
+    expect(await res.json()).toEqual({ ok: true, whatsapp_url: expect.any(String) })
+    await flushAfter()
+    expect(h.automations).toHaveLength(0)
+    // a duplicate that is NOT a recent repeat still fires it (and only lead_captured)
+    h.ingest.mockResolvedValueOnce({ status: 'duplicate', httpStatus: 200, contactId: 'c-1', duplicate: true, contactCreated: false, recentRepeat: false })
+    await POST(post(GOOD, { ip: '198.51.100.31' }), ctx())
+    await flushAfter()
+    expect(h.automations.map((a) => a.triggerType)).toEqual(['lead_captured'])
+  })
+
+  it('rejects a name that is a link, with nothing created', async () => {
+    const res = await POST(post({ ...GOOD, answers: { ...GOOD.answers, nome: 'ganhe em www.golpe.com' } }), ctx())
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('invalid_name')
+    expect(h.ingest).not.toHaveBeenCalled()
+  })
+
+  it('counts dropped submissions without personal data', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    await POST(post({ ...GOOD, contact_ref: 'x' }), ctx())
+    await POST(post({ ...GOOD, elapsed_ms: 100 }, { ip: '198.51.100.40' }), ctx())
+    const lines = info.mock.calls.map((c) => String(c[0]))
+    expect(lines).toEqual([`[site-bot] dropped key=${KEY.slice(0, 8)} reason=honeypot`, `[site-bot] dropped key=${KEY.slice(0, 8)} reason=too_fast`])
+  })
+
+  it('treats a bot without pipeline and stage as not found (it would lose the answers)', async () => {
+    h.state.source!.stage_id = null
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect((await GET(get(), ctx())).status).toBe(404)
+    expect((await POST(post(GOOD), ctx())).status).toBe(404)
+  })
+
+  it('lets browsers reuse the public config for a minute', async () => {
+    const res = await GET(get(), ctx())
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60')
+    expect(res.headers.get('vary')).toBe('Origin')
   })
 })

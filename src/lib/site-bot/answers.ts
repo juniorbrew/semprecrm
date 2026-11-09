@@ -25,13 +25,24 @@ export function cleanText(v: string): string {
   return out.replace(/\s{2,}/g, ' ').trim()
 }
 
+/**
+ * A name is shown to staff and to the WhatsApp the bot may message: it must not
+ * carry a link, a domain, an address or a long number (spam / phishing payload).
+ */
+export function looksLikeName(v: string): boolean {
+  if (/https?|www|ftp|:\/\/|@/i.test(v)) return false
+  if (/[a-z0-9-]+\.(com|net|org|br|io|me|co|app|xyz|ly|info|biz|link|site|online|shop|top|club|click|cc|ru|tk)(?![a-z])/i.test(v)) return false
+  return !/\d{5,}/.test(v.replace(/[\s().+-]/g, ''))
+}
+
 function checkOne(q: BotQuestion, raw: string): { ok: true; value: string } | { ok: false; error: string } {
   const v = cleanText(raw)
   if (!v) return { ok: true, value: '' }
   if (v.length > BOT_LIMITS.answer) return { ok: false, error: 'answer_too_long' }
   switch (q.type) {
     case 'name':
-      return v.length > BOT_LIMITS.name ? { ok: false, error: 'answer_too_long' } : { ok: true, value: v }
+      if (v.length > BOT_LIMITS.name) return { ok: false, error: 'answer_too_long' }
+      return looksLikeName(v) ? { ok: true, value: v } : { ok: false, error: 'invalid_name' }
     case 'choice':
       return (q.options ?? []).includes(v) ? { ok: true, value: v } : { ok: false, error: 'invalid_option' }
     case 'email':
@@ -94,7 +105,7 @@ const answerKey = (id: string) => `a_${id}`
 export function buildLeadFromAnswers(
   config: BotConfig,
   answers: Record<string, string>,
-  consent: { at: string; textVersion: string },
+  consent: { at: string; text: string; linkUrl: string },
 ): BuiltLead {
   const payload: Record<string, unknown> = {}
   const fieldMap: LeadSourceFieldMap = { name: 'name', phone: 'phone', email: 'email' }
@@ -114,7 +125,8 @@ export function buildLeadFromAnswers(
     if (q.type !== 'name' && q.type !== 'phone') lines.push(`${q.text}: ${a}`)
   }
   if (Object.keys(custom).length > 0) fieldMap.custom = custom
-  payload._consent = { at: consent.at, text_version: consent.textVersion }
+  // The proof of consent is the text the visitor actually saw, not a hash of it.
+  payload._consent = { at: consent.at, text: consent.text.slice(0, 300), link: consent.linkUrl.slice(0, 300) }
 
   const dealNotes = lines.length > 0 ? ['Respostas do robô do site', ...lines].join('\n').slice(0, 2000) : ''
   return { payload, fieldMap, dealNotes, name: (payload.name as string | undefined) ?? '' }

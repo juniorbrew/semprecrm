@@ -294,6 +294,15 @@ describe('validateAnswers', () => {
     expect(validateAnswers(config, { ...base, obs: ['a'] })).toMatchObject({ error: 'invalid_answers' })
     for (const bad of [null, [], 'x', 5]) expect(validateAnswers(config, bad)).toMatchObject({ error: 'invalid_answers' })
   })
+  it('rejects names that carry a link, a domain, an address or a long number', () => {
+    for (const nome of ['http://x.co', 'www.golpe.com', 'ana@x.com', 'Ligue 11999990000', 'veja bit.ly/abc', 'ganhe.xyz agora', 'Ana 12345678']) {
+      expect(validateAnswers(config, { ...base, nome }), nome).toMatchObject({ ok: false, error: 'invalid_name', questionId: 'nome' })
+    }
+    for (const nome of ['Ana Souza', "D'Ávila Júnior", 'Ana.Coelho', 'José 2º', 'Maria (Mari)']) {
+      expect(validateAnswers(config, { ...base, nome }).ok, nome).toBe(true)
+    }
+  })
+
   it('caps every answer at 500 characters', () => {
     expect(validateAnswers(config, { ...base, obs: 'a'.repeat(500) }).ok).toBe(true)
     expect(validateAnswers(config, { ...base, obs: 'a'.repeat(501) })).toMatchObject({ error: 'answer_too_long' })
@@ -313,7 +322,7 @@ describe('buildLeadFromAnswers', () => {
       { id: 'obs', text: 'Observação?', type: 'text', required: false },
     ]),
   })
-  const consent = { at: '2026-11-09T12:00:00.000Z', textVersion: 'abc123' }
+  const consent = { at: '2026-11-09T12:00:00.000Z', text: 'Concordo em ser contatado.', linkUrl: 'https://loja.com.br/privacidade' }
   const answers = { nome: 'Ana', fone: '5511987654321', mail: 'ana@exemplo.com', cor: 'Azul', obs: 'Quero orçamento' }
 
   it('maps answers to the payload, the field map and the deal note', () => {
@@ -324,7 +333,7 @@ describe('buildLeadFromAnswers', () => {
       email: 'ana@exemplo.com',
       a_cor: 'Azul',
       a_obs: 'Quero orçamento',
-      _consent: { at: consent.at, text_version: 'abc123' },
+      _consent: { at: consent.at, text: 'Concordo em ser contatado.', link: 'https://loja.com.br/privacidade' },
     })
     expect(lead.fieldMap).toEqual({ name: 'name', phone: 'phone', email: 'email', custom: { [FIELD]: 'a_cor' } })
     expect(lead.dealNotes).toBe('Respostas do robô do site\nEmail?: ana@exemplo.com\nCor?: Azul\nObservação?: Quero orçamento')

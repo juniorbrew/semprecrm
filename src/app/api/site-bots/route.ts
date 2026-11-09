@@ -13,7 +13,7 @@ import { NextResponse } from 'next/server'
 import { requireModule, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
-import { LEAD_SOURCE_COLUMNS } from '@/lib/lead-capture'
+import { BOT_SOURCE_COLUMNS } from '@/lib/lead-capture'
 import { generateLeadSourceToken } from '@/lib/lead-capture/token'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { customFieldIds, parseBotWrite } from '@/lib/site-bot/admin-body'
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
         bot_config: write.bot_config,
         created_by: ctx.userId,
       })
-      .select(LEAD_SOURCE_COLUMNS)
+      .select(BOT_SOURCE_COLUMNS)
       .single()
 
     if (error) {
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       actorUserId: ctx.userId,
       action: AUDIT_ACTIONS.LEAD_SOURCE_CREATED,
       entityType: 'lead_source',
-      entityId: (data as { id: string }).id,
+      entityId: (data as unknown as { id: string }).id,
       metadata: { name: write.name, kind: 'site_bot' },
     })
     return NextResponse.json({ source: data }, { status: 201 })

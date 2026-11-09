@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server'
 
 import { requireModule, requireRole, toErrorResponse } from '@/lib/auth/account'
-import { LEAD_SOURCE_COLUMNS } from '@/lib/lead-capture'
+import { BOT_SOURCE_COLUMNS } from '@/lib/lead-capture'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { customFieldIds, parseBotWrite } from '@/lib/site-bot/admin-body'
 
@@ -50,7 +50,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       .eq('id', id)
       .eq('account_id', ctx.accountId)
       .eq('kind', 'site_bot')
-      .select(LEAD_SOURCE_COLUMNS)
+      .select(BOT_SOURCE_COLUMNS)
       .maybeSingle()
     if (error) {
       console.error('[PATCH /api/site-bots/:id] update failed:', error.message)

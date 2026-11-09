@@ -48,7 +48,13 @@ export function parseBotWrite(body: unknown, mode: 'create' | 'update'): BotWrit
     if (v === undefined) errors.push(`${k} must be an id or null`)
     else write[k] = v
   }
-  if (write.pipeline_id === null) write.stage_id = null
+  // A bot without a pipeline and stage creates the contact but no deal, and the
+  // answers would be lost: both are required for a site bot.
+  const needsDestination = mode === 'create' || b.pipeline_id !== undefined || b.stage_id !== undefined
+  if (needsDestination) {
+    if (!write.pipeline_id) errors.push('pipeline is required')
+    else if (!write.stage_id) errors.push('stage is required')
+  }
   if (b.tag_ids !== undefined) {
     const ids = Array.isArray(b.tag_ids) ? b.tag_ids : null
     if (!ids || ids.length > MAX_TAGS || ids.some((t) => typeof t !== 'string' || !UUID_RE.test(t))) {

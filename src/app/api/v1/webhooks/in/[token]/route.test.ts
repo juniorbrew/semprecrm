@@ -37,7 +37,7 @@ vi.mock('@/lib/flows/admin-client', () => ({
             h.state.lookups.push(String(filters[0]?.[1]));
             const s = h.state.source;
             return Promise.resolve({
-              data: s && s.token === filters[0]?.[1] ? s : null,
+              data: s && filters.every(([k, v]) => s[k] === v) ? s : null,
               error: null,
             });
           }
@@ -89,6 +89,7 @@ beforeEach(() => {
     account_id: 'acct-1',
     name: 'Landing',
     token: TOKEN,
+    kind: 'webhook',
     is_active: true,
     pipeline_id: null,
     stage_id: null,
@@ -114,6 +115,15 @@ beforeEach(() => {
     dealId: 'd-1',
     duplicate: false,
     contactCreated: true,
+  });
+});
+
+describe('site bots', () => {
+  it("a bot's unused token never works as a webhook (GET and POST are 404, nothing ingested)", async () => {
+    h.state.source!.kind = 'site_bot';
+    expect((await GET(new Request('http://localhost'), ctx())).status).toBe(404);
+    expect((await POST(post('phone=5511999990000'), ctx())).status).toBe(404);
+    expect(h.ingest).not.toHaveBeenCalled();
   });
 });
 

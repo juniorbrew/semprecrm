@@ -145,6 +145,11 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Cache-Control", value: "no-store" }],
       },
       {
+        // Public bot config: browsers may reuse it for a minute (Vary: Origin is set by the route).
+        source: "/api/v1/robo/:key",
+        headers: [{ key: "Cache-Control", value: "public, max-age=60" }],
+      },
+      {
         source: "/:path((?!_next/static|_next/image|api).*)",
         headers: [
           {

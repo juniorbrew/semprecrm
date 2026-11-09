@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   role: 'admin' as 'admin' | 'agent',
   moduleOk: true,
   inserted: [] as Record<string, unknown>[],
+  selects: [] as string[],
   updated: [] as { patch: Record<string, unknown>; filters: [string, unknown][] }[],
   fields: [{ id: '11111111-1111-4111-8111-111111111111' }] as { id: string }[],
   updateRow: { id: '22222222-2222-4222-8222-222222222222' } as Record<string, unknown> | null,
@@ -30,7 +31,7 @@ vi.mock('@/lib/auth/account', async (orig) => {
         const filters: [string, unknown][] = []
         let patch: Record<string, unknown> | null = null
         const b: Record<string, unknown> = {
-          select: () => b,
+          select: (cols?: string) => (cols && h.selects.push(cols), b),
           eq: (k: string, v: unknown) => (filters.push([k, v]), b),
           in: () => Promise.resolve({ data: h.fields, error: null }),
           insert: (row: Record<string, unknown>) => (h.inserted.push(row), b),
@@ -82,6 +83,7 @@ beforeEach(() => {
   h.role = 'admin'
   h.moduleOk = true
   h.inserted.length = 0
+  h.selects.length = 0
   h.updated.length = 0
   h.fields = [{ id: FIELD }]
   h.updateRow = { id: BOT_ID }
@@ -145,9 +147,21 @@ describe('POST /api/site-bots', () => {
     expect(h.inserted).toHaveLength(0)
   })
 
-  it('drops the stage when there is no pipeline', async () => {
-    await POST(req('POST', bodyOf({ pipeline_id: null })))
-    expect(h.inserted[0]).toMatchObject({ pipeline_id: null, stage_id: null })
+  it('requires a pipeline and a stage: a bot without a deal would lose the answers', async () => {
+    for (const patch of [{ pipeline_id: null }, { pipeline_id: undefined }, { stage_id: null }, { stage_id: undefined }]) {
+      const res = await POST(req('POST', bodyOf(patch)))
+      expect(res.status).toBe(400)
+      expect((await res.json()).details.join(' ')).toMatch(/pipeline|stage/)
+    }
+    expect(h.inserted).toHaveLength(0)
+  })
+
+  it('does not return the unused webhook token of a bot', async () => {
+    await POST(req('POST', bodyOf()))
+    await PATCH(req('PATCH', { is_active: false }), { params: Promise.resolve({ id: BOT_ID }) })
+    const columns = h.selects.filter((c) => c.includes('public_key'))
+    expect(columns).toHaveLength(2)
+    for (const c of columns) expect(c.split(', ')).not.toContain('token')
   })
 })
 
@@ -172,9 +186,10 @@ describe('PATCH /api/site-bots/[id]', () => {
     expect((await PATCH(req('PATCH', { config: { ...defaultBotConfig(), greeting: '' } }), ctx())).status).toBe(400)
   })
 
-  it('clearing the pipeline clears the stage', async () => {
-    await PATCH(req('PATCH', { pipeline_id: null }), ctx())
-    expect(h.updated[0].patch).toEqual({ pipeline_id: null, stage_id: null })
+  it('never clears the destination of a bot', async () => {
+    expect((await PATCH(req('PATCH', { pipeline_id: null }), ctx())).status).toBe(400)
+    expect((await PATCH(req('PATCH', { pipeline_id: '33333333-3333-4333-8333-333333333333' }), ctx())).status).toBe(400)
+    expect(h.updated).toHaveLength(0)
   })
 
   it('404 for an unknown or foreign bot and for a malformed id; 400 for an empty patch; 403 for an agent', async () => {
