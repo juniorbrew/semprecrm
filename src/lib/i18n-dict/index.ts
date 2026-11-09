@@ -20,6 +20,7 @@ import { DICT_FLOWS } from './flows';
 import { DICT_FORECAST } from './forecast';
 import { DICT_INBOX } from './inbox';
 import { DICT_MISC } from './misc';
+import { DICT_ORIGINS } from './origins';
 import { DICT_SETTINGS } from './settings';
 import { DICT_SITE_BOT } from './site-bot';
 import { DICT_PLATFORM } from './platform';
@@ -39,6 +40,7 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_FORECAST,
   ...DICT_INBOX,
   ...DICT_MISC,
+  ...DICT_ORIGINS,
   ...DICT_SETTINGS,
   ...DICT_PLATFORM,
   ...DICT_PRODUCTS,

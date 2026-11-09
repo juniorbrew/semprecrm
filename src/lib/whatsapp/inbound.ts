@@ -41,6 +41,8 @@ import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { AccountReadOnlyError } from '@/lib/billing/read-only'
 import { isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
 import { MessagingSkipError } from '@/lib/meta-messaging/skip'
+import type { OriginTouch } from '@/lib/lead-origins'
+import { recordTouch } from '@/lib/lead-origins/record'
 import type { AccountPreferences, ConversationChannel, MetaMessagingChannel } from '@/types'
 
 /** Message kinds a transport may hand us. Anything else → text. */
@@ -113,6 +115,11 @@ export interface InboundMessageInput {
    * URL for `contacts.avatar_url`, or null. Part of the lazy profile lookup above.
    */
   storeAvatar?: (contactId: string, pictureUrl: string) => Promise<string | null>
+  /**
+   * Where the customer came from, when the message carried it (ad referral, externalAdReply, link
+   * ref). Stored as a lead_origins touch (migration 109); a failure never affects the message.
+   */
+  origin?: OriginTouch | null
 }
 
 export interface ContactProfile {
@@ -993,6 +1000,17 @@ export async function ingestInboundMessage(
   }
   const conversation = conversationOutcome.conversation
   const newConversation = conversationOutcome.created
+
+  // Origin (ad / campaign) of this customer, before anything that may create a deal for them.
+  // recordTouch never throws and gives up after a few seconds.
+  if (input.origin) {
+    await recordTouch(db, {
+      accountId,
+      contactId: contact.id,
+      conversationId: conversation.id as string,
+      touch: input.origin,
+    })
+  }
 
   // Swipe-reply context. A missing parent is fine — NULL, no quote.
   let replyToInternalId: string | null = null

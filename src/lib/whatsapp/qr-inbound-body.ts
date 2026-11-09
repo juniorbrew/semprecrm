@@ -2,6 +2,9 @@
 // (services/wa-gateway InboundPayload). Shared so both routes validate
 // the same way.
 
+import { parseBaileysAd } from '@/lib/lead-origins'
+import type { OriginTouch } from '@/lib/lead-origins'
+
 const QR_MESSAGE_TYPES = new Set([
   'text',
   'image',
@@ -25,6 +28,8 @@ export interface QrMessageBody {
   /** Chat jid as Baileys addressed it (`…@s.whatsapp.net` / `…@lid`). */
   chatJid: string | null
   timestamp: number | string | null
+  /** Click-to-WhatsApp ad forwarded by the gateway (best effort), already parsed and clamped. */
+  origin: OriginTouch | null
 }
 
 /** Null when a required field is missing or the type is unsupported. */
@@ -59,5 +64,6 @@ export function parseQrMessageBody(body: unknown): QrMessageBody | null {
         : null,
     timestamp:
       typeof b.timestamp === 'number' || typeof b.timestamp === 'string' ? b.timestamp : null,
+    origin: parseBaileysAd(b.ad),
   }
 }

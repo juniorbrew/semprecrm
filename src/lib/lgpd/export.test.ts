@@ -82,6 +82,7 @@ describe('buildContactExport — newly covered sections', () => {
       ],
       flow_runs: [{ id: 'fr1', account_id: ACC, contact_id: 'c1', vars: { cpf: '123' } }],
       lead_source_events: [{ id: 'l1', account_id: ACC, contact_id: 'c1', payload: { nome: 'Maria' } }],
+      lead_origins: [{ id: 'lo1', account_id: ACC, contact_id: 'c1', channel: 'instagram', kind: 'ad', headline: 'Promoção sofás', click_id_type: 'ctwa_clid', click_id: 'AfAbC', occurred_at: '2026-11-03T15:00:00Z' }, { id: 'lo2', account_id: ACC, contact_id: 'other', headline: 'Outro' }],
       contact_companies: [{ company_id: 'co1', account_id: ACC, contact_id: 'c1', is_primary: true }],
       csat_responses: [{ id: 's1', account_id: ACC, contact_id: 'c1', score: 4, comment: 'Atendimento rápido' }],
     })
@@ -92,10 +93,34 @@ describe('buildContactExport — newly covered sections', () => {
     expect(out.calendar_events.map((e) => e.id)).toEqual(['ev1', 'ev2'])
     expect(out.flow_runs[0].vars).toEqual({ cpf: '123' })
     expect(out.lead_events[0].payload).toEqual({ nome: 'Maria' })
+    // where the contact came from (touches of this contact only, with the click id: it is the person's own data)
+    expect(out.origins.map((o) => o.id)).toEqual(['lo1'])
+    expect(out.origins[0]).toMatchObject({ click_id_type: 'ctwa_clid', click_id: 'AfAbC' })
+    expect(out.manifest.origins).toEqual({ count: 1, complete: true })
     expect(out.companies).toEqual([{ id: 'co1', name: null, is_primary: true }])
     expect(out.csat).toMatchObject([{ score: 4, comment: 'Atendimento rápido' }])
     expect(out.manifest.tasks).toEqual({ count: 2, complete: true })
     expect(Object.values(out.manifest).every((m) => m.complete)).toBe(true)
     expect(out.warnings).toEqual([])
+  })
+})
+
+describe('buildContactExport — origins read with the server client', () => {
+  it('reads lead_origins (with click_id) through the server client only, scoped by account and contact', async () => {
+    const seed = {
+      contacts: [{ id: 'c1', account_id: ACC, name: 'Maria' }],
+      lead_origins: [
+        { id: 'lo1', account_id: ACC, contact_id: 'c1', click_id_type: 'gclid', click_id: 'G1', occurred_at: '2026-11-03T15:00:00Z' },
+        { id: 'lo2', account_id: 'other-account', contact_id: 'c1', click_id: 'X', occurred_at: '2026-11-04T15:00:00Z' },
+      ],
+    }
+    const user = makeFakeDb(seed, { fail: (table) => (table === 'lead_origins' ? { message: 'permission denied for column click_id' } : null) })
+    const server = makeFakeDb(seed)
+    const out = await buildContactExport(user.db, ACC, 'c1', undefined, server.db)
+    expect(out.origins.map((o) => o.id)).toEqual(['lo1'])
+    expect(out.origins[0].click_id).toBe('G1')
+    expect(out.manifest.origins).toEqual({ count: 1, complete: true })
+    expect(out.warnings).toEqual([])
+    expect(user.reads.some((r) => r.table === 'lead_origins')).toBe(false)
   })
 })

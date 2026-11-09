@@ -308,6 +308,8 @@ describe('robo.js', () => {
       if (!init?.method) return new Response(JSON.stringify({ ok: true, config: CONFIG }), { status: 200 })
       return new Response(JSON.stringify({ ok: true, whatsapp_url: 'https://wa.me/5511999990000?text=Oi' }), { status: 200 })
     }) as unknown as typeof fetch
+    window.history.replaceState({}, '', '/promo?utm_campaign=bf&email=ana%40x.com&gclid=G1&token=secret#frag')
+    Object.defineProperty(document, 'referrer', { value: 'https://www.google.com/search?q=ana+souza', configurable: true })
     const ctl = load()({ key: KEY, endpoint: `https://crm.test/api/v1/robo/${KEY}` }) as unknown as Ctl
     await tick(10)
     const p = parts(ctl)
@@ -330,6 +332,10 @@ describe('robo.js', () => {
     const body = JSON.parse(posts[0].init!.body as string)
     expect(body).toMatchObject({ answers: { nome: 'Ana Souza', fone: '(11) 98765-4321', cor: 'Azul' }, consent: true, contact_ref: '' })
     expect(body.elapsed_ms).toBeGreaterThanOrEqual(2000)
+    // origin (migration 109): the page and its referrer; the server keeps only campaign params and the host
+    // only the origin, the path and the campaign params leave the page; the referrer is its host
+    expect(body.page_url).toBe(`${window.location.origin}/promo?utm_campaign=bf&gclid=G1`)
+    expect(body.referrer).toBe('www.google.com')
     expect(p.$('a.btn').getAttribute('href')).toBe('https://wa.me/5511999990000?text=Oi')
   })
 

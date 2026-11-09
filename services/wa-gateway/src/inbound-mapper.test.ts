@@ -86,6 +86,50 @@ describe("mapInboundMessage", () => {
     expect(out.media).toBeUndefined();
   });
 
+  it("repassa o anúncio Click-to-WhatsApp (externalAdReply + conversionSource) e limita os textos", () => {
+    const out = mapInboundMessage(
+      ACCOUNT,
+      fixture({
+        message: {
+          extendedTextMessage: {
+            text: "Oi, vi o anúncio",
+            contextInfo: {
+              conversionSource: "FB_Ads",
+              externalAdReply: {
+                title: "Promoção sofás",
+                body: "x".repeat(900),
+                sourceType: "ad",
+                sourceId: "120210000000001",
+                sourceUrl: "https://fb.me/abc",
+                ctwaClid: "AfAbC123",
+                sourceApp: "instagram",
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(out.kind).toBe("message");
+    if (out.kind !== "message") return;
+    expect(out.payload.ad).toMatchObject({
+      title: "Promoção sofás",
+      source_type: "ad",
+      source_id: "120210000000001",
+      source_url: "https://fb.me/abc",
+      ctwa_clid: "AfAbC123",
+      source_app: "instagram",
+      conversion_source: "FB_Ads",
+    });
+    expect(out.payload.ad?.body).toHaveLength(500);
+  });
+
+  it("sem anúncio, o payload não ganha o campo ad (compatível)", () => {
+    const out = mapInboundMessage(ACCOUNT, fixture({ message: { conversation: "oi" } }));
+    expect(out.kind).toBe("message");
+    if (out.kind !== "message") return;
+    expect("ad" in out.payload).toBe(false);
+  });
+
   it("imagem com legenda vira type image + media pendente", () => {
     const out = mapInboundMessage(
       ACCOUNT,

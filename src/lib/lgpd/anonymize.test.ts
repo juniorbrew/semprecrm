@@ -64,6 +64,7 @@ function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Ro
     ai_contact_memories: [{ id: 'mem1', account_id: ACC, contact_id: C1, fact: 'tem 2 filhos' }],
     ai_handoffs: [{ id: 'h1', account_id: ACC, contact_id: C1, last_customer_words: 'socorro' }],
     ai_reply_jobs: [{ id: 'j1', account_id: ACC, contact_id: C1 }],
+    lead_origins: [{ id: 'lo1', account_id: ACC, contact_id: C1, headline: 'Promoção sofás' }, { id: 'lo2', account_id: ACC, contact_id: 'other', headline: 'Outra' }],
     csat_responses: [{ id: 'cs1', account_id: ACC, contact_id: C1, score: 5, comment: 'Ana adorou' }],
     automation_event_queue: [{ id: 1, account_id: ACC, contact_id: C1, context: { message_text: 'oi' } }],
     deals: [{ id: 'd1', account_id: ACC, contact_id: C1, conversation_id: 'conv1', title: 'Ana Souza - 11912345678', notes: 'liga às 18h', lost_note: 'caro' }],
@@ -170,6 +171,8 @@ describe('anonymizeContact', () => {
     for (const tbl of ['contact_notes', 'contact_custom_values', 'contact_companies', 'ai_contact_memories', 'ai_handoffs', 'ai_reply_jobs']) {
       expect(tables[tbl], tbl).toHaveLength(0)
     }
+    // Touches of the contact are deleted (the FKs null the pointers); another contact's stay.
+    expect(tables.lead_origins.map((o) => o.id)).toEqual(['lo2'])
     expect(tables.csat_responses[0]).toMatchObject({ score: 5, comment: null })
     expect(tables.automation_event_queue[0].context).toEqual({})
     expect(tables.deals[0]).toMatchObject({ title: ANONYMIZED_DEAL_TITLE, notes: null, lost_note: null, contact_id: C1 })
@@ -263,6 +266,14 @@ describe('anonymizeContact', () => {
     expect(tables.contacts[0].anonymization_completed_at).toBeNull()
     // Every other step still ran.
     expect(tables.tasks[0].title).toBe(ANONYMIZED_TASK_TITLE)
+  })
+
+  it('reports the touches as left over when their delete failed (the leftover check covers lead_origins)', async () => {
+    const { db, tables } = makeFakeDb(seed(), { fail: (table, op) => (table === 'lead_origins' && op === 'delete' ? { message: 'boom' } : null) })
+    const res = await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(res.completed).toBe(false)
+    expect(res.warnings.join(' ')).toContain('lead_origins')
+    expect(tables.contacts[0].anonymization_completed_at).toBeNull()
   })
 
   it('keeps an opt-out across the anonymisation through the suppression list (hash only)', async () => {

@@ -59,6 +59,7 @@ import {
 } from 'lucide-react';
 import { ContactPrivacySection } from './contact-privacy-section';
 import { ContactCompanies } from '@/components/companies/contact-companies';
+import { ContactOrigin } from '@/components/origins/origin-line';
 import { formatPhoneDisplay } from '@/lib/whatsapp/phone-utils';
 
 interface ContactDetailViewProps {
@@ -580,6 +581,7 @@ export function ContactDetailView({
                       </span>
                     )}
                   </div>
+                  {!contact.anonymized_at && (<div className="mt-1.5"><ContactOrigin contactId={contact.id} /></div>)}
                 </div>
               </div>
 

@@ -1,5 +1,5 @@
 import type { proto, WAMessage } from "@whiskeysockets/baileys";
-import type { InboundPayload, InboundType, ReactionPayload, RevokePayload } from "./types.js";
+import type { InboundAd, InboundPayload, InboundType, ReactionPayload, RevokePayload } from "./types.js";
 
 /**
  * Mídia que o gateway ainda precisa baixar/subir antes de entregar ao app.
@@ -130,6 +130,24 @@ export function capVCards(vcards: string[]): string {
     }
   }
   return out.join("\n").slice(0, MAX_VCARD_CHARS);
+}
+
+/** Textos do anúncio, cada um limitado (o app limita de novo). Undefined se nada útil chegou. */
+export function extractAd(info: proto.IContextInfo | null | undefined): InboundAd | undefined {
+  const a = info?.externalAdReply;
+  const clip = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.slice(0, n) : undefined);
+  const ad: InboundAd = {
+    title: clip(a?.title, 300),
+    body: clip(a?.body, 500),
+    source_type: clip(a?.sourceType, 40),
+    source_id: clip(a?.sourceId, 120),
+    source_url: clip(a?.sourceUrl, 1000),
+    ctwa_clid: clip(a?.ctwaClid, 600),
+    source_app: clip(a?.sourceApp, 40),
+    conversion_source: clip(info?.conversionSource, 120),
+  };
+  const out = Object.fromEntries(Object.entries(ad).filter(([, v]) => v !== undefined)) as InboundAd;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 interface Extracted {
@@ -339,6 +357,8 @@ export function mapInboundMessage(accountId: string, msg: WAMessage, opts: MapOp
   const quoted = extracted.contextInfo?.stanzaId;
   if (quoted) payload.quoted_message_id = quoted;
   if (!fromMe && key.remoteJid) payload.chat_jid = key.remoteJid;
+  const ad = fromMe ? undefined : extractAd(extracted.contextInfo);
+  if (ad) payload.ad = ad;
 
   const kind = fromMe ? "echo" : "message";
   return extracted.media ? { kind, payload, media: extracted.media } : { kind, payload };

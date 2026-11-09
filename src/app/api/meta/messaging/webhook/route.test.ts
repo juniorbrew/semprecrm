@@ -174,6 +174,14 @@ describe('POST signature', () => {
 })
 
 describe('POST events', () => {
+  it('hands the ad referral of the first message to the pipeline as the origin; plain messages carry none', async () => {
+    const ev = { ...text('IGSID', 'IG1', 'm9'), referral: { source: 'ADS', type: 'OPEN_THREAD', ad_id: 'AD7', ads_context_data: { ad_title: 'Coleção verão' } } }
+    await post(igBody(ev, text('IGSID', 'IG1', 'm10')))
+    await settle()
+    expect(h.ingest.mock.calls[0][0]).toMatchObject({ messageId: 'm9', origin: { channel: 'instagram', kind: 'ad', adId: 'AD7', headline: 'Coleção verão' } })
+    expect(h.ingest.mock.calls[1][0]).toMatchObject({ messageId: 'm10', origin: null })
+  })
+
   it('resolves the account from recipient.id and ingests on the instagram channel', async () => {
     expect((await post(igBody(text('IGSID', 'IG1', 'm1')))).status).toBe(200)
     await settle()

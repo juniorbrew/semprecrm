@@ -74,6 +74,7 @@ export const SCRUBBED_TABLES = {
   ai_contact_memories: 'deleted (cascade)',
   ai_handoffs: 'deleted (cascade)',
   ai_reply_jobs: 'deleted (cascade)',
+  lead_origins: 'deleted (cascade); contacts / deals pointers go NULL through the FKs (migration 109)',
   csat_responses: 'comment nulled (cascade)',
   automation_event_queue: 'context emptied (cascade)',
   deals: 'title neutral, notes / lost_note nulled',
@@ -592,6 +593,7 @@ export async function scrubContactData(
       'ai_contact_memories',
       'ai_handoffs',
       'ai_reply_jobs',
+      'lead_origins',
     ] as const) {
       await step(table, async () => {
         let q = admin.from(table).delete({ count: 'exact' }).eq('contact_id', contactId)
@@ -845,7 +847,7 @@ export async function remainingPersonalData(
   await any('deals', byContact('deals').neq('title', ANONYMIZED_DEAL_TITLE))
   await any('tasks', byContact('tasks').neq('title', ANONYMIZED_TASK_TITLE))
   await any('calendar_events', byContact('calendar_events').neq('title', ANONYMIZED_EVENT_TITLE))
-  for (const table of ['contact_notes', 'ai_contact_memories', 'ai_handoffs']) await any(table, byContact(table))
+  for (const table of ['contact_notes', 'ai_contact_memories', 'ai_handoffs', 'lead_origins']) await any(table, byContact(table))
   return [...left]
 }
 

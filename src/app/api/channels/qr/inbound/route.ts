@@ -57,6 +57,7 @@ export async function POST(request: Request) {
       quotedMessageId: parsed.quotedMessageId,
       chatJid: parsed.chatJid,
       timestamp: parsed.timestamp,
+      origin: parsed.origin,
     },
     supabaseAdmin(),
   )

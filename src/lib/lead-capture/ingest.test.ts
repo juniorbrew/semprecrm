@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // Suppression list (migration 077): nothing suppressed unless a test says so.
 vi.mock('@/lib/lgpd/suppression', () => ({ findSuppressedPhones: vi.fn(async () => new Set<string>()) }))
 
+// Lead origins (migration 109): recordTouch has its own tests; here only the wiring.
+vi.mock('@/lib/lead-origins/record', () => ({ recordTouch: vi.fn(async () => ({ recorded: true })) }))
+
+import { recordTouch } from '@/lib/lead-origins/record'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { ingestLead, leadDealTitle, type IngestLeadSource } from './ingest'
 import { buildLeadFromAnswers, defaultBotConfig, eventAnswerLines, validateAnswers, validateBotConfig } from '@/lib/site-bot'
@@ -477,5 +481,68 @@ describe('site bot answers through the real ingest', () => {
     state.custom_fields.push({ id: 'someone-elses', account_id: 'acct-2' })
     await run(lead(ANSWERS))
     expect(state.contact_custom_values).toHaveLength(0)
+  })
+})
+
+describe('ingestLead — origin (migration 109)', () => {
+  const PAYLOAD = { nome: 'Teste Lead', telefone: '5511988887777' }
+
+  it('webhook forms: utm_* / click ids / referrer in the body are recorded; the field mapping is untouched', async () => {
+    const db = makeDb()
+    const body = { ...PAYLOAD, utm_source: 'facebook', utm_campaign: 'verao', fbclid: 'IwAR1', referrer: 'https://l.facebook.com/x' }
+    const res = await ingestLead(db, source(), body)
+    expect(res.status).toBe('ok')
+    expect(state.contacts[0]).toMatchObject({ name: 'Teste Lead', phone: '5511988887777' })
+    expect(recordTouch).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({
+      accountId: ACCT,
+      contactId: res.contactId,
+      touch: { channel: 'webhook', kind: 'campaign', utmSource: 'facebook', utmCampaign: 'verao', clickIdType: 'fbclid', referrerHost: 'l.facebook.com' },
+    })
+    // the raw body is still what the event log keeps
+    expect(state.lead_source_events[0].payload).toEqual(body)
+  })
+
+  it('a form without any campaign field records nothing', async () => {
+    await ingestLead(makeDb(), source(), PAYLOAD)
+    expect(recordTouch).not.toHaveBeenCalled()
+  })
+
+  it('an explicit origin (site bot) wins over the payload, and null records nothing', async () => {
+    const touch = { channel: 'site_bot', kind: 'campaign', utmCampaign: 'bf' } as never
+    await ingestLead(makeDb(), source(), { ...PAYLOAD, utm_campaign: 'ignored' }, { origin: touch })
+    expect(vi.mocked(recordTouch).mock.calls[0][1].touch).toBe(touch)
+    vi.mocked(recordTouch).mockClear()
+    await ingestLead(makeDb(), source(), { ...PAYLOAD, utm_campaign: 'ignored' }, { origin: null })
+    expect(recordTouch).not.toHaveBeenCalled()
+  })
+
+  it('only a submission that created the contact may move its pointers', async () => {
+    const body = { ...PAYLOAD, utm_campaign: 'bf' }
+    await ingestLead(makeDb(), source(), body)
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ trustedPointers: true })
+    vi.mocked(recordTouch).mockClear()
+    await ingestLead(makeDb(), source(), body) // same number again: the contact exists now
+    expect(vi.mocked(recordTouch).mock.calls[0][1]).toMatchObject({ trustedPointers: false })
+  })
+
+  it('a repeat from this source inside the window (checkRecentRepeat) records nothing', async () => {
+    const body = { ...PAYLOAD, utm_campaign: 'bf' }
+    await ingestLead(makeDb(), source(), body, { checkRecentRepeat: 24 })
+    expect(recordTouch).toHaveBeenCalledTimes(1)
+    await ingestLead(makeDb(), source(), body, { checkRecentRepeat: 24 })
+    expect(recordTouch).toHaveBeenCalledTimes(1) // the event of the first submission makes the second a repeat
+    expect(state.deals.length).toBeGreaterThan(0)
+  })
+
+  it('records the origin before the deal is created (the deal takes the contact last touch)', async () => {
+    let dealsWhenRecorded = -1
+    vi.mocked(recordTouch).mockImplementationOnce(async () => {
+      dealsWhenRecorded = state.deals.length
+      return { recorded: true }
+    })
+    await ingestLead(makeDb(), source(), { ...PAYLOAD, utm_campaign: 'bf' })
+    expect(dealsWhenRecorded).toBe(0)
+    expect(state.deals).toHaveLength(1)
   })
 })

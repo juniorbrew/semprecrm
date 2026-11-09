@@ -251,6 +251,9 @@ export interface Contact {
    * admin can run the anonymisation again to finish it.
    */
   anonymization_completed_at?: string | null;
+  /** First / last origin touch (migration 109, lead_origins). Written by the server only. */
+  first_origin_id?: string | null;
+  last_origin_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -734,6 +737,10 @@ export interface Deal {
   lost_note?: string | null;
   /** Customer company (migration 054). Null when none / deleted. */
   company_id?: string | null;
+  /** Origin of the deal (migration 109): the contact's last touch when it was created; admin can change it. */
+  origin_id?: string | null;
+  origin_set_by?: string | null;
+  origin_set_at?: string | null;
   created_at: string;
   updated_at?: string;
   contact?: Contact;
