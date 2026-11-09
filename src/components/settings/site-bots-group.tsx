@@ -5,7 +5,7 @@ import { Bot, Check, ChevronDown, ChevronRight, Copy, Pencil, Plus, Trash2 } fro
 import { toast } from 'sonner';
 
 import { useLanguage } from '@/hooks/use-language';
-import { resolveSiteUrl } from '@/lib/lead-capture';
+import { resolveSiteUrl } from '@/lib/lead-capture/webhook-url';
 import { formatRelative } from '@/lib/automations/trigger-meta';
 import type { LeadSource } from '@/types';
 import { Button } from '@/components/ui/button';

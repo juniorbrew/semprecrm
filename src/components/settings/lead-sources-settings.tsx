@@ -20,21 +20,27 @@ import { toast } from 'sonner';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth, useEntitlements } from '@/hooks/use-auth';
 import { useLanguage } from '@/hooks/use-language';
+// Not the '@/lib/lead-capture' barrel: it re-exports ingest, which pulls
+// server-only code (node:crypto via lgpd/suppression) into this client bundle.
 import {
   DEFAULT_FIELD_MAP,
   LEAD_STANDARD_FIELDS,
+  normalizeFieldMap,
+  type LeadStandardField,
+} from '@/lib/lead-capture/map-fields';
+import {
   curlExample,
-  deleteLeadSource,
   htmlFormExample,
   leadWebhookUrl,
+  resolveSiteUrl,
+} from '@/lib/lead-capture/webhook-url';
+import {
+  deleteLeadSource,
   listLeadSourceEvents,
   listLeadSources,
-  normalizeFieldMap,
-  resolveSiteUrl,
   updateLeadSource,
   type LeadSourcePatch,
-  type LeadStandardField,
-} from '@/lib/lead-capture';
+} from '@/lib/lead-capture/client';
 import { formatRelative } from '@/lib/automations/trigger-meta';
 import type {
   AccountMember,
