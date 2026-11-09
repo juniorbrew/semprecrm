@@ -30,6 +30,7 @@ import { NextResponse, after } from 'next/server'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { ingestLead, type IngestLeadSource } from '@/lib/lead-capture'
+import { parseUrlOrigin } from '@/lib/lead-origins'
 import { accountHasModule } from '@/lib/plans-server'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/request-ip'
@@ -259,7 +260,13 @@ export async function POST(request: Request, { params }: RouteContext) {
     supabaseAdmin(),
     { ...source, field_map: built.fieldMap },
     built.payload,
-    { dealNotes: built.dealNotes, keepExistingCustomValues: true, checkRecentRepeat: REPEAT_WINDOW_HOURS },
+    {
+      dealNotes: built.dealNotes,
+      keepExistingCustomValues: true,
+      checkRecentRepeat: REPEAT_WINDOW_HOURS,
+      // utm_* / gclid / fbclid of the page and the host of the referrer (nothing else is kept).
+      origin: parseUrlOrigin(body.page_url, body.referrer, 'site_bot'),
+    },
   )
   if (result.status === 'error') {
     const status = result.httpStatus === 400 ? 400 : 500

@@ -416,7 +416,7 @@
       for (var k in S.answers) if (Object.prototype.hasOwnProperty.call(S.answers, k)) answers[k] = S.answers[k];
       var send = o.submit
         ? Promise.resolve().then(function () { return o.submit(answers); }).then(function (b) { return { ok: true, body: b || {} }; })
-        : post(o, { answers: answers, consent: true, contact_ref: hp.value, elapsed_ms: Date.now() - S.t0 });
+        : post(o, { answers: answers, consent: true, contact_ref: hp.value, elapsed_ms: Date.now() - S.t0, page_url: String(location.href).slice(0, 1500), referrer: String(document.referrer || '').slice(0, 1500) });
       send.then(function (res) {
         S.busy = false;
         t.remove();

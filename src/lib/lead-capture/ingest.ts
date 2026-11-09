@@ -14,6 +14,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
+import { parseBodyOrigin, type OriginTouch } from '@/lib/lead-origins'
+import { recordTouch } from '@/lib/lead-origins/record'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { DEFAULT_CURRENCY } from '@/lib/currency'
 import { isValidE164, normalizeTypedPhone } from '@/lib/whatsapp/phone-utils'
@@ -51,6 +53,12 @@ export interface IngestLeadOptions {
   keepExistingCustomValues?: boolean
   /** Hours: flag `recentRepeat` when the contact already had an event from this source. */
   checkRecentRepeat?: number
+  /**
+   * Where the lead came from (migration 109). `undefined`: read utm_* / gclid / fbclid / page_url /
+   * referrer from the payload (webhook forms). `null`: nothing to record (the site bot passes what
+   * it parsed from the page URL, or null).
+   */
+  origin?: OriginTouch | null
 }
 type IngestOptions = IngestLeadOptions
 
@@ -375,6 +383,11 @@ export async function ingestLead(
         .limit(1)
       recentRepeat = ((prior as Row[] | null) ?? []).length > 0
     }
+
+    // Origin before the deal: the deal takes the contact's last touch (trigger, migration 109).
+    // recordTouch never throws and never blocks the lead.
+    const origin = options.origin === undefined ? parseBodyOrigin(payload) : options.origin
+    if (origin) await recordTouch(db, { accountId: source.account_id, contactId: contact.id, touch: origin })
 
     await writeCustomValues(db, source, contact.id, lead.custom, options.keepExistingCustomValues === true)
     await applyTags(db, source, contact.id)

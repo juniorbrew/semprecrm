@@ -330,6 +330,9 @@ describe('robo.js', () => {
     const body = JSON.parse(posts[0].init!.body as string)
     expect(body).toMatchObject({ answers: { nome: 'Ana Souza', fone: '(11) 98765-4321', cor: 'Azul' }, consent: true, contact_ref: '' })
     expect(body.elapsed_ms).toBeGreaterThanOrEqual(2000)
+    // origin (migration 109): the page and its referrer; the server keeps only campaign params and the host
+    expect(body.page_url).toBe(window.location.href)
+    expect(body.referrer).toBe(document.referrer)
     expect(p.$('a.btn').getAttribute('href')).toBe('https://wa.me/5511999990000?text=Oi')
   })
 
