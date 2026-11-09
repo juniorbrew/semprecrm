@@ -36,7 +36,7 @@ const nextId = (prefix: string) => `${prefix}-${++idSeq}`
 
 function makeDb() {
   function builder(table: Table) {
-    const filters: { kind: 'eq' | 'in' | 'like'; key: string; value: unknown }[] = []
+    const filters: { kind: 'eq' | 'in' | 'like' | 'gte'; key: string; value: unknown }[] = []
     const ops = {
       type: 'select' as 'select' | 'insert' | 'update' | 'upsert' | 'delete',
       payload: undefined as Row | Row[] | undefined,
@@ -47,6 +47,7 @@ function makeDb() {
       filters.every((f) => {
         if (f.kind === 'eq') return r[f.key] === f.value
         if (f.kind === 'in') return (f.value as unknown[]).includes(r[f.key])
+        if (f.kind === 'gte') return String(r[f.key] ?? '') >= String(f.value)
         const suffix = String(f.value).replace(/^%/, '')
         // contacts.phone_normalized is a generated column (digits of phone).
         const v = f.key === 'phone_normalized' && r.phone_normalized === undefined
@@ -65,7 +66,7 @@ function makeDb() {
             return { data: null, error: err }
           }
           const list = Array.isArray(ops.payload) ? ops.payload : [ops.payload!]
-          const created = list.map((p) => ({ id: nextId(table), ...p }))
+          const created = list.map((p) => ({ id: nextId(table), ...(table === 'lead_source_events' ? { created_at: new Date().toISOString() } : {}), ...p }))
           state[table].push(...created)
           return { data: Array.isArray(ops.payload) ? created : created[0], error: null }
         }
@@ -110,6 +111,7 @@ function makeDb() {
       delete: () => ((ops.type = 'delete'), b),
       eq: (key: string, value: unknown) => (filters.push({ kind: 'eq', key, value }), b),
       in: (key: string, value: unknown[]) => (filters.push({ kind: 'in', key, value }), b),
+      gte: (key: string, value: unknown) => (filters.push({ kind: 'gte', key, value }), b),
       like: (key: string, value: string) => (filters.push({ kind: 'like', key, value }), b),
       order: () => b,
       limit: (n: number) => ((ops.limit = n), b),
@@ -292,6 +294,37 @@ describe('ingestLead — existing contact (dedupe)', () => {
     expect(state.deals).toHaveLength(1)
     expect(state.deals[0].title).toBe('Ana · Landing Inverno')
     expect(state.lead_source_events[0]).toMatchObject({ status: 'duplicate', contact_id: 'contact-1' })
+  })
+
+  it('replaces an existing custom value by default (webhook) but keeps it with keepExistingCustomValues', async () => {
+    const src = source({ field_map: { custom: { 'cf-1': 'plan' } } })
+    state.contact_custom_values.push({ contact_id: 'contact-1', custom_field_id: 'cf-1', value: 'Ouro' })
+    await ingestLead(makeDb(), src, { phone: '5511988887777', plan: 'Bronze' })
+    expect(state.contact_custom_values[0].value).toBe('Bronze')
+    state.contact_custom_values[0].value = 'Ouro'
+    await ingestLead(makeDb(), src, { phone: '5511988887777', plan: 'Bronze' }, { keepExistingCustomValues: true })
+    expect(state.contact_custom_values).toHaveLength(1)
+    expect(state.contact_custom_values[0].value).toBe('Ouro')
+  })
+
+  it('still writes a custom value the contact does not have yet when keeping existing ones', async () => {
+    const src = source({ field_map: { custom: { 'cf-1': 'plan' } } })
+    await ingestLead(makeDb(), src, { phone: '5511988887777', plan: 'Bronze' }, { keepExistingCustomValues: true })
+    expect(state.contact_custom_values).toHaveLength(1)
+    expect(state.contact_custom_values[0].value).toBe('Bronze')
+  })
+
+  it('flags a repeat from the same source inside the window, and only then', async () => {
+    const opts = { checkRecentRepeat: 24 }
+    const first = await ingestLead(makeDb(), source(), { phone: '5511988887777' }, opts)
+    expect(first.recentRepeat).toBe(false)
+    const second = await ingestLead(makeDb(), source(), { phone: '5511988887777' }, opts)
+    expect(second.recentRepeat).toBe(true)
+    state.lead_source_events.forEach((e) => (e.created_at = new Date(Date.now() - 25 * 3_600_000).toISOString()))
+    const third = await ingestLead(makeDb(), source(), { phone: '5511988887777' }, opts)
+    expect(third.recentRepeat).toBe(false)
+    const plain = await ingestLead(makeDb(), source(), { phone: '5511988887777' })
+    expect(plain).not.toHaveProperty('recentRepeat')
   })
 
   it('skips the deal when the contact already has an open one in the same pipeline', async () => {
