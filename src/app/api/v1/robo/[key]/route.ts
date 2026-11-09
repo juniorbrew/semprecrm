@@ -17,7 +17,7 @@
 //
 //   key shape -> rate limits (per key, per IP+key) -> bot lookup (404)
 //   -> Origin must be a registered site (403) -> `lead_capture` module
-//   -> body <= 8 KB -> honeypot / < 3 s: same success, nothing stored
+//   -> body <= 8 KB -> honeypot / < 2 s: same success, nothing stored
 //   -> consent -> answers re-validated against the stored config
 //   -> ingestLead (+ the same automations as the webhook).
 //

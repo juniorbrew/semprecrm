@@ -346,15 +346,15 @@ describe('POST', () => {
     expect(h.automations).toHaveLength(0)
   })
 
-  it('a conversation under 3 seconds (or without a timer) gets the same success and creates nothing', async () => {
+  it('a conversation under 2 seconds (or without a timer) gets the same success and creates nothing', async () => {
     let n = 40
-    for (const elapsed_ms of [0, 2999, undefined, 'fast', -5]) {
+    for (const elapsed_ms of [0, 1999, undefined, 'fast', -5]) {
       const res = await POST(post({ ...GOOD, elapsed_ms }, { ip: `198.51.100.${n++}` }), ctx())
       expect(res.status).toBe(200)
       expect(await res.json()).toHaveProperty('whatsapp_url')
     }
     expect(h.ingest).not.toHaveBeenCalled()
-    expect((await POST(post({ ...GOOD, elapsed_ms: 3000 }, { ip: '198.51.100.99' }), ctx())).status).toBe(200)
+    expect((await POST(post({ ...GOOD, elapsed_ms: 2000 }, { ip: '198.51.100.99' }), ctx())).status).toBe(200)
     expect(h.ingest).toHaveBeenCalledTimes(1)
   })
 

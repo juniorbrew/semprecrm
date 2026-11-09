@@ -81,5 +81,5 @@ export const BOT_LIMITS = {
   name: 80,
   email: 254,
   payloadBytes: 8 * 1024,
-  minConversationMs: 3000,
+  minConversationMs: 2000,
 } as const

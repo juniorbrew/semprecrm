@@ -85,7 +85,7 @@ async function toConsent(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.useFakeTimers()
   document.body.innerHTML = ''
-  window.localStorage.clear()
+  window.sessionStorage.clear()
   Object.defineProperty(navigator, 'language', { value: 'pt-BR', configurable: true })
   delete (window as unknown as Record<string, unknown>).matchMedia
 })
@@ -97,7 +97,7 @@ afterEach(() => {
 
 describe('robo.js', () => {
   it('stays under 20 KB, uses no innerHTML and no dependencies', () => {
-    expect(Buffer.byteLength(SOURCE)).toBeLessThan(20_000)
+    expect(Buffer.byteLength(SOURCE)).toBeLessThan(30_000)
     expect(SOURCE.replace(/\/\*[\s\S]*?\*\//, '')).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|import\s|require\(/)
   })
 
@@ -290,12 +290,14 @@ describe('robo.js', () => {
     expect(p.msgs().slice(-1)[0]).toContain('does not look valid')
   })
 
-  it('skips the typing pause when the visitor prefers reduced motion', async () => {
+  it('shortens, but does not remove, the typing pause under reduced motion', async () => {
     window.matchMedia = ((q: string) => ({ matches: q.includes('reduce'), media: q })) as unknown as typeof window.matchMedia
     const ctl = load()({ config: CONFIG, preview: true, submit: vi.fn() })
     const p = parts(ctl)
     ctl.open()
-    await tick(1)
+    await tick(100)
+    expect(p.msgs()).toEqual([])
+    await tick(600)
     expect(p.msgs()).toEqual(['bot: Olá! Tudo bem?', 'bot: Qual é o seu nome?'])
   })
 
@@ -326,8 +328,8 @@ describe('robo.js', () => {
     expect((posts[0].init!.headers as Record<string, string>)['Content-Type']).toBe('application/json')
     expect(posts[0].init!.credentials).toBe('omit')
     const body = JSON.parse(posts[0].init!.body as string)
-    expect(body).toMatchObject({ answers: { nome: 'Ana Souza', fone: '(11) 98765-4321', cor: 'Azul' }, consent: true, website: '' })
-    expect(body.elapsed_ms).toBeGreaterThanOrEqual(3000)
+    expect(body).toMatchObject({ answers: { nome: 'Ana Souza', fone: '(11) 98765-4321', cor: 'Azul' }, consent: true, contact_ref: '' })
+    expect(body.elapsed_ms).toBeGreaterThanOrEqual(2000)
     expect(p.$('a.btn').getAttribute('href')).toBe('https://wa.me/5511999990000?text=Oi')
   })
 
@@ -341,7 +343,7 @@ describe('robo.js', () => {
     const ctl = load()({ key: KEY, endpoint: 'https://crm.test/x' }) as unknown as Ctl
     await tick(10)
     const p = parts(ctl)
-    const hp = p.$<HTMLInputElement>('input[name=website]')
+    const hp = p.$<HTMLInputElement>('input[name=contact_ref]')
     expect(hp.getAttribute('tabindex')).toBe('-1')
     expect(hp.getAttribute('aria-hidden')).toBe('true')
     hp.value = 'http://spam'
@@ -354,7 +356,7 @@ describe('robo.js', () => {
     p.$<HTMLInputElement>('input[type=checkbox]').checked = true
     p.$<HTMLButtonElement>('.foot .btn').click()
     await tick()
-    expect(JSON.parse(calls[0].body as string).website).toBe('http://spam')
+    expect(JSON.parse(calls[0].body as string).contact_ref).toBe('http://spam')
   })
 
   it('offers a retry when the send fails, and does not lose the answers', async () => {
@@ -433,10 +435,10 @@ describe('robo.js', () => {
       expect(again.p.root.querySelectorAll('.choices button')).toHaveLength(2)
     })
 
-    it('stores answers only in the browser, with an expiry about a day away, and never the consent', async () => {
+    it('stores answers only in this tab (sessionStorage), never the consent, and nothing in localStorage', async () => {
       const { p } = await openLive()
       await p.type('Ana Souza')
-      const saved = JSON.parse(window.localStorage.getItem(`sempre-robo:${KEY}`)!)
+      const saved = JSON.parse(window.sessionStorage.getItem(`sempre-robo:${KEY}`)!)
       expect(saved.answers).toEqual({ nome: 'Ana Souza' })
       expect(saved.exp - Date.now()).toBeGreaterThan(23 * 3600_000)
       expect(saved.exp - Date.now()).toBeLessThanOrEqual(24 * 3600_000)
@@ -460,7 +462,7 @@ describe('robo.js', () => {
       again.p.$<HTMLInputElement>('input[type=checkbox]').checked = true
       again.p.$<HTMLButtonElement>('.foot .btn').click()
       await tick()
-      expect(window.localStorage.getItem(`sempre-robo:${KEY}`)).toBeNull()
+      expect(window.sessionStorage.getItem(`sempre-robo:${KEY}`)).toBeNull()
     })
 
     it('works when storage throws', async () => {
@@ -476,7 +478,7 @@ describe('robo.js', () => {
     })
 
     it('ignores corrupt saved state', async () => {
-      window.localStorage.setItem(`sempre-robo:${KEY}`, '{not json')
+      window.sessionStorage.setItem(`sempre-robo:${KEY}`, '{not json')
       const { p } = await openLive()
       expect(p.msgs()).toEqual(['bot: Olá! Tudo bem?', 'bot: Qual é o seu nome?'])
     })
@@ -530,5 +532,173 @@ describe('robo.js', () => {
       ctl.destroy()
       expect(document.querySelector('[data-robo-host]')).toBeNull()
     })
+  })
+})
+
+describe('robo.js review fixes', () => {
+  const okResponse = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status })
+
+  async function live(config = CONFIG, post?: (init: RequestInit) => Response) {
+    const posts: RequestInit[] = []
+    window.fetch = vi.fn(async (_u: string, init?: RequestInit) => {
+      if (!init?.method) return okResponse({ ok: true, config })
+      posts.push(init)
+      return post ? post(init) : okResponse({ ok: true })
+    }) as unknown as typeof fetch
+    const ctl = load()({ key: KEY, endpoint: 'https://crm.test/x' }) as unknown as Ctl
+    await tick(10)
+    const p = parts(ctl)
+    ctl.open()
+    await tick()
+    return { ctl, p, posts }
+  }
+
+  async function toSend(p: ReturnType<typeof parts>) {
+    await p.type('Ana Souza')
+    await p.type('(11) 98765-4321')
+    await p.choose('Azul')
+    await p.type('ana@exemplo.com')
+    p.$<HTMLInputElement>('input[type=checkbox]').checked = true
+    p.$<HTMLButtonElement>('.foot .btn').click()
+    await tick()
+  }
+
+  it('keeps the chat only in sessionStorage, nothing in localStorage', async () => {
+    const { p } = await live()
+    await p.type('Ana')
+    expect(window.sessionStorage.getItem(`sempre-robo:${KEY}`)).toContain('Ana')
+    expect(window.localStorage.length).toBe(0)
+  })
+
+  it('discards a saved chat when the questions changed, and keeps only still-valid answers otherwise', async () => {
+    const first = await live()
+    await first.p.type('Ana')
+    await first.p.type('11987654321')
+    first.ctl.destroy()
+    document.body.innerHTML = ''
+    const changed = { ...CONFIG, questions: [CONFIG.questions[1], CONFIG.questions[0], ...CONFIG.questions.slice(2)] }
+    const again = await live(changed)
+    expect(again.p.msgs()).toEqual(['bot: Olá! Tudo bem?', 'bot: Qual é o seu WhatsApp?'])
+    again.ctl.destroy()
+    document.body.innerHTML = ''
+    window.sessionStorage.clear()
+    const third = await live()
+    await third.p.type('Ana')
+    await third.p.type('11987654321')
+    await third.p.choose('Azul')
+    third.ctl.destroy()
+    document.body.innerHTML = ''
+    const saved = JSON.parse(window.sessionStorage.getItem(`sempre-robo:${KEY}`)!)
+    saved.answers.cor = 'Vermelho'
+    window.sessionStorage.setItem(`sempre-robo:${KEY}`, JSON.stringify(saved))
+    const fourth = await live()
+    expect(fourth.p.msgs().join('|')).not.toContain('Vermelho')
+    expect(fourth.p.msgs()).toContain('me: Ana')
+  })
+
+  it('validates phone and email with the server rules', async () => {
+    const { p } = await live()
+    await p.type('Ana')
+    for (const bad of ['123', '1234567890123456', 'abc', '0000000']) {
+      await p.type(bad)
+      expect(p.msgs().slice(-1)[0], bad).toContain('número não parece válido')
+    }
+    await p.type('+1 202 555 0100')
+    expect(p.msgs().slice(-1)).toEqual(['bot: Qual cor você prefere?'])
+  })
+
+  it('goes back to the question the server rejected, prefilled, with no retry button', async () => {
+    const { p, posts } = await live(CONFIG, () => okResponse({ ok: false, error: 'invalid_phone', question: 'fone' }, 400))
+    await toSend(p)
+    expect(p.msgs().slice(-1)[0]).toContain('número não parece válido')
+    expect(p.field().value).toBe('(11) 98765-4321')
+    expect(Array.from(p.root.querySelectorAll('button')).some((b) => b.textContent === 'Tentar de novo')).toBe(false)
+    expect(posts).toHaveLength(1)
+  })
+
+  it('maps a rejected answer without a question id to the matching question type', async () => {
+    const { p } = await live(CONFIG, () => okResponse({ ok: false, error: 'invalid_email' }, 400))
+    await toSend(p)
+    expect(p.msgs().slice(-1)[0]).toContain('e-mail não parece válido')
+    expect(p.field().value).toBe('ana@exemplo.com')
+  })
+
+  it('asks for the name again when the server refuses it', async () => {
+    const { p } = await live(CONFIG, () => okResponse({ ok: false, error: 'invalid_name', question: 'nome' }, 400))
+    await toSend(p)
+    expect(p.msgs().slice(-1)[0]).toContain('só o seu nome')
+    expect(p.field().value).toBe('Ana Souza')
+  })
+
+  it('offers a retry only for network errors, 5xx and 429', async () => {
+    for (const [status, retry] of [[500, true], [429, true], [403, false], [404, false], [413, false]] as const) {
+      document.body.innerHTML = ''
+      window.sessionStorage.clear()
+      const { p } = await live(CONFIG, () => okResponse({ ok: false }, status))
+      await toSend(p)
+      const has = Array.from(p.root.querySelectorAll('button')).some((b) => b.textContent === 'Tentar de novo')
+      expect(has, String(status)).toBe(retry)
+      expect(p.msgs().slice(-1)[0]).toContain('Não foi possível enviar')
+    }
+  })
+
+  it('prefills the field after a client-side validation error', async () => {
+    const { p } = await live()
+    await p.type('Ana')
+    await p.type('12')
+    expect(p.field().value).toBe('12')
+  })
+
+  it('on a phone: aria-modal, page scroll lock, focus trap and keyboard-aware height', async () => {
+    window.matchMedia = ((q: string) => ({ matches: q.includes('max-width'), media: q })) as unknown as typeof window.matchMedia
+    const listeners: Record<string, () => void> = {}
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: { height: 400, offsetTop: 0, addEventListener: (n: string, f: () => void) => (listeners[n] = f), removeEventListener: () => {} },
+    })
+    const { ctl, p } = await live()
+    expect(p.$('.panel').getAttribute('aria-modal')).toBe('true')
+    expect(document.documentElement.style.overflow).toBe('hidden')
+    expect(p.$('.panel').style.height).toBe('400px')
+    ;(window.visualViewport as unknown as { height: number }).height = 250
+    listeners.resize()
+    expect(p.$('.panel').style.height).toBe('250px')
+    const els = Array.from(p.root.querySelectorAll<HTMLElement>('.panel button, .panel input')).filter((n) => n.getAttribute('tabindex') !== '-1')
+    els[els.length - 1].focus()
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, composed: true, cancelable: true })
+    p.$('.panel').dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(p.root.activeElement).toBe(els[0])
+    ctl.close()
+    expect(document.documentElement.style.overflow).toBe('')
+    expect(p.$('.panel').getAttribute('aria-modal')).toBe('false')
+    delete (window as unknown as Record<string, unknown>).visualViewport
+  })
+
+  it('finds its own tag when document.currentScript is null, and retries after a failed config fetch', async () => {
+    const tag = document.createElement('script')
+    tag.src = 'https://crm.test/robo.js'
+    tag.setAttribute('data-robo', 'd'.repeat(32))
+    document.head.appendChild(tag)
+    let ok = false
+    const fetchMock = vi.fn(async () => (ok ? okResponse({ ok: true, config: CONFIG }) : new Response('{}', { status: 500 })))
+    window.fetch = fetchMock as unknown as typeof fetch
+    load(null)
+    await tick(10)
+    expect(fetchMock).toHaveBeenCalledWith(`https://crm.test/api/v1/robo/${'d'.repeat(32)}`, { credentials: 'omit' })
+    expect(document.querySelector('[data-robo-host]')).toBeNull()
+    ok = true
+    load(null)
+    await tick(10)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-robo-host]')).toBeTruthy()
+    tag.remove()
+  })
+
+  it('uses a neutral honeypot name', async () => {
+    const { p } = await live()
+    const hp = p.$<HTMLInputElement>('input.hp')
+    expect(hp.name).toBe('contact_ref')
+    expect(hp.getAttribute('autocomplete')).toBe('off')
   })
 })

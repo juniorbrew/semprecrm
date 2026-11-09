@@ -3,15 +3,15 @@
  *   <script src=".../robo.js" data-robo="PUBLIC_KEY" async></script>
  * Everything is built with createElement + textContent inside a Shadow DOM
  * (config and visitor text never become markup). Nothing is sent before the
- * visitor finishes and ticks the consent box; answers stay in localStorage
- * for 1 day so a closed chat resumes. window.SempreRobo.mount({config,
+ * visitor finishes and ticks the consent box; answers stay in sessionStorage
+ * (this tab only) so a closed chat resumes. window.SempreRobo.mount({config,
  * preview, container, submit}) powers the Settings preview: same widget,
  * unsaved config, no call to the public API.
  */
 (function () {
   'use strict';
 
-  var script = document.currentScript;
+  var script = document.currentScript || document.querySelector('script[data-robo]');
   var DAY = 864e5;
 
   var TEXT = {
@@ -22,6 +22,7 @@
       skip: 'Pular',
       placeholder: 'Digite aqui',
       required: 'Preciso dessa resposta para continuar.',
+      name: 'Escreva só o seu nome, sem links, e-mails ou números.',
       phone: 'Esse número não parece válido. Informe com DDD, por exemplo (11) 98765-4321.',
       email: 'Esse e-mail não parece válido. Confira e tente de novo.',
       consentIntro: 'Para terminar, preciso da sua autorização.',
@@ -31,7 +32,6 @@
       error: 'Não foi possível enviar agora. Tente de novo em instantes.',
       retry: 'Tentar de novo',
       whatsapp: 'Continuar no WhatsApp',
-      typing: 'Digitando',
     },
     en: {
       open: 'Open chat',
@@ -40,6 +40,7 @@
       skip: 'Skip',
       placeholder: 'Type here',
       required: 'I need this answer to continue.',
+      name: 'Please write only your name, without links, emails or numbers.',
       phone: 'That number does not look valid. Include the area code, e.g. (11) 98765-4321.',
       email: 'That email does not look valid. Please check it and try again.',
       consentIntro: 'To finish, I need your permission.',
@@ -49,7 +50,6 @@
       error: 'We could not send this right now. Please try again shortly.',
       retry: 'Try again',
       whatsapp: 'Continue on WhatsApp',
-      typing: 'Typing',
     },
   };
 
@@ -148,7 +148,7 @@
   function store(key) {
     var k = 'sempre-robo:' + key;
     function ls(fn) {
-      try { return fn(window.localStorage); } catch { return null; } // storage blocked: chat still works
+      try { return fn(window.sessionStorage); } catch { return null; } // storage blocked: chat still works
     }
     return {
       read: function () {
@@ -188,12 +188,29 @@
     return svg;
   }
 
-  function validPhone(v) {
-    return /^\d{10,15}$/.test(v.replace(/\D/g, ''));
+  // Same rules as the server (normalizeTypedPhone + isValidE164, EMAIL_RE).
+  function validPhone(raw) {
+    var d = raw.replace(/\D/g, '');
+    if (d && raw.trim().charAt(0) !== '+') {
+      if (d.indexOf('00') === 0) d = d.slice(2);
+      else {
+        var n = d.replace(/^0/, '');
+        if (n.length === 10 || n.length === 11) d = '55' + n;
+      }
+    }
+    return /^[1-9]\d{6,14}$/.test(d);
   }
 
   function validEmail(v) {
-    return /^[^\s@]{1,64}@[^\s@]+\.[^\s@.]{2,}$/.test(v) && v.length <= 254;
+    return /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]{1,190}\.[^\s@<>"',;.]{2,}$/.test(v) && v.length <= 254;
+  }
+
+  // Shape of the questions: a saved chat is only resumed if it still matches.
+  function signature(qs) {
+    var t = qs.map(function (q) { return q.id + '|' + q.type + '|' + q.options.join('\u0001'); }).join('\u0002');
+    var x = 5381;
+    for (var i = 0; i < t.length; i++) x = ((x << 5) + x + t.charCodeAt(i)) | 0;
+    return (x >>> 0).toString(36);
   }
 
   /** Builds one widget. `o`: { config, key, endpoint, preview, container, submit, lang }. */
@@ -202,6 +219,9 @@
     var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var st = o.preview || !o.key ? null : store(o.key);
     var S = { open: false, started: false, i: 0, answers: {}, t0: 0, busy: false, finished: false };
+    var sig = signature(cfg.questions);
+    var vv = window.visualViewport;
+    var prevOverflow = null;
     var timers = [];
 
     var host = h('div', { 'data-robo-host': '' });
@@ -218,9 +238,9 @@
     var closeBtn = h('button', { class: 'x', type: 'button', 'aria-label': T.close, text: '×', onclick: closePanel });
     var log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite', });
     var zone = h('div');
-    var hp = h('input', { class: 'hp', type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off', 'aria-hidden': 'true' });
+    var hp = h('input', { class: 'hp', type: 'text', name: 'contact_ref', tabindex: '-1', autocomplete: 'off', 'aria-hidden': 'true' });
     var foot = h('div', { class: 'foot' }, [zone, hp]);
-    var panel = h('div', { class: 'panel', role: 'dialog', 'aria-label': cfg.name }, [
+    var panel = h('div', { class: 'panel', role: 'dialog', 'aria-modal': 'false', 'aria-label': cfg.name }, [
       h('div', { class: 'head' }, [h('span', { text: cfg.name }), closeBtn]),
       log,
       foot,
@@ -232,11 +252,48 @@
     root.appendChild(wrap);
     root.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && S.open && !o.preview) closePanel();
+      if (e.key === 'Tab' && S.open && fullScreen()) trap(e);
     });
 
+    // Full-screen on small phones: the page behind must not be reachable.
+    function fullScreen() {
+      return !o.preview && !!(window.matchMedia && window.matchMedia('(max-width:480px)').matches);
+    }
+
+    function trap(e) {
+      var els = Array.prototype.filter.call(panel.querySelectorAll('button,input,a[href]'), function (n) {
+        return !n.disabled && n.getAttribute('tabindex') !== '-1';
+      });
+      if (!els.length) return;
+      var first = els[0], last = els[els.length - 1], cur = root.activeElement;
+      if (e.shiftKey && (cur === first || !cur)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (cur === last || !cur)) { e.preventDefault(); first.focus(); }
+    }
+
+    function fit() {
+      if (!vv || !fullScreen()) return;
+      panel.style.height = vv.height + 'px';
+      wrap.style.top = vv.offsetTop + 'px';
+    }
+
+    function lock(on) {
+      if (on && fullScreen()) {
+        panel.setAttribute('aria-modal', 'true');
+        if (prevOverflow === null) prevOverflow = document.documentElement.style.overflow;
+        document.documentElement.style.overflow = 'hidden';
+        if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
+      } else {
+        panel.setAttribute('aria-modal', 'false');
+        if (prevOverflow !== null) { document.documentElement.style.overflow = prevOverflow; prevOverflow = null; }
+        if (vv) { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); }
+        panel.style.height = '';
+        wrap.style.top = '';
+      }
+    }
+
+    // The bot's own typing pause counts for everyone (reduced motion: shorter, still non-zero).
     function later(fn, ms) {
-      var id = setTimeout(fn, reduced ? 0 : ms);
-      timers.push(id);
+      timers.push(setTimeout(fn, reduced ? Math.min(ms, 300) : ms));
     }
 
     function scroll() {
@@ -272,7 +329,7 @@
     }
 
     function persist() {
-      if (st) st.write({ t0: S.t0, answers: S.answers, i: S.i });
+      if (st) st.write({ t0: S.t0, answers: S.answers, i: S.i, sig: sig });
     }
 
     function answer(q, value, shown) {
@@ -285,21 +342,17 @@
       ask();
     }
 
-    function ask(error) {
+    function ask(error, prefill) {
       if (S.i >= cfg.questions.length) return consent();
       var q = cfg.questions[S.i];
-      if (error) {
-        typing(function () { input(q); }, error);
-        return;
-      }
-      typing(function () { input(q); }, q.text);
+      typing(function () { input(q, prefill); }, error || q.text);
     }
 
     function skipBtn(q) {
       return h('button', { class: 'btn alt', type: 'button', text: T.skip, onclick: function () { answer(q, ''); } });
     }
 
-    function input(q) {
+    function input(q, prefill) {
       clearZone();
       if (q.type === 'choice') {
         var box = h('div', { class: 'choices' });
@@ -316,6 +369,7 @@
         type: type, autocomplete: ac, maxlength: q.type === 'name' ? '80' : '500',
         placeholder: T.placeholder, 'aria-label': q.text,
       });
+      if (prefill) field.value = prefill;
       var form = h('form', { class: 'row', novalidate: '' }, [field, h('button', { class: 'btn', type: 'submit', text: T.send })]);
       form.addEventListener('submit', function (e) {
         e.preventDefault();
@@ -324,8 +378,8 @@
           if (q.required) return ask(T.required);
           return answer(q, '');
         }
-        if (q.type === 'phone' && !validPhone(v)) return ask(T.phone);
-        if (q.type === 'email' && !validEmail(v)) return ask(T.email);
+        if (q.type === 'phone' && !validPhone(v)) return ask(T.phone, v);
+        if (q.type === 'email' && !validEmail(v)) return ask(T.email, v);
         answer(q, v);
       });
       zone.appendChild(form);
@@ -362,22 +416,41 @@
       for (var k in S.answers) if (Object.prototype.hasOwnProperty.call(S.answers, k)) answers[k] = S.answers[k];
       var send = o.submit
         ? Promise.resolve().then(function () { return o.submit(answers); }).then(function (b) { return { ok: true, body: b || {} }; })
-        : post(o, { answers: answers, consent: true, website: hp.value, elapsed_ms: Date.now() - S.t0 });
+        : post(o, { answers: answers, consent: true, contact_ref: hp.value, elapsed_ms: Date.now() - S.t0 });
       send.then(function (res) {
         S.busy = false;
         t.remove();
-        return res.ok ? done(res.body) : fail();
+        if (res.ok) return done(res.body);
+        if (res.status === 400) return rejected(res.body);
+        fail(res.status === 429 || res.status >= 500);
       }, function () {
         S.busy = false;
         t.remove();
-        fail();
+        fail(true);
       });
     }
 
-    function fail() {
+    // The server refused an answer: go back to that question with what was typed.
+    function rejected(b) {
+      var err = (b && b.error) || '';
+      var kind = err === 'invalid_phone' ? 'phone' : err === 'invalid_email' ? 'email' : err === 'invalid_name' ? 'name' : '';
+      var at = -1;
+      cfg.questions.forEach(function (q, j) {
+        if (at < 0 && ((b && b.question === q.id) || (!(b && b.question) && kind && q.type === kind))) at = j;
+      });
+      if (at < 0) return fail(false);
+      var q = cfg.questions[at], typed = S.answers[q.id] || '';
+      delete S.answers[q.id];
+      S.i = at;
+      persist();
+      ask(T[kind || 'required'] || T.required, typed);
+    }
+
+    function fail(retry) {
       msg('bot', T.error);
       clearZone();
-      zone.appendChild(h('button', { class: 'btn', type: 'button', text: T.retry, onclick: submit }));
+      if (retry) zone.appendChild(h('button', { class: 'btn', type: 'button', text: T.retry, onclick: submit }));
+      else zone.appendChild(h('button', { class: 'btn alt', type: 'button', text: T.close, onclick: closePanel }));
       focusZone();
     }
 
@@ -397,15 +470,18 @@
 
     function start() {
       var saved = st && st.read();
-      if (saved && !S.finished) {
+      if (saved && !S.finished && saved.sig === sig) {
         S.t0 = Number(saved.t0) || Date.now();
-        S.answers = saved.answers;
         S.i = Math.min(Math.max(0, Number(saved.i) || 0), cfg.questions.length);
         if (cfg.greeting) msg('bot', cfg.greeting);
         for (var k = 0; k < S.i; k++) {
-          var q = cfg.questions[k];
+          var q = cfg.questions[k], a = saved.answers[q.id];
           msg('bot', q.text);
-          if (typeof S.answers[q.id] === 'string') msg('me', S.answers[q.id]);
+          // Only answers that are still valid for this question come back.
+          if (typeof a === 'string' && (q.type !== 'choice' || q.options.indexOf(a) >= 0)) {
+            S.answers[q.id] = a;
+            msg('me', a);
+          }
         }
         return ask();
       }
@@ -416,6 +492,7 @@
     function openPanel() {
       S.open = true;
       wrap.classList.add('open');
+      lock(true);
       if (!S.started) {
         S.started = true;
         start();
@@ -427,6 +504,7 @@
     function closePanel() {
       S.open = false;
       wrap.classList.remove('open');
+      lock(false);
       launch.focus();
     }
 
@@ -439,6 +517,7 @@
       close: closePanel,
       destroy: function () {
         timers.forEach(clearTimeout);
+        lock(false);
         if (host.parentNode) host.parentNode.removeChild(host);
       },
     };
@@ -468,14 +547,14 @@
       .fetch(o.endpoint, { credentials: 'omit' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
-        if (!b || !b.ok || ctl.dead) return;
+        if (!b || !b.ok || ctl.dead) return o.onFail && o.onFail();
         var real = build(normalize(b.config), o);
         ctl.host = real.host;
         ctl.open = real.open;
         ctl.close = real.close;
         ctl.destroy = real.destroy;
       })
-      .catch(function () { /* a bot that cannot load stays invisible */ });
+      .catch(function () { if (o.onFail) o.onFail(); }); // a bot that cannot load stays invisible
     return ctl;
   }
 
@@ -483,10 +562,11 @@
 
   var key = script && script.getAttribute('data-robo');
   if (key && /^[0-9a-f]{32}$/.test(key) && !window['__semprerobo_' + key]) {
+    // Marked while loading, cleared if the config cannot be fetched so a later tag can retry.
     window['__semprerobo_' + key] = true;
     var base = '';
     try { base = new URL(script.src).origin; } catch { base = ''; }
-    var go = function () { mount({ key: key, endpoint: base + '/api/v1/robo/' + key }); };
+    var go = function () { mount({ key: key, endpoint: base + '/api/v1/robo/' + key, onFail: function () { delete window['__semprerobo_' + key]; } }); };
     if (document.body) go();
     else document.addEventListener('DOMContentLoaded', go);
   }
