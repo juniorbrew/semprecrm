@@ -12,7 +12,7 @@ import type { LeadSource, LeadSourceEvent, LeadSourceFieldMap } from '@/types'
 import { normalizeFieldMap } from './map-fields'
 
 export const LEAD_SOURCE_COLUMNS =
-  'id, account_id, name, token, is_active, pipeline_id, stage_id, tag_ids, assignee_user_id, field_map, received_count, last_received_at, created_by, created_at, updated_at'
+  'id, account_id, name, token, is_active, pipeline_id, stage_id, tag_ids, assignee_user_id, field_map, kind, public_key, bot_config, received_count, last_received_at, created_by, created_at, updated_at'
 
 function normalizeSource(row: Record<string, unknown>): LeadSource {
   return {
