@@ -106,7 +106,11 @@ async function findBot(key: string): Promise<Bot | null> {
 }
 
 /** Origin gate shared by every method. Returns the CORS headers or a response. */
-function gateOrigin(request: Request, config: BotConfig, { required }: { required: boolean }) {
+function gateOrigin(
+  request: Request,
+  config: BotConfig,
+  { required }: { required: boolean },
+): { denied: NextResponse } | { headers: Record<string, string> } {
   const origin = request.headers.get('origin')
   if (!origin) {
     return required ? { denied: json({ ok: false, error: 'origin_not_allowed' }, 403) } : { headers: {} }
