@@ -37,6 +37,8 @@ const BLOCKED_IN_OWN_MIGRATION: Record<string, string> = {
   sales_goals: '103_sales_goals.sql',
   products: '104_products_deal_items.sql',
   deal_items: '104_products_deal_items.sql',
+  deal_fields: '107_deal_fields.sql',
+  deal_field_values: '107_deal_fields.sql',
 }
 
 /** Tables that carry a write policy (INSERT/UPDATE/DELETE/ALL) after all migrations before 094. */

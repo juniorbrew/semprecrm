@@ -68,3 +68,26 @@ describe("DealCard", () => {
     expect(container.querySelector("[style*='background-color']")).toBeNull()
   })
 })
+
+describe("DealCard deal fields", () => {
+  it("shows the lines the admin put on the card, nothing without them", () => {
+    const { rerender } = render(<DealCard deal={deal()} stage={stage} onEdit={vi.fn()} />)
+    expect(screen.queryByTestId("deal-card-fields")).toBeNull()
+    rerender(
+      <DealCard
+        deal={deal()}
+        stage={stage}
+        onEdit={vi.fn()}
+        fieldLines={[
+          { id: "a", name: "Margem", text: "R$ 320" },
+          { id: "b", name: "Frete", text: "—" },
+        ]}
+      />,
+    )
+    const line = screen.getByTestId("deal-card-fields")
+    expect(line.textContent).toBe("Margem R$ 320Frete —")
+    expect(line.hasAttribute("data-no-translate")).toBe(true)
+    rerender(<DealCard deal={deal()} stage={stage} onEdit={vi.fn()} fieldLines={[]} />)
+    expect(screen.queryByTestId("deal-card-fields")).toBeNull()
+  })
+})

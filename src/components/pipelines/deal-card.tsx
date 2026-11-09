@@ -93,6 +93,8 @@ interface DealCardProps {
   /** This card's placeholder while its overlay is being dragged. */
   dragging?: boolean;
   compact?: boolean;
+  /** Up to two deal fields the admin put on the card ("Margem R$ 320"). */
+  fieldLines?: { id: string; name: string; text: string }[];
   /** Drag handle wiring (dnd-kit listeners + attributes) for the main button. */
   handleRef?: Ref<HTMLButtonElement>;
   handleProps?: Record<string, unknown>;
@@ -106,6 +108,7 @@ export function DealCard({
   isOverlay,
   dragging,
   compact,
+  fieldLines,
   handleRef,
   handleProps,
 }: DealCardProps) {
@@ -232,6 +235,19 @@ export function DealCard({
             </span>
           )}
         </span>
+        {fieldLines && fieldLines.length > 0 && (
+          <span
+            data-testid="deal-card-fields"
+            data-no-translate
+            className="mt-1 flex min-w-0 flex-wrap gap-x-2 text-[11px] tabular-nums text-muted-foreground"
+          >
+            {fieldLines.map((l) => (
+              <span key={l.id} className="min-w-0 truncate">
+                {l.name} <span className="font-medium text-foreground/80">{l.text}</span>
+              </span>
+            ))}
+          </span>
+        )}
         {!compact && (close || activityAt) && (
           <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
             {close && <CloseDate close={close} />}

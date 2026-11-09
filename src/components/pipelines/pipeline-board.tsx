@@ -16,6 +16,7 @@ import {
 } from "@dnd-kit/core";
 import type { Deal, DealStatus, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
+import { useCardFieldLines, type CardFieldLine } from "./use-card-field-lines";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/hooks/use-language";
@@ -79,6 +80,9 @@ export function PipelineBoard({
     () => [...stages].sort((a, b) => a.position - b.position),
     [stages],
   );
+
+  // The deal fields marked "show on the card" (one read per 100 deals, none without them).
+  const fieldLines = useCardFieldLines(deals, sortedStages);
 
   const dealsByStage = useMemo(() => {
     const map = new Map<string, Deal[]>();
@@ -165,6 +169,7 @@ export function PipelineBoard({
               totalValue={totalValue}
               currency={defaultCurrency}
               compact={compact}
+              fieldLines={fieldLines}
               onAddDeal={onAddDeal}
               onEditDeal={onEditDeal}
               onStatus={onStatus}
@@ -187,6 +192,7 @@ export function PipelineBoard({
             }
             onEdit={() => {}}
             compact={compact}
+            fieldLines={fieldLines.get(activeDeal.id)}
             isOverlay
           />
         ) : null}
@@ -246,6 +252,7 @@ function StageColumn({
   totalValue,
   currency,
   compact,
+  fieldLines,
   onAddDeal,
   onEditDeal,
   onStatus,
@@ -255,6 +262,7 @@ function StageColumn({
   totalValue: number;
   currency: string;
   compact: boolean;
+  fieldLines: Map<string, CardFieldLine[]>;
   onAddDeal?: (stageId: string) => void;
   onEditDeal: (deal: Deal) => void;
   onStatus?: (deal: Deal, status: DealStatus) => void;
@@ -334,6 +342,7 @@ function StageColumn({
               deal={deal}
               stage={stage}
               compact={compact}
+              fieldLines={fieldLines.get(deal.id)}
               onEdit={onEditDeal}
               onStatus={onStatus}
             />
@@ -348,12 +357,14 @@ function DraggableDealCard({
   deal,
   stage,
   compact,
+  fieldLines,
   onEdit,
   onStatus,
 }: {
   deal: Deal;
   stage: PipelineStage;
   compact: boolean;
+  fieldLines?: CardFieldLine[];
   onEdit: (deal: Deal) => void;
   onStatus?: (deal: Deal, status: DealStatus) => void;
 }) {
@@ -369,6 +380,7 @@ function DraggableDealCard({
         deal={deal}
         stage={stage}
         compact={compact}
+        fieldLines={fieldLines}
         dragging={isDragging}
         onEdit={onEdit}
         onStatus={onStatus}
