@@ -1,3 +1,4 @@
+// read-only: allowed (inbound: a site visitor's lead is customer data, kept like the lead capture webhook)
 // ============================================================
 // /api/v1/robo/[key] — public endpoint of the website chat bot
 // (feature 4.7, migration 108; public/robo.js talks to it).
