@@ -30,7 +30,8 @@ export async function GET(request: Request) {
   }
   let purged = 0
   try {
-    const { data } = await db.rpc('meta_capi_purge', { p_days: 90, p_limit: 5000 })
+    const { data, error } = await db.rpc('meta_capi_purge', { p_days: 90, p_limit: 5000 })
+    if (error) console.error('[meta-capi] purge failed:', error.code ?? 'unknown')
     purged = typeof data === 'number' ? data : 0
   } catch (err) {
     console.error('[meta-capi] purge failed:', err instanceof Error ? err.message : err)

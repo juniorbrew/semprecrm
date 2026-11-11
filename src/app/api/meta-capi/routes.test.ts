@@ -131,6 +131,19 @@ describe('settings route', () => {
     expect(h.calls.some((c) => c.op === 'upsert')).toBe(false)
   })
 
+  it('saving the SAME dataset does not clear a pause; a new key or a different dataset does', async () => {
+    h.results['meta_capi_settings.select'] = { data: { dataset_id: '123456', token_last4: 'WXYZ' }, error: null }
+    h.results['meta_capi_settings.upsert'] = { data: {}, error: null }
+    await put({ dataset_id: '123456', test_event_code: 'T1' })
+    expect(h.calls.find((c) => c.op === 'upsert')!.payload).not.toHaveProperty('paused_reason')
+    h.calls = []
+    await put({ dataset_id: '654321' })
+    expect(h.calls.find((c) => c.op === 'upsert')!.payload).toMatchObject({ paused_reason: null })
+    h.calls = []
+    await put({ token: TOKEN })
+    expect(h.calls.find((c) => c.op === 'upsert')!.payload).toMatchObject({ paused_reason: null })
+  })
+
   it('toggling without a new key keeps the stored key (no token fields written)', async () => {
     h.results['meta_capi_settings.select'] = { data: { dataset_id: '123456', token_last4: 'WXYZ' }, error: null }
     h.results['meta_capi_settings.upsert'] = { data: { enabled: false }, error: null }

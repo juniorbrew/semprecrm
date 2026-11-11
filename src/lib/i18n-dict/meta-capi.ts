@@ -36,6 +36,7 @@ export const DICT_META_CAPI: Record<string, string> = {
     'Opcional: copie o código de teste em Testar eventos, envie um evento de teste e confira lá.',
   'Only customers who came from a Meta ad are sent. Your company is responsible for mentioning this in its privacy policy.':
     'Só são enviados os clientes que vieram de anúncio da Meta. Sua empresa é responsável por informar isso na política de privacidade.',
+  'Something went wrong with the test.': 'Algo deu errado com o teste.',
   'Date and time': 'Data e hora',
   'Event type': 'Tipo de evento',
   'Related deal': 'Negócio relacionado',

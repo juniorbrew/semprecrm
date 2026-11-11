@@ -38,6 +38,7 @@ interface CapiEventRow {
   value: number | string | null;
   currency: string | null;
   last_error: string | null;
+  sent_at: string | null;
   created_at: string;
 }
 
@@ -138,7 +139,7 @@ export function MetaCapiCard() {
     try {
       const res = await fetch('/api/meta-capi/test', { method: 'POST', cache: 'no-store' });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: string };
-      setTestResult({ ok: Boolean(body.ok), message: body.message ?? body.error ?? 'Something went wrong' });
+      setTestResult({ ok: Boolean(body.ok), message: body.message ?? body.error ?? t('Something went wrong with the test.') });
     } catch {
       setTestResult({ ok: false, message: 'Não foi possível falar com o servidor.' });
     } finally {
@@ -310,7 +311,7 @@ export function MetaCapiCard() {
                     <tbody className="divide-y divide-border border-t border-border">
                       {(data?.events ?? []).map((ev) => (
                         <tr key={ev.id} className="align-top">
-                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{formatRelative(ev.created_at, language)}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{formatRelative(ev.sent_at ?? ev.created_at, language)}</td>
                           <td className="px-2 py-2">{ev.event_name === 'lead' ? t('Lead created') : t('Deal won')}</td>
                           <td className="max-w-[10rem] truncate px-2 py-2" data-no-translate title={ev.deal_title ?? ''}>
                             {ev.deal_title ?? '—'}

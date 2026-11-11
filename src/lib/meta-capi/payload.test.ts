@@ -21,12 +21,12 @@ const row = (over: Partial<ClaimedEvent> = {}): ClaimedEvent => ({
   event_name: 'lead',
   event_id: 'sempre-d1-lead',
   attempts: 0,
+  lease_until: '2026-11-09T12:02:00.000Z',
   occurred_at: '2026-11-09T12:00:00.000Z',
   value: null,
   currency: null,
   dataset_id: '123456789',
   token_enc: 'enc',
-  test_event_code: null,
   contact_id: 'c1',
   contact_phone: '+55 (11) 90000-1111',
   contact_email: '  Ana@Example.COM ',
@@ -51,8 +51,11 @@ describe('isMetaEligibleOrigin', () => {
     [{ channel: 'instagram', kind: 'ad', click_id_type: null }, true],
     [{ channel: 'messenger', kind: 'ad', click_id_type: null }, true],
     [{ channel: 'instagram', kind: 'post', click_id_type: null }, false],
-    [{ channel: 'site_bot', kind: 'link', click_id_type: 'fbclid' }, true],
-    [{ channel: 'webhook', kind: 'link', click_id_type: 'fbclid' }, true],
+    [{ channel: 'site_bot', kind: 'link', click_id_type: 'fbclid', click_id: 'IwAR1abcdefghijklmnopqrstuv' }, true],
+    [{ channel: 'webhook', kind: 'link', click_id_type: 'fbclid', click_id: 'IwAR1abcdefghijklmnopqrstuv' }, true],
+    [{ channel: 'site_bot', kind: 'link', click_id_type: 'fbclid', click_id: 'FB1' }, false],
+    [{ channel: 'site_bot', kind: 'link', click_id_type: 'fbclid', click_id: 'has space and ?? chars 123456' }, false],
+    [{ channel: 'site_bot', kind: 'link', click_id_type: 'fbclid' }, false],
     [{ channel: 'site_bot', kind: 'link', click_id_type: 'gclid' }, false],
     [{ channel: null, kind: null, click_id_type: null }, false],
   ])('%j -> %s', (o, want) => expect(isMetaEligibleOrigin(o)).toBe(want))
@@ -63,6 +66,11 @@ describe('normalizers', () => {
     expect(normalizePhone('+55 (11) 90000-1111')).toBe('5511900001111')
     expect(normalizePhone('11 90000-1111')).toBe('5511900001111')
     expect(normalizePhone('abc')).toBeNull()
+    expect(normalizePhone('011 90000-1111')).toBe('5511900001111') // leading zero stripped
+    expect(normalizePhone('0 11 3000-1111')).toBe('551130001111')
+    expect(normalizePhone('+1 415 555 2671')).toBe('14155552671') // already has a country code: unchanged
+    expect(normalizePhone('+351 912 345 678')).toBe('351912345678')
+    expect(normalizePhone('5511900001111')).toBe('5511900001111')
   })
   it('email: trim and lowercase', () => {
     expect(normalizeEmail('  Ana@Example.COM ')).toBe('ana@example.com')
@@ -112,12 +120,12 @@ describe('buildCapiEvent', () => {
   })
 
   it('site: Lead as system_generated with fbc and SHA-256 of normalized phone and e-mail', () => {
-    const r = buildCapiEvent(row({ origin_channel: 'site_bot', origin_kind: 'link', origin_click_id_type: 'fbclid', origin_click_id: 'FB1' }))
+    const r = buildCapiEvent(row({ origin_channel: 'site_bot', origin_kind: 'link', origin_click_id_type: 'fbclid', origin_click_id: 'IwAR1abcdefghijklmnopqrstuv' }))
     expect(r.ok && r.event).toMatchObject({
       event_name: 'Lead',
       action_source: 'system_generated',
       user_data: {
-        fbc: `fb.1.${Date.parse('2026-11-09T11:00:00.000Z')}.FB1`,
+        fbc: `fb.1.${Date.parse('2026-11-09T11:00:00.000Z')}.IwAR1abcdefghijklmnopqrstuv`,
         ph: [h('5511900001111')],
         em: [h('ana@example.com')],
       },
@@ -138,12 +146,25 @@ describe('buildCapiEvent', () => {
     ['contact deleted', { contact_id: null }],
     ['contact anonymized', { contact_anonymized: true }],
     ['origin not from Meta', { origin_channel: 'whatsapp_qr', origin_click_id_type: null }],
-    ['whatsapp without WABA', { waba_id: null }],
     ['messenger without PSID', { origin_channel: 'messenger', origin_click_id_type: null, channel_external_id: 'P', contact_messenger_id: null }],
-    ['instagram without connection', { origin_channel: 'instagram', origin_click_id_type: null, channel_external_id: null }],
     ['site without fbclid', { origin_channel: 'site_bot', origin_click_id_type: 'fbclid', origin_click_id: null }],
+    ['site with an implausible fbclid', { origin_channel: 'site_bot', origin_click_id_type: 'fbclid', origin_click_id: 'FB1' }],
   ] as const)('refuses: %s', (_n, over) => {
     expect(buildCapiEvent(row(over as Partial<ClaimedEvent>)).ok).toBe(false)
+  })
+
+  it.each([
+    ['whatsapp without the WABA', { waba_id: null }],
+    ['messenger without a connected page', { origin_channel: 'messenger', origin_click_id_type: null, channel_external_id: null }],
+    ['instagram without a connected account', { origin_channel: 'instagram', origin_click_id_type: null, channel_external_id: null }],
+  ] as const)('fails (an admin can fix it): %s', (_n, over) => {
+    expect(buildCapiEvent(row(over as Partial<ClaimedEvent>))).toMatchObject({ ok: false, outcome: 'fail' })
+  })
+
+  it('cancels only what nobody can fix', () => {
+    expect(buildCapiEvent(row({ contact_id: null }))).toMatchObject({ outcome: 'cancel' })
+    expect(buildCapiEvent(row({ contact_anonymized: true }))).toMatchObject({ outcome: 'cancel' })
+    expect(buildCapiEvent(row({ origin_channel: 'whatsapp_qr', origin_click_id_type: null }))).toMatchObject({ outcome: 'cancel' })
   })
 
   it('event_id is the stored stable one', () => {

@@ -21,6 +21,7 @@ export function explainMetaError(code: number | null, status: number | null): { 
   if (code === 100) return { error: 'A Meta recusou os dados do evento ou o ID do conjunto de dados.', retryable: false }
   if (code === 200 || code === 10 || code === 803) return { error: 'A chave de acesso não tem permissão para este conjunto de dados.', retryable: false }
   if (code === 4 || code === 17 || code === 32 || code === 613) return { error: 'A Meta pediu para esperar um pouco (muitos envios).', retryable: true }
+  if (code === 1 || code === 2) return { error: 'A Meta teve um erro temporário.', retryable: true }
   if (status != null && status >= 500) return { error: 'A Meta está fora do ar no momento.', retryable: true }
   return { error: 'A Meta recusou o envio.', retryable: false }
 }

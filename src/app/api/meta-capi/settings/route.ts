@@ -69,8 +69,9 @@ export async function PUT(request: Request) {
     row.token_enc = encrypt(token)
     row.token_last4 = token.slice(-4)
   }
-  // A new key or a new dataset is the fix for a paused integration.
-  if (token || rest.dataset_id !== undefined) row.paused_reason = null
+  // Only a new key or a DIFFERENT dataset is the fix for a paused integration (saving the same values is not).
+  const datasetChanged = rest.dataset_id !== undefined && rest.dataset_id !== ((existing?.dataset_id as string | null | undefined) ?? null)
+  if (token || datasetChanged) row.paused_reason = null
 
   const { data, error } = await db
     .from('meta_capi_settings')

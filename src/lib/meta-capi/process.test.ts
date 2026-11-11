@@ -15,12 +15,12 @@ const claimed = (over: Partial<ClaimedEvent> = {}): ClaimedEvent => ({
   event_name: 'lead',
   event_id: 'sempre-d1-lead',
   attempts: 0,
+  lease_until: '2026-11-09T12:02:00+00:00',
   occurred_at: '2026-11-09T11:00:00Z',
   value: null,
   currency: null,
   dataset_id: '123456789',
   token_enc: 'enc',
-  test_event_code: null,
   contact_id: 'c1',
   contact_phone: '+5511900001111',
   contact_email: null,
@@ -37,8 +37,14 @@ const claimed = (over: Partial<ClaimedEvent> = {}): ClaimedEvent => ({
   ...over,
 })
 
-function fakeDb(rows: ClaimedEvent[], claimError: { code: string } | null = null) {
-  const updates: { table: string; patch: Record<string, unknown>; filters: Record<string, unknown> }[] = []
+type Upd = { table: string; patch: Record<string, unknown>; filters: Record<string, unknown> }
+/** `matches` decides, per update, how many rows "matched" (0 = lease lost); `updateError` simulates a DB error. */
+function fakeDb(
+  rows: ClaimedEvent[],
+  claimError: { code: string } | null = null,
+  opts: { matches?: (u: Upd) => number; updateError?: { code: string } | null } = {},
+) {
+  const updates: Upd[] = []
   const db = {
     rpc: vi.fn(async () => ({ data: rows, error: claimError })),
     from: (table: string) => ({
@@ -47,7 +53,13 @@ function fakeDb(rows: ClaimedEvent[], claimError: { code: string } | null = null
         const q: Record<string, unknown> = {}
         q.eq = (k: string, v: unknown) => ((filters[k] = v), q)
         q.is = (k: string, v: unknown) => ((filters[k] = v), q)
-        q.then = (res: (v: unknown) => void) => (updates.push({ table, patch, filters }), res({ error: null }))
+        q.select = () => q
+        q.then = (res: (v: unknown) => void) => {
+          const u = { table, patch, filters }
+          updates.push(u)
+          const n = opts.matches ? opts.matches(u) : 1
+          res({ data: Array.from({ length: n }, () => ({ id: 'x' })), error: opts.updateError ?? null })
+        }
         return q
       },
     }),
@@ -60,18 +72,18 @@ const run = (db: SupabaseClient, send: (a: never) => Promise<SendOutcome>) =>
   processCapiBatch({ db, now: () => NOW, decryptToken: () => 'TOKEN', send: send as never })
 
 describe('processCapiBatch', () => {
-  it('sends and marks sent, decrypting the token and including the test code', async () => {
-    const { db, updates } = fakeDb([claimed({ test_event_code: 'TEST1' })])
+  it('sends and marks sent, decrypting the token; a saved test code is never added to a real event', async () => {
+    const { db, updates } = fakeDb([claimed()])
     const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => ok)
     const s = await run(db, send)
     expect(s).toMatchObject({ claimed: 1, sent: 1 })
-    const arg = send.mock.calls[0][0] as { token: string; datasetId: string; body: { test_event_code: string; data: unknown[] } }
+    const arg = send.mock.calls[0][0] as { token: string; datasetId: string; body: { data: unknown[] } }
     expect(arg.token).toBe('TOKEN')
     expect(arg.datasetId).toBe('123456789')
-    expect(arg.body.test_event_code).toBe('TEST1')
     expect(arg.body.data).toHaveLength(1)
     expect(updates[0].patch).toMatchObject({ status: 'sent', attempts: 1, claimed_until: null })
-    expect(updates[0].filters).toMatchObject({ id: 'e1', status: 'pending' })
+    expect(updates[0].filters).toMatchObject({ id: 'e1', status: 'pending', claimed_until: '2026-11-09T12:02:00+00:00' })
+    expect(arg.body).not.toHaveProperty('test_event_code')
   })
 
   it('retries with growing backoff, then fails after 5 attempts', async () => {
@@ -104,7 +116,7 @@ describe('processCapiBatch', () => {
     expect(s.paused).toBe(1)
     const pause = updates.find((u) => u.table === 'meta_capi_settings')
     expect(pause?.patch).toEqual({ paused_reason: 'invalid_token' })
-    expect(pause?.filters).toMatchObject({ account_id: 'a1' })
+    expect(pause?.filters).toMatchObject({ account_id: 'a1', token_enc: 'enc' }) // only the token this run used
     // both rows stay pending (no status change): they wait for a new key
     expect(updates.filter((u) => u.table === 'meta_capi_events').every((u) => u.patch.status === undefined)).toBe(true)
   })
@@ -120,6 +132,48 @@ describe('processCapiBatch', () => {
     expect(send).not.toHaveBeenCalled()
     expect(s.cancelled).toBe(3)
     expect(updates.every((u) => u.patch.status === 'cancelled')).toBe(true)
+  })
+
+  it('a missing WABA or channel row is a failure an admin can fix (retry), not a cancel', async () => {
+    const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => ok)
+    const { db, updates } = fakeDb([claimed({ waba_id: null })])
+    const s = await run(db, send)
+    expect(send).not.toHaveBeenCalled()
+    expect(s).toMatchObject({ failed: 1, cancelled: 0 })
+    expect(updates[0].patch).toMatchObject({ status: 'failed', last_error: expect.stringMatching(/WhatsApp/) })
+  })
+
+  it('counts and logs a status update that errors or matches no row (lease lost), without personal data', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const a = await run(fakeDb([claimed()], null, { updateError: { code: '42501' } }).db, async () => ok)
+    expect(a.errors).toBe(1)
+    const b = await run(fakeDb([claimed()], null, { matches: () => 0 }).db, async () => ok)
+    expect(b.errors).toBe(1)
+    const lines = log.mock.calls.map((c) => c.join(' ')).join(' | ')
+    expect(lines).toMatch(/event e1/)
+    expect(lines).toMatch(/42501/)
+    expect(lines).not.toMatch(/5511900001111|CTWA/)
+    log.mockRestore()
+  })
+
+  it('stops on the lease time budget and releases the rest (claimed_until null, nothing sent)', async () => {
+    let t = NOW.getTime()
+    const send = vi.fn<(a: unknown) => Promise<SendOutcome>>(async () => {
+      t += 95_000 // each send eats most of a 120 s lease: after the first, less than 30 s are left
+      return ok
+    })
+    const { db, updates } = fakeDb([claimed({ id: 'a' }), claimed({ id: 'b' }), claimed({ id: 'c' })])
+    const s = await processCapiBatch({ db, now: () => new Date(t), decryptToken: () => 'T', send: send as never })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(s).toMatchObject({ sent: 1, released: 2 })
+    const released = updates.filter((u) => u.filters.id !== 'a')
+    expect(released).toHaveLength(2)
+    expect(released.every((u) => u.patch.claimed_until === null && u.patch.status === undefined)).toBe(true)
+  })
+
+  it('error 1 and 2 from Meta are retried', async () => {
+    expect(explainMetaError(1, 500).retryable).toBe(true)
+    expect(explainMetaError(2, 500).retryable).toBe(true)
   })
 
   it('fails events older than 7 days without calling Meta', async () => {
