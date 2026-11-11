@@ -87,6 +87,7 @@ Fica em **Configurações → Integrações → "Avisar a Meta (anúncios)"**. S
 ## Privacidade (LGPD)
 
 - Só clientes vindos de anúncio da Meta são enviados. A Meta já conhece o clique, e o envio diz apenas que virou lead ou venda.
+- Um `fbclid` falso enviado pelo robô público do site ainda pode gerar um Lead; só é aceito um `fbclid` com formato plausível (20 ou mais letras, números, `-` ou `_`), e o risco é limitado pelos limites de taxa do robô.
 - **Anonimização:** quando o contato é anonimizado, os eventos pendentes dele são cancelados.
 - **Responsabilidade da empresa:** a tela de configuração avisa em uma frase que a empresa é responsável por informar isso na política de privacidade dela.
 - **Dados guardados:** a chave fica criptografada. Os registros de envio não guardam telefone, e-mail nem o corpo enviado.
@@ -99,6 +100,7 @@ Fica em **Configurações → Integrações → "Avisar a Meta (anúncios)"**. S
 - Google Ads (conversões offline).
 - Clientes vindos do WhatsApp por QR Code: não há código de clique confiável.
 - Reenvio de negócios antigos, criados antes da integração ser ligada.
+- Negócio cuja origem é trocada depois de criado: não envia Lead (o Lead sai só na criação; a Venda usa a origem vigente quando ganha).
 
 ## Testes
 

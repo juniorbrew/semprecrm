@@ -1,7 +1,7 @@
 -- ============================================================
 -- Migration 110 (meta_capi_settings / meta_capi_events / enqueue trigger / claim / purge): triggers write only
 -- when they should, unique (deal, kind), disabled = no-op, tenant isolation, anon / agent denied, token_enc
--- hidden, billing block (094) in the claim, lease, pause, purge.
+-- hidden, billing block (094) in the claim, lease, pause, purge (leads only), no Purchase without a value.
 --
 -- Nothing is committed (ends in ROLLBACK). Needs the local DB migrated through 109:
 --   (cat supabase/migrations/110_meta_capi.sql supabase/tests/meta_capi.sql) \
@@ -54,14 +54,18 @@ INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
   ('11000000-0000-4000-8000-0000000000c5', '11000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900020005', 'C5'),
   ('11000000-0000-4000-8000-0000000000c6', '11000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900020006', 'C6'),
   ('11000000-0000-4000-8000-0000000000c7', '11000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900020007', 'C7'),
-  ('11000000-0000-4000-8000-0000000000cb', '11000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ctx), '+5511900020099', 'CB');
+  ('11000000-0000-4000-8000-0000000000cb', '11000000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ctx), '+5511900020099', 'CB'),
+  ('11000000-0000-4000-8000-0000000000c8', '11000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900020008', 'C8'),
+  ('11000000-0000-4000-8000-0000000000c9', '11000000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900020009', 'C9');
 INSERT INTO lead_origins(account_id, contact_id, channel, kind, click_id_type, click_id, occurred_at) VALUES
   ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c1', 'whatsapp', 'ad', 'ctwa_clid', 'CTWA1', now()),
   ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c2', 'instagram', 'ad', NULL, NULL, now()),
   ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c3', 'instagram', 'post', NULL, NULL, now()),
-  ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c4', 'site_bot', 'link', 'fbclid', 'FB1', now()),
+  ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c4', 'site_bot', 'link', 'fbclid', 'IwAR1abcdefghijklmnopqrstuv_-x', now()),
   ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c5', 'site_bot', 'link', 'gclid', 'G1', now()),
   ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c6', 'whatsapp_qr', 'ad', NULL, NULL, now()),
+  ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c8', 'whatsapp', 'ad', 'ctwa_clid', 'CTWA8', now()),
+  ((SELECT acc_a FROM ctx), '11000000-0000-4000-8000-0000000000c9', 'site_bot', 'link', 'fbclid', 'FB1', now()),
   ((SELECT acc_b FROM ctx), '11000000-0000-4000-8000-0000000000cb', 'whatsapp', 'ad', 'ctwa_clid', 'CTWAB', now());
 UPDATE contacts c SET last_origin_id = o.id, first_origin_id = o.id FROM lead_origins o WHERE o.contact_id = c.id AND c.id::text LIKE '11000000-%';
 
@@ -130,6 +134,13 @@ SELECT pg_temp.assert_true(EXISTS (SELECT 1 FROM deals WHERE id = '11000000-0000
 ALTER TABLE meta_capi_events DROP CONSTRAINT tmp_break;
 SELECT pg_temp.assert_eq(pg_temp.n_events($$deal_id = '11000000-0000-4000-8000-000000000d13'$$), 0, 'and wrote no event');
 
+-- anonymised customer and an implausible (short) fbclid are never enqueued
+UPDATE contacts SET anonymized_at = now() WHERE id = '11000000-0000-4000-8000-0000000000c8';
+SELECT pg_temp.mkdeal(14, 'c8', (SELECT acc_a FROM ctx), '11000000-0000-4000-8000-00000000000a', '11000000-0000-4000-8000-0000000000f1', '11000000-0000-4000-8000-0000000000e1', 'won');
+SELECT pg_temp.assert_eq(pg_temp.n_events($$deal_id = '11000000-0000-4000-8000-000000000d14'$$), 0, 'anonymised contact: nothing');
+SELECT pg_temp.mkdeal(15, 'c9', (SELECT acc_a FROM ctx), '11000000-0000-4000-8000-00000000000a', '11000000-0000-4000-8000-0000000000f1', '11000000-0000-4000-8000-0000000000e1', 'won');
+SELECT pg_temp.assert_eq(pg_temp.n_events($$deal_id = '11000000-0000-4000-8000-000000000d15'$$), 0, 'short fbclid: nothing');
+
 -- ---- tenant B (own settings, own events) ---------------------------------------------------------
 INSERT INTO meta_capi_settings(account_id, dataset_id, token_enc, token_last4, enabled)
   VALUES ((SELECT acc_b FROM ctx), '999999999999', 'ENCB', 'wxyz', true);
@@ -144,6 +155,7 @@ SELECT pg_temp.assert_true((SELECT token_last4 = 'abcd' FROM meta_capi_settings)
 SELECT pg_temp.assert_fails('SELECT token_enc FROM meta_capi_settings', 'token_enc hidden from authenticated');
 SELECT pg_temp.assert_fails('SELECT * FROM meta_capi_settings', 'select * refused (token_enc not granted)');
 SELECT pg_temp.assert_true((SELECT count(*) > 0 AND bool_and(account_id = (SELECT acc_a FROM ctx)) FROM meta_capi_events), 'admin A reads only its events');
+SELECT pg_temp.assert_fails($q$UPDATE deals SET account_id = (SELECT acc_b FROM ctx) WHERE id = '11000000-0000-4000-8000-000000000d03'$q$, 'a user session cannot move a deal across accounts');
 SELECT pg_temp.assert_fails($q$UPDATE meta_capi_settings SET enabled = false$q$, 'no write grant on settings');
 SELECT pg_temp.assert_fails($q$UPDATE meta_capi_events SET status = 'sent'$q$, 'no write grant on events');
 SELECT pg_temp.assert_fails($q$DELETE FROM meta_capi_events$q$, 'no delete grant on events');
@@ -151,6 +163,7 @@ SELECT pg_temp.assert_fails($q$INSERT INTO meta_capi_events(account_id, deal_id,
 SELECT pg_temp.assert_fails($q$SELECT * FROM public.meta_capi_claim(10, 60)$q$, 'claim is service-role only');
 SELECT pg_temp.assert_fails($q$SELECT public.meta_capi_purge(90, 10)$q$, 'purge is service-role only');
 SELECT set_config('request.jwt.claim.sub', '11000000-0000-4000-8000-00000000000c', true);
+SELECT pg_temp.assert_fails($q$UPDATE deals SET account_id = (SELECT acc_b FROM ctx) WHERE id = '11000000-0000-4000-8000-000000000d03'$q$, 'agent cannot move a deal across accounts');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM meta_capi_settings), 0, 'agent reads no settings');
 SELECT pg_temp.assert_eq((SELECT count(*) FROM meta_capi_events), 0, 'agent reads no events');
 SELECT set_config('request.jwt.claim.sub', '11000000-0000-4000-8000-00000000000b', true);
@@ -165,8 +178,15 @@ RESET ROLE;
 
 -- ---- claim: lease, billing block (094), pause, toggles ------------------------------------------------
 SET ROLE service_role;
-SELECT pg_temp.assert_true((SELECT count(*) = 7 FROM public.meta_capi_claim(100, 60)), 'claims the 6 events of A and the 1 of B');
-SELECT pg_temp.assert_eq((SELECT count(*) FROM public.meta_capi_claim(100, 60)), 0, 'leased rows are not claimed twice');
+-- fairness: A has 6 due events, B has 1; at most 5 per account per claim
+SELECT pg_temp.assert_true((SELECT count(*) FILTER (WHERE account_id = (SELECT acc_a FROM ctx)) = 5 AND count(*) FILTER (WHERE account_id = (SELECT acc_b FROM ctx)) = 1 FROM public.meta_capi_claim(100, 60)), 'cap of 5 per account: 5 of A and the 1 of B');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.meta_capi_claim(100, 60)), 1, 'the 6th event of A comes next; leased rows are not claimed twice');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM public.meta_capi_claim(100, 60)), 0, 'nothing left');
+-- the claim returns the lease it set
+RESET ROLE;
+UPDATE meta_capi_events SET claimed_until = NULL;
+SET ROLE service_role;
+SELECT pg_temp.assert_true((SELECT bool_and(lease_until > now() AND lease_until <= now() + interval '61 seconds') FROM public.meta_capi_claim(100, 60)), 'lease_until is returned');
 RESET ROLE;
 UPDATE meta_capi_events SET claimed_until = NULL;
 
@@ -176,6 +196,16 @@ SELECT pg_temp.assert_true((SELECT origin_channel = 'whatsapp' AND origin_click_
    AND dataset_id = '123456789012345' AND token_enc = 'ENC' AND NOT contact_anonymized
    FROM public.meta_capi_claim(100, 60) WHERE deal_id = '11000000-0000-4000-8000-000000000d03' AND event_name = 'lead'), 'claim context');
 RESET ROLE;
+UPDATE meta_capi_events SET claimed_until = NULL;
+
+-- account mismatch between an event and its deal (enforce_same_account already refuses moving a deal with a
+-- contact; this is the belt for any other path): the claim returns the row without contact or origin, which the
+-- app cancels
+UPDATE meta_capi_events SET account_id = (SELECT acc_b FROM ctx) WHERE deal_id = '11000000-0000-4000-8000-000000000d10' AND event_name = 'lead';
+SET ROLE service_role;
+SELECT pg_temp.assert_true((SELECT contact_id IS NULL AND origin_channel IS NULL FROM public.meta_capi_claim(100, 60) WHERE deal_id = '11000000-0000-4000-8000-000000000d10' AND event_name = 'lead'), 'account mismatch: row comes back without contact or origin (the app cancels it)');
+RESET ROLE;
+UPDATE meta_capi_events SET account_id = (SELECT acc_a FROM ctx) WHERE deal_id = '11000000-0000-4000-8000-000000000d10' AND event_name = 'lead';
 UPDATE meta_capi_events SET claimed_until = NULL;
 
 -- a read-only account (canceled) is not claimed; the other tenant still is
@@ -213,6 +243,19 @@ SET ROLE service_role;
 SELECT pg_temp.assert_eq(public.meta_capi_purge(90, 100), 1, 'purge removes the old sent row only');
 RESET ROLE;
 SELECT pg_temp.assert_eq(pg_temp.n_events($$deal_id = '11000000-0000-4000-8000-000000000d10' AND event_name = 'lead'$$), 1, 'old pending row kept');
+
+-- purchases are never purged (the unique key must outlive the purge: no second Purchase after a reopen)
+UPDATE meta_capi_events SET status = 'sent', sent_at = now(), created_at = now() - interval '200 days'
+ WHERE deal_id = '11000000-0000-4000-8000-000000000d03' AND event_name = 'purchase';
+SET ROLE service_role;
+SELECT pg_temp.assert_eq(public.meta_capi_purge(90, 100), 0, 'purge keeps an old sent purchase');
+RESET ROLE;
+SELECT pg_temp.assert_eq(pg_temp.n_events($$deal_id = '11000000-0000-4000-8000-000000000d03' AND event_name = 'purchase'$$), 1, 'purchase row kept');
+
+-- a sale with no value (0; the column is NOT NULL) never enqueues a Purchase
+UPDATE deals SET value = 0 WHERE id = '11000000-0000-4000-8000-000000000d04';
+UPDATE deals SET status = 'won' WHERE id = '11000000-0000-4000-8000-000000000d04';
+SELECT pg_temp.assert_eq(pg_temp.n_events($$deal_id = '11000000-0000-4000-8000-000000000d04' AND event_name = 'purchase'$$), 0, 'zero-value sale: no Purchase');
 
 -- ---- cascade: deleting a deal removes its events -------------------------------------------------------------
 DELETE FROM deals WHERE id = '11000000-0000-4000-8000-000000000d20';

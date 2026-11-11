@@ -18,7 +18,8 @@
 --   4. meta_capi_claim(): service-role RPC, leases due rows (FOR UPDATE SKIP LOCKED) and returns what the sender
 --      needs. Accounts blocked by billing (094 account_is_writable) are not claimed; pending rows expire to
 --      'failed' after 24 h.
---   5. meta_capi_purge(): deletes terminal events older than 90 days.
+--   4b. deals_account_guard(): a user session cannot change deals.account_id (the claim trusts it).
+--   5. meta_capi_purge(): deletes terminal LEAD events older than 90 days (purchases are kept, see below).
 --
 -- LGPD: the app cancels pending / failed events of an anonymised contact (src/lib/lgpd/anonymize.ts); the sender
 -- also cancels any event whose deal lost its contact (hard delete) or whose contact is anonymised.
@@ -114,12 +115,21 @@ BEGIN
        OR v_s.dataset_id IS NULL OR v_s.token_enc IS NULL THEN
       RETURN NULL;
     END IF;
+    -- An anonymised customer is never reported (LGPD).
+    IF NEW.contact_id IS NULL OR EXISTS (
+      SELECT 1 FROM public.contacts c
+       WHERE c.id = NEW.contact_id AND c.account_id = NEW.account_id AND c.anonymized_at IS NOT NULL
+    ) OR NOT EXISTS (SELECT 1 FROM public.contacts c WHERE c.id = NEW.contact_id AND c.account_id = NEW.account_id) THEN
+      RETURN NULL;
+    END IF;
+    -- Site: only a plausible fbclid counts (mirrors isMetaEligibleOrigin and the part A parser).
     IF NOT EXISTS (
       SELECT 1 FROM public.lead_origins o
        WHERE o.id = NEW.origin_id AND o.account_id = NEW.account_id
          AND ((o.channel = 'whatsapp' AND o.click_id_type = 'ctwa_clid')
            OR (o.channel IN ('instagram', 'messenger') AND o.kind = 'ad')
-           OR (o.channel IN ('site_bot', 'webhook') AND o.click_id_type = 'fbclid'))
+           OR (o.channel IN ('site_bot', 'webhook') AND o.click_id_type = 'fbclid'
+               AND o.click_id ~ '^[A-Za-z0-9_-]{20,}$'))
     ) THEN
       RETURN NULL;
     END IF;
@@ -129,11 +139,12 @@ BEGIN
       VALUES (NEW.account_id, NEW.id, 'lead', 'sempre-' || NEW.id || '-lead', COALESCE(NEW.created_at, now()))
       ON CONFLICT (deal_id, event_name) DO NOTHING;
     END IF;
-    IF v_purchase AND v_s.send_purchase THEN
+    -- A sale with no value (null or 0) tells Meta nothing useful: no Purchase.
+    IF v_purchase AND v_s.send_purchase AND COALESCE(NEW.value, 0) > 0 THEN
       v_cur := CASE WHEN NEW.currency ~ '^[A-Z]{3}$' THEN NEW.currency ELSE 'BRL' END;
       INSERT INTO public.meta_capi_events (account_id, deal_id, event_name, event_id, occurred_at, value, currency)
       VALUES (NEW.account_id, NEW.id, 'purchase', 'sempre-' || NEW.id || '-purchase',
-              COALESCE(NEW.closed_at, now()), COALESCE(NEW.value, 0), v_cur)
+              COALESCE(NEW.closed_at, now()), NEW.value, v_cur)
       ON CONFLICT (deal_id, event_name) DO NOTHING;
     END IF;
   EXCEPTION WHEN OTHERS THEN
@@ -147,18 +158,39 @@ DROP TRIGGER IF EXISTS meta_capi_enqueue ON public.deals;
 CREATE TRIGGER meta_capi_enqueue AFTER INSERT OR UPDATE OF status ON public.deals
   FOR EACH ROW EXECUTE FUNCTION public.meta_capi_enqueue();
 
+-- ---- deals.account_id is immutable for user sessions --------------------------------
+-- The claim joins by deal id and trusts deals.account_id: a user session must never move a deal across
+-- accounts (the server may, for a merge). Same pattern as 054 / 104 / 107.
+CREATE OR REPLACE FUNCTION public.deals_account_guard()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.account_id IS DISTINCT FROM OLD.account_id AND private.is_user_session() THEN
+    RAISE EXCEPTION 'the account of a deal never changes' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.deals_account_guard() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS deals_account_guard ON public.deals;
+CREATE TRIGGER deals_account_guard BEFORE UPDATE OF account_id ON public.deals
+  FOR EACH ROW EXECUTE FUNCTION public.deals_account_guard();
+
 -- ---- claim -----------------------------------------------------------------
 -- Leases up to p_limit due events and returns what the sender needs to build the payload. Billing-blocked
 -- accounts, paused / disabled settings and switched-off event kinds are not claimed. Pending rows past their
 -- expires_at (24 h without a successful send) become 'failed' first.
--- ponytail: one global window ordered by next_attempt_at (no per-account fairness like 093); at 5 attempts
--- in 24 h and one small row per deal, add a per-account LATERAL if a tenant ever floods the queue.
+-- Fairness: at most 5 rows per account per claim (row_number partition), so one tenant's backlog cannot hold up
+-- the others. The caller keeps p_limit * lease time in mind: the lease is returned as lease_until and every
+-- update of a claimed row must still match it (a stale run never overwrites a newer one).
 DROP FUNCTION IF EXISTS public.meta_capi_claim(integer, integer);
 CREATE OR REPLACE FUNCTION public.meta_capi_claim(p_limit integer DEFAULT 50, p_lease_seconds integer DEFAULT 120)
 RETURNS TABLE (
-  id uuid, account_id uuid, deal_id uuid, event_name text, event_id text, attempts integer,
+  id uuid, account_id uuid, deal_id uuid, event_name text, event_id text, attempts integer, lease_until timestamptz,
   occurred_at timestamptz, value numeric, currency text,
-  dataset_id text, token_enc text, test_event_code text,
+  dataset_id text, token_enc text,
   contact_id uuid, contact_phone text, contact_email text, contact_instagram_id text, contact_messenger_id text,
   contact_anonymized boolean,
   origin_channel text, origin_kind text, origin_click_id_type text, origin_click_id text, origin_occurred_at timestamptz,
@@ -174,8 +206,9 @@ BEGIN
    WHERE e.status = 'pending' AND e.expires_at < now();
 
   RETURN QUERY
-  WITH due AS (
-    SELECT e0.id
+  WITH ranked AS (
+    SELECT e0.id, e0.next_attempt_at,
+           row_number() OVER (PARTITION BY e0.account_id ORDER BY e0.next_attempt_at) AS rn
       FROM public.meta_capi_events e0
       JOIN public.meta_capi_settings s ON s.account_id = e0.account_id
      WHERE e0.status = 'pending'
@@ -184,18 +217,24 @@ BEGIN
        AND s.enabled AND s.paused_reason IS NULL AND s.dataset_id IS NOT NULL AND s.token_enc IS NOT NULL
        AND ((e0.event_name = 'lead' AND s.send_lead) OR (e0.event_name = 'purchase' AND s.send_purchase))
        AND private.account_is_writable(e0.account_id)
-     ORDER BY e0.next_attempt_at
+  ), due AS (
+    SELECT e1.id
+      FROM public.meta_capi_events e1
+      JOIN ranked k ON k.id = e1.id
+     WHERE k.rn <= 5 AND e1.status = 'pending'
+       AND (e1.claimed_until IS NULL OR e1.claimed_until < now())
+     ORDER BY k.next_attempt_at
      LIMIT GREATEST(p_limit, 1)
-     FOR UPDATE OF e0 SKIP LOCKED
+     FOR UPDATE OF e1 SKIP LOCKED
   ), leased AS (
     UPDATE public.meta_capi_events e
-       SET claimed_until = now() + make_interval(secs => GREATEST(p_lease_seconds, 10))
+       SET claimed_until = clock_timestamp() + make_interval(secs => GREATEST(p_lease_seconds, 10))
       FROM due WHERE e.id = due.id
     RETURNING e.*
   )
-  SELECT l.id, l.account_id, l.deal_id, l.event_name, l.event_id, l.attempts,
+  SELECT l.id, l.account_id, l.deal_id, l.event_name, l.event_id, l.attempts, l.claimed_until,
          l.occurred_at, l.value, l.currency,
-         s.dataset_id, s.token_enc, s.test_event_code,
+         s.dataset_id, s.token_enc,
          c.id, c.phone, c.email, c.instagram_id, c.messenger_id, (c.anonymized_at IS NOT NULL),
          o.channel, o.kind, o.click_id_type, o.click_id, o.occurred_at,
          (SELECT w.waba_id FROM public.whatsapp_config w WHERE w.account_id = l.account_id LIMIT 1),
@@ -203,15 +242,16 @@ BEGIN
            WHERE m.account_id = l.account_id AND m.kind = o.channel LIMIT 1)
     FROM leased l
     JOIN public.meta_capi_settings s ON s.account_id = l.account_id
-    LEFT JOIN public.deals d ON d.id = l.deal_id
-    LEFT JOIN public.contacts c ON c.id = d.contact_id
-    LEFT JOIN public.lead_origins o ON o.id = d.origin_id;
+    LEFT JOIN public.deals d ON d.id = l.deal_id AND d.account_id = l.account_id
+    LEFT JOIN public.contacts c ON c.id = d.contact_id AND c.account_id = l.account_id
+    LEFT JOIN public.lead_origins o ON o.id = d.origin_id AND o.account_id = l.account_id;
 END;
 $$;
 
 -- ---- purge -------------------------------------------------------------------
--- Terminal rows (sent / failed / cancelled) older than p_days. Caveat: the unique (deal_id, event_name) goes
--- with the row, so a deal reopened and won again after the purge would enqueue a second purchase.
+-- Terminal LEAD rows (sent / failed / cancelled) older than p_days. Purchase rows are never purged (one per won
+-- deal, no personal data): the unique (deal_id, event_name) must outlive the purge, so a deal reopened and won
+-- again after 90 days cannot send a second Purchase. A lead is only enqueued on insert, so purging it is safe.
 CREATE OR REPLACE FUNCTION public.meta_capi_purge(p_days integer DEFAULT 90, p_limit integer DEFAULT 5000)
 RETURNS integer
 LANGUAGE sql
@@ -220,7 +260,7 @@ SET search_path = public, pg_temp
 AS $$
   WITH old AS (
     SELECT e.id FROM public.meta_capi_events e
-     WHERE e.status IN ('sent', 'failed', 'cancelled')
+     WHERE e.event_name = 'lead' AND e.status IN ('sent', 'failed', 'cancelled')
        AND e.created_at < now() - make_interval(days => p_days)
      ORDER BY e.created_at LIMIT p_limit
   ), gone AS (

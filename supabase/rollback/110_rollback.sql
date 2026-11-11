@@ -3,6 +3,8 @@
 BEGIN;
 DROP TRIGGER IF EXISTS meta_capi_enqueue ON public.deals;
 DROP FUNCTION IF EXISTS public.meta_capi_enqueue();
+DROP TRIGGER IF EXISTS deals_account_guard ON public.deals;
+DROP FUNCTION IF EXISTS public.deals_account_guard();
 DROP FUNCTION IF EXISTS public.meta_capi_claim(integer, integer);
 DROP FUNCTION IF EXISTS public.meta_capi_purge(integer, integer);
 DROP TABLE IF EXISTS public.meta_capi_events;
