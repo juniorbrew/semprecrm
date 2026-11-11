@@ -14,6 +14,7 @@
 //    gclid, fbclid) and document.referrer (only its host is kept).
 // ============================================================
 
+import { isPlausibleFbclid } from './fbclid'
 import { cleanHost, clip, metaHostUrl, normalizeTouch, ORIGIN_LIMITS, safeHttpUrl } from './normalize'
 import type { ClickIdType, OriginChannel, OriginKind, OriginTouch } from './types'
 
@@ -151,7 +152,8 @@ export function parseUrlOrigin(
   const page = parseHttpUrl(pageUrl)
   const param = (k: string) => clip(extra[k], ORIGIN_LIMITS.utmLong) ?? clip(page?.searchParams.get(k), ORIGIN_LIMITS.utmLong)
   const gclid = param('gclid')
-  const fbclid = param('fbclid')
+  const rawFbclid = param('fbclid')
+  const fbclid = isPlausibleFbclid(rawFbclid) ? rawFbclid : null // part B sends it to Meta: keep only a real-looking one
   const clickIdType: ClickIdType | null = gclid ? 'gclid' : fbclid ? 'fbclid' : null
   let referrerHost = referrerHostOf(referrer)
   if (referrerHost && page && referrerHost === cleanHost(page.hostname)) referrerHost = null // same-site navigation
