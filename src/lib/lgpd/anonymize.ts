@@ -78,6 +78,7 @@ export const SCRUBBED_TABLES = {
   csat_responses: 'comment nulled (cascade)',
   automation_event_queue: 'context emptied (cascade)',
   deals: 'title neutral, notes / lost_note nulled',
+  meta_capi_events: 'pending / failed Conversions API events of the contact deals cancelled (they hold no personal data; migration 110)',
   tasks: 'title neutral, description nulled',
   task_comments: 'body replaced',
   calendar_events: 'title neutral, description / location nulled',
@@ -449,6 +450,30 @@ export async function scrubContactData(
         'deals scrub',
       )
       add('deals', res.count)
+    })
+
+    // Conversions API (migration 110): an anonymised customer is never reported to Meta. The rows carry no
+    // personal data (value / currency / short error), so they are cancelled, not deleted. The sender also
+    // cancels any event whose contact is anonymised or gone.
+    await step('meta_capi_events', async () => {
+      await eachPage<{ id: string }>(
+        () => byContact('deals'),
+        async (rows) => {
+          for (const part of chunk(rows.map((r) => r.id), ID_CHUNK)) {
+            const res = must(
+              await admin
+                .from('meta_capi_events')
+                .update({ status: 'cancelled', last_error: 'O cliente foi anonimizado', claimed_until: null }, { count: 'exact' })
+                .eq('account_id', accountId)
+                .in('deal_id', part)
+                .in('status', ['pending', 'failed']),
+              'meta_capi_events cancel',
+            )
+            add('meta_capi_events', res.count)
+          }
+        },
+        'meta_capi_events deals lookup',
+      )
     })
 
     // Flow runs: collected variables (answers typed by the customer) and

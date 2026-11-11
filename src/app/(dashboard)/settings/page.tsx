@@ -20,6 +20,7 @@ import { ProductsSettings } from '@/components/settings/products-settings';
 import { TaskStatusesSettings } from '@/components/settings/task-statuses-settings';
 import { QuickRepliesSettings } from '@/components/settings/quick-replies-settings';
 import { LeadSourcesSettings } from '@/components/settings/lead-sources-settings';
+import { MetaCapiCard } from '@/components/settings/meta-capi-card';
 import { ApiWebhooksSettings } from '@/components/settings/api-webhooks-settings';
 import { InboxSettings } from '@/components/settings/inbox-settings';
 import { SupportSettings } from '@/components/settings/support-settings';
@@ -90,7 +91,12 @@ export default function SettingsPage() {
     quick_replies: <QuickRepliesSettings />,
     inbox: <InboxSettings />,
     support: <SupportSettings />,
-    integrations: <LeadSourcesSettings />,
+    integrations: (
+      <>
+        <LeadSourcesSettings />
+        <MetaCapiCard />
+      </>
+    ),
     api: <ApiWebhooksSettings />,
     audit: <AuditLogSettings />,
     branding: <BrandingSettings />,

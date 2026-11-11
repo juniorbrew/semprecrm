@@ -489,7 +489,7 @@ describe('ingestLead — origin (migration 109)', () => {
 
   it('webhook forms: utm_* / click ids / referrer in the body are recorded; the field mapping is untouched', async () => {
     const db = makeDb()
-    const body = { ...PAYLOAD, utm_source: 'facebook', utm_campaign: 'verao', fbclid: 'IwAR1', referrer: 'https://l.facebook.com/x' }
+    const body = { ...PAYLOAD, utm_source: 'facebook', utm_campaign: 'verao', fbclid: 'IwAR1abcdefghijklmnopqrstuvwxyz', referrer: 'https://l.facebook.com/x' }
     const res = await ingestLead(db, source(), body)
     expect(res.status).toBe('ok')
     expect(state.contacts[0]).toMatchObject({ name: 'Teste Lead', phone: '5511988887777' })

@@ -77,6 +77,11 @@ function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Ro
     flow_runs: [{ id: 'fr1', account_id: ACC, contact_id: C1, vars: { cpf: '123' } }],
     flow_run_events: [{ id: 'fre1', flow_run_id: 'fr1', payload: { text: '123' } }],
     lead_source_events: [{ id: 'l1', account_id: ACC, contact_id: C1, payload: { name: 'Ana' } }],
+    meta_capi_events: [
+      { id: 'mc1', account_id: ACC, deal_id: 'd1', status: 'pending', last_error: null },
+      { id: 'mc2', account_id: ACC, deal_id: 'd1', status: 'sent', last_error: null },
+      { id: 'mc3', account_id: ACC, deal_id: 'other-deal', status: 'pending', last_error: null },
+    ],
     webhook_events: [
       { id: 'we1', account_id: ACC, contact_id: C1, type: 'message.received', data: { text: 'oi Ana' } },
       { id: 'we2', account_id: ACC, contact_id: 'other', type: 'message.received', data: { text: 'outro' } },
@@ -210,6 +215,12 @@ describe('anonymizeContact', () => {
     const base = seed().contacts[0]
     const { db } = makeFakeDb(seed({ contacts: [{ ...base, instagram_id: 'IGSID-1' }] }))
     expect(await remainingPersonalData(db, ACC, C1)).toContain('contacts')
+  })
+
+  it('cancels the pending Conversions API events of the contact deals only', async () => {
+    const { db, tables } = makeFakeDb(seed())
+    await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(tables.meta_capi_events.map((e) => [e.id, e.status])).toEqual([['mc1', 'cancelled'], ['mc2', 'sent'], ['mc3', 'pending']])
   })
 
   it('covers every table in SCRUBBED_TABLES (coverage)', async () => {

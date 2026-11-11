@@ -168,6 +168,9 @@ puro, sem dependências) chama os dois endpoints a cada minuto por loopback com 
 - Também chama `GET /api/webhooks/cron` (migration 093): entrega os webhooks de saída pendentes (até 40 por
   lote, repetindo enquanto houver fila e tempo) e apaga o histórico com mais de 30 dias. Com 2 ticks
   sobrepostos nada é entregue em dobro (as linhas são reservadas com `FOR UPDATE SKIP LOCKED`).
+- Avisar a Meta (migration 110): o mesmo loop chama `GET /api/meta-capi/cron` a cada tick; envia os eventos de lead e venda
+  pendentes para a Conversions API (reserva com `FOR UPDATE SKIP LOCKED`, até 5 tentativas em 24 h) e apaga os com mais de 90 dias.
+  Bloqueado no `nginx.conf` pelo domínio público (precisa recarregar o nginx no deploy).
 - Logs: `pm2 logs semprecrm-cron` ou `/var/log/semprecrm/cron.*.log` — uma linha por chamada
   (`GET /api/automations/cron 200 85ms processed=0 inactive_fired=2`).
 - Se preferir um crontab com `curl -H "x-cron-secret: …"`, chame `http://127.0.0.1:3000/...` na própria

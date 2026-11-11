@@ -188,7 +188,12 @@ describe('parseUrlOrigin', () => {
     })
   })
   it('fbclid is a click id too', () => {
-    expect(parseUrlOrigin('https://loja.com.br/?fbclid=IwAR1', '', 'site_bot')).toMatchObject({ kind: 'campaign', clickIdType: 'fbclid', clickId: 'IwAR1' })
+    expect(parseUrlOrigin('https://loja.com.br/?fbclid=IwAR1abcdefghijklmnopqrstuvwxyz', '', 'site_bot')).toMatchObject({ kind: 'campaign', clickIdType: 'fbclid', clickId: 'IwAR1abcdefghijklmnopqrstuvwxyz' })
+  })
+  it('an implausible fbclid is not kept as a click id (part B sends it to Meta)', () => {
+    expect(parseUrlOrigin('https://loja.com.br/?fbclid=IwAR1', '', 'site_bot')).toBeNull()
+    expect(parseUrlOrigin('https://loja.com.br/?fbclid=IwAR1&utm_campaign=x', '', 'site_bot')).toMatchObject({ kind: 'campaign', clickIdType: null, clickId: null })
+    expect(parseBodyOrigin({ fbclid: 'a b c', utm_source: 'x' })).toMatchObject({ clickIdType: null })
   })
   it('accepts the bare host robo.js sends as referrer (with or without a port)', () => {
     expect(parseUrlOrigin('https://loja.com.br/', 'www.google.com', 'site_bot')).toMatchObject({ kind: 'referrer', referrerHost: 'google.com' })
@@ -224,7 +229,7 @@ describe('parseUrlOrigin', () => {
 
 describe('parseBodyOrigin (webhook form)', () => {
   it('reads utm_* and click ids from the body, without touching other fields', () => {
-    const body = { name: 'Ana', phone: '11999990000', utm_source: 'facebook', utm_campaign: 'verao', fbclid: 'IwAR9', page_url: 'https://loja.com.br/lp?utm_campaign=ignored', referrer: 'https://l.facebook.com/' }
+    const body = { name: 'Ana', phone: '11999990000', utm_source: 'facebook', utm_campaign: 'verao', fbclid: 'IwAR1abcdefghijklmnopqrstuvwxyz', page_url: 'https://loja.com.br/lp?utm_campaign=ignored', referrer: 'https://l.facebook.com/' }
     expect(parseBodyOrigin(body)).toMatchObject({
       channel: 'webhook',
       kind: 'campaign',
@@ -246,7 +251,7 @@ describe('parseBodyOrigin (webhook form)', () => {
     expect(parseBodyOrigin({ page_url: 'https://loja.com.br/lp?utm_campaign=lp' })).toMatchObject({ utmCampaign: 'lp' })
   })
   it('gclid beats fbclid when both are present (one click id per touch)', () => {
-    expect(parseBodyOrigin({ gclid: 'G1', fbclid: 'F1' })).toMatchObject({ clickIdType: 'gclid', clickId: 'G1' })
+    expect(parseBodyOrigin({ gclid: 'G1', fbclid: 'IwAR1abcdefghijklmnopqrstuvwxyz' })).toMatchObject({ clickIdType: 'gclid', clickId: 'G1' })
   })
 })
 
