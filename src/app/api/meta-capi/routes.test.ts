@@ -42,14 +42,15 @@ vi.mock('@/lib/automations/admin-client', () => ({
       }
       q.select = () => chain()
       q.update = (p: unknown) => chain('update', p)
-      q.upsert = (p: unknown) => chain('upsert', p)
+      q.insert = (p: unknown) => chain('insert', p)
       q.order = () => q
       q.limit = () => q
       q.in = (k: string, v: unknown) => ((call.filters[k] = v), q)
       q.eq = (k: string, v: unknown) => ((call.filters[k] = v), q)
       const result = () => {
         h.calls.push(call)
-        return h.results[`${table}.${call.op}`] ?? { data: null, error: null }
+        const key = table === 'meta_capi_settings' && (call.op === 'update' || call.op === 'insert') ? 'meta_capi_settings.write' : `${table}.${call.op}`
+        return h.results[key] ?? { data: null, error: null }
       }
       q.maybeSingle = async () => result()
       q.single = async () => result()
@@ -64,6 +65,8 @@ import { POST as retryPost } from './events/[id]/retry/route'
 import { GET as settingsGet, PUT as settingsPut } from './settings/route'
 import { POST as testPost } from './test/route'
 
+const isWrite = (c: { table: string; op: string }) => c.table === 'meta_capi_settings' && (c.op === 'update' || c.op === 'insert')
+const written = () => h.calls.find((c) => isWrite(c))!
 const put = (body: unknown) => settingsPut(new Request('https://x.test/api/meta-capi/settings', { method: 'PUT', body: JSON.stringify(body) }))
 const TOKEN = 'EAAB' + 'x'.repeat(40) + 'WXYZ'
 
@@ -106,10 +109,10 @@ describe('settings route', () => {
 
   it('saving encrypts the token, stores last4, clears the pause, and never echoes the token', async () => {
     h.results['meta_capi_settings.select'] = { data: null, error: null }
-    h.results['meta_capi_settings.upsert'] = { data: { dataset_id: '123456', token_last4: 'WXYZ', paused_reason: null }, error: null }
+    h.results['meta_capi_settings.write'] = { data: { dataset_id: '123456', token_last4: 'WXYZ', paused_reason: null }, error: null }
     const res = await put({ dataset_id: '123456', token: TOKEN, enabled: true })
     expect(res.status).toBe(200)
-    const upsert = h.calls.find((c) => c.op === 'upsert')!
+    const upsert = written()
     expect(upsert.payload).toMatchObject({
       account_id: 'acc-1',
       updated_by: 'user-1',
@@ -128,27 +131,38 @@ describe('settings route', () => {
     expect((await put({ dataset_id: 'abc' })).status).toBe(400)
     expect((await put({ token: 'short' })).status).toBe(400)
     expect((await put({ test_event_code: 'a b' })).status).toBe(400)
-    expect(h.calls.some((c) => c.op === 'upsert')).toBe(false)
+    expect(h.calls.some((c) => isWrite(c))).toBe(false)
   })
 
   it('saving the SAME dataset does not clear a pause; a new key or a different dataset does', async () => {
     h.results['meta_capi_settings.select'] = { data: { dataset_id: '123456', token_last4: 'WXYZ' }, error: null }
-    h.results['meta_capi_settings.upsert'] = { data: {}, error: null }
+    h.results['meta_capi_settings.write'] = { data: {}, error: null }
     await put({ dataset_id: '123456', test_event_code: 'T1' })
-    expect(h.calls.find((c) => c.op === 'upsert')!.payload).not.toHaveProperty('paused_reason')
+    expect(written().payload).not.toHaveProperty('paused_reason')
     h.calls = []
     await put({ dataset_id: '654321' })
-    expect(h.calls.find((c) => c.op === 'upsert')!.payload).toMatchObject({ paused_reason: null })
+    expect(written().payload).toMatchObject({ paused_reason: null })
     h.calls = []
     await put({ token: TOKEN })
-    expect(h.calls.find((c) => c.op === 'upsert')!.payload).toMatchObject({ paused_reason: null })
+    expect(written().payload).toMatchObject({ paused_reason: null })
+  })
+
+  it('a toggle-only PUT on an existing row UPDATEs it by account (an upsert would fail the CHECK, 23514); a first save INSERTs', async () => {
+    h.results['meta_capi_settings.select'] = { data: { dataset_id: '123456', token_last4: 'WXYZ' }, error: null }
+    h.results['meta_capi_settings.write'] = { data: { enabled: true }, error: null }
+    expect((await put({ enabled: true })).status).toBe(200)
+    expect(written()).toMatchObject({ op: 'update', filters: { account_id: 'acc-1' } })
+    h.calls = []
+    h.results['meta_capi_settings.select'] = { data: null, error: null }
+    expect((await put({ dataset_id: '123456', token: TOKEN })).status).toBe(200)
+    expect(written().op).toBe('insert')
   })
 
   it('toggling without a new key keeps the stored key (no token fields written)', async () => {
     h.results['meta_capi_settings.select'] = { data: { dataset_id: '123456', token_last4: 'WXYZ' }, error: null }
-    h.results['meta_capi_settings.upsert'] = { data: { enabled: false }, error: null }
+    h.results['meta_capi_settings.write'] = { data: { enabled: false }, error: null }
     expect((await put({ send_lead: false })).status).toBe(200)
-    const payload = h.calls.find((c) => c.op === 'upsert')!.payload as Record<string, unknown>
+    const payload = written().payload as Record<string, unknown>
     expect(payload).not.toHaveProperty('token_enc')
     expect(payload).not.toHaveProperty('paused_reason')
   })

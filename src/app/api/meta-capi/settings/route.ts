@@ -73,11 +73,13 @@ export async function PUT(request: Request) {
   const datasetChanged = rest.dataset_id !== undefined && rest.dataset_id !== ((existing?.dataset_id as string | null | undefined) ?? null)
   if (token || datasetChanged) row.paused_reason = null
 
-  const { data, error } = await db
-    .from('meta_capi_settings')
-    .upsert(row, { onConflict: 'account_id' })
-    .select(SETTINGS_PUBLIC)
-    .single()
+  // update vs insert, never upsert: Postgres checks CHECK constraints on the INSERT tuple before ON CONFLICT,
+  // so a partial upsert such as { enabled: true } fails "enabled requires dataset and token" (23514) even
+  // when the existing row has both.
+  const write = existing
+    ? db.from('meta_capi_settings').update(row).eq('account_id', accountId)
+    : db.from('meta_capi_settings').insert(row)
+  const { data, error } = await write.select(SETTINGS_PUBLIC).single()
   if (error || !data) {
     console.error('[meta-capi] save failed:', error?.code ?? 'unknown')
     return NextResponse.json({ error: 'Failed to save the Meta settings' }, { status: 500 })
