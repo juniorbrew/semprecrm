@@ -58,3 +58,11 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # The WhatsApp QR gateway is built separately on the VPS (deploy.sh); type
+      # errors there were only seen at deploy time (#135). Check it here too.
+      - name: Gateway typecheck
+        working-directory: services/wa-gateway
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc -p tsconfig.json --noEmit
