@@ -1724,6 +1724,9 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   'Enter a message to send outside business hours.':
     'Informe a mensagem a enviar fora do horário de atendimento.',
   'Automatic distribution': 'Distribuição automática',
+  "Show the agent's name to the customer": 'Mostrar o nome do atendente para o cliente',
+  "Each reply sent from the inbox reaches the customer with the name of the person answering on the first line, for example “*Ana:*”. The name comes from each person's profile. Templates, audio and automatic messages are sent unchanged.":
+    'Cada resposta enviada pela caixa de entrada chega ao cliente com o nome de quem está atendendo na primeira linha, por exemplo “*Ana:*”. O nome vem do perfil de cada pessoa. Modelos de mensagem, áudios e mensagens automáticas são enviados sem mudança.',
   'Round-robin: when a new conversation gets its first customer message and has no owner, assign it to the available member with the fewest open conversations. Members marked as away are skipped; with nobody available the conversation stays in the Radar.':
     'Rodízio: quando uma conversa recebe a primeira mensagem do cliente e não tem responsável, atribui ao membro disponível com menos conversas abertas. Membros ausentes são pulados; sem ninguém disponível a conversa fica no Radar.',
   'Response-time limits behind the Radar, business hours, automatic distribution and the words a customer can send to stop receiving messages.':

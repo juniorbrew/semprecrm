@@ -59,6 +59,15 @@ describe('parseAccountPreferences', () => {
     expect(merged.business_hours).toBeUndefined()
   })
 
+  it('show_agent_name: off by default, only a real boolean turns it on, merged only when sent', () => {
+    expect(parseAccountPreferences({}).show_agent_name).toBe(false)
+    expect(parseAccountPreferences({ show_agent_name: 'yes' }).show_agent_name).toBe(false)
+    expect(parseAccountPreferences({ show_agent_name: true }).show_agent_name).toBe(true)
+    expect(mergeAccountPreferences({ show_agent_name: true }, { inbox_sla_minutes: 5 }).show_agent_name).toBe(true)
+    expect(mergeAccountPreferences({}, { show_agent_name: true }).show_agent_name).toBe(true)
+    expect(mergeAccountPreferences({ show_agent_name: true }, { show_agent_name: false }).show_agent_name).toBe(false)
+  })
+
   it('accepts numeric strings and falls back per key on bad values', () => {
     const p = parseAccountPreferences({
       inbox_sla_minutes: '45',

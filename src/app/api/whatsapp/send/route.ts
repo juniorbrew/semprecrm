@@ -40,6 +40,8 @@ import {
 } from '@/lib/whatsapp/qr-gateway'
 import { mimeFromUrl } from '@/lib/whatsapp/qr-engine-send'
 import { isMetaMessagingChannel } from '@/lib/meta-messaging/channels'
+import { parseAccountPreferences } from '@/lib/account-preferences'
+import { withAgentName } from '@/lib/whatsapp/agent-name'
 import { sendManualMessagingReply } from '@/lib/meta-messaging/manual-send'
 import {
   MediaUrlNaoPermitida,
@@ -87,7 +89,7 @@ export async function POST(request: Request) {
     // returned nothing for teammates who didn't author the row.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, full_name')
       .eq('user_id', user.id)
       .maybeSingle()
     const accountId = profile?.account_id as string | undefined
@@ -225,6 +227,43 @@ export async function POST(request: Request) {
 
     const contact = conversation.contact
 
+    // "Show the agent's name" (Settings → Service): only the text that reaches
+    // the customer carries it; the stored message stays plain (the bubble
+    // already shows the sender). Templates and audio never change.
+    const { data: accountRow } = await supabase
+      .from('accounts')
+      .select('preferences')
+      .eq('id', accountId)
+      .maybeSingle()
+    const carriesText = message_type === 'text' || (isMediaKind && message_type !== 'audio')
+    const outText: string =
+      carriesText && content_text && parseAccountPreferences(accountRow?.preferences).show_agent_name
+        ? withAgentName(content_text, profile?.full_name, conversation.channel)
+        : content_text
+    if (isMediaKind && typeof outText === 'string' && outText.length > 1024) {
+      return NextResponse.json(
+        { error: 'Caption exceeds the 1024-character limit' },
+        { status: 400 }
+      )
+    }
+    // Official text cap (Meta: 4096). The composer allows 4096, so only the
+    // name can push it over: answer a clear 400 instead of Meta's 502.
+    if (
+      message_type === 'text' &&
+      outText !== content_text &&
+      conversation.channel !== 'qr' &&
+      !isMetaMessagingChannel(conversation.channel) &&
+      outText.length > 4096
+    ) {
+      return NextResponse.json(
+        {
+          error: 'Com o nome do atendente, a mensagem passa de 4096 caracteres. Encurte o texto.',
+          code: 'text_too_long',
+        },
+        { status: 400 }
+      )
+    }
+
     // LGPD (migration 035 / 077): an anonymised contact never receives
     // anything. An opted-out contact ("PARAR") can still get a free-text
     // reply from an agent inside the conversation it started, but no
@@ -260,6 +299,7 @@ export async function POST(request: Request) {
         conversation: { ...conversation, channel: conversation.channel, contact },
         messageType: message_type,
         contentText: content_text || null,
+        sentText: outText || null,
         mediaUrl: media_url || null,
         publicMediaUrl: isMediaKind ? storageUrlForPublic(mediaObjectPath) : null,
         replyToMessageId: reply_to_message_id || null,
@@ -315,11 +355,11 @@ export async function POST(request: Request) {
                   url: storageUrlForServer(mediaObjectPath),
                   mimetype: mimeFromUrl(message_type, media_url, filename || undefined),
                   filename: filename || undefined,
-                  caption: message_type !== 'audio' && content_text ? content_text : undefined,
+                  caption: message_type !== 'audio' && outText ? outText : undefined,
                   ptt: message_type === 'audio' ? true : undefined,
                 },
               }
-            : { text: content_text }),
+            : { text: outText }),
         })
         qrMessageId = sent.message_id
       } catch (err) {
@@ -535,7 +575,7 @@ export async function POST(request: Request) {
           kind: message_type as MediaKind,
           // Meta fetches the link from the outside → public site origin.
           link: storageUrlForPublic(mediaObjectPath),
-          caption: content_text || undefined,
+          caption: outText || undefined,
           filename: filename || undefined,
           contextMessageId,
         })
@@ -545,7 +585,7 @@ export async function POST(request: Request) {
         phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
-        text: content_text,
+        text: outText,
         contextMessageId,
       })
       return result.messageId

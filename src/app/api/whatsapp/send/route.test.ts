@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
     activeOther: null as Record<string, unknown> | null,
     /** Plan block of the account (resolveEntitlements().blocked). */
     blocked: false as false | { reason: string },
+    /** accounts.preferences (show_agent_name lives here). */
+    prefs: {} as Record<string, unknown>,
   },
   meta: {
     sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.META' })),
@@ -91,7 +93,7 @@ function builder(table: string) {
   function resolve() {
     if (table === 'profiles') {
       return {
-        data: { account_id: 'acct-1', account_role: h.state.role, account: { id: 'acct-1', name: 'Acme' } },
+        data: { account_id: 'acct-1', full_name: 'Ana Souza', account_role: h.state.role, account: { id: 'acct-1', name: 'Acme' } },
         error: null,
       }
     }
@@ -103,6 +105,7 @@ function builder(table: string) {
       if (ops.neq) return { data: h.state.activeOther ? [h.state.activeOther] : [], error: null }
       return { data: h.state.conversation, error: null }
     }
+    if (table === 'accounts') return { data: { preferences: h.state.prefs }, error: null }
     if (table === 'whatsapp_config') {
       return { data: { id: 'cfg', phone_number_id: '123', access_token: 'enc' }, error: null }
     }
@@ -155,6 +158,8 @@ beforeEach(() => {
   h.state.convUpdates = []
   h.state.role = 'agent'
   h.state.activeOther = null
+  h.state.prefs = {}
+  h.state.blocked = false
   process.env.WA_GATEWAY_URL = 'http://gateway.test:3201'
   process.env.WA_GATEWAY_SECRET = 'shh'
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://sb.test')
@@ -568,5 +573,68 @@ describe('POST /api/whatsapp/send — opt-out / anonymised contacts', () => {
     expect(res.status).toBe(403)
     expect(await res.json()).toMatchObject({ code: 'account_blocked' })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/whatsapp/send — agent name (show_agent_name)', () => {
+  it('QR: the customer gets "*Ana Souza:*" on the first line, the stored row stays plain', async () => {
+    h.state.prefs = { show_agent_name: true }
+    fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'B-N1' }))
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(200)
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).text).toBe('*Ana Souza:*\noi')
+    expect(h.state.inserted[0]).toMatchObject({ content_text: 'oi' })
+  })
+
+  it('QR: off by default, text unchanged', async () => {
+    fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'B-N2' }))
+    await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).text).toBe('oi')
+  })
+
+  it('QR: media caption carries the name', async () => {
+    h.state.prefs = { show_agent_name: true }
+    fetchMock.mockResolvedValueOnce(gatewayOk({ message_id: 'B-N3' }))
+    await POST(request({ conversation_id: 'conv-1', message_type: 'image', media_url: OWN_MEDIA, content_text: 'legenda' }))
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).media.caption).toBe('*Ana Souza:*\nlegenda')
+  })
+
+  it('official: text to Meta carries the name, the row and the conversation preview stay plain', async () => {
+    h.state.prefs = { show_agent_name: true }
+    h.state.conversation = { ...h.state.conversation, channel: 'whatsapp' }
+    h.meta.sendTextMessage.mockClear()
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'oi' }))
+    expect(res.status).toBe(200)
+    expect(h.meta.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '*Ana Souza:*\noi' }))
+    expect(h.state.inserted[0]).toMatchObject({ content_text: 'oi' })
+    expect(h.state.convUpdates.at(-1)).toMatchObject({ last_message_text: 'oi' })
+  })
+
+  it('official: templates are never changed', async () => {
+    h.state.prefs = { show_agent_name: true }
+    h.state.conversation = { ...h.state.conversation, channel: 'whatsapp' }
+    h.meta.sendTemplateMessage.mockClear()
+    await POST(request({ conversation_id: 'conv-1', message_type: 'template', template_name: 'boas_vindas', content_text: 'Olá' }))
+    expect(h.meta.sendTemplateMessage).toHaveBeenCalled()
+    expect(h.meta.sendTextMessage).not.toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Ana') }))
+  })
+
+  it('a caption that only passes the limit without the name is refused', async () => {
+    h.state.prefs = { show_agent_name: true }
+    const res = await POST(
+      request({ conversation_id: 'conv-1', message_type: 'image', media_url: OWN_MEDIA, content_text: 'x'.repeat(1020) }),
+    )
+    expect(res.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('official: text pushed over 4096 by the name is a clear 400, Meta never called', async () => {
+    h.state.prefs = { show_agent_name: true }
+    h.state.conversation = { ...h.state.conversation, channel: 'whatsapp' }
+    h.meta.sendTextMessage.mockClear()
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'x'.repeat(4090) }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ code: 'text_too_long' })
+    expect(h.meta.sendTextMessage).not.toHaveBeenCalled()
   })
 })

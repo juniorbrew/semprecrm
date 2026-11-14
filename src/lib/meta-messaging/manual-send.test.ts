@@ -120,6 +120,22 @@ describe('sendManualMessagingReply', () => {
     expect(h.updates[0]).toMatchObject({ last_message_text: 'olá' })
   })
 
+  it('agent name on: Meta gets sentText, the row and the preview keep the plain text', async () => {
+    fetchMock.mockResolvedValueOnce(ok('mid.n'))
+    const r = await sendManualMessagingReply(input({ sentText: 'Ana:\nolá' }))
+    expect(r.status).toBe(200)
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).message).toEqual({ text: 'Ana:\nolá' })
+    expect(h.inserted[0]).toMatchObject({ content_text: 'olá' })
+    expect(h.updates[0]).toMatchObject({ last_message_text: 'olá' })
+  })
+
+  it('agent name on: the limit counts the sent text, so the name can push it over', async () => {
+    const text = 'a'.repeat(995)
+    const r = await sendManualMessagingReply(input({ contentText: text, sentText: `Ana Souza:\n${text}` }))
+    expect(r.body.code).toBe('text_too_long')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('Messenger image: sends the attachment to the page, then the caption as text', async () => {
     h.connection = { ...h.connection, kind: 'messenger', external_id: 'PG1' }
     fetchMock.mockResolvedValueOnce(ok('mid.img')).mockResolvedValueOnce(ok('mid.cap'))

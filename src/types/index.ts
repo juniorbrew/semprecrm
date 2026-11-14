@@ -136,6 +136,8 @@ export interface AccountPreferences {
    * who turned on "Conversation with nobody assigned" are pushed (migration 105).
    */
   unassigned_alert_minutes: number;
+  /** Inbox replies reach the customer with "*Ana:*" on the first line (manual sends only). */
+  show_agent_name: boolean;
 }
 
 export type UnassignedPushTo = 'available' | 'managers' | 'none';
