@@ -1,4 +1,5 @@
 import type { Message } from "@/types";
+import { cleanAgentName } from "@/lib/whatsapp/agent-name";
 
 /**
  * Who sent an outbound bubble (inbox package 1). `text` is either a
@@ -59,4 +60,25 @@ export function senderLabelFor(
   const name = senderId ? ctx.nameFor?.(senderId)?.trim() : undefined;
   if (name) return { kind: "agent", text: name, translate: false };
   return { kind: "agent", text: "Agent", translate: true };
+}
+
+/**
+ * "Show the agent's name" on (accounts.preferences.show_agent_name): the bold
+ * first line the customer saw, mirrored in the bubble. Only a person's own
+ * reply with text (a text message or a media caption); never templates, audio,
+ * automations, the bot or the AI. `selfName` is the current user's profile name.
+ */
+export function agentNameHeader(
+  message: Pick<Message, "content_type" | "content_text">,
+  label: SenderLabel | null | undefined,
+  selfName: string | null | undefined,
+): string | null {
+  if (!label || (label.kind !== "you" && label.kind !== "agent")) return null;
+  const type = message.content_type;
+  const hasText =
+    type === "text" ||
+    ((type === "image" || type === "video" || type === "document") && !!message.content_text);
+  if (!hasText) return null;
+  const name = cleanAgentName(label.kind === "you" ? selfName : label.translate ? "" : label.text);
+  return name || null;
 }
