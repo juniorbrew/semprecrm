@@ -59,6 +59,8 @@ export interface ManualSendInput {
   }
   messageType: string
   contentText: string | null
+  /** What the customer receives when it differs from `contentText` (agent name on). */
+  sentText?: string | null
   /** Stored media URL (as persisted in `messages.media_url`). */
   mediaUrl: string | null
   /** Public URL Meta can fetch (rebuilt from the validated object path). */
@@ -82,7 +84,8 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
   if (input.messageType === 'template') {
     return fail(400, `Modelos de mensagem não existem no ${label}. Envie uma mensagem de texto.`, 'template_not_supported')
   }
-  if (textTooLong(kind, input.contentText)) {
+  const wireText = input.sentText ?? input.contentText
+  if (textTooLong(kind, wireText)) {
     return fail(400, textLimitMessage(kind), 'text_too_long')
   }
   const recipientId = conversation.contact?.[IDENTITY_COLUMN[kind]]
@@ -138,7 +141,7 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
       mainRecord = await persist(input.messageType, null, input.mediaUrl, mainId)
       if (input.contentText && input.messageType !== 'audio') {
         try {
-          const caption = await send({ text: input.contentText })
+          const caption = await send({ text: wireText ?? input.contentText })
           await persist('text', input.contentText, null, caption.messageId)
         } catch {
           captionFailed = true
@@ -146,7 +149,7 @@ export async function sendManualMessagingReply(input: ManualSendInput): Promise<
         }
       }
     } else {
-      mainId = (await send({ text: input.contentText ?? '' })).messageId
+      mainId = (await send({ text: wireText ?? '' })).messageId
       mainRecord = await persist('text', input.contentText, null, mainId)
     }
   } catch (err) {

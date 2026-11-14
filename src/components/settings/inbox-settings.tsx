@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { BusinessHours, UnassignedPushTo } from "@/types";
 import { SettingsGroup } from "./settings-group";
@@ -57,6 +58,7 @@ export function InboxSettings() {
   // Unassigned conversations: who is pushed, and the managers' alert delay.
   const [unassignedPushTo, setUnassignedPushTo] = useState<UnassignedPushTo>(preferences.unassigned_push_to);
   const [unassignedMinutes, setUnassignedMinutes] = useState(String(preferences.unassigned_alert_minutes));
+  const [showAgentName, setShowAgentName] = useState(preferences.show_agent_name);
 
   // Re-seed the form when the account row (re)loads — e.g. after another
   // admin saved, or on first render before the profile resolved.
@@ -70,6 +72,7 @@ export function InboxSettings() {
     setAutoAssign(preferences.auto_assign_enabled);
     setUnassignedPushTo(preferences.unassigned_push_to);
     setUnassignedMinutes(String(preferences.unassigned_alert_minutes));
+    setShowAgentName(preferences.show_agent_name);
   }, [preferences]);
 
   const slaNum = Number(sla);
@@ -102,7 +105,8 @@ export function InboxSettings() {
       oohMessage !== preferences.out_of_hours_message ||
       autoAssign !== preferences.auto_assign_enabled ||
       unassignedPushTo !== preferences.unassigned_push_to ||
-      unassignedNum !== preferences.unassigned_alert_minutes,
+      unassignedNum !== preferences.unassigned_alert_minutes ||
+      showAgentName !== preferences.show_agent_name,
     [
       slaNum,
       coolingNum,
@@ -113,6 +117,7 @@ export function InboxSettings() {
       autoAssign,
       unassignedPushTo,
       unassignedNum,
+      showAgentName,
       preferences,
     ],
   );
@@ -167,6 +172,7 @@ export function InboxSettings() {
           auto_assign_enabled: autoAssign,
           unassigned_push_to: unassignedPushTo,
           unassigned_alert_minutes: unassignedNum,
+          show_agent_name: showAgentName,
         }),
       });
       if (!res.ok) {
@@ -314,6 +320,21 @@ export function InboxSettings() {
         />
 
         <AutoAssignCard enabled={autoAssign} onEnabledChange={setAutoAssign} disabled={disabled} />
+
+        <SettingsGroup
+          title={t("Show the agent's name to the customer")}
+          description={t(
+            "Each reply sent from the inbox reaches the customer with the name of the person answering on the first line, for example “*Ana:*”. The name comes from each person's profile. Templates, audio and automatic messages are sent unchanged.",
+          )}
+          action={
+            <Switch
+              checked={showAgentName}
+              disabled={disabled}
+              onCheckedChange={(v) => setShowAgentName(!!v)}
+              aria-label={t("Show the agent's name to the customer")}
+            />
+          }
+        />
 
         <SettingsGroup
           title={t("Unassigned conversations")}

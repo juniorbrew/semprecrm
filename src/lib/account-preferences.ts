@@ -46,6 +46,7 @@ export const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
   sla_count_only_business_hours: true,
   unassigned_push_to: 'available',
   unassigned_alert_minutes: 5,
+  show_agent_name: false,
 }
 
 export const UNASSIGNED_PUSH_TO: UnassignedPushTo[] = ['available', 'managers', 'none']
@@ -202,6 +203,7 @@ export function parseAccountPreferences(raw: unknown): AccountPreferences {
         PREFERENCE_LIMITS.unassigned_alert_minutes.min,
         PREFERENCE_LIMITS.unassigned_alert_minutes.max,
       ) ?? d.unassigned_alert_minutes,
+    show_agent_name: booleanOr(obj.show_agent_name, d.show_agent_name),
   }
 }
 
@@ -236,5 +238,6 @@ export function mergeAccountPreferences(
   if (patch.unassigned_push_to !== undefined) base.unassigned_push_to = parsed.unassigned_push_to
   if (patch.unassigned_alert_minutes !== undefined)
     base.unassigned_alert_minutes = parsed.unassigned_alert_minutes
+  if (patch.show_agent_name !== undefined) base.show_agent_name = parsed.show_agent_name
   return base
 }

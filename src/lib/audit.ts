@@ -174,6 +174,7 @@ export const AUDIT_FIELD_LABELS: Record<Language, Record<string, string>> = {
     out_of_hours_enabled: 'Resposta fora do horário',
     out_of_hours_message: 'Mensagem fora do horário',
     auto_assign_enabled: 'Atribuição automática',
+    show_agent_name: 'Nome do atendente nas mensagens',
     require_mfa_admins: 'Exigir verificação em duas etapas para administradores',
     // company registration / contact
     person_type: 'Tipo de conta',
@@ -253,6 +254,7 @@ export const AUDIT_FIELD_LABELS: Record<Language, Record<string, string>> = {
     out_of_hours_enabled: 'Out-of-hours reply',
     out_of_hours_message: 'Out-of-hours message',
     auto_assign_enabled: 'Auto-assign',
+    show_agent_name: 'Agent name in messages',
     require_mfa_admins: 'Require MFA for admins',
     person_type: 'Account type',
     tax_id: 'Tax ID',
