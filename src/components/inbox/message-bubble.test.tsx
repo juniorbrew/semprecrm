@@ -89,6 +89,21 @@ describe('MessageBubble — sender label', () => {
   });
 });
 
+describe('MessageBubble — agent name header (show_agent_name)', () => {
+  it('shows the name in bold on the first line, above the text, untranslated', () => {
+    const html = renderToString(<MessageBubble message={msg({})} nameHeader="Ana Souza" />);
+    expect(html).toMatch(/data-agent-name-header[^>]*data-no-translate[^>]*>Ana Souza<!-- -->:<\/p>/);
+    expect(html.indexOf('data-agent-name-header')).toBeLessThan(html.indexOf('Olá!'));
+  });
+
+  it('nothing without a header, and never on customer bubbles', () => {
+    expect(renderToString(<MessageBubble message={msg({})} />)).not.toContain('data-agent-name-header');
+    expect(
+      renderToString(<MessageBubble message={msg({ sender_type: 'customer' })} nameHeader="Ana" />),
+    ).not.toContain('data-agent-name-header');
+  });
+});
+
 describe('MessageBubble — deleted for everyone', () => {
   it('keeps the text, struck through, with "Deleted by customer"', () => {
     const m = msg({

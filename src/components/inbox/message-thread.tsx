@@ -92,7 +92,7 @@ import { ConversationReminder } from "./conversation-reminder";
 import { ConversationSnooze } from "./conversation-snooze";
 import { MessageBubble } from "./message-bubble";
 import { ScheduledMessagesPanel } from "./scheduled-messages-panel";
-import { senderLabelFor } from "./sender-label";
+import { agentNameHeader, senderLabelFor } from "./sender-label";
 import { MessageActions } from "./message-actions";
 import {
   MessageComposer,
@@ -448,7 +448,7 @@ export function MessageThread({
   onToggleContactPanel,
   onOpenConversation,
 }: MessageThreadProps) {
-  const { user, profile, accountId, accountRole } = useAuth();
+  const { user, profile, accountId, accountRole, preferences } = useAuth();
   const { language, t } = useLanguage();
   const statusCopy = THREAD_STATUS_COPY[language] ?? THREAD_STATUS_COPY["pt-BR"];
   const [loading, setLoading] = useState(false);
@@ -2570,6 +2570,10 @@ export function MessageThread({
                         }
                       : null;
                     const msgReactions = reactionsByMessageId.get(msg.id);
+                    const senderLabel = senderLabelFor(msg, {
+                      currentUserId: user?.id,
+                      nameFor: profileNameFor,
+                    });
                     // Toggle is computed at the call site — `msgReactions`
                     // and `user?.id` are already in scope, no extra hook.
                     const handlePillToggle = (emoji: string) => {
@@ -2599,10 +2603,12 @@ export function MessageThread({
                           onToggleReaction={handlePillToggle}
                           onOpenConversation={onOpenConversation ? openConversation : undefined}
                           fresh={opened.id === conversation.id && isFreshMessage(msg.created_at, opened.at)}
-                          senderLabel={senderLabelFor(msg, {
-                            currentUserId: user?.id,
-                            nameFor: profileNameFor,
-                          })}
+                          senderLabel={senderLabel}
+                          nameHeader={
+                            preferences.show_agent_name
+                              ? agentNameHeader(msg, senderLabel, profile?.full_name)
+                              : null
+                          }
                         />
                       </MessageActions>
                     );
