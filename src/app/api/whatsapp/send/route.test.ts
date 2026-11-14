@@ -627,4 +627,14 @@ describe('POST /api/whatsapp/send — agent name (show_agent_name)', () => {
     expect(res.status).toBe(400)
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('official: text pushed over 4096 by the name is a clear 400, Meta never called', async () => {
+    h.state.prefs = { show_agent_name: true }
+    h.state.conversation = { ...h.state.conversation, channel: 'whatsapp' }
+    h.meta.sendTextMessage.mockClear()
+    const res = await POST(request({ conversation_id: 'conv-1', message_type: 'text', content_text: 'x'.repeat(4090) }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ code: 'text_too_long' })
+    expect(h.meta.sendTextMessage).not.toHaveBeenCalled()
+  })
 })

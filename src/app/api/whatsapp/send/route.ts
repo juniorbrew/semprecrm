@@ -246,6 +246,23 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+    // Official text cap (Meta: 4096). The composer allows 4096, so only the
+    // name can push it over: answer a clear 400 instead of Meta's 502.
+    if (
+      message_type === 'text' &&
+      outText !== content_text &&
+      conversation.channel !== 'qr' &&
+      !isMetaMessagingChannel(conversation.channel) &&
+      outText.length > 4096
+    ) {
+      return NextResponse.json(
+        {
+          error: 'Com o nome do atendente, a mensagem passa de 4096 caracteres. Encurte o texto.',
+          code: 'text_too_long',
+        },
+        { status: 400 }
+      )
+    }
 
     // LGPD (migration 035 / 077): an anonymised contact never receives
     // anything. An opted-out contact ("PARAR") can still get a free-text
