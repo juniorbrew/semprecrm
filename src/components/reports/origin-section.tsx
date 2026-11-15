@@ -6,7 +6,8 @@ import { Download } from "lucide-react";
 import { OriginNameText } from "@/components/origins/origin-line";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/hooks/use-language";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatMoney } from "@/lib/currency";
+import { canHaveSpend, formatRoas, spendMetrics } from "@/lib/indicators/spend";
 import { channelLabel, type OriginChannel, type OriginReportRow } from "@/lib/lead-origins";
 import {
   fetchOriginReport,
@@ -17,6 +18,8 @@ import {
 } from "@/lib/lead-origins/report";
 import { createClient } from "@/lib/supabase/client";
 import type { ReportPeriod } from "@/lib/support/reports";
+
+import { SpendDialog } from "./spend-dialog";
 
 const HEADING = "text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground";
 const TH = "sticky top-0 z-10 bg-background pb-2 pr-4 font-normal";
@@ -38,12 +41,17 @@ export function OriginSection({
   timezone,
   currency,
   enabled = true,
+  accountId = null,
+  canEditSpend = false,
 }: {
   period: ReportPeriod;
   periodOk: boolean;
   timezone: string;
   currency: string;
   enabled?: boolean;
+  /** Needed (with canEditSpend) for the "Report spend" button: only admins write ad_spend. */
+  accountId?: string | null;
+  canEditSpend?: boolean;
 }) {
   const { t, language } = useLanguage();
   const [channel, setChannel] = useState<OriginChannel | "">("");
@@ -53,6 +61,7 @@ export function OriginSection({
   // on screen dimmed (aria-busy) until the new answer arrives; rows null = that question failed.
   const [result, setResult] = useState<{ key: string; rows: OriginReportRow[] | null } | null>(null);
   const [tick, setTick] = useState(0);
+  const [spendRow, setSpendRow] = useState<OriginReportRow | null>(null);
   const key = `${period.from}|${period.to}|${timezone}|${channel}|${pipelineId}|${tick}`;
   const answered = result?.key === key;
   const failed = answered && result.rows === null;
@@ -189,7 +198,7 @@ export function OriginSection({
               </figure>
             )}
             <div className="max-h-[26rem] overflow-auto">
-              <table className="w-full min-w-[44rem] text-sm" data-testid="origin-table">
+              <table className="w-full min-w-[66rem] text-sm" data-testid="origin-table">
                 <thead>
                   <tr className="text-left text-xs text-muted-foreground">
                     <th scope="col" className={TH}>{t("Customer origin")}</th>
@@ -198,11 +207,17 @@ export function OriginSection({
                     <th scope="col" className={`${TH} text-right`}>{t("Deals won")}</th>
                     <th scope="col" className={`${TH} text-right`}>{t("Won value")}</th>
                     <th scope="col" className={`${TH} text-right`}>{t("Conversion rate")}</th>
-                    <th scope="col" className={`${TH} pr-0 text-right`}>{t("Average ticket")}</th>
+                    <th scope="col" className={`${TH} text-right`}>{t("Average ticket")}</th>
+                    <th scope="col" className={`${TH} text-right`}>{t("Ad spend")}</th>
+                    <th scope="col" className={`${TH} text-right`}>{t("Cost per customer")}</th>
+                    <th scope="col" className={`${TH} text-right`}>{t("Cost per sale")}</th>
+                    <th scope="col" className={`${TH} pr-0 text-right`}>{t("Return on spend")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border border-t border-border">
-                  {rows.map((r, i) => (
+                  {rows.map((r, i) => {
+                    const m = spendMetrics(r);
+                    return (
                     <tr key={`${r.origin_type}|${r.channel}|${r.name}|${r.source}|${i}`}>
                       <th scope="row" className="max-w-72 py-2 pr-4 text-left font-normal text-foreground">
                         <OriginNameText n={rowOriginName(r)} />
@@ -216,20 +231,62 @@ export function OriginSection({
                       <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
                         {r.deals_created > 0 ? `${r.conversion_pct.toLocaleString(language)}%` : "—"}
                       </td>
-                      <td className="py-2 text-right tabular-nums" data-no-translate>
+                      <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
                         {r.deals_won > 0 ? money(r.avg_ticket) : "—"}
                       </td>
+                      <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
+                        {m.spend == null ? "—" : formatMoney(m.spend, currency)}
+                        {canEditSpend && accountId && !pipelineId && canHaveSpend(r) && (
+                          <button
+                            type="button"
+                            onClick={() => setSpendRow(r)}
+                            className="ml-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                            data-testid="origin-spend-button"
+                          >
+                            {t("Report spend")}
+                          </button>
+                        )}
+                      </td>
+                      <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
+                        {m.costPerCustomer == null ? "—" : formatMoney(m.costPerCustomer, currency)}
+                      </td>
+                      <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
+                        {m.costPerSale == null ? "—" : formatMoney(m.costPerSale, currency)}
+                      </td>
+                      <td className="py-2 text-right tabular-nums" data-no-translate>
+                        {formatRoas(m.roas, language)}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
             <p className="text-xs text-muted-foreground" data-testid="origin-note">
               {t("Customers are counted by their first contact, and deals by the origin of each deal.")}
             </p>
+            <p className="text-xs text-muted-foreground" data-testid="origin-spend-note">
+              {t("Spend counts whole months: a period from the 10th to the 20th uses the spend of the entire month.")}
+            </p>
+            {pipelineId && (
+              <p className="text-xs text-muted-foreground" data-testid="origin-spend-pipeline-note">
+                {t("Spend is not shown when filtering by pipeline.")}
+              </p>
+            )}
           </div>
         )}
       </div>
+      {spendRow && accountId && (
+        <SpendDialog
+          key={`${spendRow.origin_type}|${spendRow.channel}|${spendRow.name}|${spendRow.source}`}
+          row={spendRow}
+          accountId={accountId}
+          defaultMonth={period.to.slice(0, 7)}
+          currency={currency}
+          onClose={() => setSpendRow(null)}
+          onSaved={() => setTick((n) => n + 1)}
+        />
+      )}
     </section>
   );
 }

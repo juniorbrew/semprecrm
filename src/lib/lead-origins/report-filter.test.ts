@@ -22,6 +22,7 @@ const row = (over: Partial<OriginReportRow> = {}): OriginReportRow => ({
   won_value: 1500,
   conversion_pct: 66.7,
   avg_ticket: 750,
+  spend_cents: null,
   ...over,
 })
 
@@ -50,8 +51,9 @@ describe('fetchOriginReport', () => {
       p_end: '2026-11-02T00:00:00.000Z',
       p_channel: 'whatsapp',
       p_pipeline_id: 'p1',
+      p_timezone: 'UTC',
     })
-    expect(rows[0]).toMatchObject({ deals_created: 2, won_value: 12.5, origin_type: 'direct' })
+    expect(rows[0]).toMatchObject({ deals_created: 2, won_value: 12.5, origin_type: 'direct', spend_cents: null })
   })
   it('throws the database error and treats null data as empty', async () => {
     await expect(fetchOriginReport({ rpc: async () => ({ data: null, error: new Error('x') }) } as never, { from: '2026-11-01', to: '2026-11-01' }, 'UTC')).rejects.toThrow('x')
@@ -88,9 +90,14 @@ describe('originReportToCsv', () => {
     const lines = csv.replace('﻿', '').trimEnd().split('\r\n')
     expect(csv.startsWith('﻿')).toBe(true)
     expect(lines[0]).toBe('periodo;2026-11-01;2026-11-30')
-    expect(lines[1]).toBe('origem;canal;clientes_novos;negocios_criados;negocios_ganhos;valor_ganho;taxa_de_conversao_pct;ticket_medio')
-    expect(lines[2]).toBe('"Anúncio ""Promoção sofás"" · Instagram";Instagram;2;3;2;1500.00;66.7;750.00')
-    expect(lines[3]).toBe('Direto ou não identificado;;2;3;0;0.00;0;0.00')
+    expect(lines[1]).toBe('origem;canal;clientes_novos;negocios_criados;negocios_ganhos;valor_ganho;taxa_de_conversao_pct;ticket_medio;gasto;custo_por_cliente;custo_por_venda;retorno')
+    expect(lines[2]).toBe('"Anúncio ""Promoção sofás"" · Instagram";Instagram;2;3;2;1500.00;66.7;750.00;;;;')
+    expect(lines[3]).toBe('Direto ou não identificado;;2;3;0;0.00;0;0.00;;;;')
+  })
+  it('writes spend, cost per customer, cost per sale and return when a spend was typed', () => {
+    const csv = originReportToCsv({ from: '2026-11-01', to: '2026-11-30' }, [row({ spend_cents: 30000 })])
+    // spend 300.00 / 2 customers = 150.00; / 2 sales = 150.00; 1500 / 300 = 5.00
+    expect(csv.trimEnd().split('\r\n')[2]).toBe('"Anúncio ""Promoção sofás"" · Instagram";Instagram;2;3;2;1500.00;66.7;750.00;300.00;150.00;150.00;5.00')
   })
   it('a name full of separators, quotes and newlines stays in one cell', () => {
     const csv = originReportToCsv({ from: '2026-11-01', to: '2026-11-30' }, [row({ name: 'a;b"c\nd' })])

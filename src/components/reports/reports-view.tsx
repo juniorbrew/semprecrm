@@ -29,6 +29,8 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { BacklogSection, GroupSection, OverviewSection, PrioritySection } from "./report-sections";
 import { OriginSection } from "./origin-section";
+import { AiSection } from "./ai-section";
+import { TeamSection } from "./team-section";
 
 type Preset = 7 | 30 | 90 | "custom";
 
@@ -56,6 +58,7 @@ export function ReportsView() {
   const copy = reportsCopy(language);
   const { accountId, preferences, profileLoading, defaultCurrency } = useAuth();
   const allowed = useCan("view-reports");
+  const canEditSpend = useCan("edit-settings");
   const timezone = safeTimezone(preferences.business_hours?.timezone);
 
   const [preset, setPreset] = useState<Preset>(30);
@@ -283,7 +286,25 @@ export function ReportsView() {
       </div>
 
       {/* Where the customers came from (migration 109): its own numbers, same period. */}
-      <OriginSection period={period} periodOk={periodOk} timezone={timezone} currency={defaultCurrency || "BRL"} />
+      <OriginSection
+        period={period}
+        periodOk={periodOk}
+        timezone={timezone}
+        currency={defaultCurrency || "BRL"}
+        accountId={accountId}
+        canEditSpend={canEditSpend}
+      />
+
+      {/* What the AI did, and how each member performed (migration 111): same period. */}
+      <AiSection accountId={accountId} period={period} periodOk={periodOk} timezone={timezone} />
+      <TeamSection
+        accountId={accountId}
+        period={period}
+        periodOk={periodOk}
+        timezone={timezone}
+        currency={defaultCurrency || "BRL"}
+        members={members}
+      />
     </div>
   );
 }
