@@ -721,7 +721,7 @@ function Mine({ page, signedIn, onSignedOut, onBook }: { page: PublicPage; signe
           <article key={a.id} className="flex flex-col gap-2 rounded-xl border p-4">
             <div>
               <h3 className="font-medium">{a.service}</h3>
-              <p className="text-sm capitalize">{fmtWhen(a.starts_at, page.timezone)}</p>
+              <p className="text-sm first-letter:uppercase">{fmtWhen(a.starts_at, page.timezone)}</p>
               {a.professional && <p className="text-muted-foreground text-sm">com {a.professional}</p>}
               {a.status === 'confirmed' && <p className="text-primary mt-1 text-xs font-medium">Confirmado</p>}
             </div>
