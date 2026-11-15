@@ -83,4 +83,64 @@ export const DICT_BILLING: Record<string, string> = {
     'Muitas tentativas de assinatura nas últimas 24 horas. Tente novamente amanhã ou fale com a equipe do SempreCRM.',
   'Could not reach the payment provider. Try again in a few minutes.':
     'Não foi possível falar com o provedor de pagamento. Tente novamente em alguns minutos.',
+
+  // Extras beyond the plan (migration 114)
+  'Extras beyond the plan':
+    'Extras além do plano',
+  'Optional monthly price of one extra user or number. Leave blank to not offer it: the limit keeps blocking. A new price only applies to new purchases.':
+    'Preço mensal opcional de um usuário ou número extra. Deixe em branco para não oferecer: o limite continua bloqueando. Um preço novo só vale para quem contrata depois.',
+  'Extra user, monthly price in BRL':
+    'Usuário extra, preço mensal em reais',
+  'Extra number, monthly price in BRL':
+    'Número extra, preço mensal em reais',
+  'Add users or WhatsApp numbers without changing plan. The new limit works right away; the new value starts at your next charge.':
+    'Adicione usuários ou números de WhatsApp sem trocar de plano. O limite novo vale na hora; o valor novo começa na próxima cobrança.',
+  '+ extra user':
+    '+ usuário extra',
+  '+ extra number':
+    '+ número extra',
+  'Next charge':
+    'Próxima cobrança',
+  'Included in the plan':
+    'Incluído no plano',
+  'Extras bought':
+    'Extras contratados',
+  'In use':
+    'Em uso',
+  'per extra, per month':
+    'por extra, por mês',
+  'Quantity':
+    'Quantidade',
+  'Confirm the change':
+    'Confirmar a alteração',
+  'extra user(s)':
+    'usuário(s) extra(s)',
+  'extra number(s)':
+    'número(s) extra(s)',
+  'New charge':
+    'Nova cobrança',
+  'starting at your next charge':
+    'a partir da próxima cobrança',
+  'Extras updated. The new value starts at your next charge.':
+    'Extras atualizados. O valor novo começa na próxima cobrança.',
+  'Could not change it right now, try again.':
+    'Não foi possível alterar agora, tente de novo.',
+  'Buy 1 extra for':
+    'Contratar 1 extra por',
+  'Choose what to change and how many.':
+    'Escolha o que alterar e quantos.',
+  'Extras are only available on an active paid subscription. Subscribe first, or wait until the payment is confirmed.':
+    'Os extras só estão disponíveis com uma assinatura paga e ativa. Assine primeiro ou espere a confirmação do pagamento.',
+  'Your plan does not offer this extra. Talk to the SempreCRM team.':
+    'Seu plano não oferece este extra. Fale com a equipe do SempreCRM.',
+  'Your plan has no limit here, so there is nothing to add.':
+    'Seu plano não tem limite aqui, então não há nada para adicionar.',
+  'You reached the maximum number of extras. Talk to the SempreCRM team.':
+    'Você chegou ao máximo de extras. Fale com a equipe do SempreCRM.',
+  'You are using more than the new limit would allow. Free up a user or number first.':
+    'Você está usando mais do que o novo limite permitiria. Libere um usuário ou número primeiro.',
+  'Too many changes in the last 24 hours. Try again tomorrow or talk to the SempreCRM team.':
+    'Muitas alterações nas últimas 24 horas. Tente novamente amanhã ou fale com a equipe do SempreCRM.',
+  'Your subscription changed while you were doing this. Reload the page and try again.':
+    'Sua assinatura mudou enquanto você fazia isso. Recarregue a página e tente de novo.',
 };
