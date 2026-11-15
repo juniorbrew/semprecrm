@@ -46,6 +46,7 @@ describe('OriginSection', () => {
       p_end: '2026-12-01T03:00:00.000Z',
       p_channel: null,
       p_pipeline_id: null,
+      p_timezone: 'America/Sao_Paulo',
     })
   })
 

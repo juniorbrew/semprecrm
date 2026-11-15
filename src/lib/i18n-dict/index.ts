@@ -19,6 +19,7 @@ import { DICT_DEAL_FIELDS } from './deal-fields';
 import { DICT_FLOWS } from './flows';
 import { DICT_FORECAST } from './forecast';
 import { DICT_INBOX } from './inbox';
+import { DICT_INDICATORS } from './indicators';
 import { DICT_META_CAPI } from './meta-capi';
 import { DICT_MISC } from './misc';
 import { DICT_ORIGINS } from './origins';
@@ -40,6 +41,7 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_FLOWS,
   ...DICT_FORECAST,
   ...DICT_INBOX,
+  ...DICT_INDICATORS,
   ...DICT_META_CAPI,
   ...DICT_MISC,
   ...DICT_ORIGINS,

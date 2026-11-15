@@ -71,4 +71,6 @@ export interface OriginReportRow {
   won_value: number
   conversion_pct: number
   avg_ticket: number
+  /** Spend typed by an admin for the months the period touches (cents); null = none (migration 111). */
+  spend_cents: number | null
 }

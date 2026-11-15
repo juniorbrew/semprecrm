@@ -9,6 +9,8 @@ import { addDays, type ReportPeriod } from '@/lib/support/reports'
 import { fromZonedParts } from '@/lib/calendar/range'
 import { csvCell } from '@/lib/support/reports'
 
+import { spendMetrics } from '@/lib/indicators/spend'
+
 import { CHANNEL_LABEL, DIRECT_LABEL, type OriginName } from './label'
 import type { OriginChannel, OriginReportRow } from './types'
 
@@ -40,6 +42,7 @@ export async function fetchOriginReport(
     p_end: end,
     p_channel: filters.channel || null,
     p_pipeline_id: filters.pipelineId || null,
+    p_timezone: timezone,
   })
   if (error) throw error
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
@@ -53,6 +56,7 @@ export async function fetchOriginReport(
     won_value: num(r.won_value),
     conversion_pct: num(r.conversion_pct),
     avg_ticket: num(r.avg_ticket),
+    spend_cents: r.spend_cents == null ? null : num(r.spend_cents),
   }))
 }
 
@@ -107,6 +111,10 @@ export const ORIGIN_CSV_HEADER = [
   'valor_ganho',
   'taxa_de_conversao_pct',
   'ticket_medio',
+  'gasto',
+  'custo_por_cliente',
+  'custo_por_venda',
+  'retorno',
 ] as const
 
 /**
@@ -115,7 +123,9 @@ export const ORIGIN_CSV_HEADER = [
  */
 export function originReportToCsv(period: ReportPeriod, rows: OriginReportRow[]): string {
   const lines = [`periodo;${period.from};${period.to}`, ORIGIN_CSV_HEADER.join(';')]
+  const money = (n: number | null) => (n == null ? '' : n.toFixed(2))
   for (const r of rows) {
+    const m = spendMetrics(r)
     lines.push(
       [
         csvCell(originRowLabel(r)),
@@ -126,6 +136,10 @@ export function originReportToCsv(period: ReportPeriod, rows: OriginReportRow[])
         r.won_value.toFixed(2),
         r.conversion_pct,
         r.avg_ticket.toFixed(2),
+        money(m.spend),
+        money(m.costPerCustomer),
+        money(m.costPerSale),
+        m.roas == null ? '' : m.roas.toFixed(2),
       ].join(';'),
     )
   }
