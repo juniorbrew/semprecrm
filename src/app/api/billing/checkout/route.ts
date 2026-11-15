@@ -28,7 +28,8 @@ import {
   listSubscriptionPayments,
   type AsaasPayment,
 } from '@/lib/billing/asaas'
-import { asaasCycle, isBillingCycle, isNewPayment, periodEnd, periodPriceCents, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
+import { subscriptionValueCents } from '@/lib/billing/extras'
+import { asaasCycle, isBillingCycle, isNewPayment, periodEnd, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { PLANS, type Plan } from '@/lib/plans'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -58,6 +59,10 @@ type BillingRow = {
   cycle: string
   status: string
   current_period_end: string | null
+  extra_users: number | null
+  extra_channels: number | null
+  extra_user_price_cents: number | null
+  extra_channel_price_cents: number | null
 }
 
 export async function POST(request: Request) {
@@ -97,7 +102,9 @@ export async function POST(request: Request) {
 
     const { data: existing, error: billErr } = await db
       .from('account_billing')
-      .select('asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end')
+      .select(
+        'asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end, extra_users, extra_channels, extra_user_price_cents, extra_channel_price_cents',
+      )
       .eq('account_id', ctx.accountId)
       .maybeSingle()
     if (billErr) throw new Error(`billing read failed: ${billErr.message}`)
@@ -158,7 +165,14 @@ export async function POST(request: Request) {
         })
       ).id
 
-    const value = periodPriceCents(monthly, cycle)
+    // Extras already contracted (migration 114) stay on the account and in the
+    // new subscription's value: they keep their locked prices.
+    const value = subscriptionValueCents(monthly, cycle, {
+      users: current?.extra_users ?? 0,
+      channels: current?.extra_channels ?? 0,
+      userPriceCents: current?.extra_user_price_cents ?? null,
+      channelPriceCents: current?.extra_channel_price_cents ?? null,
+    })
     const label = plan === 'pro' ? 'Pro' : plan === 'basico' ? 'Básico' : plan
     const subscription = await createSubscription({
       customer: customerId,

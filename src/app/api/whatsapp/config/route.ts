@@ -23,6 +23,7 @@ import {
 } from '@/lib/whatsapp/waba-pairing'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { loadAccountEntitlements, countConnectedChannels } from '@/lib/plans-server'
+import { extraOfferFor } from '@/lib/billing/extra-offer'
 import { canAddChannel } from '@/lib/plans'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
@@ -508,10 +509,12 @@ export async function POST(request: Request) {
       }
       const maxChannels = entitlements.limits.max_channels
       if (!canAddChannel(count, maxChannels)) {
+        const offer = await extraOfferFor(supabase, accountId, 'channel')
         return NextResponse.json(
           {
             error: 'Your plan has no free slot for another connected WhatsApp number. Disconnect one or upgrade the plan.',
             code: 'plan_limit_reached',
+            ...(offer ? { offer } : {}),
           },
           { status: 403 },
         )

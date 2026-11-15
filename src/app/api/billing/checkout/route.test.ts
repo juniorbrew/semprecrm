@@ -216,6 +216,28 @@ describe('billing checkout', () => {
     expect(res.status).toBe(502)
     expect(JSON.stringify(await res.json())).not.toMatch(/CPF inválido/)
   })
+  it('a past_due account that holds extras keeps them, and the new subscription bills them at their locked price', async () => {
+    h.fake.tables.account_billing.push({
+      account_id: 'acct-1',
+      asaas_customer_id: 'cus_1',
+      asaas_subscription_id: 'sub_0',
+      plan: 'pro',
+      plan_version_id: 'v-pro',
+      cycle: 'monthly',
+      value_cents: 8990 + 3000,
+      status: 'past_due',
+      extra_users: 2,
+      extra_user_price_cents: 1500,
+      extra_channels: 0,
+      extra_channel_price_cents: null,
+    })
+    vi.mocked(asaas.listSubscriptionPayments).mockImplementation(async (sub: string) => [
+      { id: 'pay_x', subscription: sub, status: 'OVERDUE', value: 119.9, dueDate: '2026-10-12', invoiceUrl: 'https://asaas/i/' + sub },
+    ])
+    expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
+    expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ value: 899 + 300, cycle: 'YEARLY' }))
+    expect(h.fake.tables.account_billing[0]).toMatchObject({ extra_users: 2, extra_user_price_cents: 1500, value_cents: 89900 + 30000 })
+  })
   describe('past_due account (overdue renewal)', () => {
     // Paid first month (period ended 2026-10-17 with grace) + the overdue renewal.
     const paidFirst = { id: 'pay_1', subscription: 'sub_0', status: 'RECEIVED', value: 89.9, dueDate: '2026-09-12' }

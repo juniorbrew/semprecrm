@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { requireRole, requireModule, PlanLimitError } from '@/lib/auth/account'
 import { canAddChannel } from '@/lib/plans'
 import { countConnectedChannels } from '@/lib/plans-server'
+import { extraOfferFor } from '@/lib/billing/extra-offer'
 import { connectSession, getSessionState } from '@/lib/whatsapp/qr-gateway'
 import { AUDIT_ACTIONS } from '@/lib/audit'
 import { audit } from '@/lib/audit-server'
@@ -39,6 +40,7 @@ export async function POST() {
         const plural = max === 1 ? '' : 's'
         throw new PlanLimitError(
           `Seu plano permite até ${max} canal${max === 1 ? '' : 'is'} conectado${plural}. Desconecte um canal ou faça upgrade do plano.`,
+          await extraOfferFor(ctx.supabase, ctx.accountId, 'channel'),
         )
       }
     }

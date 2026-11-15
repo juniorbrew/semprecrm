@@ -52,6 +52,7 @@ export const AUDIT_ACTIONS = {
   AI_KNOWLEDGE_CHANGED: 'ai.knowledge_changed',
   AI_AGENTS_CHANGED: 'ai.agents_changed',
   BILLING_CHECKOUT: 'billing.checkout',
+  BILLING_EXTRAS_CHANGED: 'billing.extras_changed',
   META_CHANNEL_TAKEN_OVER: 'meta_channel.taken_over',
   META_CHANNEL_LOST: 'meta_channel.lost',
 } as const
@@ -104,6 +105,7 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'ai.key_removed': 'Chave de API de IA removida',
     'ai.knowledge_changed': 'Base de conhecimento da IA alterada',
     'ai.agents_changed': 'Agentes de IA alterados',
+    'billing.extras_changed': 'Extras da assinatura alterados',
   },
   'en-US': {
     'member.invited': 'Member invited',
@@ -139,6 +141,7 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'ai.key_removed': 'AI API key removed',
     'ai.knowledge_changed': 'AI knowledge base changed',
     'ai.agents_changed': 'AI agents changed',
+    'billing.extras_changed': 'Subscription extras changed',
   },
 }
 

@@ -107,7 +107,11 @@ export class ReadOnlyError extends Error {
  * with `code: "plan_limit_reached"`.
  */
 export class PlanLimitError extends ForbiddenError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** The plan sells one more of what hit the limit (migration 114): its price, for the UI. */
+    readonly offer: { kind: 'user' | 'channel'; monthlyCents: number } | null = null
+  ) {
     super(message, 'plan_limit_reached');
     this.name = 'PlanLimitError';
   }
@@ -137,7 +141,9 @@ export function toErrorResponse(err: unknown): NextResponse {
   }
   if (err instanceof ForbiddenError) {
     return NextResponse.json(
-      err.code
+      err instanceof PlanLimitError && err.offer
+        ? { error: err.message, code: err.code, offer: err.offer }
+        : err.code
         ? { error: err.message, code: err.code }
         : { error: err.message },
       { status: err.status }

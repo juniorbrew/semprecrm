@@ -39,6 +39,43 @@ export interface BillingOverview {
   /** Link of the charge still to be paid (overdue first), if any. */
   pendingInvoiceUrl: string | null
   payments: { id: string; dueDate: string | null; valueCents: number; status: string; invoiceUrl: string | null }[]
+  /** Extras block; null when extras cannot be changed now (trial, read-only, no active paid subscription). */
+  extras: ExtrasView | null
+}
+
+export interface ExtrasView {
+  /** Plan limits without extras (null = unlimited: nothing to extend). */
+  includedUsers: number | null
+  includedChannels: number | null
+  users: number
+  channels: number
+  /** Monthly price of ONE more (locked while any is contracted, else the plan's price); null = not offered. */
+  userUnitCents: number | null
+  channelUnitCents: number | null
+  /** What the account uses now: members + pending invites, connected numbers. */
+  usedUsers: number
+  usedChannels: number
+}
+
+/** The extras block of the panel, from the resolved entitlements and the billing row. */
+export function buildExtrasView(input: {
+  ent: { limits: { max_users: number | null; max_channels: number | null }; extras: { users: number; channels: number } }
+  offered: { userCents: number | null; channelCents: number | null }
+  locked: { userCents: number | null; channelCents: number | null }
+  usage: { users: number; channels: number }
+}): ExtrasView {
+  const { ent, offered, locked } = input
+  const base = (limit: number | null, extras: number) => (limit === null ? null : limit - extras)
+  return {
+    includedUsers: base(ent.limits.max_users, ent.extras.users),
+    includedChannels: base(ent.limits.max_channels, ent.extras.channels),
+    users: ent.extras.users,
+    channels: ent.extras.channels,
+    userUnitCents: ent.extras.users > 0 && locked.userCents !== null ? locked.userCents : offered.userCents,
+    channelUnitCents: ent.extras.channels > 0 && locked.channelCents !== null ? locked.channelCents : offered.channelCents,
+    usedUsers: input.usage.users,
+    usedChannels: input.usage.channels,
+  }
 }
 
 const UNPAID = new Set(['PENDING', 'OVERDUE'])
@@ -54,6 +91,7 @@ export function buildOverview(input: {
   catalog: CatalogPlan[]
   billing: BillingRowView | null
   payments: PaymentRowView[]
+  extras?: ExtrasView | null
 }): BillingOverview {
   const { billing } = input
   const current = billing && billing.status !== 'canceled' ? billing.subscriptionId : null
@@ -75,6 +113,7 @@ export function buildOverview(input: {
     payments: [...visible]
       .sort((a, b) => (b.dueDate ?? '').localeCompare(a.dueDate ?? ''))
       .map((p) => ({ id: p.id, dueDate: p.dueDate, valueCents: p.valueCents, status: p.status, invoiceUrl: safeInvoiceUrl(p.invoiceUrl) })),
+    extras: input.extras ?? null,
   }
 }
 

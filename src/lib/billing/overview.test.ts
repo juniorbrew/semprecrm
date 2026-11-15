@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildOverview, cyclePricing, formatBrl, paymentStatusKey, planAction, safeInvoiceUrl, situationOf, type PaymentRowView } from './overview'
+import { buildExtrasView, buildOverview, cyclePricing, formatBrl, paymentStatusKey, planAction, safeInvoiceUrl, situationOf, type PaymentRowView } from './overview'
 
 const catalog = [
   { plan: 'trial', priceMonthlyCents: null },
@@ -111,5 +111,40 @@ describe('planAction', () => {
     expect(planAction('active', true)).toBe('locked')
     expect(planAction('active', false)).toBe('locked')
     expect(planAction('suspended', false)).toBe('locked')
+  })
+})
+
+describe('buildExtrasView', () => {
+  const ent = { limits: { max_users: 5, max_channels: 3 }, extras: { users: 2, channels: 0 } }
+  const usage = { users: 4, channels: 1 }
+
+  it('splits the effective limit back into included and bought', () => {
+    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage })
+    expect(v).toMatchObject({ includedUsers: 3, includedChannels: 3, users: 2, channels: 0, usedUsers: 4, usedChannels: 1 })
+  })
+
+  it('a locked price wins while extras of that kind are held; otherwise the plan price is offered', () => {
+    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage })
+    expect(v.userUnitCents).toBe(1500)
+    expect(v.channelUnitCents).toBe(4000)
+    const none = buildExtrasView({ ent, offered: { userCents: null, channelCents: null }, locked: { userCents: null, channelCents: null }, usage })
+    expect(none.channelUnitCents).toBeNull()
+  })
+
+  it('an unlimited plan limit has no included number', () => {
+    const v = buildExtrasView({
+      ent: { limits: { max_users: null, max_channels: 3 }, extras: { users: 0, channels: 0 } },
+      offered: { userCents: 1500, channelCents: null },
+      locked: { userCents: null, channelCents: null },
+      usage,
+    })
+    expect(v.includedUsers).toBeNull()
+  })
+
+  it('buildOverview carries the block, or null', () => {
+    const base = { configured: true, isOwner: true, catalog: [], billing: null, payments: [] }
+    expect(buildOverview(base).extras).toBeNull()
+    const extras = buildExtrasView({ ent, offered: { userCents: 1, channelCents: 1 }, locked: { userCents: null, channelCents: null }, usage })
+    expect(buildOverview({ ...base, extras }).extras).toEqual(extras)
   })
 })

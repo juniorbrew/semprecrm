@@ -97,7 +97,16 @@ export interface PlanDefinition {
   /** Optional modules granted by the plan (always-on ones implied). */
   modules: readonly OptionalModule[];
   limits: Limits;
+  /**
+   * Monthly price (BRL cents) of one extra user / one extra WhatsApp number
+   * (migration 114). Absent = the plan does not offer that extra.
+   */
+  extra_user_price_cents?: number;
+  extra_channel_price_cents?: number;
 }
+
+/** Contracted extras are capped (DB CHECK, migration 114). */
+export const MAX_EXTRAS = 100;
 
 const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
 
@@ -243,6 +252,8 @@ export interface PlanAccountFields {
   plan_expires_at?: string | Date | null;
   module_overrides?: Record<string, unknown> | null;
   limit_overrides?: Record<string, unknown> | null;
+  /** Extras contracted on top of the plan (account_billing, migration 114). */
+  extras?: { users: number; channels: number } | null;
 }
 
 export type BlockReason =
@@ -259,6 +270,8 @@ export interface Entitlements {
   expiresAt: string | null;
   modules: Record<Module, boolean>;
   limits: Limits;
+  /** Extras already inside `limits` (migration 114); zero when none. */
+  extras: { users: number; channels: number };
   blocked: false | { reason: BlockReason };
 }
 
@@ -334,6 +347,24 @@ export function resolveEntitlements(
     }
   }
 
+  // 2b. Contracted extras raise a finite limit (unlimited stays unlimited).
+  const applied = { users: 0, channels: 0 };
+  const extras = account?.extras;
+  const whole = (n: unknown) =>
+    typeof n === 'number' && Number.isSafeInteger(n) && n > 0
+      ? Math.min(n, MAX_EXTRAS)
+      : 0;
+  if (available && extras) {
+    if (limits.max_users !== null) {
+      applied.users = whole(extras.users);
+      limits.max_users += applied.users;
+    }
+    if (limits.max_channels !== null) {
+      applied.channels = whole(extras.channels);
+      limits.max_channels += applied.channels;
+    }
+  }
+
   // 3. Always-on modules — overrides can never switch these off.
   for (const m of ALWAYS_ON_MODULES) modules[m] = true;
 
@@ -355,7 +386,7 @@ export function resolveEntitlements(
   }
 
   if (!available) blocked = { reason: 'plan_unavailable' };
-  return { plan, status, expiresAt, modules, limits, blocked };
+  return { plan, status, expiresAt, modules, limits, extras: applied, blocked };
 }
 
 // ------------------------------------------------------------

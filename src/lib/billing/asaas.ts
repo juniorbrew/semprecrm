@@ -116,6 +116,18 @@ export function createSubscription(input: {
   })
 }
 
+/**
+ * Changes the value of the NEXT charges (extras, migration 114). `updatePendingPayments:
+ * false` leaves the charges already generated untouched: no proration, the new value
+ * starts at the next charge. `value` is in reais, like createSubscription.
+ */
+export function updateSubscriptionValue(id: string, value: number): Promise<AsaasSubscription> {
+  return request<AsaasSubscription>(`/subscriptions/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: { value, updatePendingPayments: false },
+  })
+}
+
 export function deleteSubscription(id: string): Promise<unknown> {
   return request(`/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

@@ -24,7 +24,7 @@ import {
 
 /** Columns the resolver needs — keep in sync with `PlanAccountFields`. */
 export const PLAN_COLUMNS =
-  'plan, plan_status, plan_expires_at, module_overrides, limit_overrides, plan_version_id, plan_version:platform_plan_versions!accounts_plan_version_fk(id,plan,definition)';
+  'plan, plan_status, plan_expires_at, module_overrides, limit_overrides, plan_version_id, plan_version:platform_plan_versions!accounts_plan_version_fk(id,plan,definition), account_billing(extra_users,extra_channels)';
 
 /**
  * Load and resolve the entitlements for one account.
