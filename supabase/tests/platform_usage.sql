@@ -36,11 +36,16 @@ SELECT (SELECT account_id FROM profiles WHERE user_id = '11200000-0000-4000-8000
 INSERT INTO contacts(id, user_id, account_id, phone, name, created_at) VALUES
  ('11200000-0000-4000-8000-0000000000c1', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900000001', 'C1', now() - interval '1 day'),
  ('11200000-0000-4000-8000-0000000000c2', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900000002', 'C2', now() - interval '8 days');
+-- A: a third contact whose conversation d4 has NULL last_message_at (import) but an in-month message
+INSERT INTO contacts(id, user_id, account_id, phone, name, created_at) VALUES
+ ('11200000-0000-4000-8000-0000000000c3', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+5511900000003', 'C3', now() - interval '30 days');
 -- A: d1, d2 created in June 2026; d3 created in May 2026
 INSERT INTO conversations(id, user_id, account_id, contact_id, created_at, status) VALUES
  ('11200000-0000-4000-8000-0000000000d1', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11200000-0000-4000-8000-0000000000c1', '2026-06-10 12:00:00+00', 'open'),
  ('11200000-0000-4000-8000-0000000000d2', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11200000-0000-4000-8000-0000000000c2', '2026-06-15 12:00:00+00', 'open'),
  ('11200000-0000-4000-8000-0000000000d3', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11200000-0000-4000-8000-0000000000c2', '2026-05-20 12:00:00+00', 'closed');
+INSERT INTO conversations(id, user_id, account_id, contact_id, created_at, status) VALUES
+ ('11200000-0000-4000-8000-0000000000d4', '11200000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11200000-0000-4000-8000-0000000000c3', '2026-06-12 12:00:00+00', 'open');
 -- June (America/Sao_Paulo = UTC-3): [2026-06-01 03:00Z, 2026-07-01 03:00Z)
 INSERT INTO messages(conversation_id, sender_type, content_text, created_at) VALUES
  ('11200000-0000-4000-8000-0000000000d1', 'customer', 'x', '2026-06-10 12:00:00+00'),
@@ -50,10 +55,12 @@ INSERT INTO messages(conversation_id, sender_type, content_text, created_at) VAL
  ('11200000-0000-4000-8000-0000000000d3', 'customer', 'x', '2026-06-01 02:59:59+00'),  -- last second of May
  ('11200000-0000-4000-8000-0000000000d3', 'customer', 'x', '2026-06-01 03:00:00+00'),  -- first second of June
  ('11200000-0000-4000-8000-0000000000d3', 'agent',    'x', '2026-07-01 02:59:59+00'),  -- last second of June
- ('11200000-0000-4000-8000-0000000000d3', 'agent',    'x', '2026-07-01 03:00:00+00');  -- first second of July
+ ('11200000-0000-4000-8000-0000000000d3', 'agent',    'x', '2026-07-01 03:00:00+00'),  -- first second of July
+ ('11200000-0000-4000-8000-0000000000d4', 'customer', 'x', '2026-06-12 12:05:00+00');  -- d4: last_message_at stays NULL
 -- last_message_at after the inserts (a trigger may have moved it)
 UPDATE conversations SET last_message_at = '2026-06-10 12:03:00+00' WHERE id = '11200000-0000-4000-8000-0000000000d1';
 UPDATE conversations SET last_message_at = '2026-07-01 03:00:00+00' WHERE id = '11200000-0000-4000-8000-0000000000d3';
+UPDATE conversations SET last_message_at = NULL WHERE id = '11200000-0000-4000-8000-0000000000d4';
 -- A: AI. June: 2 ok calls (150.5 + 49.5 cents = 2.00 USD); an error row and a July row do not count
 INSERT INTO ai_usage(account_id, feature, provider, model, cost_cents, status, created_at) VALUES
  ((SELECT acc_a FROM ctx), 'suggest_reply', 'openai', 'm', 150.5, 'ok',    '2026-06-05 12:00:00+00'),
@@ -72,8 +79,8 @@ SELECT pg_temp.assert_true((SELECT conversations = 0 AND messages_received = 0 A
    AND ai_cost_usd = 0 AND contacts_7d = 0 AND last_activity_at IS NULL FROM jun WHERE account_id = (SELECT acc_b FROM ctx)), 'B: zeros, never active');
 
 -- A in June, by hand
-SELECT pg_temp.assert_eq((SELECT conversations FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 2, 'A conversations in June (d3 is May)');
-SELECT pg_temp.assert_eq((SELECT messages_received FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 3, 'A received: 2 + the first second of June');
+SELECT pg_temp.assert_eq((SELECT conversations FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 3, 'A conversations in June (d3 is May)');
+SELECT pg_temp.assert_eq((SELECT messages_received FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 4, 'A received: 2 + first second of June + d4 (NULL last_message_at is still counted)');
 SELECT pg_temp.assert_eq((SELECT messages_sent FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 3, 'A sent: agent + bot + the last second of June');
 SELECT pg_temp.assert_eq((SELECT ai_calls FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 2, 'A AI calls (errors and July out)');
 SELECT pg_temp.assert_eq((SELECT ai_cost_usd FROM jun WHERE account_id = (SELECT acc_a FROM ctx)), 2.00, 'A AI cost in USD');

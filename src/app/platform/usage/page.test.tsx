@@ -46,3 +46,14 @@ it.each(['2026-13', '1999-01', 'abc', '2999-01'])(
     expect(used).toBe(page.props.maxMonth);
   }
 );
+
+it('opens the gate before reading accounts or usage', async () => {
+  await PlatformUsagePage({ searchParams: search('2026-06') });
+  const gate = mocks.requirePlatformAdmin.mock.invocationCallOrder[0]!;
+  expect(gate).toBeLessThan(
+    mocks.getPlatformUsage.mock.invocationCallOrder[0]!
+  );
+  expect(gate).toBeLessThan(
+    mocks.listPlatformAccounts.mock.invocationCallOrder[0]!
+  );
+});

@@ -118,6 +118,8 @@ export async function getPlatformAccount(
 export async function getPlatformUsage(
   month: string
 ): Promise<PlatformUsageRecord[]> {
+  // Defense in depth: the page gates too, but this reads with the service role.
+  await requirePlatformAdminContext();
   const { data, error } = await supabaseAdmin().rpc('platform_usage', {
     p_month: `${month}-01`,
   });

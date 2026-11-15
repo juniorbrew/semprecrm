@@ -165,7 +165,10 @@ export const DICT_PLATFORM: Record<string, string> = {
   Plan: 'Plano',
   'WhatsApp numbers': 'Números de WhatsApp',
   Conversations: 'Conversas',
-  Received: 'Recebidas',
+  'Messages received': 'Mensagens recebidas',
+  'Messages sent': 'Mensagens enviadas',
+  'Last activity = the last message in any conversation (customer, team or bot).':
+    'Última atividade = a última mensagem em qualquer conversa (cliente, equipe ou robô).',
   'AI cost (USD)': 'Custo da IA (USD)',
   'New people (7 days)': 'Pessoas novas (7 dias)',
   'Last activity': 'Última atividade',

@@ -1016,7 +1016,7 @@ registerDict({
   "Ready message (use {nome} for the name)": "Mensagem pronta (use {nome} para o nome)",
   "Ready-made answers your team inserts in the inbox by typing / followed by the shortcut. Variables fill in the contact, agent and company names.": "Respostas prontas que a equipe insere na caixa de entrada digitando / seguido do atalho. As variáveis preenchem o nome do contato, do responsável e da empresa.",
   "Receive leads from landing pages, forms, Zapier and n8n straight into the CRM.": "Receba leads de landing pages, formulários, Zapier e n8n direto no CRM.",
-  "Received": "Recebidas",
+  "Received": "Recebidos",
   "Receives and sends 1:1 messages (text, images, audio, video, documents).": "Recebe e envia mensagens 1:1 (texto, imagens, áudio, vídeo, documentos).",
   "Recife": "Recife",
   "Recommended": "Recomendada",

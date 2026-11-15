@@ -163,6 +163,22 @@ describe('buildUsageRows', () => {
   });
 });
 
+describe('merging the two sources', () => {
+  it('keeps an account missing from the RPC (zeros) and ignores an RPC row for an unknown account', () => {
+    const rows = buildUsageRows(
+      [account({ id: 'listed' })],
+      [usage({ account_id: 'ghost', conversations: 99 })],
+      now
+    );
+    expect(rows.map((r) => r.id)).toEqual(['listed']);
+    expect(rows[0]).toMatchObject({
+      conversations: 0,
+      lastActivityAt: null,
+      idle: true,
+    });
+  });
+});
+
 describe('filter and sort', () => {
   const rows = [
     row(
@@ -248,7 +264,8 @@ describe('CSV', () => {
     expect(lines[1]!.startsWith('"\'=HYPERLINK(""x"")";')).toBe(true);
     const cols = lines[1]!.split(';');
     expect(cols[4]).toBe(''); // null user limit = empty
-    expect(cols[11]).toBe('1.50');
+    expect(cols[11]).toBe('"1,50"'); // pt-BR decimal comma, quoted
+    expect(cols[2]).toBe('Ativo');
     expect(cols[15]).toBe('sim'); // never active
   });
   it('has only the header for no rows', () => {

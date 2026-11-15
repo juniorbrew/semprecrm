@@ -15,8 +15,10 @@
 -- Plan, billing status and limits come from platform_list_accounts() (already gated); this function
 -- only adds the usage numbers. SECURITY DEFINER, executable by service_role ONLY (076 rule): the
 -- server route checks the platform owner first, then calls it with the service-role client.
--- Messages are reached through conversations filtered on last_message_at, so idx_messages_conversation_created
--- (conversation_id, created_at) is used instead of a scan of the whole messages table.
+-- messages has no account_id, so messages are reached through conversations. A conversation can only hold
+-- an in-month message if COALESCE(last_message_at, created_at) >= month start (ASSUMPTION: last_message_at is the
+-- latest message time when set, and created_at bounds it when NULL, e.g. imports). That is the 067 index
+-- expression, and idx_messages_conversation_created (conversation_id, created_at) serves the inner range.
 --
 -- Rollback: supabase/rollback/112_rollback.sql. SQL test: supabase/tests/platform_usage.sql. Idempotent.
 -- ============================================================
@@ -38,16 +40,21 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET statement_timeout = '15s'
 AS $$
   WITH b AS (
     SELECT (date_trunc('month', p_month)::timestamp AT TIME ZONE 'America/Sao_Paulo')                        AS s,
            ((date_trunc('month', p_month) + interval '1 month')::timestamp AT TIME ZONE 'America/Sao_Paulo') AS e
   ),
   conv AS (
-    SELECT c.account_id,
-           count(*) FILTER (WHERE c.created_at >= b.s AND c.created_at < b.e) AS n,
-           max(c.last_message_at)                                             AS last_at
+    SELECT c.account_id, count(*) AS n
       FROM public.conversations c, b
+     WHERE c.created_at >= b.s AND c.created_at < b.e
+     GROUP BY c.account_id
+  ),
+  last_act AS (
+    SELECT c.account_id, max(COALESCE(c.last_message_at, c.created_at)) AS last_at
+      FROM public.conversations c
      GROUP BY c.account_id
   ),
   msg AS (
@@ -60,7 +67,7 @@ AS $$
         SELECT mm.sender_type FROM public.messages mm
          WHERE mm.conversation_id = c.id AND mm.created_at >= b.s AND mm.created_at < b.e
       ) m
-     WHERE c.last_message_at >= b.s
+     WHERE COALESCE(c.last_message_at, c.created_at) >= b.s
      GROUP BY c.account_id
   ),
   ai AS (
@@ -69,6 +76,7 @@ AS $$
      WHERE u.status = 'ok' AND u.created_at >= b.s AND u.created_at < b.e
      GROUP BY u.account_id
   ),
+  -- ponytail: no (account_id, created_at) index on contacts; add one if this scan shows up in slow logs.
   ppl AS (
     SELECT ct.account_id, count(*) AS n
       FROM public.contacts ct
@@ -82,9 +90,10 @@ AS $$
          coalesce(ai.n, 0),
          coalesce(ai.usd, 0),
          coalesce(ppl.n, 0),
-         conv.last_at
+         last_act.last_at
     FROM public.accounts a
     LEFT JOIN conv ON conv.account_id = a.id
+    LEFT JOIN last_act ON last_act.account_id = a.id
     LEFT JOIN msg  ON msg.account_id  = a.id
     LEFT JOIN ai   ON ai.account_id   = a.id
     LEFT JOIN ppl  ON ppl.account_id  = a.id

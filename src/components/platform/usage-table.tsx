@@ -28,8 +28,8 @@ const COLUMNS: { key: UsageSortKey; label: string; numeric?: boolean }[] = [
   { key: 'users', label: 'Users', numeric: true },
   { key: 'channels', label: 'WhatsApp numbers', numeric: true },
   { key: 'conversations', label: 'Conversations', numeric: true },
-  { key: 'received', label: 'Received', numeric: true },
-  { key: 'sent', label: 'Sent', numeric: true },
+  { key: 'received', label: 'Messages received', numeric: true },
+  { key: 'sent', label: 'Messages sent', numeric: true },
   { key: 'aiCalls', label: 'AI calls', numeric: true },
   { key: 'aiCostUsd', label: 'AI cost (USD)', numeric: true },
   { key: 'contacts7d', label: 'New people (7 days)', numeric: true },
@@ -304,6 +304,11 @@ export function PlatformUsageTable({
           </tbody>
         </table>
       </div>
+      <p className="text-muted-foreground mt-3 text-xs">
+        {t(
+          'Last activity = the last message in any conversation (customer, team or bot).'
+        )}
+      </p>
     </section>
   );
 }

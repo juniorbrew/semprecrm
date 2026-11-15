@@ -33,7 +33,7 @@ vi.mock('./gate', () => ({
   loadGateCredentials: async () => ({}),
   hasGateSession: async () => true,
 }));
-import { requirePlatformAdmin } from './server';
+import { getPlatformUsage, requirePlatformAdmin } from './server';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -63,5 +63,29 @@ describe('the platform gate in front of /platform/usage', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(requirePlatformAdmin()).rejects.toThrow('NEXT_NOT_FOUND');
     expect(mocks.admin).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPlatformUsage (service role) checks the gate itself', () => {
+  it('refuses a non-admin before creating the service client', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'tenant-user' } } });
+    mocks.rpc.mockResolvedValue({ data: false, error: null });
+    await expect(getPlatformUsage('2026-06')).rejects.toThrow('NEXT_NOT_FOUND');
+    expect(mocks.admin).not.toHaveBeenCalled();
+  });
+
+  it('reads the month for the platform admin', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'owner' } } });
+    mocks.rpc.mockResolvedValue({ data: true, error: null });
+    const adminRpc = vi
+      .fn()
+      .mockResolvedValue({ data: [{ account_id: 'a' }], error: null });
+    mocks.admin.mockReturnValue({ rpc: adminRpc });
+    await expect(getPlatformUsage('2026-06')).resolves.toEqual([
+      { account_id: 'a' },
+    ]);
+    expect(adminRpc).toHaveBeenCalledWith('platform_usage', {
+      p_month: '2026-06-01',
+    });
   });
 });

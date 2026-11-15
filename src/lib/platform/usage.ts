@@ -155,19 +155,31 @@ export function sortUsageRows(
       ? r.lastActivityAt
         ? new Date(r.lastActivityAt).getTime()
         : null
-      : key === 'name'
-        ? r.name.toLocaleLowerCase()
-        : r[key];
+      : r[key];
+  const byName = (a: UsageRow, b: UsageRow) =>
+    a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
   return [...rows].sort((a, b) => {
     const x = value(a);
     const y = value(b);
     if (x === null || y === null) {
-      return x === y ? 0 : x === null ? 1 : -1;
+      return x === y ? byName(a, b) : x === null ? 1 : -1;
     }
-    if (x === y) return 0;
+    if (typeof x === 'string' && typeof y === 'string') {
+      const c = x.localeCompare(y, 'pt-BR', { sensitivity: 'base' });
+      return c !== 0 ? c * sign : byName(a, b);
+    }
+    if (x === y) return byName(a, b);
     return (x < y ? -1 : 1) * sign;
   });
 }
+
+const STATUS_PT: Record<PlanStatus, string> = {
+  trial: 'Em teste',
+  active: 'Ativo',
+  past_due: 'Em atraso',
+  canceled: 'Cancelado',
+  suspended: 'Suspenso',
+};
 
 export const USAGE_CSV_HEADER = [
   'Empresa',
@@ -196,7 +208,9 @@ export function usageToCsv(rows: UsageRow[]): string {
       [
         r.name,
         r.plan,
-        r.blocked && r.status === 'trial' ? 'trial_expired' : r.status,
+        r.blocked && r.status === 'trial'
+          ? 'Teste expirado'
+          : STATUS_PT[r.status],
         r.users,
         r.maxUsers,
         r.channels,
@@ -205,11 +219,11 @@ export function usageToCsv(rows: UsageRow[]): string {
         r.received,
         r.sent,
         r.aiCalls,
-        r.aiCostUsd.toFixed(2),
+        r.aiCostUsd.toFixed(2).replace('.', ','),
         r.contacts7d,
         r.lastActivityAt,
-        r.nearLimit ? 'sim' : 'nao',
-        r.idle ? 'sim' : 'nao',
+        r.nearLimit ? 'sim' : 'não',
+        r.idle ? 'sim' : 'não',
       ]
         .map(csvCell)
         .join(';')
