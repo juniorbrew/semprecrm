@@ -35,6 +35,8 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
   /** Who sent an outbound bubble (see sender-label.ts). */
   senderLabel?: SenderLabel | null;
+  /** Bold first line with the agent's name, as the customer saw it (show_agent_name on). */
+  nameHeader?: string | null;
   /** Lets a received contact card jump to that contact's conversation. */
   onOpenConversation?: (conversation: Conversation) => void;
   /** Arrived while the thread was open: short fade/rise (none with reduced motion). */
@@ -380,6 +382,7 @@ export function MessageBubble({
   currentUserId,
   onToggleReaction,
   senderLabel,
+  nameHeader,
   onOpenConversation,
   fresh = false,
 }: MessageBubbleProps) {
@@ -432,6 +435,11 @@ export function MessageBubble({
           className={cn(revoked && "line-through decoration-1 opacity-60")}
           data-revoked={revoked ? "" : undefined}
         >
+          {isAgent && nameHeader && !sticker && (
+            <p className="text-sm font-semibold" data-agent-name-header data-no-translate>
+              {nameHeader}:
+            </p>
+          )}
           <MessageContent
             message={message}
             isAgent={isAgent}
