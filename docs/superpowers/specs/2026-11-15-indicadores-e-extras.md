@@ -155,7 +155,7 @@ Página nova em **Plataforma → Uso**, visível só para o dono da plataforma (
   - **Auditoria:** cada alteração fica registrada, com o valor anterior e o novo.
   - **Falha do Asaas:** se o Asaas falhar, nada muda e o admin vê "Não foi possível alterar agora, tente de novo".
 
-### Banco (migration `112_plan_extras.sql`)
+### Banco (migration `114_plan_extras.sql`)
 
 - **Preços dos extras:** o JSON das versões de plano ganha `extra_user_price_cents` e `extra_channel_price_cents`, com a validação no mesmo lugar das outras chaves.
 - **`account_billing`:** ganha as colunas `extra_users`, `extra_channels`, `extra_user_price_cents` e `extra_channel_price_cents`.
