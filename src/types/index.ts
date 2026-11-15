@@ -1422,7 +1422,7 @@ export interface CalendarEvent {
   /** Agenda inteligente (096): set when the event is a service appointment. */
   service_id?: string | null;
   resource_id?: string | null;
-  booking_source?: 'agent' | 'ai' | 'api' | null;
+  booking_source?: 'agent' | 'ai' | 'api' | 'client' | null;
   /** Encaixe (097): booked ignoring the minimum notice and the day horizon. */
   booking_override?: boolean;
   /** What the customer answered to the WhatsApp reminder (097). */

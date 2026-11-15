@@ -27,6 +27,8 @@ export const metadata: Metadata = {
   },
   description: 'CRM autogerenciável para WhatsApp.',
   applicationName: 'SempreCRM',
+  // Route handler, not the file convention: /agendar/<slug> links its own manifest.
+  manifest: '/manifest.webmanifest',
   // iPhone/iPad: opens full screen from the home-screen icon.
   appleWebApp: {
     capable: true,

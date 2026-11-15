@@ -9,7 +9,7 @@ export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 /** Statuses that still hold the professional's time. */
 export const ACTIVE_APPOINTMENT_STATUSES = ['scheduled', 'confirmed'] as const;
 
-export const BOOKING_SOURCES = ['agent', 'ai', 'api'] as const;
+export const BOOKING_SOURCES = ['agent', 'ai', 'api', 'client'] as const;
 export type BookingSource = (typeof BOOKING_SOURCES)[number];
 
 export const RESOURCE_KINDS = ['professional', 'room', 'other'] as const;

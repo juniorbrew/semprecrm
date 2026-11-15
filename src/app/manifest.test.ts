@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { config as middlewareConfig } from '@/middleware';
-import manifest from './manifest';
+import { appManifest as manifest } from '@/lib/pwa/app-manifest';
+import { GET as manifestGET } from './manifest.webmanifest/route';
 import { GET, ICON_VARIANTS, generateStaticParams } from './icons/[variant]/route';
 
 describe('installable app manifest', () => {
@@ -33,6 +34,12 @@ describe('installable app manifest', () => {
     for (const p of ['/dashboard', '/inbox', '/login', '/api/whatsapp/send', '/settings']) {
       expect(re.test(p), p).toBe(true);
     }
+  });
+
+  it('serves the same manifest at /manifest.webmanifest', async () => {
+    const res = manifestGET();
+    expect(res.headers.get('content-type')).toBe('application/manifest+json');
+    expect(await res.json()).toEqual(manifest());
   });
 
   it('answers 404 for an unknown icon instead of drawing something', async () => {

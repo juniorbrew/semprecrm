@@ -1,9 +1,11 @@
 import type { MetadataRoute } from 'next';
 
 // Makes SempreCRM installable on the phone (ícone na tela, tela cheia).
-// Next links it from <head> automatically. Global brand: accounts with
-// white-label still install as "SempreCRM".
-export default function manifest(): MetadataRoute.Manifest {
+// Served by app/manifest.webmanifest/route.ts and linked from the root
+// layout's `metadata.manifest` — NOT the app/manifest.ts file convention,
+// whose link would win over the per-business manifest of /agendar/<slug>.
+// Global brand: accounts with white-label still install as "SempreCRM".
+export function appManifest(): MetadataRoute.Manifest {
   return {
     id: '/dashboard',
     name: 'SempreCRM',

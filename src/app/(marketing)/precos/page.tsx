@@ -90,6 +90,7 @@ const MODULE_LABELS_PT: Record<Module, string> = {
   ai_actions: 'Ações da IA (agendar, criar tarefas)',
   channel_instagram: 'Instagram Direct',
   channel_messenger: 'Facebook Messenger',
+  booking_page: 'Página de agendamento',
 };
 
 // pt-BR plural forms per limit; null = unlimited.

@@ -104,7 +104,9 @@ export async function middleware(request: NextRequest) {
 
   // Protected pages - redirect to login if not authenticated
   const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/companies', '/pipelines', '/broadcasts', '/automations', '/ai', '/settings', '/tasks', '/agenda', '/chat', '/flows', '/reports']
-  if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
+  // Whole segments only: "/agendar" (public booking page) is not "/agenda".
+  const pathname = request.nextUrl.pathname
+  if (!user && protectedPaths.some(path => pathname === path || pathname.startsWith(`${path}/`))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return expireLegacy(NextResponse.redirect(url))
