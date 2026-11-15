@@ -7,6 +7,7 @@ import {
   Building2,
   LayoutDashboard,
   UserRoundPlus,
+  BarChart3,
   ShieldCheck,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -54,6 +55,7 @@ export function PlatformNavigation({
                 icon: Building2,
               },
               { href: '/platform/leads', label: 'Leads', icon: UserRoundPlus },
+              { href: '/platform/usage', label: 'Usage', icon: BarChart3 },
               {
                 href: '/platform/plans',
                 label: 'Plans',
@@ -68,6 +70,7 @@ export function PlatformNavigation({
                       pathname !== '/platform/acesso' &&
                       pathname !== '/platform/login' &&
                       !pathname.startsWith('/platform/leads') &&
+                      !pathname.startsWith('/platform/usage') &&
                       !pathname.startsWith('/platform/plans')
                     : pathname.startsWith(href);
               return (

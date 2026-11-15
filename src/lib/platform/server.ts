@@ -9,6 +9,8 @@ import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { cache } from 'react';
 import { parsePlanDefinition } from '@/lib/plan-catalog';
 import type { PlatformChannelAlerts } from './overview';
+import type { PlatformUsageRecord } from './usage';
+import { supabaseAdmin } from '@/lib/automations/admin-client';
 
 import { createClient } from '@/lib/supabase/server';
 import type { PlatformAccountRow } from '@/types';
@@ -106,4 +108,22 @@ export async function getPlatformAccount(
 ): Promise<PlatformAccountRow | null> {
   const rows = await listPlatformAccounts(supabase);
   return rows.find((r) => r.id === accountId) ?? null;
+}
+
+/**
+ * Usage counts of every company for one month (YYYY-MM). platform_usage() is
+ * executable by service_role only, so callers MUST have passed
+ * requirePlatformAdmin() first; the month is validated by the caller.
+ */
+export async function getPlatformUsage(
+  month: string
+): Promise<PlatformUsageRecord[]> {
+  const { data, error } = await supabaseAdmin().rpc('platform_usage', {
+    p_month: `${month}-01`,
+  });
+  if (error) {
+    console.error('[platform] platform_usage failed:', error.message);
+    throw new Error('Failed to load usage');
+  }
+  return (data ?? []) as PlatformUsageRecord[];
 }
