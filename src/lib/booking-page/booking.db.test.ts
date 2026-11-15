@@ -11,6 +11,7 @@
 
 import { randomUUID } from 'node:crypto'
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -40,7 +41,7 @@ const PHONE_B = `55219${String(Date.now() + 1).slice(-8)}`
 const PHONE_A_TWIN = `55319${String(Date.now()).slice(-8)}`
 
 describe.runIf(RUN)('booking page against the local database', () => {
-  const db = supabaseAdmin()
+  let db: SupabaseClient
   let page: BookingPageRow
   let qrBefore: Record<string, unknown> | null = null
   const contacts: string[] = []
@@ -49,6 +50,7 @@ describe.runIf(RUN)('booking page against the local database', () => {
   let sessionB: BookingSession
 
   beforeAll(async () => {
+    db = supabaseAdmin()
     const qr = await db.from('wa_qr_sessions').select('*').eq('account_id', ACCOUNT).maybeSingle()
     qrBefore = qr.data
     await db.from('wa_qr_sessions').upsert({ account_id: ACCOUNT, status: 'connected', phone_number: '5511900000000' })
@@ -57,10 +59,8 @@ describe.runIf(RUN)('booking page against the local database', () => {
       .insert({ account_id: ACCOUNT, slug: SLUG, enabled: true, whatsapp_number: '5511900000000', max_future_per_contact: 2, change_limit_hours: 1 })
       .select('id')
       .single()
-    if (ins.error) {
-      // The account already has a page (one per account): borrow it with a test slug, put it back after.
-      throw new Error(`create page failed: ${ins.error.message}`)
-    }
+    // One page per account: run it on an account without a booking page.
+    if (ins.error) throw new Error(`create page failed: ${ins.error.message}`)
     page = (await loadPageBySlug(db, SLUG)) as BookingPageRow
   })
 
@@ -146,6 +146,23 @@ describe.runIf(RUN)('booking page against the local database', () => {
     // Reminders of the existing agenda are planned for the new appointment (097 trigger).
     const reminders = await db.from('agenda_reminders').select('id').eq('event_id', first.appointment.id)
     expect(reminders.error).toBeNull()
+  })
+
+  it('holds the per-customer limit under parallel requests (lock in booking_client_book)', async () => {
+    const pub = await loadPublicPage(db, page, 'ok')
+    const service = pub.services[0]
+    const from = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10)
+    const { slots } = await pageSlots(db, page, { serviceId: service.id, resourceId: null, from })
+    expect(slots.length).toBeGreaterThan(3)
+    const picks = [slots[0], slots[Math.floor(slots.length / 2)], slots[slots.length - 1]]
+    const results = await Promise.all(
+      picks.map((s) => bookForClient(db, page, sessionB, { serviceId: service.id, resourceId: null, startsAt: s.starts_at, idempotencyKey: randomUUID() })),
+    )
+    for (const r of results) if (r.ok) events.push(r.appointment.id)
+    expect(results.filter((r) => r.ok).length).toBe(2)
+    expect(results.filter((r) => !r.ok && r.reason === 'limit').length).toBe(1)
+    // B's bookings out of the way for the isolation checks below.
+    for (const r of results) if (r.ok) await db.from('calendar_events').delete().eq('id', r.appointment.id)
   })
 
   it('isolates contacts: B cannot see, cancel or move A’s appointments', async () => {

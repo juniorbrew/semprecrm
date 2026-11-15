@@ -382,6 +382,43 @@ ALTER FUNCTION public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestampt
 REVOKE ALL ON FUNCTION public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.agenda_book_appointment(uuid, uuid, uuid, uuid, timestamptz, uuid, text, text, text, text, uuid, boolean) TO service_role;
 
+-- ---- booking_client_book ---------------------------------------------------------
+-- The booking page's own limit ("até N horários futuros por cliente") must hold
+-- under parallel requests: one lock per contact, count and book in the same
+-- transaction. Everything else is agenda_book_appointment unchanged.
+CREATE OR REPLACE FUNCTION public.booking_client_book(
+  p_account_id UUID,
+  p_service_id UUID,
+  p_resource_id UUID,
+  p_contact_id UUID,
+  p_starts_at TIMESTAMPTZ,
+  p_max_future INTEGER,
+  p_idempotency_key TEXT
+) RETURNS public.calendar_events
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_open INTEGER;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('booking-client:' || p_contact_id::text, 0));
+  SELECT count(*) INTO v_open FROM public.calendar_events
+   WHERE account_id = p_account_id AND contact_id = p_contact_id AND service_id IS NOT NULL
+     AND status IN ('scheduled', 'confirmed') AND ends_at >= now()
+     AND idempotency_key IS DISTINCT FROM p_idempotency_key;
+  IF v_open >= p_max_future THEN
+    RAISE EXCEPTION 'booking_client_limit' USING ERRCODE = 'AG012';
+  END IF;
+  RETURN public.agenda_book_appointment(
+    p_account_id, p_service_id, p_resource_id, p_contact_id, p_starts_at,
+    NULL, 'client', NULL, p_idempotency_key, 'scheduled', NULL, false);
+END;
+$$;
+ALTER FUNCTION public.booking_client_book(uuid, uuid, uuid, uuid, timestamptz, integer, text) OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.booking_client_book(uuid, uuid, uuid, uuid, timestamptz, integer, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.booking_client_book(uuid, uuid, uuid, uuid, timestamptz, integer, text) TO service_role;
+
 -- ---- booking_pages -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.booking_pages (
   id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),

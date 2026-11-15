@@ -25,6 +25,7 @@ import {
   listUpcomingForContact,
   rescheduleAppointment,
   setAppointmentStatus,
+  type RpcWriter,
 } from '@/lib/agenda/service'
 import type { Slot } from '@/lib/agenda/types'
 import { shiftDate, todayIn } from '@/lib/agenda/ui'
@@ -358,6 +359,18 @@ async function alternativesFor(
 
 const RETRY_NEXT = new Set(['slot_taken', 'busy', 'resource_unavailable', 'outside_hours', 'service_not_offered'])
 
+/** booking_client_book refused: the contact reached the page's limit (AG012). */
+class ClientLimitError extends Error {}
+
+function limitResult(count: number): BookResult {
+  return {
+    ok: false,
+    reason: 'limit',
+    message: `Você já tem ${count} horário(s) marcado(s). Cancele um para marcar outro ou fale com a empresa.`,
+    alternatives: [],
+  }
+}
+
 export async function bookForClient(
   db: SupabaseClient,
   page: BookingPageRow,
@@ -381,14 +394,7 @@ export async function bookForClient(
   }
 
   const upcoming = await listUpcomingForContact(db, { accountId: page.account_id, contactId: session.contactId, now, limit: 11 })
-  if (upcoming.length >= page.max_future_per_contact) {
-    return {
-      ok: false,
-      reason: 'limit',
-      message: `Você já tem ${upcoming.length} horário(s) marcado(s). Cancele um para marcar outro ou fale com a empresa.`,
-      alternatives: [],
-    }
-  }
+  if (upcoming.length >= page.max_future_per_contact) return limitResult(upcoming.length)
 
   const unavailable = async (message: string): Promise<BookResult> => ({
     ok: false,
@@ -407,6 +413,25 @@ export async function bookForClient(
     candidates = resourcesForService(config, input.serviceId).filter((r) => resourceOffered(page, r.id)).map((r) => r.id)
   }
 
+  // The count above is the friendly early answer; the guarantee is booking_client_book (114),
+  // which locks the contact and counts again in the booking's own transaction.
+  const writer: RpcWriter = {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn !== 'agenda_book_appointment') return db.rpc(fn, args)
+      const res = await db.rpc('booking_client_book', {
+        p_account_id: args.p_account_id,
+        p_service_id: args.p_service_id,
+        p_resource_id: args.p_resource_id,
+        p_contact_id: args.p_contact_id,
+        p_starts_at: args.p_starts_at,
+        p_max_future: page.max_future_per_contact,
+        p_idempotency_key: args.p_idempotency_key,
+      })
+      if (res.error?.code === 'AG012') throw new ClientLimitError()
+      return res
+    },
+  } as unknown as RpcWriter
+
   let last: AgendaError | null = null
   for (const resourceId of candidates) {
     try {
@@ -423,10 +448,11 @@ export async function bookForClient(
           idempotencyKey: key,
           now,
         },
-        db,
+        writer,
       )
       return { ok: true, appointment }
     } catch (err) {
+      if (err instanceof ClientLimitError) return limitResult(page.max_future_per_contact)
       if (isAgendaError(err) && (RETRY_NEXT.has(err.code) || err.code === 'min_notice' || err.code === 'max_ahead')) {
         last = err
         continue

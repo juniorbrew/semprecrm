@@ -41,7 +41,8 @@ export interface BookingCodeDeps {
   send?: typeof engineSendText
 }
 
-export const ACK_CONFIRMED = 'Celular confirmado! Volte para a página de agendamento para concluir.'
+export const ACK_CONFIRMED =
+  'Celular confirmado! Volte para a página de agendamento para concluir. Se não foi você quem pediu, responda avisando a gente.'
 export const ACK_UNKNOWN = 'Esse código não vale mais. Volte para a página de agendamento e peça um novo.'
 export const ACK_CONTACT = 'Não foi possível confirmar este celular por aqui. Fale com a empresa para agendar.'
 export const ACK_OTHER_PHONE =

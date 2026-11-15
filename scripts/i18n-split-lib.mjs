@@ -121,6 +121,8 @@ export function defineGroups(root) {
     auth: [...entriesIn(path.join(app, '(auth)')), ...entriesIn(path.join(app, 'join'))],
     marketing: entriesIn(path.join(app, '(marketing)')),
     platform: entriesIn(path.join(app, 'platform')),
+    // Public booking page (migration 114): customer-facing pt-BR text, no app translations needed.
+    booking: entriesIn(path.join(app, 'agendar')),
     shell: [path.join(app, '(dashboard)/layout.tsx')],
   };
   const dash = path.join(app, '(dashboard)');
