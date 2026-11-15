@@ -239,6 +239,9 @@ $$;
 
 ALTER FUNCTION public.platform_update_account_v2(UUID,JSONB,UUID,UUID,BOOLEAN) OWNER TO postgres;
 
+REVOKE ALL ON FUNCTION public.platform_update_account_v2(UUID,JSONB,UUID,UUID,BOOLEAN) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.platform_update_account_v2(UUID,JSONB,UUID,UUID,BOOLEAN) TO service_role;
+
 -- ---- Origem 'client' ---------------------------------------------------------
 ALTER TABLE public.calendar_events DROP CONSTRAINT IF EXISTS calendar_events_booking_source_check;
 ALTER TABLE public.calendar_events ADD CONSTRAINT calendar_events_booking_source_check
@@ -508,6 +511,21 @@ CREATE INDEX IF NOT EXISTS idx_booking_phone_checks_expires ON public.booking_ph
 CREATE INDEX IF NOT EXISTS idx_booking_phone_checks_browser ON public.booking_phone_checks (browser_hash);
 
 ALTER TABLE public.booking_phone_checks ENABLE ROW LEVEL SECURITY;
+-- (grants below)
+
+-- ---- booking_session_revocations ------------------------------------------------
+-- The customer's session is a signed cookie (30 days). "Sair de todos os aparelhos"
+-- stores the moment here: sessions issued before it stop working. Only service role.
+CREATE TABLE IF NOT EXISTS public.booking_session_revocations (
+  account_id     UUID NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+  contact_id     UUID NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
+  revoked_before TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (account_id, contact_id)
+);
+ALTER TABLE public.booking_session_revocations ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.booking_session_revocations FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.booking_session_revocations TO service_role;
+
 REVOKE ALL ON TABLE public.booking_phone_checks FROM PUBLIC, anon, authenticated;
 GRANT ALL ON TABLE public.booking_phone_checks TO service_role;
 

@@ -6,7 +6,7 @@
 // (services, professionals, hours); this screen only picks what the page
 // offers and its own rules.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -59,13 +59,25 @@ const DEFAULTS: Omit<PageRow, 'slug' | 'whatsapp_number'> = {
   change_limit_hours: 2,
 };
 
-/** "" -> null, otherwise a whole number. */
-function optInt(value: string): number | null {
-  const v = value.trim();
-  if (!v) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : null;
+/** Number fields are kept as typed and parsed on save: "" = empty, NaN = not a number. */
+function parseNum(value: string): number | null {
+  const v = value.trim().replace(',', '.');
+  return v ? Number(v) : null;
 }
+
+interface NumDraft {
+  notice: string;
+  days: string;
+  future: string;
+  change: string;
+}
+
+const toDraft = (row: PageRow): NumDraft => ({
+  notice: row.min_notice_minutes == null ? '' : String(row.min_notice_minutes / 60),
+  days: row.max_days_ahead == null ? '' : String(row.max_days_ahead),
+  future: String(row.max_future_per_contact),
+  change: String(row.change_limit_hours),
+});
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -88,17 +100,22 @@ export function BookingPageSettings() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Hours shown in the form; stored as minutes.
-  const [noticeHours, setNoticeHours] = useState('');
+  const [nums, setNums] = useState<NumDraft>({ notice: '', days: '', future: '2', change: '2' });
+  /** The address as saved: the copy / open link must exist. */
+  const [savedSlug, setSavedSlug] = useState<string | null>(null);
+  const loaded = useRef(false);
 
   useEffect(() => {
+    if (loaded.current) return;
+    loaded.current = true;
     agendaFetch<{ page: PageRow | null; hints: Hints }>('/api/agenda/pagina')
       .then(({ page, hints: h }) => {
         setHints(h);
         setSaved(!!page);
+        setSavedSlug(page?.enabled ? page.slug : null);
         const row = page ?? { ...DEFAULTS, slug: h.suggested_slug, whatsapp_number: h.qr_number };
         setForm(row);
-        setNoticeHours(row.min_notice_minutes == null ? '' : String(row.min_notice_minutes / 60));
+        setNums(toDraft(row));
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : t('Could not load.')));
   }, [t]);
@@ -106,7 +123,7 @@ export function BookingPageSettings() {
   const services = useMemo(() => (config?.services ?? []).filter((s) => s.is_active), [config]);
   const resources = useMemo(() => (config?.resources ?? []).filter((r) => r.is_active), [config]);
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
-  const link = form?.slug ? `${origin}/agendar/${form.slug}` : '';
+  const link = savedSlug ? `${origin}/agendar/${savedSlug}` : '';
 
   if (error && !form) return <p className="text-sm text-destructive">{error}</p>;
   if (!form || !hints) {
@@ -129,15 +146,36 @@ export function BookingPageSettings() {
   };
 
   const save = async () => {
+    const notice = parseNum(nums.notice);
+    const days = parseNum(nums.days);
+    const future = parseNum(nums.future);
+    const change = parseNum(nums.change);
+    const bad =
+      (notice != null && !(notice >= 0 && notice <= 720)) ? t('Minimum notice (hours)') + ': 0–720'
+      : (days != null && !(Number.isInteger(days) && days >= 1 && days <= 365)) ? t('Up to how many days ahead') + ': 1–365'
+      : !(future != null && Number.isInteger(future) && future >= 1 && future <= 10) ? t('Upcoming bookings per customer') + ': 1–10'
+      : !(change != null && Number.isInteger(change) && change >= 0 && change <= 720) ? t('Changes allowed until (hours before)') + ': 0–720'
+      : null;
+    if (bad) {
+      setError(bad);
+      return;
+    }
     setSaving(true);
     setError(null);
-    const notice = optInt(noticeHours);
     try {
       const res = await agendaFetch<{ page: PageRow }>('/api/agenda/pagina', {
         method: 'PUT',
-        body: JSON.stringify({ ...form, min_notice_minutes: notice == null ? null : notice * 60 }),
+        body: JSON.stringify({
+          ...form,
+          min_notice_minutes: notice == null ? null : Math.round(notice * 60),
+          max_days_ahead: days,
+          max_future_per_contact: future,
+          change_limit_hours: change,
+        }),
       });
       setForm(res.page);
+      setNums(toDraft(res.page));
+      setSavedSlug(res.page.enabled ? res.page.slug : null);
       setSaved(true);
       toast.success(t('Booking page saved'));
     } catch (err) {
@@ -169,7 +207,7 @@ export function BookingPageSettings() {
           </div>
           <span className="text-xs text-muted-foreground">{t('Lowercase letters, numbers and hyphen.')}</span>
         </label>
-        {saved && form.enabled && link && (
+        {saved && link && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -266,13 +304,13 @@ export function BookingPageSettings() {
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="flex flex-col gap-1.5 text-sm">
             {t('Minimum notice (hours)')}
-            <Input value={noticeHours} onChange={(e) => setNoticeHours(e.target.value)} inputMode="numeric" disabled={disabled} />
+            <Input value={nums.notice} onChange={(e) => setNums((n) => ({ ...n, notice: e.target.value }))} inputMode="decimal" disabled={disabled} />
           </label>
           <label className="flex flex-col gap-1.5 text-sm">
             {t('Up to how many days ahead')}
             <Input
-              value={form.max_days_ahead ?? ''}
-              onChange={(e) => set('max_days_ahead', optInt(e.target.value))}
+              value={nums.days}
+              onChange={(e) => setNums((n) => ({ ...n, days: e.target.value }))}
               inputMode="numeric"
               disabled={disabled}
             />
@@ -280,8 +318,8 @@ export function BookingPageSettings() {
           <label className="flex flex-col gap-1.5 text-sm">
             {t('Upcoming bookings per customer')}
             <Input
-              value={form.max_future_per_contact}
-              onChange={(e) => set('max_future_per_contact', optInt(e.target.value) ?? 1)}
+              value={nums.future}
+              onChange={(e) => setNums((n) => ({ ...n, future: e.target.value }))}
               inputMode="numeric"
               disabled={disabled}
             />
@@ -301,8 +339,8 @@ export function BookingPageSettings() {
         <label className="mt-2 flex max-w-xs flex-col gap-1.5 text-sm">
           {t('Changes allowed until (hours before)')}
           <Input
-            value={form.change_limit_hours}
-            onChange={(e) => set('change_limit_hours', optInt(e.target.value) ?? 0)}
+            value={nums.change}
+            onChange={(e) => setNums((n) => ({ ...n, change: e.target.value }))}
             inputMode="numeric"
             disabled={disabled}
           />

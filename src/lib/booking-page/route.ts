@@ -81,6 +81,7 @@ export function setCheckCookie(res: NextResponse, slug: string, secret: string):
   })
 }
 
+/** Signature only (no DB): the routes that act on data re-check the contact with usableContact. */
 export function sessionOf(request: NextRequest, page: BookingPageRow): BookingSession | null {
   return verifySession(request.cookies.get(SESSION_COOKIE)?.value, { pageId: page.id, accountId: page.account_id })
 }
@@ -92,6 +93,9 @@ export function signedOut(): NextResponse {
 /** Per IP and per page; returns the 429 response when over. */
 export function limited(request: NextRequest, slug: string, name: string, perIp: RateLimitOptions, perPage?: RateLimitOptions): NextResponse | null {
   const ip = rateLimitIpKey(getClientIp(request))
+  // Across every page: rotating slugs does not reset an IP's budget.
+  const all = checkRateLimit(`agendar:any:ip:${ip}`, { limit: 600, windowMs: 10 * 60_000 })
+  if (!all.success) return rateLimitResponse(all)
   const a = checkRateLimit(`agendar:${name}:ip:${ip}:${slug}`, perIp)
   if (!a.success) return rateLimitResponse(a)
   if (perPage) {

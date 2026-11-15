@@ -127,7 +127,8 @@ export interface PublicPage {
   state: PageState
   services: PublicService[]
   resources: PublicResource[]
-  rules: { allow_cancel: boolean; allow_reschedule: boolean; change_limit_hours: number }
+  /** max_days_ahead: the stricter of the page and the agenda (the week arrows stop there). */
+  rules: { allow_cancel: boolean; allow_reschedule: boolean; change_limit_hours: number; max_days_ahead: number }
 }
 
 export async function loadPublicPage(db: SupabaseClient, page: BookingPageRow, state: PageState): Promise<PublicPage> {
@@ -166,7 +167,12 @@ export async function loadPublicPage(db: SupabaseClient, page: BookingPageRow, s
     resources: config.resources
       .filter((r) => offered.has(r.id))
       .map((r) => ({ id: r.id, name: r.name, color: r.color })),
-    rules: { allow_cancel: page.allow_cancel, allow_reschedule: page.allow_reschedule, change_limit_hours: page.change_limit_hours },
+    rules: {
+      allow_cancel: page.allow_cancel,
+      allow_reschedule: page.allow_reschedule,
+      change_limit_hours: page.change_limit_hours,
+      max_days_ahead: Math.min(page.max_days_ahead ?? Infinity, config.settings.max_days_ahead),
+    },
   }
 }
 
@@ -282,16 +288,38 @@ export async function readPhoneCheck(
 // Contact + bookings of the session
 // ------------------------------------------------------------
 
-async function usableContact(db: SupabaseClient, session: BookingSession): Promise<boolean> {
-  const res = await db
-    .from('contacts')
-    .select('id, anonymized_at')
-    .eq('account_id', session.accountId)
-    .eq('id', session.contactId)
-    .maybeSingle()
-  if (res.error) throw new Error(`contact read failed: ${res.error.code ?? 'unknown'}`)
+/**
+ * The session's contact still exists, is not anonymised, and the session was
+ * issued after the contact's last "sair de todos os aparelhos" (114).
+ */
+export async function usableContact(db: SupabaseClient, session: BookingSession): Promise<boolean> {
+  const [res, revoked] = await Promise.all([
+    db.from('contacts').select('id, anonymized_at').eq('account_id', session.accountId).eq('id', session.contactId).maybeSingle(),
+    db
+      .from('booking_session_revocations')
+      .select('revoked_before')
+      .eq('account_id', session.accountId)
+      .eq('contact_id', session.contactId)
+      .maybeSingle(),
+  ])
+  if (res.error || revoked.error) throw new Error(`contact read failed: ${(res.error ?? revoked.error)?.code ?? 'unknown'}`)
   const c = res.data as { anonymized_at: string | null } | null
-  return !!c && !c.anonymized_at
+  if (!c || c.anonymized_at) return false
+  const before = (revoked.data as { revoked_before?: string } | null)?.revoked_before
+  return !before || session.issuedAt > Date.parse(before)
+}
+
+/** Ends every session of this contact on this account (every device). */
+export async function revokeSessions(db: SupabaseClient, session: BookingSession, now: Date = new Date()): Promise<void> {
+  const res = await db
+    .from('booking_session_revocations')
+    .upsert({ account_id: session.accountId, contact_id: session.contactId, revoked_before: now.toISOString() })
+  if (res.error) throw new Error(`revoke failed: ${res.error.code ?? 'unknown'}`)
+}
+
+/** L3: the customer sees / changes only appointments of what this page offers (not every staff booking). */
+function offeredEvent(page: BookingPageRow, e: Pick<CalendarEvent, 'service_id' | 'resource_id'>): boolean {
+  return !!e.service_id && serviceOffered(page, e.service_id) && (!e.resource_id || resourceOffered(page, e.resource_id))
 }
 
 export interface MyAppointment {
@@ -319,7 +347,7 @@ export async function listMine(
     loadConfig(db, page.account_id),
   ])
   return events
-    .filter((e) => e.service_id)
+    .filter((e) => offeredEvent(page, e))
     .map((e) => ({
       id: e.id,
       service_id: e.service_id as string,
@@ -387,10 +415,12 @@ export async function bookForClient(
   // The same key returns the same appointment (double tap, retry after a timeout).
   const key = `client:${page.id}:${input.idempotencyKey}`
   const prior = await db.from('calendar_events').select('*').eq('account_id', page.account_id).eq('idempotency_key', key).maybeSingle()
+  // Needed here (not only inside bookAppointment) so a retry after the limit is reached still gets its booking.
   if (prior.data) {
     const p = prior.data as CalendarEvent
     if (p.contact_id !== session.contactId) throw new AgendaError('idempotency_conflict')
-    return { ok: true, appointment: p }
+    if (p.status === 'scheduled' || p.status === 'confirmed') return { ok: true, appointment: p }
+    throw new AgendaError('idempotency_conflict', 'Esse agendamento foi cancelado. Escolha o horário de novo.')
   }
 
   const upcoming = await listUpcomingForContact(db, { accountId: page.account_id, contactId: session.contactId, now, limit: 11 })
@@ -466,7 +496,13 @@ export async function bookForClient(
 /** The session's own open appointment on this page's account, or a not_found error. */
 async function ownAppointment(db: SupabaseClient, page: BookingPageRow, session: BookingSession, eventId: string): Promise<CalendarEvent> {
   const ev = await getAppointment(db, page.account_id, eventId)
-  if (!ev || ev.contact_id !== session.contactId || (ev.status !== 'scheduled' && ev.status !== 'confirmed')) {
+  if (
+    !ev ||
+    ev.contact_id !== session.contactId ||
+    (ev.status !== 'scheduled' && ev.status !== 'confirmed') ||
+    !offeredEvent(page, ev) ||
+    !(await usableContact(db, session))
+  ) {
     throw new AgendaError('not_found', 'Agendamento não encontrado.')
   }
   return ev

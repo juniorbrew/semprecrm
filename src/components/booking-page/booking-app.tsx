@@ -24,12 +24,18 @@ interface ApiError {
   alternatives?: Slot[]
 }
 
+/** Never throws: no connection comes back as status 0 (common on phones). */
 async function api<T>(slug: string, path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: T & ApiError }> {
-  const res = await fetch(`/api/agendar/${slug}${path}`, {
-    ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
-    cache: 'no-store',
-  })
+  let res: Response
+  try {
+    res = await fetch(`/api/agendar/${slug}${path}`, {
+      ...init,
+      headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+      cache: 'no-store',
+    })
+  } catch {
+    return { ok: false, status: 0, data: { error: 'Sem conexão. Verifique a internet e tente novamente.' } as T & ApiError }
+  }
   const data = (await res.json().catch(() => ({ error: 'Não foi possível concluir. Tente novamente.' }))) as T & ApiError
   return { ok: res.ok, status: res.status, data }
 }
@@ -53,9 +59,17 @@ export function BookingApp({ page }: { page: PublicPage }) {
   const [tab, setTab] = useState<'book' | 'mine'>('book')
   const [signedIn, setSignedIn] = useState(false)
 
+  const [checked, setChecked] = useState(false)
   useEffect(() => {
-    api<{ signed_in: boolean }>(page.slug, '').then((r) => setSignedIn(!!r.data.signed_in))
+    api<{ signed_in: boolean }>(page.slug, '').then((r) => {
+      setSignedIn(!!r.data.signed_in)
+      setChecked(true)
+    })
   }, [page.slug])
+  const onSignedIn = useCallback(() => setSignedIn(true), [])
+  const onSignedOut = useCallback(() => setSignedIn(false), [])
+  const seeMine = useCallback(() => setTab('mine'), [])
+  const seeBook = useCallback(() => setTab('book'), [])
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-4 pb-10">
@@ -93,11 +107,16 @@ export function BookingApp({ page }: { page: PublicPage }) {
               </button>
             ))}
           </nav>
-          {tab === 'book' ? (
-            <BookFlow page={page} signedIn={signedIn} onSignedIn={() => setSignedIn(true)} onSeeMine={() => setTab('mine')} />
-          ) : (
-            <Mine page={page} signedIn={signedIn} onSignedOut={() => setSignedIn(false)} onBook={() => setTab('book')} />
-          )}
+          {/* Kept mounted: switching tabs while waiting for the WhatsApp code must not drop the wait. */}
+          <div hidden={tab !== 'book'}>
+            <BookFlow page={page} signedIn={signedIn} onSignedIn={onSignedIn} onSeeMine={seeMine} />
+          </div>
+          {tab === 'mine' &&
+            (checked ? (
+              <Mine page={page} signedIn={signedIn} onSignedOut={onSignedOut} onBook={seeBook} />
+            ) : (
+              <Loader2 className="text-muted-foreground size-4 animate-spin" aria-label="Carregando" />
+            ))}
           <InstallHint name={page.name} />
         </>
       )}
@@ -128,7 +147,9 @@ function BookFlow({
   const [error, setError] = useState<string | null>(null)
   const [alternatives, setAlternatives] = useState<Slot[]>([])
   const [booked, setBooked] = useState<{ starts_at: string } | null>(null)
-  const keyRef = useRef<string>('')
+  // One key per chosen slot: a retry of the same slot (lost answer, double tap) is the same booking.
+  const keyRef = useRef<{ startsAt: string; key: string } | null>(null)
+  const inFlight = useRef(false)
 
   const pros = useMemo(
     () => (service ? page.resources.filter((r) => service.resource_ids.includes(r.id)) : []),
@@ -137,14 +158,17 @@ function BookFlow({
 
   const book = useCallback(
     async (chosen: Slot) => {
-      if (!service) return
+      if (!service || inFlight.current) return
+      if (keyRef.current?.startsAt !== chosen.starts_at) keyRef.current = { startsAt: chosen.starts_at, key: crypto.randomUUID() }
+      inFlight.current = true
       setBusy(true)
       setError(null)
       setAlternatives([])
       const r = await api<{ ok: boolean; starts_at: string }>(page.slug, '/agendar', {
         method: 'POST',
-        body: JSON.stringify({ servico: service.id, profissional: resourceId, inicio: chosen.starts_at, chave: keyRef.current }),
+        body: JSON.stringify({ servico: service.id, profissional: resourceId, inicio: chosen.starts_at, chave: keyRef.current.key }),
       })
+      inFlight.current = false
       setBusy(false)
       if (r.ok) {
         setBooked({ starts_at: r.data.starts_at })
@@ -155,6 +179,8 @@ function BookFlow({
         setStep('confirm')
         return
       }
+      // A definitive refusal: the next attempt at this slot is a new booking.
+      if (r.status >= 400 && r.status < 500) keyRef.current = null
       setError(r.data.error ?? 'Não foi possível agendar.')
       setAlternatives(r.data.alternatives ?? [])
       if (r.status === 409) setStep('time')
@@ -164,7 +190,6 @@ function BookFlow({
 
   const pickSlot = (s: Slot) => {
     setSlot(s)
-    keyRef.current = crypto.randomUUID()
     setError(null)
     setAlternatives([])
     if (signedIn) void book(s)
@@ -396,7 +421,13 @@ function SlotPicker({
         <span className="text-muted-foreground text-sm">
           {fmtDay(from)} – {fmtDay(shiftDate(from, 6))}
         </span>
-        <Button variant="ghost" size="sm" disabled={state.loading} onClick={() => setFrom(shiftDate(from, 7))} aria-label="Próxima semana">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={state.loading || shiftDate(from, 7) > shiftDate(today, page.rules.max_days_ahead)}
+          onClick={() => setFrom(shiftDate(from, 7))}
+          aria-label="Próxima semana"
+        >
           <ChevronRight className="size-4" aria-hidden />
         </Button>
       </div>
@@ -451,28 +482,45 @@ function ConfirmPhone({ page, summary, onConfirmed }: { page: PublicPage; summar
   const [error, setError] = useState<string | null>(null)
   const [check, setCheck] = useState<{ code: string; url: string } | null>(null)
 
+  const confirmedRef = useRef(onConfirmed)
+  useEffect(() => {
+    confirmedRef.current = onConfirmed
+  }, [onConfirmed])
+
   useEffect(() => {
     if (!check) return
     let alive = true
+    let running = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const started = Date.now()
     const tick = async () => {
-      if (!alive) return
+      if (!alive || running) return
+      running = true
+      clearTimeout(timer)
       const r = await api<{ status: string }>(page.slug, '/confirmar')
+      running = false
       if (!alive) return
-      if (r.data.status === 'confirmed') return onConfirmed()
+      if (r.data.status === 'confirmed') return confirmedRef.current()
       if (r.data.status === 'expired' || Date.now() - started > 11 * 60_000) {
         setCheck(null)
         setError('O código venceu. Peça um novo para continuar.')
         return
       }
-      setTimeout(tick, 3000)
+      // No connection / over the limit: keep waiting. 3 s for the first minute, then 5 s.
+      timer = setTimeout(tick, Date.now() - started < 60_000 ? 3000 : 5000)
     }
-    const t = setTimeout(tick, 3000)
+    // Phones freeze timers while WhatsApp is in front: check as soon as the customer comes back.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    timer = setTimeout(tick, 3000)
     return () => {
       alive = false
-      clearTimeout(t)
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [check, onConfirmed, page.slug])
+  }, [check, page.slug])
 
   const start = async (e: { preventDefault: () => void }) => {
     e.preventDefault()
@@ -562,6 +610,7 @@ function Mine({ page, signedIn, onSignedOut, onBook }: { page: PublicPage; signe
   const [moving, setMoving] = useState<MyAppointment | null>(null)
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [alternatives, setAlternatives] = useState<Slot[]>([])
 
   const [version, setVersion] = useState(0)
   const load = useCallback(() => setVersion((v) => v + 1), [])
@@ -599,8 +648,10 @@ function Mine({ page, signedIn, onSignedOut, onBook }: { page: PublicPage; signe
     if (r.data.signed_out) return onSignedOut()
     if (!r.ok) {
       setError(r.data.error ?? 'Não foi possível concluir.')
+      setAlternatives(r.data.alternatives ?? [])
       return false
     }
+    setAlternatives([])
     setMoving(null)
     setConfirmCancel(null)
     load()
@@ -610,7 +661,14 @@ function Mine({ page, signedIn, onSignedOut, onBook }: { page: PublicPage; signe
   if (moving) {
     return (
       <section className="flex flex-col gap-4">
-        <button type="button" onClick={() => setMoving(null)} className="text-muted-foreground flex w-fit items-center gap-1 text-sm">
+        <button
+          type="button"
+          onClick={() => {
+            setMoving(null)
+            setError(null)
+            setAlternatives([])
+          }}
+          className="text-muted-foreground flex w-fit items-center gap-1 text-sm">
           <ArrowLeft className="size-4" aria-hidden /> Voltar
         </button>
         <h2 className="text-base font-semibold">Novo horário para {moving.service}</h2>
@@ -619,6 +677,15 @@ function Mine({ page, signedIn, onSignedOut, onBook }: { page: PublicPage; signe
           <p role="alert" className="bg-destructive/10 text-destructive rounded-xl p-3 text-sm">
             {error}
           </p>
+        )}
+        {alternatives.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {alternatives.map((s) => (
+              <Button key={s.starts_at} variant="outline" size="sm" disabled={busy} onClick={() => void act(moving.id, { acao: 'remarcar', inicio: s.starts_at })}>
+                {fmtDay(todayIn(page.timezone, new Date(s.starts_at)))} {fmtTime(s.starts_at, page.timezone)}
+              </Button>
+            ))}
+          </div>
         )}
         <SlotPicker
           page={page}
@@ -689,6 +756,13 @@ function Mine({ page, signedIn, onSignedOut, onBook }: { page: PublicPage; signe
       {page.rules.change_limit_hours > 0 && (page.rules.allow_cancel || page.rules.allow_reschedule) && (
         <p className="text-muted-foreground text-xs">Mudanças por aqui até {page.rules.change_limit_hours} h antes do horário.</p>
       )}
+      <button
+        type="button"
+        className="text-muted-foreground mt-2 w-fit text-xs underline underline-offset-4"
+        onClick={() => void api(page.slug, '/meus', { method: 'DELETE' }).then(() => onSignedOut())}
+      >
+        Sair de todos os aparelhos
+      </button>
     </section>
   )
 }

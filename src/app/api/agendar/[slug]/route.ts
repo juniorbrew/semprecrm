@@ -5,7 +5,7 @@
 
 import type { NextRequest } from 'next/server'
 
-import { loadPublicPage } from '@/lib/booking-page/server'
+import { loadPublicPage, usableContact } from '@/lib/booking-page/server'
 import { errorResponse, json, limited, pageContext, sessionOf } from '@/lib/booking-page/route'
 
 export const runtime = 'nodejs'
@@ -19,7 +19,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const ctx = await pageContext(slug)
     if (!('page' in ctx)) return ctx
     const page = await loadPublicPage(ctx.db, ctx.page, ctx.state)
-    return json({ page, signed_in: !!sessionOf(request, ctx.page) })
+    const session = sessionOf(request, ctx.page)
+    return json({ page, signed_in: !!session && (await usableContact(ctx.db, session)) })
   } catch (err) {
     return errorResponse(err)
   }

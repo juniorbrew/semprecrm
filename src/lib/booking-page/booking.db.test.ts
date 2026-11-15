@@ -28,7 +28,9 @@ import {
   pageState,
   readPhoneCheck,
   rescheduleForClient,
+  revokeSessions,
   startPhoneCheck,
+  usableContact,
   type BookingPageRow,
 } from './server'
 
@@ -194,5 +196,14 @@ describe.runIf(RUN)('booking page against the local database', () => {
     await cancelForClient(db, page, sessionA, target.id)
     const ev = await db.from('calendar_events').select('status').eq('id', target.id).single()
     expect(ev.data?.status).toBe('cancelled')
+  })
+
+  it('signs out every device: older sessions stop working, a new one works', async () => {
+    expect(await usableContact(db, sessionA)).toBe(true)
+    await revokeSessions(db, sessionA, new Date())
+    expect(await usableContact(db, sessionA)).toBe(false)
+    expect(await listMine(db, page, sessionA)).toEqual([])
+    expect(await usableContact(db, { ...sessionA, issuedAt: Date.now() + 1000 })).toBe(true)
+    await db.from('booking_session_revocations').delete().eq('contact_id', sessionA.contactId)
   })
 })

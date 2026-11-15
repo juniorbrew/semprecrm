@@ -4,7 +4,10 @@
 
 import { ImageResponse } from 'next/og'
 
+import type { NextRequest } from 'next/server'
+
 import { isValidSlug } from '@/lib/booking-page/core'
+import { limited } from '@/lib/booking-page/route'
 import { loadPageBySlug, loadPublicPage, pageState } from '@/lib/booking-page/server'
 import { normalizeHexColor, primaryForeground } from '@/lib/branding'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -19,8 +22,10 @@ const VARIANTS = {
   maskable: { px: 512, radius: 0, font: 220 },
 } as const
 
-export async function GET(_req: Request, { params }: { params: Promise<{ slug: string; variant: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string; variant: string }> }) {
   const { slug, variant } = await params
+  const over = limited(req, slug, 'asset', { limit: 60, windowMs: 60_000 })
+  if (over) return over
   if (!isValidSlug(slug) || !Object.hasOwn(VARIANTS, variant)) return new Response('Not found', { status: 404 })
   const db = supabaseAdmin()
   const row = await loadPageBySlug(db, slug)

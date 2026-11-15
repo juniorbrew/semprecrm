@@ -43,10 +43,10 @@ export interface BookingCodeDeps {
 
 export const ACK_CONFIRMED =
   'Celular confirmado! Volte para a página de agendamento para concluir. Se não foi você quem pediu, responda avisando a gente.'
-export const ACK_UNKNOWN = 'Esse código não vale mais. Volte para a página de agendamento e peça um novo.'
+/** Also the answer to a code typed for another phone: never tell a stranger that a live code exists. */
+export const ACK_UNKNOWN =
+  'Não conseguimos confirmar esse código. Envie pelo mesmo celular informado na página, ou volte à página e peça um novo.'
 export const ACK_CONTACT = 'Não foi possível confirmar este celular por aqui. Fale com a empresa para agendar.'
-export const ACK_OTHER_PHONE =
-  'Esse código foi pedido para outro número. Envie a mensagem pelo mesmo celular informado na página.'
 
 const TEXT_TYPES = new Set(['text'])
 /** Answers per contact: someone pasting codes in a loop gets a few replies, not one per message. */
@@ -72,9 +72,7 @@ export async function tryHandleBookingCode(
     const text =
       outcome === 'confirmed'
         ? ACK_CONFIRMED
-        : outcome === 'other_phone'
-          ? ACK_OTHER_PHONE
-          : outcome === 'contact_mismatch'
+        : outcome === 'contact_mismatch'
             ? ACK_CONTACT
             : ACK_UNKNOWN
     void (deps.send ?? engineSendText)({

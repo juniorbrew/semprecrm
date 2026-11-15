@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetRateLimitForTests } from '@/lib/rate-limit'
 
 import { codeMessage } from './core'
-import { ACK_CONFIRMED, ACK_CONTACT, ACK_OTHER_PHONE, ACK_UNKNOWN, tryHandleBookingCode, type BookingCodeInput } from './inbound'
+import { ACK_CONFIRMED, ACK_CONTACT, ACK_UNKNOWN, tryHandleBookingCode, type BookingCodeInput } from './inbound'
 
 type Row = Record<string, unknown>
 
@@ -103,7 +103,7 @@ describe('tryHandleBookingCode', () => {
     const other = { ...input, senderPhone: '5521987654321', contactPhone: '5521987654321' }
     expect(await tryHandleBookingCode(db, other, { send })).toBe('other_phone')
     expect(tables.booking_phone_checks[0]).toMatchObject({ attempts: 1, confirmed_at: null })
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: ACK_OTHER_PHONE }))
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: ACK_UNKNOWN }))
   })
 
   it('refuses when inbound resolved a contact whose phone is not exactly the sender (loose dedupe)', async () => {

@@ -5,6 +5,7 @@
 
 import type { Metadata, Viewport } from 'next'
 import { notFound } from 'next/navigation'
+import { cache } from 'react'
 
 import { BookingApp } from '@/components/booking-page/booking-app'
 import { isValidSlug } from '@/lib/booking-page/core'
@@ -16,14 +17,15 @@ export const dynamic = 'force-dynamic'
 
 type Props = { params: Promise<{ slug: string }> }
 
-async function load(slug: string): Promise<PublicPage | null> {
+// generateMetadata, generateViewport and the page share one load per request.
+const load = cache(async (slug: string): Promise<PublicPage | null> => {
   if (!isValidSlug(slug)) return null
   const db = supabaseAdmin()
   const page = await loadPageBySlug(db, slug)
   const state = await pageState(db, page)
   if (!page || state === 'off') return null
   return loadPublicPage(db, page, state)
-}
+})
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
