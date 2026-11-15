@@ -236,7 +236,7 @@ export function OriginSection({
                       </td>
                       <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
                         {m.spend == null ? "—" : formatMoney(m.spend, currency)}
-                        {canEditSpend && accountId && canHaveSpend(r) && (
+                        {canEditSpend && accountId && !pipelineId && canHaveSpend(r) && (
                           <button
                             type="button"
                             onClick={() => setSpendRow(r)}
@@ -268,6 +268,11 @@ export function OriginSection({
             <p className="text-xs text-muted-foreground" data-testid="origin-spend-note">
               {t("Spend counts whole months: a period from the 10th to the 20th uses the spend of the entire month.")}
             </p>
+            {pipelineId && (
+              <p className="text-xs text-muted-foreground" data-testid="origin-spend-pipeline-note">
+                {t("Spend is not shown when filtering by pipeline.")}
+              </p>
+            )}
           </div>
         )}
       </div>

@@ -174,7 +174,7 @@ SELECT set_config('request.jwt.claim.sub', '', true);
 -- ================= ai_report ===========================================================
 INSERT INTO contacts(id, user_id, account_id, phone, name)
 SELECT ('11100000-0000-4000-8000-0000000001' || lpad(g::text, 2, '0'))::uuid, '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '+55119111101' || lpad(g::text, 2, '0'), 'K' || g
-  FROM generate_series(1, 4) g;
+  FROM generate_series(1, 5) g;
 INSERT INTO contacts(id, user_id, account_id, phone, name) VALUES
   ('11100000-0000-4000-8000-0000000001b1', '11100000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ctx), '+5511911110199', 'KB');
 INSERT INTO conversations(id, user_id, account_id, contact_id) VALUES
@@ -182,7 +182,9 @@ INSERT INTO conversations(id, user_id, account_id, contact_id) VALUES
   ('11100000-0000-4000-8000-0000000002d2', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-000000000102'),
   ('11100000-0000-4000-8000-0000000002d3', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-000000000103'),
   ('11100000-0000-4000-8000-0000000002d4', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-000000000104'),
+  ('11100000-0000-4000-8000-0000000002d5', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-000000000105'),
   ('11100000-0000-4000-8000-0000000002db', '11100000-0000-4000-8000-00000000000b', (SELECT acc_b FROM ctx), '11100000-0000-4000-8000-0000000001b1');
+-- d5: one AI message, then an agent closes it with one click (no message): NOT "resolved without a person".
 -- d1: 2 AI messages + a person (agent c). d2: 1 AI message. d3: 1 AI message. d4: person only (admin e). B: 1 AI message.
 INSERT INTO messages(conversation_id, sender_type, sender_id, content_text, origin, created_at) VALUES
   ('11100000-0000-4000-8000-0000000002d1', 'bot', NULL, 'oi', 'ai', now() - interval '3 hours'),
@@ -191,6 +193,7 @@ INSERT INTO messages(conversation_id, sender_type, sender_id, content_text, orig
   ('11100000-0000-4000-8000-0000000002d2', 'bot', NULL, 'oi', 'ai', now() - interval '3 hours'),
   ('11100000-0000-4000-8000-0000000002d3', 'bot', NULL, 'oi', 'ai', now() - interval '3 hours'),
   ('11100000-0000-4000-8000-0000000002d4', 'agent', '11100000-0000-4000-8000-00000000000e', 'oi', NULL, now() - interval '3 hours'),
+  ('11100000-0000-4000-8000-0000000002d5', 'bot', NULL, 'oi', 'ai', now() - interval '3 hours'),
   ('11100000-0000-4000-8000-0000000002db', 'bot', NULL, 'oi', 'ai', now() - interval '3 hours'),
   -- an AI message long before the period: does not count
   ('11100000-0000-4000-8000-0000000002d4', 'bot', NULL, 'antigo', 'ai', now() - interval '30 days');
@@ -201,6 +204,7 @@ INSERT INTO conversation_events(account_id, conversation_id, actor_user_id, even
   ((SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000002d2', NULL, 'status_changed', '{"status":"closed"}', now() - interval '30 minutes'),
   ((SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000002d1', '11100000-0000-4000-8000-00000000000c', 'status_changed', '{"status":"closed"}', now() - interval '20 minutes'),
   ((SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000002d4', '11100000-0000-4000-8000-00000000000e', 'status_changed', '{"status":"closed"}', now() - interval '20 minutes'),
+  ((SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000002d5', '11100000-0000-4000-8000-00000000000e', 'status_changed', '{"status":"closed"}', now() - interval '10 minutes'),
   ((SELECT acc_b FROM ctx), '11100000-0000-4000-8000-0000000002db', NULL, 'ai_handoff', '{"reason":"B"}', now() - interval '80 minutes');
 INSERT INTO ai_usage(account_id, feature, provider, model, cost_cents, status, created_at) VALUES
   ((SELECT acc_a FROM ctx), 'auto_reply', 'openai', 'm', 12.5, 'ok', now() - interval '3 hours'),
@@ -212,11 +216,12 @@ INSERT INTO ai_usage(account_id, feature, provider, model, cost_cents, status, c
 
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '11100000-0000-4000-8000-00000000000a', true);
--- attended: d1, d2, d3 = 3. handed off: d1, d3 = 2 (d3 has two events but counts once). top reason: preco x2.
--- resolved without a person: d2 (closed, never an agent message) = 1; d1 has an agent message, d4 never had an AI message.
--- AI messages in the period: d1 2 + d2 1 + d3 1 = 4.
-SELECT pg_temp.assert_true((SELECT attended = 3 AND handed_off = 2 AND top_reason = 'preco' AND top_reason_count = 2
-                                   AND resolved_without_person = 1 AND ai_messages = 4
+-- attended: d1, d2, d3, d5 = 4. handed off: d1, d3 = 2 (d3 has two events but counts once). top reason: preco x2.
+-- resolved without a person: d2 (closed by the system, never an agent message) = 1; d1 has an agent message, d5 was
+-- closed by a person, d4 never had an AI message.
+-- AI messages in the period: d1 2 + d2 1 + d3 1 + d5 1 = 5.
+SELECT pg_temp.assert_true((SELECT attended = 4 AND handed_off = 2 AND top_reason = 'preco' AND top_reason_count = 2
+                                   AND resolved_without_person = 1 AND ai_messages = 5
    FROM ai_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day')), 'ai_report counts');
 -- cost: auto_reply 12.5 + 2.5 = 15 over 2 calls, triage 5; the blocked row, the old row and tenant B are out
 SELECT pg_temp.assert_true((SELECT cost_by_feature = '[{"feature":"auto_reply","calls":2,"cost_cents":15.0},{"feature":"triage","calls":1,"cost_cents":5.0}]'::jsonb
@@ -230,7 +235,7 @@ SELECT set_config('request.jwt.claim.sub', '', true);
 -- an agent sees the counts, never the cost
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '11100000-0000-4000-8000-00000000000c', true);
-SELECT pg_temp.assert_true((SELECT attended = 3 AND cost_by_feature IS NULL FROM ai_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day')), 'agent: counts yes, cost hidden');
+SELECT pg_temp.assert_true((SELECT attended = 4 AND cost_by_feature IS NULL FROM ai_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day')), 'agent: counts yes, cost hidden');
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', '', true);
 
@@ -248,19 +253,27 @@ INSERT INTO deals(id, user_id, account_id, pipeline_id, stage_id, contact_id, ti
   ('11100000-0000-4000-8000-000000000d04', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000000f1', '11100000-0000-4000-8000-0000000000e1', NULL, 'T4', 200,  'lost', '11100000-0000-4000-8000-0000000000e1'),
   ('11100000-0000-4000-8000-000000000d05', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000000f1', '11100000-0000-4000-8000-0000000000e1', NULL, 'T5', 7777, 'won',  '11100000-0000-4000-8000-0000000000c1'),
   ('11100000-0000-4000-8000-000000000d06', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000000f1', '11100000-0000-4000-8000-0000000000e1', NULL, 'T6', 50,   'open', '11100000-0000-4000-8000-0000000000c1');
+-- two deals with nobody responsible (T7 won 400, T8 lost) + the earlier "DP" (won 800, no owner): one extra row, user_id NULL
+INSERT INTO deals(id, user_id, account_id, pipeline_id, stage_id, contact_id, title, value, status, assigned_to) VALUES
+  ('11100000-0000-4000-8000-000000000d07', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000000f1', '11100000-0000-4000-8000-0000000000e1', NULL, 'T7', 400, 'won',  NULL),
+  ('11100000-0000-4000-8000-000000000d08', '11100000-0000-4000-8000-00000000000a', (SELECT acc_a FROM ctx), '11100000-0000-4000-8000-0000000000f1', '11100000-0000-4000-8000-0000000000e1', NULL, 'T8', 90,  'lost', NULL);
+UPDATE deals SET closed_at = now() - interval '2 hours' WHERE id IN ('11100000-0000-4000-8000-000000000d07', '11100000-0000-4000-8000-000000000d08');
 UPDATE deals SET closed_at = now() - interval '2 hours' WHERE id IN ('11100000-0000-4000-8000-000000000d01', '11100000-0000-4000-8000-000000000d02', '11100000-0000-4000-8000-000000000d03', '11100000-0000-4000-8000-000000000d04');
 UPDATE deals SET closed_at = now() - interval '10 days' WHERE id = '11100000-0000-4000-8000-000000000d05';
 
 -- every role of the account sees the whole table (owner decision: like the dashboard)
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '11100000-0000-4000-8000-00000000000c', true);
-SELECT pg_temp.assert_eq((SELECT count(*) FROM team_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day')), 3, 'one row per member (owner, admin, agent), seen by an agent');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM team_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day') WHERE user_id IS NOT NULL), 3, 'one row per member (owner, admin, agent), seen by an agent');
+SELECT pg_temp.assert_true((SELECT count(*) = 1 AND bool_and(deals_won = 2 AND deals_lost = 1 AND won_value = 1200 AND handled = 0 AND resolved = 0 AND open_assigned = 0 AND first_response_avg_seconds IS NULL)
+   FROM team_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day') WHERE user_id IS NULL), 'deals without an owner: one extra row');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM team_report((SELECT acc_a FROM ctx), now() - interval '40 days', now() - interval '35 days') WHERE user_id IS NULL), 0, 'no unowned row when there are no unowned deals');
 -- agent c: handled d1 = 1, resolved 1 (closed d1), first response 30 s x1, no tasks, open 1 (d3), won 2 / 1500, lost 1
 SELECT pg_temp.assert_true((SELECT handled = 1 AND resolved = 1 AND first_response_avg_seconds = 30 AND first_response_median_seconds = 30 AND first_response_samples = 1
                                    AND tasks_completed = 0 AND open_assigned = 1 AND deals_won = 2 AND deals_lost = 1 AND won_value = 1500
    FROM team_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day') WHERE user_id = '11100000-0000-4000-8000-00000000000c'), 'agent numbers');
--- admin e: handled d4 = 1, resolved d4 = 1, first response 60 s, no open, lost 1, nothing won
-SELECT pg_temp.assert_true((SELECT handled = 1 AND resolved = 1 AND first_response_avg_seconds = 60 AND open_assigned = 0 AND deals_won = 0 AND deals_lost = 1 AND won_value = 0
+-- admin e: handled d4 = 1, resolved d4 + d5 = 2, first response 60 s, no open, lost 1, nothing won
+SELECT pg_temp.assert_true((SELECT handled = 1 AND resolved = 2 AND first_response_avg_seconds = 60 AND open_assigned = 0 AND deals_won = 0 AND deals_lost = 1 AND won_value = 0
    FROM team_report((SELECT acc_a FROM ctx), now() - interval '1 day', now() + interval '1 day') WHERE user_id = '11100000-0000-4000-8000-00000000000e'), 'admin numbers');
 -- owner a: idle, zeros, no first response
 SELECT pg_temp.assert_true((SELECT handled = 0 AND resolved = 0 AND first_response_avg_seconds IS NULL AND first_response_samples = 0 AND deals_won = 0 AND deals_lost = 0

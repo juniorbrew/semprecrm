@@ -77,18 +77,25 @@ export function TeamSection({
                 <tbody className="divide-y divide-border border-t border-border">
                   {rows.map((r) => {
                     const rate = winRatePct(r.dealsWon, r.dealsLost);
+                    const unowned = r.userId === null; // only the deal columns mean something there
                     return (
-                      <tr key={r.userId}>
-                        <th scope="row" className="max-w-56 truncate py-2 pr-4 text-left font-normal text-foreground" data-no-translate>
-                          {nameOf(r.userId)}
-                        </th>
-                        <td className="py-2 pr-4 text-right tabular-nums">{r.handled}</td>
-                        <td className="py-2 pr-4 text-right tabular-nums">{r.resolved}</td>
+                      <tr key={r.userId ?? "unowned"} data-testid={unowned ? "team-unowned" : undefined}>
+                        {unowned ? (
+                          <th scope="row" className="max-w-56 truncate py-2 pr-4 text-left font-normal text-muted-foreground">
+                            {t("Without an owner")}
+                          </th>
+                        ) : (
+                          <th scope="row" className="max-w-56 truncate py-2 pr-4 text-left font-normal text-foreground" data-no-translate>
+                            {nameOf(r.userId ?? "")}
+                          </th>
+                        )}
+                        <td className="py-2 pr-4 text-right tabular-nums">{unowned ? "—" : r.handled}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums">{unowned ? "—" : r.resolved}</td>
                         <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
-                          {formatSeconds(r.firstResponseAvgSeconds)}
+                          {unowned ? "—" : formatSeconds(r.firstResponseAvgSeconds)}
                         </td>
-                        <td className="py-2 pr-4 text-right tabular-nums">{r.tasksCompleted}</td>
-                        <td className="py-2 pr-4 text-right tabular-nums">{r.openAssigned}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums">{unowned ? "—" : r.tasksCompleted}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums">{unowned ? "—" : r.openAssigned}</td>
                         <td className="py-2 pr-4 text-right tabular-nums">{r.dealsWon}</td>
                         <td className="py-2 pr-4 text-right tabular-nums" data-no-translate>
                           {formatCurrency(r.wonValue, currency)}

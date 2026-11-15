@@ -8,9 +8,12 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { OriginReportRow } from '@/lib/lead-origins'
 
-/** Rows that can carry a spend: everything but "direct" (no ad, nothing to pay for). */
-export function canHaveSpend(row: Pick<OriginReportRow, 'origin_type'>): boolean {
-  return row.origin_type !== 'direct'
+/**
+ * Rows that can carry a spend: everything but "direct" (nothing to pay for) and a bucket without a name
+ * ("Ad without a title"): ad_spend.name is 1 to 300 characters, so the database would refuse it.
+ */
+export function canHaveSpend(row: Pick<OriginReportRow, 'origin_type' | 'name'>): boolean {
+  return row.origin_type !== 'direct' && row.name !== ''
 }
 
 export interface SpendMetrics {
@@ -84,10 +87,11 @@ export interface SpendKey {
   source: string
 }
 
-export async function loadSpend(db: SupabaseClient, key: SpendKey, ym: string): Promise<number | null> {
+export async function loadSpend(db: SupabaseClient, accountId: string, key: SpendKey, ym: string): Promise<number | null> {
   const { data, error } = await db
     .from('ad_spend')
     .select('amount_cents')
+    .eq('account_id', accountId)
     .eq('origin_type', key.origin_type)
     .eq('channel', key.channel)
     .eq('name', key.name)

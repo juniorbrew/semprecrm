@@ -18,7 +18,7 @@ vi.mock('@/lib/supabase/client', () => ({
         chain.maybeSingle = async () => ({ data: h.saved.current == null ? null : { amount_cents: h.saved.current }, error: null })
         return { select: () => chain, upsert: (...a: unknown[]) => h.upsert(...a) }
       }
-      return { select: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) }
+      return { select: () => ({ order: () => Promise.resolve({ data: [{ id: 'p1', name: 'Vendas' }], error: null }) }) }
     },
   }),
 }))
@@ -95,6 +95,25 @@ describe('OriginSection: spend columns', () => {
     renderOrigin({ accountId: 'acc-1', canEditSpend: true })
     await screen.findByTestId('origin-table')
     expect(screen.getAllByTestId('origin-spend-button')).toHaveLength(2)
+  })
+
+  it('no button for an ad without a title (the database refuses a blank name)', async () => {
+    h.rpc.mockResolvedValue({ data: [{ ...AD, name: '' }, AD], error: null })
+    renderOrigin({ accountId: 'acc-1', canEditSpend: true })
+    await screen.findByTestId('origin-table')
+    expect(screen.getAllByTestId('origin-spend-button')).toHaveLength(1)
+  })
+
+  it('with a pipeline filter: no spend buttons and a line that says why', async () => {
+    h.rpc.mockResolvedValue({ data: [AD], error: null })
+    renderOrigin({ accountId: 'acc-1', canEditSpend: true })
+    await screen.findByTestId('origin-table')
+    expect(screen.queryByTestId('origin-spend-pipeline-note')).toBeNull()
+    expect(screen.getAllByTestId('origin-spend-button')).toHaveLength(1)
+    await waitFor(() => expect(within(screen.getByTestId('origin-pipeline')).getAllByRole('option')).toHaveLength(2))
+    fireEvent.change(screen.getByTestId('origin-pipeline'), { target: { value: 'p1' } })
+    await waitFor(() => expect(screen.getByTestId('origin-spend-pipeline-note').textContent).toBe('O gasto não aparece quando o relatório está filtrado por funil.'))
+    expect(screen.queryAllByTestId('origin-spend-button')).toHaveLength(0)
   })
 
   it('the dialog saves the amount of the chosen month and the table asks again', async () => {
@@ -224,6 +243,20 @@ describe('TeamSection', () => {
     expect(bruno[7]).toBe('—') // nothing closed: no win rate
     expect(table.textContent).not.toMatch(/NaN|Infinity/)
     expect(h.rpc).toHaveBeenCalledWith('team_report', { p_account_id: 'acc-1', p_start: '2026-11-10T03:00:00.000Z', p_end: '2026-11-21T03:00:00.000Z' })
+  })
+
+  it('deals without an owner get a last row with only the deal columns', async () => {
+    h.rpc.mockResolvedValue({ data: [...ROWS, { user_id: null, handled: 0, resolved: 0, first_response_avg_seconds: null, tasks_completed: 0, open_assigned: 0, deals_won: 1, deals_lost: 1, won_value: 400 }], error: null })
+    renderTeam()
+    const row = await screen.findByTestId('team-unowned')
+    const rows = within(screen.getByTestId('team-table')).getAllByRole('row')
+    expect(rows[rows.length - 1]).toBe(row)
+    expect(within(row).getByRole('rowheader').textContent).toBe('Sem responsável')
+    const cells = within(row).getAllByRole('cell').map((c) => c.textContent ?? '')
+    expect(cells.slice(0, 5)).toEqual(['—', '—', '—', '—', '—'])
+    expect(cells[5]).toBe('1')
+    expect(cells[6]).toContain('400')
+    expect(cells[7]).toBe('50%')
   })
 
   it('names are data (never translated)', async () => {

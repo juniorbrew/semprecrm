@@ -200,7 +200,8 @@ GRANT EXECUTE ON FUNCTION public.origin_report(timestamptz, timestamptz, text, u
 -- One row. attended = conversations with at least one AI message (messages.origin = 'ai') in the period.
 -- handed_off = attended conversations with an ai_handoff event in the period; top_reason = the most
 -- common payload reason of those events. resolved_without_person = attended conversations closed in the
--- period (status_changed -> closed) that never had a message from a person (sender_type = 'agent').
+-- period by the system (status_changed -> closed with no actor_user_id: a person closing it with one click
+-- does not count) that never had a message from a person (sender_type = 'agent').
 -- cost_by_feature (USD cents per ai_usage.feature, ok/error rows, never 'blocked') is NULL unless the
 -- caller is admin+: ai_usage is admin-only (058) and the cost must not leak to agents / viewers.
 CREATE OR REPLACE FUNCTION public.ai_report(p_account_id uuid, p_start timestamptz, p_end timestamptz)
@@ -254,7 +255,7 @@ BEGIN
       FROM public.conversation_events e
       JOIN att a ON a.conversation_id = e.conversation_id
      WHERE e.account_id = p_account_id AND e.event_type = 'status_changed'
-       AND e.payload->>'status' = 'closed'
+       AND e.payload->>'status' = 'closed' AND e.actor_user_id IS NULL
        AND e.created_at >= p_start AND e.created_at < p_end
        AND NOT EXISTS (SELECT 1 FROM public.messages m
                         WHERE m.conversation_id = e.conversation_id AND m.sender_type = 'agent')
@@ -284,6 +285,8 @@ GRANT EXECUTE ON FUNCTION public.ai_report(uuid, timestamptz, timestamptz) TO au
 -- One row per member of the account (people who left are not in profiles, so they drop out). Same rules
 -- as dashboard_team_metrics (086) but bounded by p_end; open_assigned is "right now" (no period).
 -- Deals: closed in the period (deals.closed_at, 070), by deals.assigned_to (profiles.id -> user_id).
+-- Deals closed in the period with nobody responsible (assigned_to NULL) come as ONE extra row with
+-- user_id NULL (only when there is one), so the column totals reconcile with the pipeline.
 -- Win rate (won / (won + lost)) is left to the app: it is a division by a possible zero.
 CREATE OR REPLACE FUNCTION public.team_report(p_account_id uuid, p_start timestamptz, p_end timestamptz)
 RETURNS TABLE (
@@ -377,7 +380,16 @@ BEGIN
     LEFT JOIN tasks_done t ON t.uid = p.user_id
     LEFT JOIN open_now o ON o.uid = p.user_id
     LEFT JOIN dl ON dl.uid = p.user_id
-   WHERE p.account_id = p_account_id;
+   WHERE p.account_id = p_account_id
+  UNION ALL
+  SELECT NULL::uuid, 0, 0, NULL::double precision, NULL::double precision, 0, 0, 0,
+         (count(*) FILTER (WHERE d.status = 'won'))::integer,
+         (count(*) FILTER (WHERE d.status = 'lost'))::integer,
+         coalesce(sum(d.value) FILTER (WHERE d.status = 'won'), 0)
+    FROM public.deals d
+   WHERE d.account_id = p_account_id AND d.assigned_to IS NULL AND d.status IN ('won', 'lost')
+     AND d.closed_at >= p_start AND d.closed_at < p_end
+  HAVING count(*) > 0;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.team_report(uuid, timestamptz, timestamptz) FROM PUBLIC, anon;

@@ -22,9 +22,11 @@ describe('spendMetrics', () => {
     expect(m.costPerSale).toBeNull()
     expect(m.roas).toBe(0)
   })
-  it('only origins that are not "direct" can carry a spend', () => {
-    expect(canHaveSpend({ origin_type: 'ad' })).toBe(true)
-    expect(canHaveSpend({ origin_type: 'direct' })).toBe(false)
+  it('only named origins that are not "direct" can carry a spend', () => {
+    expect(canHaveSpend({ origin_type: 'ad', name: 'Promo' })).toBe(true)
+    expect(canHaveSpend({ origin_type: 'direct', name: '' })).toBe(false)
+    // "Ad without a title": ad_spend.name must not be blank, so no button for it
+    expect(canHaveSpend({ origin_type: 'ad', name: '' })).toBe(false)
   })
 })
 
@@ -66,6 +68,10 @@ describe('sortTeam', () => {
   const row = (userId: string, wonValue: number, handled: number) => ({
     userId, handled, resolved: 0, firstResponseAvgSeconds: null, tasksCompleted: 0, openAssigned: 0, dealsWon: 0, dealsLost: 0, wonValue,
   })
+  it('the row without an owner is always last, even with the most sold', () => {
+    const sorted = sortTeam([row('x', 0, 0), { ...row('x', 9999, 0), userId: null }, row('y', 5, 0)], (id) => id)
+    expect(sorted.map((r) => r.userId)).toEqual(['y', 'x', null])
+  })
   it('most sold first, then the busiest, then by name', () => {
     const names: Record<string, string> = { a: 'Zé', b: 'Ana', c: 'Bia', d: 'Caio' }
     const sorted = sortTeam([row('a', 0, 5), row('b', 100, 1), row('c', 0, 5), row('d', 0, 9)], (id) => names[id])
@@ -97,6 +103,10 @@ describe('fetchAiReport / fetchTeamReport', () => {
     await expect(fetchAiReport({ rpc: async () => ({ data: null, error: new Error('x') }) } as never, 'acc', period, 'UTC')).rejects.toThrow('x')
     await expect(fetchTeamReport({ rpc: async () => ({ data: null, error: new Error('y') }) } as never, 'acc', period, 'UTC')).rejects.toThrow('y')
   })
+  it('a null user_id (deals without an owner) stays null', async () => {
+    const rows = await fetchTeamReport({ rpc: async () => ({ data: [{ user_id: null, deals_won: 1, deals_lost: 2, won_value: 5 }], error: null }) } as never, 'acc', period, 'UTC')
+    expect(rows[0]).toMatchObject({ userId: null, dealsWon: 1, dealsLost: 2, wonValue: 5 })
+  })
   it('maps the team rows and keeps a missing first response as null', async () => {
     const rpc = vi.fn(async () => ({
       data: [{ user_id: 'u1', handled: 1, resolved: 2, first_response_avg_seconds: null, tasks_completed: 3, open_assigned: 4, deals_won: 5, deals_lost: 6, won_value: '7.5' }],
@@ -126,14 +136,15 @@ describe('loadSpend / saveSpend', () => {
     chain.eq = (c: string, v: unknown) => (eqs.push([c, v]), chain)
     chain.maybeSingle = async () => ({ data: { amount_cents: '12345' }, error: null })
     const db = { from: () => ({ select: () => chain }) }
-    expect(await loadSpend(db as never, key, '2026-11')).toBe(12345)
+    expect(await loadSpend(db as never, 'acc-1', key, '2026-11')).toBe(12345)
+    expect(eqs).toContainEqual(['account_id', 'acc-1'])
     expect(eqs).toContainEqual(['month', '2026-11-01'])
     expect(eqs).toContainEqual(['name', 'Promo'])
   })
   it('no row is null; an error throws', async () => {
     const mk = (res: unknown) => ({ from: () => ({ select: () => { const c: Record<string, unknown> = {}; c.eq = () => c; c.maybeSingle = async () => res; return c } }) })
-    expect(await loadSpend(mk({ data: null, error: null }) as never, key, '2026-11')).toBeNull()
-    await expect(loadSpend(mk({ data: null, error: new Error('rls') }) as never, key, '2026-11')).rejects.toThrow('rls')
+    expect(await loadSpend(mk({ data: null, error: null }) as never, 'acc-1', key, '2026-11')).toBeNull()
+    await expect(loadSpend(mk({ data: null, error: new Error('rls') }) as never, 'acc-1', key, '2026-11')).rejects.toThrow('rls')
   })
   it('upserts on the unique key with the first day of the month', async () => {
     const upsert = vi.fn(async () => ({ error: null }))

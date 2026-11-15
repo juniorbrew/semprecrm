@@ -66,7 +66,8 @@ export const aiIsEmpty = (r: AiReport) =>
   !r.enabled && r.attended === 0 && r.messages === 0 && !r.costByFeature?.length
 
 export interface TeamStats {
-  userId: string
+  /** null = deals closed in the period with nobody responsible (one extra row, only deal numbers). */
+  userId: string | null
   handled: number
   resolved: number
   firstResponseAvgSeconds: number | null
@@ -87,7 +88,7 @@ export async function fetchTeamReport(
   const { data, error } = await db.rpc('team_report', { p_account_id: accountId, p_start: start, p_end: end })
   if (error) throw error
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-    userId: String(r.user_id),
+    userId: r.user_id == null ? null : String(r.user_id),
     handled: num(r.handled),
     resolved: num(r.resolved),
     firstResponseAvgSeconds: r.first_response_avg_seconds == null ? null : num(r.first_response_avg_seconds),
@@ -105,9 +106,13 @@ export function winRatePct(won: number, lost: number): number | null {
   return closed > 0 ? Math.round((1000 * won) / closed) / 10 : null
 }
 
-/** Most sales first, then the busiest, then by name. */
+/** Most sales first, then the busiest, then by name; the "without an owner" row always last. */
 export function sortTeam(rows: TeamStats[], nameOf: (id: string) => string): TeamStats[] {
   return [...rows].sort(
-    (a, b) => b.wonValue - a.wonValue || b.handled - a.handled || nameOf(a.userId).localeCompare(nameOf(b.userId)),
+    (a, b) =>
+      Number(a.userId === null) - Number(b.userId === null) ||
+      b.wonValue - a.wonValue ||
+      b.handled - a.handled ||
+      nameOf(a.userId ?? '').localeCompare(nameOf(b.userId ?? '')),
   )
 }

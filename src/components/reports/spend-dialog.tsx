@@ -49,13 +49,13 @@ export function SpendDialog({
   useEffect(() => {
     if (!monthOk) return;
     let cancelled = false;
-    loadSpend(createClient(), { origin_type: row.origin_type, channel: row.channel, name: row.name, source: row.source }, month)
+    loadSpend(createClient(), accountId, { origin_type: row.origin_type, channel: row.channel, name: row.name, source: row.source }, month)
       .then((cents) => !cancelled && setSaved({ month, cents, failed: false }))
       .catch(() => !cancelled && setSaved({ month, cents: null, failed: true }));
     return () => {
       cancelled = true;
     };
-  }, [month, monthOk, row.origin_type, row.channel, row.name, row.source]);
+  }, [accountId, month, monthOk, row.origin_type, row.channel, row.name, row.source]);
 
   const current = saved?.month === month && saved.cents != null ? (saved.cents / 100).toFixed(2).replace(".", ",") : "";
   const shown = text ?? current;

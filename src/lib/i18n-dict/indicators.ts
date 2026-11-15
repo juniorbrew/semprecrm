@@ -19,6 +19,7 @@ export const DICT_INDICATORS: Record<string, string> = {
   'Could not save the spend.': 'Não foi possível salvar o gasto.',
   'Could not load the saved spend.': 'Não foi possível carregar o gasto salvo.',
   'Save spend': 'Salvar gasto',
+  'Spend is not shown when filtering by pipeline.': 'O gasto não aparece quando o relatório está filtrado por funil.',
 
   // ---- AI section ----
   'AI results': 'Resultado da IA',
@@ -45,6 +46,7 @@ export const DICT_INDICATORS: Record<string, string> = {
   'Could not load the team performance.': 'Não foi possível carregar o desempenho da equipe.',
   'No team members in this account.': 'Nenhum membro da equipe nesta conta.',
   'Team member': 'Membro da equipe',
+  'Without an owner': 'Sem responsável',
   'Conversations handled': 'Conversas atendidas',
   'Conversations resolved': 'Conversas resolvidas',
   'First response time': 'Tempo da primeira resposta',
