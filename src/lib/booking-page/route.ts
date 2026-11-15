@@ -105,15 +105,37 @@ export function limited(request: NextRequest, slug: string, name: string, perIp:
   return null
 }
 
+/**
+ * The browser's Origin must be the host it called (behind the proxy, nextUrl is the
+ * internal address, so compare with Host / X-Forwarded-Host) or the public site URL.
+ * No Origin header (same-origin GET-like or non-browser): allowed, the JSON
+ * content type already forces a CORS preflight on cross-site requests.
+ */
+export function sameOrigin(request: NextRequest): boolean {
+  const origin = request.headers.get('origin')
+  if (!origin) return true
+  let host: string
+  try {
+    host = new URL(origin).hostname
+  } catch {
+    return false
+  }
+  const hosts = [request.headers.get('x-forwarded-host'), request.headers.get('host')]
+  try {
+    hosts.push(new URL(process.env.NEXT_PUBLIC_SITE_URL ?? '').hostname)
+  } catch {
+    // no site URL configured
+  }
+  // Host names only: nginx forwards $host without the port.
+  return hosts.some((h) => !!h && h.split(',')[0].trim().replace(/:\d+$/, '') === host)
+}
+
 /** Only same-origin JSON writes (a form post from another site is refused). */
 export async function readJson(request: NextRequest): Promise<Record<string, unknown> | NextResponse> {
   if (!(request.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json')) {
     return json({ error: 'Formato inválido.' }, 415)
   }
-  const origin = request.headers.get('origin')
-  if (origin && origin !== request.nextUrl.origin && origin !== (process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '')) {
-    return json({ error: 'Origem não permitida.' }, 403)
-  }
+  if (!sameOrigin(request)) return json({ error: 'Origem não permitida.' }, 403)
   const raw = await request.text()
   if (raw.length > 4096) return json({ error: 'Pedido grande demais.' }, 413)
   try {
