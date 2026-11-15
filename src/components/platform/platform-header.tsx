@@ -40,9 +40,11 @@ export function PlatformHeader() {
               ? 'Plans'
               : pathname.startsWith('/platform/leads')
                 ? 'Leads'
-                : pathname === '/platform'
-                  ? 'Overview'
-                  : 'Companies'
+                : pathname.startsWith('/platform/usage')
+                  ? 'Usage'
+                  : pathname === '/platform'
+                    ? 'Overview'
+                    : 'Companies'
           )}
         </span>
       </div>
