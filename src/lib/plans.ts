@@ -52,6 +52,7 @@ export const MODULES = [
   'ai_actions',
   'channel_instagram',
   'channel_messenger',
+  'booking_page',
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -76,6 +77,7 @@ export const OPTIONAL_MODULES = [
   'ai_actions',
   'channel_instagram',
   'channel_messenger',
+  'booking_page',
 ] as const satisfies readonly Module[];
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
@@ -119,6 +121,8 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  * (Migration 101 added `channel_instagram` and `channel_messenger`: in
  *  trial, pro and empresa, not in basico. They do NOT count toward
  *  `max_channels`, which limits WhatsApp numbers.)
+ * (Migration 114 added `booking_page` — the public page where a customer
+ *  books by themselves; needs `calendar` too — in trial, pro and empresa.)
  * | empresa | todos                            | null      | 5            |
  */
 export const PLAN_CATALOG: Record<Plan, PlanDefinition> = {
@@ -178,6 +182,7 @@ export const MODULE_LABELS: Record<Module, string> = {
   ai_actions: 'AI actions',
   channel_instagram: 'Instagram Direct',
   channel_messenger: 'Facebook Messenger',
+  booking_page: 'Booking page',
 };
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {

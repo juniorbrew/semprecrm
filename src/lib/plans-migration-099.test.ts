@@ -6,7 +6,7 @@ import { OPTIONAL_MODULES } from './plans'
 
 // The database keeps its own copy of the module list (valid_plan_definition and
 // platform_update_account_v2). A module missing there can never be granted.
-const LATER: readonly string[] = ['channel_instagram', 'channel_messenger']
+const LATER: readonly string[] = ['channel_instagram', 'channel_messenger', 'booking_page']
 const sql = readFileSync(join(process.cwd(), 'supabase/migrations/099_modules_per_account.sql'), 'utf8')
 
 describe('migration 099 module lists', () => {

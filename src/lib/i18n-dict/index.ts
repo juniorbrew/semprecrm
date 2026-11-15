@@ -12,6 +12,7 @@ import { DICT_API } from './api';
 import { DICT_API_WEBHOOKS } from './api-webhooks';
 import { DICT_AUTH } from './auth';
 import { DICT_BILLING } from './billing';
+import { DICT_BOOKING_PAGE } from './booking-page';
 import { DICT_COMPANIES } from './companies';
 import { DICT_CONTACTS } from './contacts';
 import { DICT_DASHBOARD } from './dashboard';
@@ -34,6 +35,7 @@ export const EN_TO_PT_AREAS: Record<string, string> = {
   ...DICT_API,
   ...DICT_AUTH,
   ...DICT_BILLING,
+  ...DICT_BOOKING_PAGE,
   ...DICT_COMPANIES,
   ...DICT_CONTACTS,
   ...DICT_DASHBOARD,

@@ -35,6 +35,7 @@ import { notifyInboundMessage } from '@/lib/push/notify'
 import { enqueueAutoReplyIfEligible } from '@/lib/ai/auto-reply-runtime'
 import { triageDueOnInbound } from '@/lib/support/ai-triage'
 import { tryHandleReminderReply } from '@/lib/agenda/reminder-reply'
+import { tryHandleBookingCode } from '@/lib/booking-page/inbound'
 import { tryConsumeCsat } from '@/lib/support/csat-inbound'
 import { isPushConfigured } from '@/lib/push/send'
 import { findSuppressedPhones } from '@/lib/lgpd/suppression'
@@ -1179,7 +1180,23 @@ export async function ingestInboundMessage(
   // 097): handled here, so the flows, automations, AI and the out-of-hours notice skip it.
   // Instagram / Messenger have no appointment reminders (they would almost always fall outside the
   // 24 h window), so there is nothing for the customer to answer.
-  const agendaReply = contactBlocked || messaging
+  // "Código de agendamento: 123456" confirming the phone on the booking page (migration 114).
+  // The customer wrote it to us on purpose, so it is answered even after "PARAR"; never on an
+  // anonymised contact, never on Instagram / Messenger (no phone to compare).
+  const bookingCode = messaging || contact.anonymized_at
+    ? null
+    : await tryHandleBookingCode(db, {
+        accountId,
+        contactId: contact.id,
+        contactName: (contact.name as string | null) ?? null,
+        contactPhone: (contact.phone as string | null) ?? null,
+        senderPhone,
+        conversationId: conversation.id,
+        userId: ownerUserId,
+        type: input.type,
+        text: contentText,
+      })
+  const agendaReply = bookingCode || contactBlocked || messaging
     ? null
     : await tryHandleReminderReply(db, {
         accountId,
@@ -1190,7 +1207,7 @@ export async function ingestInboundMessage(
         text: contentText,
         quotedMessageId: input.quotedMessageId ?? null,
       })
-  const outOfHoursReply = contactBlocked || agendaReply
+  const outOfHoursReply = contactBlocked || agendaReply || bookingCode
     ? undefined
     : await replyOutOfHoursIfNeeded(
         db,
@@ -1223,7 +1240,7 @@ export async function ingestInboundMessage(
   // still fire. The runner never throws.
   // A shared contact card is third-party data: automations / flows only see a placeholder.
   const inboundText = plainMessageText(contentText)
-  const flowResult: { consumed: boolean } = agendaReply
+  const flowResult: { consumed: boolean } = agendaReply || bookingCode
     ? { consumed: true }
     : contactBlocked
     ? { consumed: false }

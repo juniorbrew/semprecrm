@@ -2074,6 +2074,7 @@ export const EN_TO_PT_EXTRA: Record<string, string> = {
   // Modules added in migration 101
   'Instagram Direct': 'Instagram Direct',
   'Facebook Messenger': 'Facebook Messenger',
+  'Booking page': 'Página de agendamento',
   'Month': 'Mês',
   'Week': 'Semana',
   'Day': 'Dia',
