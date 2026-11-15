@@ -1180,7 +1180,7 @@ export async function ingestInboundMessage(
   // 097): handled here, so the flows, automations, AI and the out-of-hours notice skip it.
   // Instagram / Messenger have no appointment reminders (they would almost always fall outside the
   // 24 h window), so there is nothing for the customer to answer.
-  // "Código de agendamento: 123456" confirming the phone on the booking page (migration 114).
+  // "Código de agendamento: 123456" confirming the phone on the booking page (migration 113).
   // The customer wrote it to us on purpose, so it is answered even after "PARAR"; never on an
   // anonymised contact, never on Instagram / Messenger (no phone to compare).
   const bookingCode = messaging || contact.anonymized_at

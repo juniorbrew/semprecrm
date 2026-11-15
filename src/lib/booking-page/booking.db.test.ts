@@ -1,7 +1,7 @@
 // @vitest-environment node
-// Real-database check of the booking page (migration 114): phone check through
+// Real-database check of the booking page (migration 113): phone check through
 // the real inbound pipeline, booking through the real agenda RPCs, isolation
-// between contacts and accounts. Needs a local Supabase with 114 applied and an
+// between contacts and accounts. Needs a local Supabase with 113 applied and an
 // account that has agenda services; skipped unless BOOKING_DB_TEST=1:
 //
 //   BOOKING_DB_TEST=1 BOOKING_DB_ACCOUNT=<account uuid> NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:56021 \

@@ -1,6 +1,6 @@
 # Módulo hora marcada — parte 1: o cliente agenda sozinho
 
-Data: 2026-11-15 · Branch `feat/agendamento-cliente` · Worktree `C:\SempreCRM-hora-marcada` · Migration **114** (112 = uso da plataforma, 113 reservada para extras da Entrega 10; conferir antes do PR).
+Data: 2026-11-15 · Branch `feat/agendamento-cliente` · Worktree `C:\SempreCRM-hora-marcada` · Migration **113** (112 = uso da plataforma; os extras da Entrega 10 passam a usar a 114).
 
 ## Decisões do dono (2026-11-15)
 - Serve qualquer negócio de hora marcada (salão, barbearia, clínica, estética).
@@ -30,7 +30,7 @@ Depois de confirmado, o aparelho fica lembrado por 30 dias (cookie assinado, só
 - Módulos por empresa: novo módulo `booking_page` (exige `calendar`).
 - Modo só leitura da cobrança: empresa bloqueada → página mostra "agendamento indisponível no momento".
 
-## Banco — migration 114_booking_pages
+## Banco — migration 113_booking_pages
 - `booking_pages`: `account_id` (único), `slug` (único, minúsculo, `^[a-z0-9](-?[a-z0-9])+$`, 3–40, lista de reservados), `enabled`, `title`, `intro`, `show_prices`, `client_change_hours` (padrão 2), `created_at/updated_at`. RLS: membros leem, admin escreve; anon sem acesso.
 - `calendar_events.booking_source` aceita `'client'`.
 - `booking_phone_checks` (confirmação A): `account_id`, `code` (4–6 dígitos, único por conta enquanto válido), `phone_hash`, `expires_at` (10 min), `confirmed_at`, `attempts`. Só service role.

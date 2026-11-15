@@ -1,5 +1,5 @@
 // ============================================================
-// Página de agendamento (migration 114) — pure rules, no I/O.
+// Página de agendamento (migration 113) — pure rules, no I/O.
 //
 //   slug            the public address /agendar/<slug>
 //   phone check     the customer SENDS "Código de agendamento: 123456" to the

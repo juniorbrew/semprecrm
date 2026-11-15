@@ -1,4 +1,4 @@
-// /agendar/[slug] — the public booking page (migration 114). Server side:
+// /agendar/[slug] — the public booking page (migration 113). Server side:
 // the page's public data (same as GET /api/agendar/[slug]), the business'
 // name / colour for the tab, the install manifest of THIS business. The
 // booking itself runs in the client component against /api/agendar/[slug]/*.

@@ -1,4 +1,4 @@
-// Settings → Página de agendamento (migration 114).
+// Settings → Página de agendamento (migration 113).
 export const DICT_BOOKING_PAGE: Record<string, string> = {
   'Booking page': 'Página de agendamento',
   'Booking page saved': 'Página de agendamento salva',

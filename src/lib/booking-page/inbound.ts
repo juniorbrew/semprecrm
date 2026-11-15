@@ -1,5 +1,5 @@
 // ============================================================
-// Página de agendamento (migration 114) — the customer's WhatsApp message
+// Página de agendamento (migration 113) — the customer's WhatsApp message
 // "Código de agendamento: 123456" confirming their phone.
 //
 // Called by ingestInboundMessage after the message is stored (WhatsApp only,

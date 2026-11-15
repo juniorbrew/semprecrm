@@ -1,6 +1,6 @@
 'use client'
 
-// The customer side of the booking page (migration 114): pick a service, a
+// The customer side of the booking page (migration 113): pick a service, a
 // professional (or anyone), a free time; confirm the phone once on WhatsApp;
 // book; see / cancel / move upcoming appointments. Talks only to
 // /api/agendar/<slug>/*; the session lives in an HttpOnly cookie there.

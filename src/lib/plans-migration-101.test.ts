@@ -15,7 +15,7 @@ describe('migration 101 module lists', () => {
       sql.indexOf('CREATE OR REPLACE FUNCTION public.platform_update_account_v2'),
     )
     const upd = sql.slice(sql.indexOf('v_allowed_modules TEXT[]'), sql.indexOf('];', sql.indexOf('v_allowed_modules TEXT[]')))
-    // Modules added after 101 are checked against migration 114 (plans-migration-114.test.ts).
+    // Modules added after 101 are checked against migration 113 (plans-migration-113.test.ts).
     for (const m of OPTIONAL_MODULES.filter((o) => o !== 'booking_page')) {
       expect(vpd, `valid_plan_definition lacks ${m}`).toContain(`'${m}'`)
       expect(upd, `platform_update_account_v2 lacks ${m}`).toContain(`'${m}'`)

@@ -1,6 +1,6 @@
 'use client';
 
-// Settings → Página de agendamento (migration 114): the public page where a
+// Settings → Página de agendamento (migration 113): the public page where a
 // customer books by themselves. Admin only; needs the `calendar` and
 // `booking_page` modules. Everything the customer sees comes from the agenda
 // (services, professionals, hours); this screen only picks what the page

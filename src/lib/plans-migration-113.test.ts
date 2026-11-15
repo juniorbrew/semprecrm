@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest'
 
 import { OPTIONAL_MODULES, PLAN_CATALOG } from './plans'
 
-// Migration 114 carries the current copy of the SQL module lists. A module missing there can
+// Migration 113 carries the current copy of the SQL module lists. A module missing there can
 // never be granted to an account.
-const sql = readFileSync(join(process.cwd(), 'supabase/migrations/114_booking_pages.sql'), 'utf8')
+const sql = readFileSync(join(process.cwd(), 'supabase/migrations/113_booking_pages.sql'), 'utf8')
 
-describe('migration 114 module lists', () => {
+describe('migration 113 module lists', () => {
   it('both SQL lists name every optional module', () => {
     const vpd = sql.slice(
       sql.indexOf('CREATE OR REPLACE FUNCTION public.valid_plan_definition'),

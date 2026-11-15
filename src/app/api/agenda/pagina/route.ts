@@ -1,4 +1,4 @@
-// /api/agenda/pagina — Settings → Página de agendamento (migration 114).
+// /api/agenda/pagina — Settings → Página de agendamento (migration 113).
 //
 //   GET  the account's page (or null) + hints for the form: a suggested
 //        address, the QR session's number, whether a WhatsApp is connected.

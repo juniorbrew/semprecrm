@@ -1,5 +1,5 @@
 // read-only: allowed (POST refuses read-only accounts via requireOk/pageState; the GET poll only consumes its own phone check)
-// /api/agendar/[slug]/confirmar — the phone check (migration 114).
+// /api/agendar/[slug]/confirmar — the phone check (migration 113).
 //
 //   POST {nome, celular, aceite:true}  -> a 6-digit code + the wa.me link that
 //        sends "Código de agendamento: 123456" to the business. A random

@@ -1,5 +1,5 @@
 -- ============================================================
--- 114 — Página de agendamento: o cliente marca sozinho pelo link
+-- 113 — Página de agendamento: o cliente marca sozinho pelo link
 -- (módulo hora marcada, parte 1; spec docs/superpowers/specs/2026-11-15-agendamento-pelo-cliente.md).
 --
 --   * Módulo novo `booking_page` (exige `calendar`, checado no servidor). Entra em
@@ -533,11 +533,11 @@ GRANT ALL ON TABLE public.booking_phone_checks TO service_role;
 DO $$
 DECLARE v record; mods jsonb; new_id uuid; rev int;
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.platform_plan_versions WHERE actor_name = 'Sistema (114: página de agendamento)') THEN
+  IF EXISTS (SELECT 1 FROM public.platform_plan_versions WHERE actor_name = 'Sistema (113: página de agendamento)') THEN
     RETURN;
   END IF;
   LOCK TABLE public.accounts, public.account_billing IN SHARE ROW EXCLUSIVE MODE;
-  CREATE TEMP TABLE version_map_114(old_id uuid PRIMARY KEY, new_id uuid NOT NULL) ON COMMIT DROP;
+  CREATE TEMP TABLE version_map_113(old_id uuid PRIMARY KEY, new_id uuid NOT NULL) ON COMMIT DROP;
   FOR v IN
     SELECT pv.*, (c.current_version_id = pv.id) AS is_current
     FROM public.platform_plan_versions pv
@@ -554,9 +554,9 @@ BEGIN
     SELECT max(revision) + 1 INTO rev FROM public.platform_plan_versions WHERE plan = v.plan;
     INSERT INTO public.platform_plan_versions(plan, revision, definition, price_monthly_cents, currency, actor_name)
       VALUES (v.plan, rev, jsonb_set(v.definition, '{modules}', mods), v.price_monthly_cents, v.currency,
-              'Sistema (114: página de agendamento)')
+              'Sistema (113: página de agendamento)')
       RETURNING id INTO new_id;
-    INSERT INTO version_map_114 VALUES (v.id, new_id);
+    INSERT INTO version_map_113 VALUES (v.id, new_id);
     IF v.is_current THEN
       UPDATE public.platform_plan_catalog SET current_version_id = new_id WHERE plan = v.plan;
     END IF;
@@ -564,10 +564,10 @@ BEGIN
 
   -- Bookkeeping, not a customer edit: keep updated_at (same as 081 / 099 / 101).
   ALTER TABLE public.accounts DISABLE TRIGGER set_updated_at;
-  UPDATE public.accounts a SET plan_version_id = m.new_id FROM version_map_114 m WHERE a.plan_version_id = m.old_id;
+  UPDATE public.accounts a SET plan_version_id = m.new_id FROM version_map_113 m WHERE a.plan_version_id = m.old_id;
   ALTER TABLE public.accounts ENABLE TRIGGER set_updated_at;
   ALTER TABLE public.account_billing DISABLE TRIGGER set_updated_at;
-  UPDATE public.account_billing b SET plan_version_id = m.new_id FROM version_map_114 m WHERE b.plan_version_id = m.old_id;
+  UPDATE public.account_billing b SET plan_version_id = m.new_id FROM version_map_113 m WHERE b.plan_version_id = m.old_id;
   ALTER TABLE public.account_billing ENABLE TRIGGER set_updated_at;
 END $$;
 

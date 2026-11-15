@@ -1,4 +1,4 @@
-// GET /api/agendar/[slug] — the booking page's public data (migration 114):
+// GET /api/agendar/[slug] — the booking page's public data (migration 113):
 // name, logo, services offered (price only when the business shows it),
 // professionals offered, rules, whether this device is signed in.
 // Never: account id, WhatsApp number, other customers, internal notes.

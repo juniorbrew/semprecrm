@@ -121,7 +121,7 @@ const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
  * (Migration 101 added `channel_instagram` and `channel_messenger`: in
  *  trial, pro and empresa, not in basico. They do NOT count toward
  *  `max_channels`, which limits WhatsApp numbers.)
- * (Migration 114 added `booking_page` — the public page where a customer
+ * (Migration 113 added `booking_page` — the public page where a customer
  *  books by themselves; needs `calendar` too — in trial, pro and empresa.)
  * | empresa | todos                            | null      | 5            |
  */

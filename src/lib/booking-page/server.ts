@@ -1,5 +1,5 @@
 // ============================================================
-// Página de agendamento (migration 114) — server side.
+// Página de agendamento (migration 113) — server side.
 //
 // Everything here runs with the SERVICE-ROLE client: the public page has no
 // user session. So every read is scoped by the page row (found by its slug)
@@ -290,7 +290,7 @@ export async function readPhoneCheck(
 
 /**
  * The session's contact still exists, is not anonymised, and the session was
- * issued after the contact's last "sair de todos os aparelhos" (114).
+ * issued after the contact's last "sair de todos os aparelhos" (113).
  */
 export async function usableContact(db: SupabaseClient, session: BookingSession): Promise<boolean> {
   const [res, revoked] = await Promise.all([
@@ -443,7 +443,7 @@ export async function bookForClient(
     candidates = resourcesForService(config, input.serviceId).filter((r) => resourceOffered(page, r.id)).map((r) => r.id)
   }
 
-  // The count above is the friendly early answer; the guarantee is booking_client_book (114),
+  // The count above is the friendly early answer; the guarantee is booking_client_book (113),
   // which locks the contact and counts again in the booking's own transaction.
   const writer: RpcWriter = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
