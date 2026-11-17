@@ -15,13 +15,24 @@ const h = vi.hoisted(() => ({
   activateResult: true as boolean,
 }))
 
+// The per-minute limiter is per process and would trip over this many requests.
+vi.mock('@/lib/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/rate-limit')>()),
+  checkRateLimit: () => ({ success: true }),
+}))
 vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => h.fake.db }))
 vi.mock('@/lib/audit-server', () => ({ audit: vi.fn(async () => true) }))
 vi.mock('@/lib/plan-catalog-server', () => ({
   loadCurrentPlanCatalog: vi.fn(async () => [
-    { id: 'v-basico', plan: 'basico', revision: 1, definition: {}, price_monthly_cents: 5990 },
-    { id: 'v-pro', plan: 'pro', revision: 1, definition: {}, price_monthly_cents: 8990 },
-    { id: 'v-empresa', plan: 'empresa', revision: 1, definition: {}, price_monthly_cents: null },
+    { id: 'v-basico', plan: 'basico', revision: 1, definition: { modules: [], limits: { max_users: 3, max_channels: 1 } }, price_monthly_cents: 5990 },
+    {
+      id: 'v-pro',
+      plan: 'pro',
+      revision: 1,
+      definition: { modules: [], limits: { max_users: 10, max_channels: 2 }, extra_user_price_cents: 1800, extra_channel_price_cents: 4500 },
+      price_monthly_cents: 8990,
+    },
+    { id: 'v-empresa', plan: 'empresa', revision: 1, definition: { modules: [], limits: { max_users: null, max_channels: 5 } }, price_monthly_cents: null },
   ]),
 }))
 vi.mock('@/lib/billing/asaas', () => {
@@ -216,27 +227,71 @@ describe('billing checkout', () => {
     expect(res.status).toBe(502)
     expect(JSON.stringify(await res.json())).not.toMatch(/CPF inválido/)
   })
-  it('a past_due account that holds extras keeps them, and the new subscription bills them at their locked price', async () => {
-    h.fake.tables.account_billing.push({
+  describe('extras held by an account that subscribes again (migration 114)', () => {
+    const held = {
       account_id: 'acct-1',
       asaas_customer_id: 'cus_1',
       asaas_subscription_id: 'sub_0',
       plan: 'pro',
       plan_version_id: 'v-pro',
       cycle: 'monthly',
-      value_cents: 8990 + 3000,
+      value_cents: 8990 + 3000 + 4000,
       status: 'past_due',
       extra_users: 2,
       extra_user_price_cents: 1500,
-      extra_channels: 0,
-      extra_channel_price_cents: null,
+      extra_channels: 1,
+      extra_channel_price_cents: 4000,
+      extras_first_due: '2026-10-01',
+      pending_extra_users: 1,
+      pending_extra_channels: 1,
+      extras_reduce_due: '2026-12-01',
+      extras_asaas_lowered: true,
+    }
+    beforeEach(() => {
+      h.fake.tables.account_billing.push({ ...held })
+      vi.mocked(asaas.listSubscriptionPayments).mockImplementation(async (sub: string) => [
+        { id: 'pay_x', subscription: sub, status: 'OVERDUE', value: 129.9, dueDate: '2026-10-12', invoiceUrl: 'https://asaas/i/' + sub },
+      ])
     })
-    vi.mocked(asaas.listSubscriptionPayments).mockImplementation(async (sub: string) => [
-      { id: 'pay_x', subscription: sub, status: 'OVERDUE', value: 119.9, dueDate: '2026-10-12', invoiceUrl: 'https://asaas/i/' + sub },
-    ])
-    expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
-    expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ value: 899 + 300, cycle: 'YEARLY' }))
-    expect(h.fake.tables.account_billing[0]).toMatchObject({ extra_users: 2, extra_user_price_cents: 1500, value_cents: 89900 + 30000 })
+
+    it('are kept at their locked prices where the target plan can use them (pro sells both), and a pending removal is cleared', async () => {
+      expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
+      expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ value: 899 + 300 + 400, cycle: 'YEARLY' }))
+      expect(h.fake.tables.account_billing[0]).toMatchObject({
+        extra_users: 2,
+        extra_user_price_cents: 1500,
+        extra_channels: 1,
+        extra_channel_price_cents: 4000,
+        value_cents: 89900 + 30000 + 40000,
+        pending_extra_users: null,
+        extras_reduce_due: null,
+        extras_asaas_lowered: false,
+      })
+    })
+
+    it('are dropped, with their locked prices, where the target plan sells no price for them', async () => {
+      // basico sells no extras in this catalog: nothing useless keeps being billed
+      expect((await checkout({ plan: 'basico', cycle: 'monthly' })).status).toBe(200)
+      expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ value: 59.9 }))
+      expect(h.fake.tables.account_billing[0]).toMatchObject({
+        extra_users: 0,
+        extra_user_price_cents: null,
+        extra_channels: 0,
+        extra_channel_price_cents: null,
+        value_cents: 5990,
+        extras_first_due: null,
+      })
+    })
+
+    it('a kind whose limit in the target plan is unlimited is dropped even if a price exists', async () => {
+      h.fake.tables.account_billing[0].extra_user_price_cents = 1500
+      const { loadCurrentPlanCatalog } = await import('@/lib/plan-catalog-server')
+      vi.mocked(loadCurrentPlanCatalog).mockResolvedValueOnce([
+        { id: 'v-pro', plan: 'pro', revision: 2, definition: { modules: [], limits: { max_users: null, max_channels: 2 }, extra_user_price_cents: 1800, extra_channel_price_cents: 4500 }, price_monthly_cents: 8990 },
+      ])
+      expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
+      expect(h.fake.tables.account_billing[0]).toMatchObject({ extra_users: 0, extra_user_price_cents: null, extra_channels: 1, value_cents: 89900 + 40000 })
+    })
   })
   describe('past_due account (overdue renewal)', () => {
     // Paid first month (period ended 2026-10-17 with grace) + the overdue renewal.

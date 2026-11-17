@@ -55,6 +55,10 @@ export interface ExtrasView {
   /** What the account uses now: members + pending invites, connected numbers. */
   usedUsers: number
   usedChannels: number
+  /** A removal waiting for its day: the limit drops to these counts on `effectiveDate` (YYYY-MM-DD). */
+  pendingRemoval: { users: number; channels: number; effectiveDate: string } | null
+  /** Only the account owner buys and removes extras; admins see the panel read-only. */
+  canChange: boolean
 }
 
 /** The extras block of the panel, from the resolved entitlements and the billing row. */
@@ -63,6 +67,8 @@ export function buildExtrasView(input: {
   offered: { userCents: number | null; channelCents: number | null }
   locked: { userCents: number | null; channelCents: number | null }
   usage: { users: number; channels: number }
+  pending?: { users: number | null; channels: number | null; effectiveDate: string | null }
+  isOwner: boolean
 }): ExtrasView {
   const { ent, offered, locked } = input
   const base = (limit: number | null, extras: number) => (limit === null ? null : limit - extras)
@@ -75,6 +81,11 @@ export function buildExtrasView(input: {
     channelUnitCents: ent.extras.channels > 0 && locked.channelCents !== null ? locked.channelCents : offered.channelCents,
     usedUsers: input.usage.users,
     usedChannels: input.usage.channels,
+    pendingRemoval:
+      input.pending && input.pending.users !== null && input.pending.channels !== null && input.pending.effectiveDate
+        ? { users: input.pending.users, channels: input.pending.channels, effectiveDate: input.pending.effectiveDate }
+        : null,
+    canChange: input.isOwner,
   }
 }
 

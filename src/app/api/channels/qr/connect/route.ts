@@ -40,7 +40,7 @@ export async function POST() {
         const plural = max === 1 ? '' : 's'
         throw new PlanLimitError(
           `Seu plano permite até ${max} canal${max === 1 ? '' : 'is'} conectado${plural}. Desconecte um canal ou faça upgrade do plano.`,
-          await extraOfferFor(ctx.supabase, ctx.accountId, 'channel'),
+          await extraOfferFor(ctx.supabase, ctx.accountId, 'channel', ctx.role === 'owner'),
         )
       }
     }

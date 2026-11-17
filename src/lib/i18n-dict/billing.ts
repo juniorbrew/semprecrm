@@ -93,8 +93,6 @@ export const DICT_BILLING: Record<string, string> = {
     'Usuário extra, preço mensal em reais',
   'Extra number, monthly price in BRL':
     'Número extra, preço mensal em reais',
-  'Add users or WhatsApp numbers without changing plan. The new limit works right away; the new value starts at your next charge.':
-    'Adicione usuários ou números de WhatsApp sem trocar de plano. O limite novo vale na hora; o valor novo começa na próxima cobrança.',
   '+ extra user':
     '+ usuário extra',
   '+ extra number':
@@ -119,10 +117,6 @@ export const DICT_BILLING: Record<string, string> = {
     'número(s) extra(s)',
   'New charge':
     'Nova cobrança',
-  'starting at your next charge':
-    'a partir da próxima cobrança',
-  'Extras updated. The new value starts at your next charge.':
-    'Extras atualizados. O valor novo começa na próxima cobrança.',
   'Could not change it right now, try again.':
     'Não foi possível alterar agora, tente de novo.',
   'Buy 1 extra for':
@@ -143,4 +137,36 @@ export const DICT_BILLING: Record<string, string> = {
     'Muitas alterações nas últimas 24 horas. Tente novamente amanhã ou fale com a equipe do SempreCRM.',
   'Your subscription changed while you were doing this. Reload the page and try again.':
     'Sua assinatura mudou enquanto você fazia isso. Recarregue a página e tente de novo.',
+  'Add users or WhatsApp numbers without changing plan. Added extras work right away and go into your next charge. Removed extras stay active until the end of the period you already paid.':
+    'Adicione usuários ou números de WhatsApp sem trocar de plano. Extras adicionados valem na hora e entram na próxima cobrança. Extras removidos continuam ativos até o fim do período já pago.',
+  'Extras added. The limit is already higher; the new value is in your next charge.':
+    'Extras adicionados. O limite já aumentou; o valor novo entra na próxima cobrança.',
+  'Removal scheduled: the extras stay active until':
+    'Remoção agendada: os extras continuam ativos até',
+  'Then the limit drops to':
+    'Depois o limite cai para',
+  'Removal cancelled.':
+    'Remoção cancelada.',
+  'Cancel removal':
+    'Cancelar remoção',
+  'Only the account owner can buy or remove extras. Ask the account owner.':
+    'Só o dono da conta pode contratar ou remover extras. Peça ao dono da conta.',
+  'per extra, per year (12 months for the price of 10)':
+    'por extra, por ano (12 meses pelo preço de 10)',
+  'It works right away and goes into your next charge, even one already issued.':
+    'Vale na hora e entra na próxima cobrança, mesmo que ela já tenha sido emitida.',
+  'They stay active until the end of the period you already paid (and every extra is billed for at least one full period). The charge after that no longer includes them.':
+    'Eles continuam ativos até o fim do período já pago (e todo extra é cobrado por pelo menos um período completo). A cobrança seguinte não inclui mais esses extras.',
+  'Ask the account owner to add 1 extra for':
+    'Peça ao dono da conta para contratar 1 extra por',
+  'Extra user price':
+    'Preço do usuário extra',
+  'Extra number price':
+    'Preço do número extra',
+  'Not offered by the plan':
+    'Não oferecido pelo plano',
+  'A removal is already scheduled. Cancel it first to change the extras.':
+    'Já existe uma remoção agendada. Cancele-a antes de alterar os extras.',
+  'There is no scheduled removal to cancel.':
+    'Não há remoção agendada para cancelar.',
 };

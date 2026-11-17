@@ -26,7 +26,7 @@ export const isVersionId = (value: unknown): value is string =>
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
-/** Cap of an extra's monthly price in cents (R$ 100.000,00), same as the DB. */
+/** An extra's monthly price in cents is 1..R$ 100.000,00, same as the DB (absent = not offered). */
 export const MAX_EXTRA_PRICE_CENTS = 10_000_000;
 const EXTRA_PRICE_KEYS = [
   'extra_user_price_cents',
@@ -46,7 +46,7 @@ export function parsePlanDefinition(raw: unknown): PlanDefinition | null {
         !(k in raw) ||
         (typeof raw[k] === 'number' &&
           Number.isSafeInteger(raw[k]) &&
-          raw[k] >= 0 &&
+          raw[k] >= 1 &&
           raw[k] <= MAX_EXTRA_PRICE_CENTS)
     ) ||
     !Array.isArray(raw.modules) ||

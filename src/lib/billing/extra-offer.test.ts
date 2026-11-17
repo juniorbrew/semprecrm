@@ -41,35 +41,39 @@ function db(opts: {
 
 describe('extraOfferFor', () => {
   it('offers the plan price when the plan sells the extra', async () => {
-    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 } }), 'a', 'user')).toEqual({ kind: 'user', monthlyCents: 1500 })
-    expect(await extraOfferFor(db({ prices: { extra_channel_price_cents: 4000 } }), 'a', 'channel')).toEqual({ kind: 'channel', monthlyCents: 4000 })
+    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 } }), 'a', 'user', true)).toEqual({ kind: 'user', monthlyCents: 1500, canBuy: true })
+    expect(await extraOfferFor(db({ prices: { extra_channel_price_cents: 4000 } }), 'a', 'channel', true)).toEqual({ kind: 'channel', monthlyCents: 4000, canBuy: true })
   })
 
   it('offers nothing without a price, for the other kind, or on an unlimited limit', async () => {
-    expect(await extraOfferFor(db({}), 'a', 'user')).toBeNull()
-    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 } }), 'a', 'channel')).toBeNull()
+    expect(await extraOfferFor(db({}), 'a', 'user', true)).toBeNull()
+    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 } }), 'a', 'channel', true)).toBeNull()
     expect(
-      await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 }, limits: { max_users: null, max_channels: 2 } }), 'a', 'user'),
+      await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 }, limits: { max_users: null, max_channels: 2 } }), 'a', 'user', true),
     ).toBeNull()
   })
 
   it('offers nothing in trial, read-only or without an active paid subscription', async () => {
     const prices = { extra_user_price_cents: 1500 }
-    expect(await extraOfferFor(db({ prices, status: 'trial' }), 'a', 'user')).toBeNull()
-    expect(await extraOfferFor(db({ prices, status: 'past_due' }), 'a', 'user')).toBeNull()
-    expect(await extraOfferFor(db({ prices, billing: null }), 'a', 'user')).toBeNull()
+    expect(await extraOfferFor(db({ prices, status: 'trial' }), 'a', 'user', true)).toBeNull()
+    expect(await extraOfferFor(db({ prices, status: 'past_due' }), 'a', 'user', true)).toBeNull()
+    expect(await extraOfferFor(db({ prices, billing: null }), 'a', 'user', true)).toBeNull()
     expect(
-      await extraOfferFor(db({ prices, billing: { status: 'pending', asaas_subscription_id: 'sub_1', extra_users: 0, extra_channels: 0 } }), 'a', 'user'),
+      await extraOfferFor(db({ prices, billing: { status: 'pending', asaas_subscription_id: 'sub_1', extra_users: 0, extra_channels: 0 } }), 'a', 'user', true),
     ).toBeNull()
   })
 
   it('an account that already has extras is offered its locked price', async () => {
     const billing = { status: 'active', asaas_subscription_id: 'sub_1', extra_users: 1, extra_channels: 0, extra_user_price_cents: 1000, extra_channel_price_cents: null }
-    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 2500 }, billing }), 'a', 'user')).toEqual({ kind: 'user', monthlyCents: 1000 })
+    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 2500 }, billing }), 'a', 'user', true)).toEqual({ kind: 'user', monthlyCents: 1000, canBuy: true })
+  })
+
+  it('for an admin who is not the owner the offer says they cannot buy', async () => {
+    expect(await extraOfferFor(db({ prices: { extra_user_price_cents: 1500 } }), 'a', 'user', false)).toEqual({ kind: 'user', monthlyCents: 1500, canBuy: false })
   })
 
   it('never throws: a failing read is no offer', async () => {
     const broken = { from: () => { throw new Error('boom') }, ent: {} } as unknown as SupabaseClient
-    expect(await extraOfferFor(broken, 'a', 'user')).toBeNull()
+    expect(await extraOfferFor(broken, 'a', 'user', true)).toBeNull()
   })
 })

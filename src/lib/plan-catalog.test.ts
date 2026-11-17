@@ -84,7 +84,7 @@ describe('assigned catalog', () => {
     const withPrices = {
       ...PLAN_CATALOG.pro,
       extra_user_price_cents: 1500,
-      extra_channel_price_cents: 0,
+      extra_channel_price_cents: 1,
     };
     expect(parsePlanDefinition(withPrices)).toEqual(withPrices);
     expect(
@@ -94,7 +94,7 @@ describe('assigned catalog', () => {
     expect(parsePlanDefinition(PLAN_CATALOG.pro)).not.toHaveProperty(
       'extra_user_price_cents'
     );
-    for (const bad of [-1, 1.5, '1500', null, 10_000_001, Infinity, NaN])
+    for (const bad of [0, -1, 1.5, '1500', null, 10_000_001, Infinity, NaN])
       for (const key of ['extra_user_price_cents', 'extra_channel_price_cents'])
         expect(
           parsePlanDefinition({ ...PLAN_CATALOG.pro, [key]: bad }),

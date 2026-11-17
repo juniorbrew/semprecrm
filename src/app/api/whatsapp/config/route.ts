@@ -509,7 +509,7 @@ export async function POST(request: Request) {
       }
       const maxChannels = entitlements.limits.max_channels
       if (!canAddChannel(count, maxChannels)) {
-        const offer = await extraOfferFor(supabase, accountId, 'channel')
+        const offer = await extraOfferFor(supabase, accountId, 'channel', ctx.role === 'owner')
         return NextResponse.json(
           {
             error: 'Your plan has no free slot for another connected WhatsApp number. Disconnect one or upgrade the plan.',

@@ -1,31 +1,40 @@
 // ============================================================
-// POST /api/billing/extras — buy or remove extra users / WhatsApp numbers
-// (migration 114; spec 2026-11-15-indicadores-e-extras.md, Parte C).
+// POST /api/billing/extras — buy extra users / WhatsApp numbers, schedule their
+// removal, or cancel a scheduled removal (migration 114; spec
+// 2026-11-15-indicadores-e-extras.md, Parte C).
 //
-// Owner and admins, active paid account only (trial, read-only and blocked
-// accounts are refused). Body { kind: 'user' | 'channel', delta }. The account
-// is the session's, never the body's.
+// OWNER only (like checkout), active paid account only: trial, read-only and
+// blocked accounts are refused. Body { kind: 'user' | 'channel', delta } or
+// { cancel_removal: true }. The account is the session's, never the body's.
 //
-// Order, so money and limits never disagree:
-//   1. read the billing row and compute the new subscription value;
-//   2. update the value in Asaas (next charges only, no proration);
-//   3. only after Asaas confirms, write the extras with compare-and-swap on
-//      every value that was read. 0 rows = someone else changed it first:
-//      the Asaas value is put back to what the database now holds.
-// An Asaas failure changes nothing here. The new limit applies at once.
+//   delta > 0  the limit grows now; the next charge carries the extra (Asaas
+//              `updatePendingPayments: true`, no proration).
+//   delta < 0  nothing drops now: the extras stay until the end of the paid
+//              period (and for at least one full billed period); the sweep applies
+//              it. The usage check runs now and again when it takes effect.
+//
+// The whole change runs through runExtrasChange (extras-service.ts): per-account
+// claim, Asaas first, then one transaction for the extras and their audit row.
 // ============================================================
 
 import { NextResponse } from 'next/server'
 
-import { AUDIT_ACTIONS } from '@/lib/audit'
-import { audit } from '@/lib/audit-server'
 import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { asaasConfigured, updateSubscriptionValue } from '@/lib/billing/asaas'
-import { changeExtras, type ExtrasRefusal, type ExtrasState } from '@/lib/billing/extras'
-import { isBillingCycle } from '@/lib/billing/rules'
+import { asaasConfigured, listSubscriptionPayments } from '@/lib/billing/asaas'
+import {
+  changeExtras,
+  extrasCostCents,
+  nextChargeDue,
+  removalDueDate,
+  addCycles,
+  type ExtrasRefusal,
+  type ExtrasState,
+} from '@/lib/billing/extras'
+import { accountUsage, pickNew, runExtrasChange, type BillingExtrasRow, type Decision } from '@/lib/billing/extras-service'
+import { isBillingCycle, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
-import { loadAccountEntitlements, countConnectedChannels } from '@/lib/plans-server'
+import { loadAccountEntitlements } from '@/lib/plans-server'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
@@ -41,210 +50,174 @@ export const EXTRAS_ERRORS = {
   unlimited: 'Your plan has no limit here, so there is nothing to add.',
   cap: 'You reached the maximum number of extras. Talk to the SempreCRM team.',
   belowUsage: 'You are using more than the new limit would allow. Free up a user or number first.',
+  pendingRemoval: 'A removal is already scheduled. Cancel it first to change the extras.',
+  noPendingRemoval: 'There is no scheduled removal to cancel.',
   tooMany: 'Too many changes in the last 24 hours. Try again tomorrow or talk to the SempreCRM team.',
   conflict: 'Your subscription changed while you were doing this. Reload the page and try again.',
   provider: 'Could not change it right now, try again.',
 } as const
 
-const REFUSALS: Record<ExtrasRefusal, [keyof typeof EXTRAS_ERRORS, number]> = {
+type Refusal = ExtrasRefusal | 'unavailable' | 'no_pending_removal'
+
+const REFUSALS: Record<Refusal | 'busy' | 'daily_cap' | 'conflict' | 'provider' | 'none', [keyof typeof EXTRAS_ERRORS, number]> = {
   invalid: ['body', 400],
   not_offered: ['notOffered', 400],
   unlimited: ['unlimited', 400],
   cap: ['cap', 400],
   below_usage: ['belowUsage', 409],
+  pending_removal: ['pendingRemoval', 409],
+  unavailable: ['unavailable', 403],
+  no_pending_removal: ['noPendingRemoval', 409],
+  busy: ['conflict', 409],
+  daily_cap: ['tooMany', 429],
+  conflict: ['conflict', 409],
+  provider: ['provider', 502],
+  none: ['unavailable', 403],
 }
-
-type BillingRow = {
-  asaas_subscription_id: string | null
-  cycle: string
-  value_cents: number
-  status: string
-  extra_users: number
-  extra_channels: number
-  extra_user_price_cents: number | null
-  extra_channel_price_cents: number | null
-}
-const BILLING_COLUMNS =
-  'asaas_subscription_id, cycle, value_cents, status, extra_users, extra_channels, extra_user_price_cents, extra_channel_price_cents'
 
 export async function POST(request: Request) {
   try {
-    const ctx = await requireWritable(await requireRole('admin'))
+    const ctx = await requireWritable(await requireRole('owner'))
     const limit = checkRateLimit(`billing:extras:${ctx.userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
     if (!asaasConfigured()) return NextResponse.json({ error: EXTRAS_ERRORS.notConfigured }, { status: 503 })
 
-    const body = (await request.json().catch(() => null)) as { kind?: unknown; delta?: unknown } | null
+    const body = (await request.json().catch(() => null)) as { kind?: unknown; delta?: unknown; cancel_removal?: unknown } | null
+    const cancel = body?.cancel_removal === true
     const kind = body?.kind
     const delta = body?.delta
-    if ((kind !== 'user' && kind !== 'channel') || typeof delta !== 'number') {
+    if (!cancel && ((kind !== 'user' && kind !== 'channel') || typeof delta !== 'number')) {
       return NextResponse.json({ error: EXTRAS_ERRORS.body }, { status: 400 })
     }
 
     const db = supabaseAdmin()
-    const ent = await loadAccountEntitlements(db, ctx.accountId)
-    const { data: row, error: billErr } = await db.from('account_billing').select(BILLING_COLUMNS).eq('account_id', ctx.accountId).maybeSingle()
-    if (billErr) throw new Error(`billing read failed: ${billErr.message}`)
-    const b = row as BillingRow | null
-    if (!ent || ent.blocked || ent.status !== 'active' || !b || b.status !== 'active' || !b.asaas_subscription_id || !isBillingCycle(b.cycle)) {
-      return NextResponse.json({ error: EXTRAS_ERRORS.unavailable }, { status: 403 })
-    }
-    const cycle = b.cycle
-    const subscriptionId = b.asaas_subscription_id
-    // The entitlements and the billing row were read apart: they must agree.
-    if (ent.extras.users !== b.extra_users && ent.limits.max_users !== null) return conflict()
-    if (ent.extras.channels !== b.extra_channels && ent.limits.max_channels !== null) return conflict()
+    const result = await runExtrasChange<Refusal>(db, {
+      accountId: ctx.accountId,
+      actorId: ctx.userId,
+      maxPerDay: MAX_EXTRAS_CHANGES_PER_DAY,
+      decide: async (row): Promise<Decision<Refusal>> => {
+        const cycle = row.cycle
+        const subscriptionId = row.asaas_subscription_id
+        const ent = await loadAccountEntitlements(db, ctx.accountId)
+        if (!ent || ent.blocked || ent.status !== 'active' || row.status !== 'active' || !subscriptionId || !isBillingCycle(cycle)) {
+          return { refuse: 'unavailable' }
+        }
+        const current = stateOf(row)
+        const pending = row.pending_extra_users !== null
 
-    const since = new Date(Date.now() - 24 * 3_600_000).toISOString()
-    const { count: recent, error: capErr } = await db
-      .from('audit_log')
-      .select('id', { count: 'exact', head: true })
-      .eq('account_id', ctx.accountId)
-      .eq('action', AUDIT_ACTIONS.BILLING_EXTRAS_CHANGED)
-      .gte('created_at', since)
-    if (capErr) throw new Error(`extras cap read failed: ${capErr.message}`)
-    if ((recent ?? 0) >= MAX_EXTRAS_CHANGES_PER_DAY) {
-      return NextResponse.json({ error: EXTRAS_ERRORS.tooMany }, { status: 429 })
-    }
+        if (cancel) {
+          if (!pending) return { refuse: 'no_pending_removal' }
+          // Asaas was already lowered for the charge after the removal: raise it back.
+          const restored = row.extras_asaas_lowered
+            ? Number(row.value_cents) -
+              extrasCostCents(cycle, { ...current, users: row.pending_extra_users ?? 0, channels: row.pending_extra_channels ?? 0 }) +
+              extrasCostCents(cycle, current)
+            : Number(row.value_cents)
+          return {
+            next: pickNew(row, {
+              value_cents: restored,
+              pending_extra_users: null,
+              pending_extra_channels: null,
+              extras_reduce_due: null,
+              extras_asaas_lowered: false,
+            }),
+            asaas: row.extras_asaas_lowered ? { valueCents: restored, updatePending: true } : null,
+            action: 'billing.extras_changed',
+            metadata: { type: 'removal_cancelled', extra_users: row.extra_users, extra_channels: row.extra_channels, value_cents: restored },
+          }
+        }
 
-    const definition = (await loadCurrentPlanCatalog(db)).find((v) => v.plan === ent.plan)?.definition
-    const current: ExtrasState = {
-      users: b.extra_users,
-      channels: b.extra_channels,
-      userPriceCents: b.extra_user_price_cents,
-      channelPriceCents: b.extra_channel_price_cents,
-    }
-    const result = changeExtras({
-      cycle,
-      currentValueCents: Number(b.value_cents),
-      current,
-      kind,
-      delta,
-      offeredPriceCents: (kind === 'user' ? definition?.extra_user_price_cents : definition?.extra_channel_price_cents) ?? null,
-      baseLimit: kind === 'user' ? baseOf(ent.limits.max_users, ent.extras.users) : baseOf(ent.limits.max_channels, ent.extras.channels),
-      usage: delta < 0 ? await usageOf(db, ctx.accountId, kind) : 0,
+        const k = kind as 'user' | 'channel'
+        const d = delta as number
+        const catalogDefinition = d > 0 ? (await loadCurrentPlanCatalog(db)).find((v) => v.plan === ent.plan)?.definition : undefined
+        const baseLimit = baseOf(k === 'user' ? ent.limits.max_users : ent.limits.max_channels, k === 'user' ? ent.extras.users : ent.extras.channels)
+        const change = changeExtras({
+          cycle,
+          currentValueCents: Number(row.value_cents),
+          current,
+          kind: k,
+          delta: d,
+          offeredPriceCents: (k === 'user' ? catalogDefinition?.extra_user_price_cents : catalogDefinition?.extra_channel_price_cents) ?? null,
+          baseLimit,
+          usage: d < 0 ? (await accountUsage(db, ctx.accountId))[k === 'user' ? 'users' : 'channels'] : 0,
+          removalPending: pending,
+        })
+        if (!change.ok) return { refuse: change.code }
+
+        const payments = (await listSubscriptionPayments(subscriptionId)).map((p) => ({ dueDate: p.dueDate, status: p.status }))
+        const nextDue = nextChargeDue(payments, cycle) ?? addCycles(todayInSaoPaulo(), cycle, 1)
+
+        if (change.type === 'add') {
+          return {
+            next: pickNew(row, {
+              extra_users: change.next.users,
+              extra_channels: change.next.channels,
+              extra_user_price_cents: change.next.userPriceCents,
+              extra_channel_price_cents: change.next.channelPriceCents,
+              value_cents: change.valueCents,
+              extras_first_due: nextDue,
+            }),
+            // Already-generated charges follow: the extra goes into the very next charge.
+            asaas: { valueCents: change.valueCents, updatePending: true },
+            action: 'billing.extras_changed',
+            metadata: {
+              type: 'add',
+              kind: k,
+              delta: d,
+              from: { extra_users: row.extra_users, extra_channels: row.extra_channels, value_cents: Number(row.value_cents) },
+              to: { extra_users: change.next.users, extra_channels: change.next.channels, value_cents: change.valueCents },
+              first_charge_due: nextDue,
+            },
+          }
+        }
+        const effective = removalDueDate(nextDue, row.extras_first_due, cycle as BillingCycle)
+        return {
+          next: pickNew(row, {
+            pending_extra_users: change.target.users,
+            pending_extra_channels: change.target.channels,
+            extras_reduce_due: effective,
+            extras_asaas_lowered: false,
+          }),
+          asaas: null,
+          action: 'billing.extras_changed',
+          metadata: {
+            type: 'removal_scheduled',
+            kind: k,
+            delta: d,
+            effective_date: effective,
+            from: { extra_users: row.extra_users, extra_channels: row.extra_channels },
+            to: { extra_users: change.target.users, extra_channels: change.target.channels },
+          },
+        }
+      },
     })
+
     if (!result.ok) {
       const [key, status] = REFUSALS[result.code]
       return NextResponse.json({ error: EXTRAS_ERRORS[key] }, { status })
     }
-
-    // 2. Asaas first. Whatever the failure (even a timeout whose answer we never
-    // saw), nothing is written here, and the old value is asked back so Asaas
-    // cannot be left holding a value the account never got.
-    try {
-      await updateSubscriptionValue(subscriptionId, result.valueCents / 100)
-    } catch (err) {
-      console.error('[billing/extras] Asaas update failed:', err instanceof Error ? err.message : err)
-      await restoreAsaas(subscriptionId, Number(b.value_cents))
-      return NextResponse.json({ error: EXTRAS_ERRORS.provider }, { status: 502 })
-    }
-
-    // 3. Compare-and-swap on everything read; a concurrent change makes it 0 rows.
-    let swapped: { account_id: string }[] | null = null
-    try {
-      let q = db
-        .from('account_billing')
-        .update({
-          extra_users: result.next.users,
-          extra_channels: result.next.channels,
-          extra_user_price_cents: result.next.userPriceCents,
-          extra_channel_price_cents: result.next.channelPriceCents,
-          value_cents: result.valueCents,
-        })
-        .eq('account_id', ctx.accountId)
-        .eq('status', 'active')
-        .eq('asaas_subscription_id', subscriptionId)
-        .eq('value_cents', b.value_cents)
-        .eq('extra_users', b.extra_users)
-        .eq('extra_channels', b.extra_channels)
-      q = b.extra_user_price_cents === null ? q.is('extra_user_price_cents', null) : q.eq('extra_user_price_cents', b.extra_user_price_cents)
-      q = b.extra_channel_price_cents === null ? q.is('extra_channel_price_cents', null) : q.eq('extra_channel_price_cents', b.extra_channel_price_cents)
-      const { data, error } = await q.select('account_id')
-      if (error) throw new Error(`extras save failed: ${error.message}`)
-      swapped = data
-    } catch (err) {
-      await syncAsaasToDb(db, ctx.accountId, subscriptionId)
-      throw err
-    }
-    if (!swapped?.length) {
-      await syncAsaasToDb(db, ctx.accountId, subscriptionId)
-      return conflict()
-    }
-
-    await audit({
-      accountId: ctx.accountId,
-      actorUserId: ctx.userId,
-      action: AUDIT_ACTIONS.BILLING_EXTRAS_CHANGED,
-      entityType: 'account_billing',
-      entityId: ctx.accountId,
-      metadata: {
-        kind,
-        delta,
-        from: { extra_users: b.extra_users, extra_channels: b.extra_channels, value_cents: Number(b.value_cents) },
-        to: { extra_users: result.next.users, extra_channels: result.next.channels, value_cents: result.valueCents },
-      },
-    })
+    const r = result.row
     return NextResponse.json({
-      extras: { users: result.next.users, channels: result.next.channels },
-      valueCents: result.valueCents,
+      extras: { users: r.extra_users, channels: r.extra_channels },
+      valueCents: r.value_cents,
+      pendingRemoval:
+        r.pending_extra_users === null ? null : { users: r.pending_extra_users, channels: r.pending_extra_channels, effectiveDate: r.extras_reduce_due },
     })
   } catch (err) {
     return toErrorResponse(err)
   }
 }
 
-function conflict() {
-  return NextResponse.json({ error: EXTRAS_ERRORS.conflict }, { status: 409 })
+function stateOf(row: BillingExtrasRow): ExtrasState {
+  return {
+    users: row.extra_users,
+    channels: row.extra_channels,
+    userPriceCents: row.extra_user_price_cents,
+    channelPriceCents: row.extra_channel_price_cents,
+  }
 }
 
 /** Plan limit without the extras (null = unlimited). */
 function baseOf(effective: number | null, extras: number): number | null {
   return effective === null ? null : effective - extras
-}
-
-type Db = ReturnType<typeof supabaseAdmin>
-
-/** What the account uses today: users = members + pending invites (as the invite route counts), channels as the connect routes do. */
-async function usageOf(db: Db, accountId: string, kind: 'user' | 'channel'): Promise<number> {
-  if (kind === 'channel') return countConnectedChannels(db, accountId)
-  const [members, invites] = await Promise.all([
-    db.from('profiles').select('user_id', { count: 'exact', head: true }).eq('account_id', accountId),
-    db
-      .from('account_invitations')
-      .select('id', { count: 'exact', head: true })
-      .eq('account_id', accountId)
-      .is('accepted_at', null)
-      .gt('expires_at', new Date().toISOString()),
-  ])
-  if (members.error || invites.error) throw new Error('usage read failed')
-  return (members.count ?? 0) + (invites.count ?? 0)
-}
-
-/** Best effort: ask Asaas to hold `valueCents` again. A failure is logged for manual repair. */
-async function restoreAsaas(subscriptionId: string, valueCents: number): Promise<void> {
-  try {
-    await updateSubscriptionValue(subscriptionId, valueCents / 100)
-  } catch (err) {
-    console.error(
-      '[billing/extras] ASAAS VALUE MAY DIFFER from the database, fix subscription',
-      subscriptionId,
-      'to cents',
-      valueCents,
-      err instanceof Error ? err.message : err,
-    )
-  }
-}
-
-/**
- * After a lost compare-and-swap: the database is the truth. Re-read its value and
- * put Asaas back to it (if the account still points at the same subscription).
- */
-async function syncAsaasToDb(db: Db, accountId: string, subscriptionId: string): Promise<void> {
-  const { data } = await db.from('account_billing').select('asaas_subscription_id, value_cents').eq('account_id', accountId).maybeSingle()
-  if (!data || data.asaas_subscription_id !== subscriptionId) {
-    console.error('[billing/extras] subscription replaced during an extras change, check Asaas value of', subscriptionId)
-    return
-  }
-  await restoreAsaas(subscriptionId, Number(data.value_cents))
 }

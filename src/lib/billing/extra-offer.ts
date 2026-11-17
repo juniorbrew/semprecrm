@@ -16,6 +16,8 @@ export interface ExtraOffer {
   kind: ExtraKind
   /** Monthly price of one more extra, in cents. */
   monthlyCents: number
+  /** Only the account owner can buy; for anyone else the UI says to ask the owner. */
+  canBuy: boolean
 }
 
 /**
@@ -25,7 +27,7 @@ export interface ExtraOffer {
  * their locked price for more of the same kind). Never throws: the caller is
  * already answering a limit error and must still answer it.
  */
-export async function extraOfferFor(db: SupabaseClient, accountId: string, kind: ExtraKind): Promise<ExtraOffer | null> {
+export async function extraOfferFor(db: SupabaseClient, accountId: string, kind: ExtraKind, isOwner: boolean): Promise<ExtraOffer | null> {
   try {
     const ent = await loadAccountEntitlements(db, accountId)
     const limit = kind === 'user' ? ent?.limits.max_users : ent?.limits.max_channels
@@ -40,13 +42,13 @@ export async function extraOfferFor(db: SupabaseClient, accountId: string, kind:
 
     const have = kind === 'user' ? b.extra_users : b.extra_channels
     const locked = kind === 'user' ? b.extra_user_price_cents : b.extra_channel_price_cents
-    if (have > 0 && locked !== null) return { kind, monthlyCents: locked }
+    if (have > 0 && locked !== null) return { kind, monthlyCents: locked, canBuy: isOwner }
 
     // The current catalog (public RPC, readable by the admin's own client): no server-only import.
     const { data: catalog } = await db.rpc('public_plan_catalog')
     const definition = (Array.isArray(catalog) ? catalog : []).map(parsePlanVersion).find((v) => v?.plan === ent.plan)?.definition
     const price = kind === 'user' ? definition?.extra_user_price_cents : definition?.extra_channel_price_cents
-    return typeof price === 'number' ? { kind, monthlyCents: price } : null
+    return typeof price === 'number' ? { kind, monthlyCents: price, canBuy: isOwner } : null
   } catch (err) {
     console.error('[extra-offer] could not compute the offer:', err instanceof Error ? err.message : err)
     return null

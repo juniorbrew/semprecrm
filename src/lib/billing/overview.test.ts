@@ -119,15 +119,15 @@ describe('buildExtrasView', () => {
   const usage = { users: 4, channels: 1 }
 
   it('splits the effective limit back into included and bought', () => {
-    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage })
+    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage, isOwner: true })
     expect(v).toMatchObject({ includedUsers: 3, includedChannels: 3, users: 2, channels: 0, usedUsers: 4, usedChannels: 1 })
   })
 
   it('a locked price wins while extras of that kind are held; otherwise the plan price is offered', () => {
-    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage })
+    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage, isOwner: true })
     expect(v.userUnitCents).toBe(1500)
     expect(v.channelUnitCents).toBe(4000)
-    const none = buildExtrasView({ ent, offered: { userCents: null, channelCents: null }, locked: { userCents: null, channelCents: null }, usage })
+    const none = buildExtrasView({ ent, offered: { userCents: null, channelCents: null }, locked: { userCents: null, channelCents: null }, usage, isOwner: true })
     expect(none.channelUnitCents).toBeNull()
   })
 
@@ -137,14 +137,24 @@ describe('buildExtrasView', () => {
       offered: { userCents: 1500, channelCents: null },
       locked: { userCents: null, channelCents: null },
       usage,
+      isOwner: true,
     })
     expect(v.includedUsers).toBeNull()
+  })
+
+  it('carries a scheduled removal and whether the viewer may change anything', () => {
+    const base = { ent, offered: { userCents: 1500, channelCents: null }, locked: { userCents: null, channelCents: null }, usage }
+    const v = buildExtrasView({ ...base, isOwner: false, pending: { users: 1, channels: 0, effectiveDate: '2026-02-01' } })
+    expect(v.pendingRemoval).toEqual({ users: 1, channels: 0, effectiveDate: '2026-02-01' })
+    expect(v.canChange).toBe(false)
+    expect(buildExtrasView({ ...base, isOwner: true }).pendingRemoval).toBeNull()
+    expect(buildExtrasView({ ...base, isOwner: true, pending: { users: null, channels: null, effectiveDate: null } }).pendingRemoval).toBeNull()
   })
 
   it('buildOverview carries the block, or null', () => {
     const base = { configured: true, isOwner: true, catalog: [], billing: null, payments: [] }
     expect(buildOverview(base).extras).toBeNull()
-    const extras = buildExtrasView({ ent, offered: { userCents: 1, channelCents: 1 }, locked: { userCents: null, channelCents: null }, usage })
+    const extras = buildExtrasView({ ent, offered: { userCents: 1, channelCents: 1 }, locked: { userCents: null, channelCents: null }, usage, isOwner: true })
     expect(buildOverview({ ...base, extras }).extras).toEqual(extras)
   })
 })

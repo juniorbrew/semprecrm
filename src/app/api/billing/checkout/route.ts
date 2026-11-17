@@ -28,7 +28,7 @@ import {
   listSubscriptionPayments,
   type AsaasPayment,
 } from '@/lib/billing/asaas'
-import { subscriptionValueCents } from '@/lib/billing/extras'
+import { carryExtras, subscriptionValueCents } from '@/lib/billing/extras'
 import { asaasCycle, isBillingCycle, isNewPayment, periodEnd, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { PLANS, type Plan } from '@/lib/plans'
@@ -165,14 +165,25 @@ export async function POST(request: Request) {
         })
       ).id
 
-    // Extras already contracted (migration 114) stay on the account and in the
-    // new subscription's value: they keep their locked prices.
-    const value = subscriptionValueCents(monthly, cycle, {
-      users: current?.extra_users ?? 0,
-      channels: current?.extra_channels ?? 0,
-      userPriceCents: current?.extra_user_price_cents ?? null,
-      channelPriceCents: current?.extra_channel_price_cents ?? null,
-    })
+    // Extras already contracted (migration 114) stay, at their locked prices, only for the
+    // kinds the target plan can use: an unlimited limit or a plan that sells no price for the
+    // extra drops it, so nothing useless keeps being billed. A scheduled removal is cleared.
+    const def = version.definition
+    const carried = carryExtras(
+      {
+        users: current?.extra_users ?? 0,
+        channels: current?.extra_channels ?? 0,
+        userPriceCents: current?.extra_user_price_cents ?? null,
+        channelPriceCents: current?.extra_channel_price_cents ?? null,
+      },
+      {
+        maxUsers: def.limits.max_users,
+        maxChannels: def.limits.max_channels,
+        userPriceCents: def.extra_user_price_cents ?? null,
+        channelPriceCents: def.extra_channel_price_cents ?? null,
+      },
+    )
+    const value = subscriptionValueCents(monthly, cycle, carried)
     const label = plan === 'pro' ? 'Pro' : plan === 'basico' ? 'Básico' : plan
     const subscription = await createSubscription({
       customer: customerId,
@@ -194,6 +205,16 @@ export async function POST(request: Request) {
         cycle,
         value_cents: value,
         status: 'pending',
+        extra_users: carried.users,
+        extra_channels: carried.channels,
+        extra_user_price_cents: carried.userPriceCents,
+        extra_channel_price_cents: carried.channelPriceCents,
+        // The new subscription's first charge (due today) is the first one to include them.
+        extras_first_due: carried.users + carried.channels > 0 ? todayInSaoPaulo() : null,
+        pending_extra_users: null,
+        pending_extra_channels: null,
+        extras_reduce_due: null,
+        extras_asaas_lowered: false,
       }
       // Compare-and-swap against what was read: a concurrent checkout loses.
       const swap = current

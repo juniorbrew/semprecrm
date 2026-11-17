@@ -26,7 +26,7 @@ export async function GET() {
       ctx.supabase
         .from('account_billing')
         .select(
-          'plan, cycle, value_cents, status, current_period_end, asaas_subscription_id, extra_user_price_cents, extra_channel_price_cents',
+          'plan, cycle, value_cents, status, current_period_end, asaas_subscription_id, extra_user_price_cents, extra_channel_price_cents, pending_extra_users, pending_extra_channels, extras_reduce_due',
         )
         .eq('account_id', ctx.accountId)
         .maybeSingle(),
@@ -85,6 +85,12 @@ export async function GET() {
           offered: { userCents: offered?.extra_user_price_cents ?? null, channelCents: offered?.extra_channel_price_cents ?? null },
           locked: { userCents: toCents(b?.extra_user_price_cents), channelCents: toCents(b?.extra_channel_price_cents) },
           usage: { users: (members.count ?? 0) + (invites.count ?? 0), channels },
+          pending: {
+            users: toCount(b?.pending_extra_users),
+            channels: toCount(b?.pending_extra_channels),
+            effectiveDate: typeof b?.extras_reduce_due === 'string' ? b.extras_reduce_due : null,
+          },
+          isOwner: ctx.role === 'owner',
         })
       }
     }
@@ -102,6 +108,10 @@ export async function GET() {
   } catch (err) {
     return toErrorResponse(err)
   }
+}
+
+function toCount(v: unknown): number | null {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null
 }
 
 function toCents(v: unknown): number | null {

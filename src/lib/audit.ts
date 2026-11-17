@@ -53,6 +53,9 @@ export const AUDIT_ACTIONS = {
   AI_AGENTS_CHANGED: 'ai.agents_changed',
   BILLING_CHECKOUT: 'billing.checkout',
   BILLING_EXTRAS_CHANGED: 'billing.extras_changed',
+  BILLING_EXTRAS_REMOVAL_APPLIED: 'billing.extras_removal_applied',
+  BILLING_EXTRAS_REMOVAL_BLOCKED: 'billing.extras_removal_blocked',
+  BILLING_EXTRAS_MISMATCH: 'billing.extras_mismatch',
   META_CHANNEL_TAKEN_OVER: 'meta_channel.taken_over',
   META_CHANNEL_LOST: 'meta_channel.lost',
 } as const
@@ -106,6 +109,9 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'ai.knowledge_changed': 'Base de conhecimento da IA alterada',
     'ai.agents_changed': 'Agentes de IA alterados',
     'billing.extras_changed': 'Extras da assinatura alterados',
+    'billing.extras_removal_applied': 'Remoção de extras aplicada',
+    'billing.extras_removal_blocked': 'Remoção de extras cancelada (uso acima do novo limite)',
+    'billing.extras_mismatch': 'Valor da assinatura no Asaas pode estar diferente do sistema',
   },
   'en-US': {
     'member.invited': 'Member invited',
@@ -142,6 +148,9 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'ai.knowledge_changed': 'AI knowledge base changed',
     'ai.agents_changed': 'AI agents changed',
     'billing.extras_changed': 'Subscription extras changed',
+    'billing.extras_removal_applied': 'Extras removal applied',
+    'billing.extras_removal_blocked': 'Extras removal cancelled (usage above the new limit)',
+    'billing.extras_mismatch': 'Asaas subscription value may differ from the system',
   },
 }
 

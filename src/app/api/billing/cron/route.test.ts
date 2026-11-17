@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const rpc = vi.hoisted(() => vi.fn(async () => ({ data: 2, error: null as { message: string } | null })))
 vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => ({ rpc }) }))
+const sweep = vi.hoisted(() => vi.fn(async () => ({ lowered: 0, applied: 1, blocked: 0, errors: 0 })))
+vi.mock('@/lib/billing/extras-sweep', () => ({ sweepExtrasRemovals: sweep }))
 
 import { GET } from './route'
 
@@ -27,7 +29,14 @@ describe('GET /api/billing/cron', () => {
   it('runs the expiry sweep', async () => {
     const res = await GET(req('s3cret'))
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ expired: 2 })
+    expect(await res.json()).toEqual({ expired: 2, extras: { lowered: 0, applied: 1, blocked: 0, errors: 0 } })
     expect(rpc).toHaveBeenCalledWith('billing_expire_lapsed')
+  })
+
+  it('a failing extras sweep still reports the expiry', async () => {
+    sweep.mockRejectedValueOnce(new Error('boom'))
+    const res = await GET(req('s3cret'))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ expired: 2, extras: null })
   })
 })

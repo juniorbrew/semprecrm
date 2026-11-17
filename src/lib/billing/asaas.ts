@@ -67,6 +67,8 @@ export interface AsaasCustomer {
 export interface AsaasSubscription {
   id: string
   status: string
+  /** Value of each charge, in reais. */
+  value?: number
 }
 
 export interface AsaasPayment {
@@ -117,15 +119,21 @@ export function createSubscription(input: {
 }
 
 /**
- * Changes the value of the NEXT charges (extras, migration 114). `updatePendingPayments:
- * false` leaves the charges already generated untouched: no proration, the new value
- * starts at the next charge. `value` is in reais, like createSubscription.
+ * Changes the value of the subscription (extras, migration 114). `value` is in reais, like
+ * createSubscription. `updatePendingPayments` decides about the charges Asaas already
+ * generated and not yet paid: true = they follow the new value (use it when the account
+ * adds extras, or lowers them for a charge that must no longer include them); false = they
+ * stay as generated and only the charges generated later change. No proration either way.
  */
-export function updateSubscriptionValue(id: string, value: number): Promise<AsaasSubscription> {
+export function updateSubscriptionValue(id: string, value: number, updatePendingPayments: boolean): Promise<AsaasSubscription> {
   return request<AsaasSubscription>(`/subscriptions/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    body: { value, updatePendingPayments: false },
+    body: { value, updatePendingPayments },
   })
+}
+
+export function getSubscription(id: string): Promise<AsaasSubscription> {
+  return request<AsaasSubscription>(`/subscriptions/${encodeURIComponent(id)}`)
 }
 
 export function deleteSubscription(id: string): Promise<unknown> {

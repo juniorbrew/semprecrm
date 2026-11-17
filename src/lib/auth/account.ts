@@ -110,7 +110,7 @@ export class PlanLimitError extends ForbiddenError {
   constructor(
     message: string,
     /** The plan sells one more of what hit the limit (migration 114): its price, for the UI. */
-    readonly offer: { kind: 'user' | 'channel'; monthlyCents: number } | null = null
+    readonly offer: { kind: 'user' | 'channel'; monthlyCents: number; canBuy: boolean } | null = null
   ) {
     super(message, 'plan_limit_reached');
     this.name = 'PlanLimitError';

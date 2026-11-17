@@ -86,6 +86,11 @@ export async function listPlatformAccounts(
   return ((data ?? []) as PlatformAccountRow[]).map((row) => ({
     ...row,
     plan_definition: parsePlanDefinition(row.plan_definition),
+    // Contracted extras (migration 114) so every platform page resolves the REAL limit.
+    extras: {
+      users: Number(row.extra_users) || 0,
+      channels: Number(row.extra_channels) || 0,
+    },
   }));
 }
 
