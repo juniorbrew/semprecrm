@@ -46,13 +46,15 @@ SELECT (SELECT account_id FROM profiles WHERE user_id = '11400000-0000-4000-8000
 GRANT SELECT ON ctx TO anon, authenticated, service_role;
 UPDATE profiles SET account_id = (SELECT acc_a FROM ctx), account_role = 'agent' WHERE user_id = '11400000-0000-4000-8000-00000000000c';
 UPDATE profiles SET account_id = (SELECT acc_a FROM ctx), account_role = 'admin' WHERE user_id = '11400000-0000-4000-8000-00000000000e';
-UPDATE accounts SET plan = 'basico', plan_status = 'active', plan_expires_at = NULL WHERE id IN ((SELECT acc_a FROM ctx), (SELECT acc_b FROM ctx));
-UPDATE accounts a SET plan_version_id = c.current_version_id FROM platform_plan_catalog c WHERE c.plan = 'basico' AND a.id IN ((SELECT acc_a FROM ctx), (SELECT acc_b FROM ctx));
+UPDATE accounts a SET plan = 'basico', plan_status = 'active', plan_expires_at = NULL, plan_version_id = c.current_version_id
+  FROM platform_plan_catalog c WHERE c.plan = 'basico' AND a.id IN ((SELECT acc_a FROM ctx), (SELECT acc_b FROM ctx));
 
 -- ================= valid_plan_definition: optional extra prices ==========================
 CREATE TEMP TABLE def AS SELECT definition AS d FROM platform_plan_versions WHERE plan = 'pro' ORDER BY revision DESC LIMIT 1;
 SELECT pg_temp.assert_true(valid_plan_definition((SELECT d FROM def)), 'a definition without prices stays valid');
-SELECT pg_temp.assert_true(valid_plan_definition((SELECT d FROM def) || '{"extra_user_price_cents":1500,"extra_channel_price_cents":0}'), 'both prices accepted (0 is a price)');
+SELECT pg_temp.assert_true(valid_plan_definition((SELECT d FROM def) || '{"extra_user_price_cents":1500,"extra_channel_price_cents":1}'), 'both prices accepted (1 cent is the minimum)');
+SELECT pg_temp.assert_true(NOT valid_plan_definition((SELECT d FROM def) || '{"extra_user_price_cents":0}'), 'zero is not a price');
+SELECT pg_temp.assert_true(NOT valid_plan_definition((SELECT d FROM def) || '{"extra_channel_price_cents":0}'), 'zero is not a price (channels)');
 SELECT pg_temp.assert_true(valid_plan_definition((SELECT d FROM def) || '{"extra_user_price_cents":10000000}'), 'the cap itself is accepted');
 SELECT pg_temp.assert_true(NOT valid_plan_definition((SELECT d FROM def) || '{"extra_user_price_cents":10000001}'), 'over the cap');
 SELECT pg_temp.assert_true(NOT valid_plan_definition((SELECT d FROM def) || '{"extra_user_price_cents":-1}'), 'negative');
@@ -81,6 +83,10 @@ SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extra_user
 SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extra_users = 101, extra_user_price_cents = 1 WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'quantity over the cap');
 SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extra_user_price_cents = 10000001 WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'price over the cap');
 SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extra_channel_price_cents = -1 WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'negative price');
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extra_user_price_cents = 0 WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'zero price');
+-- a scheduled removal is all-or-nothing and only lowers
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_extra_users = 0 WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'half a schedule');
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extras_asaas_lowered = true WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'lowered without a schedule');
 
 -- service_role (the server) writes; the compare-and-swap UPDATE matches 1 row, then 0 when stale
 SET ROLE service_role;
@@ -126,6 +132,80 @@ SET ROLE anon;
 SELECT pg_temp.assert_fails_with($q$SELECT extra_users FROM account_billing$q$, '42501', 'anon cannot read extras');
 SELECT pg_temp.assert_fails_with($q$UPDATE account_billing SET extra_users = 1$q$, '42501', 'anon cannot write extras');
 RESET ROLE;
+
+-- ================= serialised changes: claim / commit / release ==========================
+-- (run on tenant B, whose extras were 0; the checks above are already done)
+SET ROLE service_role;
+CREATE TEMP TABLE claim AS SELECT billing_extras_claim((SELECT acc_b FROM ctx), 10) AS r;
+GRANT SELECT ON claim TO service_role;
+SELECT pg_temp.assert_true((SELECT r->>'status' = 'ok' AND (r->>'token') IS NOT NULL AND (r->'row'->>'extra_users')::int = 0 FROM claim), 'claim returns the row and a token');
+SELECT pg_temp.assert_true(billing_extras_claim((SELECT acc_b FROM ctx), 10)->>'status' = 'busy', 'a second claim finds the account claimed');
+SELECT pg_temp.assert_true(billing_extras_claim('00000000-0000-4000-8000-0000000000ff', 10)->>'status' = 'none', 'unknown account');
+-- commit with a wrong token or stale data changes nothing
+SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_b FROM ctx), gen_random_uuid(),
+  jsonb_build_object('asaas_subscription_id','sub_ext_b','value_cents',5990,'extra_users',0,'extra_channels',0,'extras_asaas_lowered',false),
+  jsonb_build_object('extra_users',1,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',7490,'extras_asaas_lowered',false),
+  NULL, 'billing.extras_changed', '{}'), 'wrong token');
+SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_b FROM ctx), ((SELECT r FROM claim)->>'token')::uuid,
+  jsonb_build_object('asaas_subscription_id','sub_ext_b','value_cents',1,'extra_users',0,'extra_channels',0,'extras_asaas_lowered',false),
+  jsonb_build_object('extra_users',1,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',7490,'extras_asaas_lowered',false),
+  NULL, 'billing.extras_changed', '{}'), 'stale value read: compare-and-swap fails');
+SELECT pg_temp.assert_fails_with(format($q$SELECT billing_extras_commit(%L, %L, '{}', '{}', NULL, 'billing.checkout', '{}')$q$, (SELECT acc_b FROM ctx), ((SELECT r FROM claim)->>'token')),
+  '22023', 'only the extras actions can be written');
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT extra_users = 0 AND value_cents = 5990 FROM account_billing WHERE account_id = (SELECT acc_b FROM ctx))
+  AND NOT EXISTS (SELECT 1 FROM audit_log WHERE account_id = (SELECT acc_b FROM ctx) AND action LIKE 'billing.extras%'), 'failed commits wrote nothing, not even an audit row');
+-- the real commit: extras and audit row together, claim cleared
+SET ROLE service_role;
+SELECT pg_temp.assert_true(billing_extras_commit((SELECT acc_b FROM ctx), ((SELECT r FROM claim)->>'token')::uuid,
+  jsonb_build_object('asaas_subscription_id','sub_ext_b','value_cents',5990,'extra_users',0,'extra_channels',0,'extras_asaas_lowered',false),
+  jsonb_build_object('extra_users',1,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',7490,'extras_first_due','2027-01-01','extras_asaas_lowered',false),
+  '11400000-0000-4000-8000-00000000000b', 'billing.extras_changed', '{"type":"add"}'), 'commit succeeds with the right token and data');
+RESET ROLE;
+SELECT pg_temp.assert_true((SELECT extra_users = 1 AND extra_user_price_cents = 1500 AND value_cents = 7490 AND extras_first_due = '2027-01-01' AND extras_claim_token IS NULL
+  FROM account_billing WHERE account_id = (SELECT acc_b FROM ctx)), 'extras saved and claim cleared');
+SELECT pg_temp.assert_eq((SELECT count(*) FROM audit_log WHERE account_id = (SELECT acc_b FROM ctx) AND action = 'billing.extras_changed'
+  AND actor_user_id = '11400000-0000-4000-8000-00000000000b' AND metadata->>'type' = 'add'), 1, 'one audit row, written with the change');
+-- a used token cannot commit again
+SET ROLE service_role;
+SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_b FROM ctx), ((SELECT r FROM claim)->>'token')::uuid,
+  jsonb_build_object('asaas_subscription_id','sub_ext_b','value_cents',7490,'extra_users',1,'extra_channels',0,'extra_user_price_cents',1500,'extras_asaas_lowered',false),
+  jsonb_build_object('extra_users',2,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',8990,'extras_asaas_lowered',false),
+  NULL, 'billing.extras_changed', '{}'), 'a used token is dead');
+-- release frees the account
+CREATE TEMP TABLE claim2 AS SELECT billing_extras_claim((SELECT acc_b FROM ctx), 10) AS r;
+GRANT SELECT ON claim2 TO service_role;
+SELECT billing_extras_release((SELECT acc_b FROM ctx), ((SELECT r FROM claim2)->>'token')::uuid);
+SELECT pg_temp.assert_true(billing_extras_claim((SELECT acc_b FROM ctx), 10)->>'status' = 'ok', 'released: claimable again');
+RESET ROLE;
+-- the daily cap counts the audit rows under the claim lock
+INSERT INTO audit_log(account_id, action, entity_type, created_at)
+  SELECT (SELECT acc_b FROM ctx), 'billing.extras_changed', 'account_billing', now() FROM generate_series(1, 9);
+UPDATE account_billing SET extras_claim_token = NULL, extras_claim_until = NULL WHERE account_id = (SELECT acc_b FROM ctx);
+SET ROLE service_role;
+SELECT pg_temp.assert_true(billing_extras_claim((SELECT acc_b FROM ctx), 10)->>'status' = 'cap', 'ten changes in 24 h: the cap');
+SELECT pg_temp.assert_true(billing_extras_claim((SELECT acc_b FROM ctx), NULL)->>'status' = 'ok', 'the system steps are not capped');
+RESET ROLE;
+-- nobody but service_role runs them
+SELECT pg_temp.assert_true(
+  NOT has_function_privilege('anon', 'public.billing_extras_claim(uuid,integer)', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.billing_extras_claim(uuid,integer)', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.billing_extras_commit(uuid,uuid,jsonb,jsonb,uuid,text,jsonb)', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.billing_extras_release(uuid,uuid)', 'EXECUTE')
+  AND has_function_privilege('service_role', 'public.billing_extras_claim(uuid,integer)', 'EXECUTE')
+  AND has_function_privilege('service_role', 'public.billing_extras_commit(uuid,uuid,jsonb,jsonb,uuid,text,jsonb)', 'EXECUTE')
+  AND has_function_privilege('service_role', 'public.billing_extras_release(uuid,uuid)', 'EXECUTE'), 'extras functions are service_role only');
+
+-- ================= platform_list_accounts carries the extras ==============================
+SELECT pg_temp.assert_true(pg_get_function_result('public.platform_list_accounts()'::regprocedure) LIKE '%extra_users integer, extra_channels integer%',
+  'platform_list_accounts returns extra_users and extra_channels');
+SELECT pg_temp.assert_true(has_function_privilege('authenticated', 'public.platform_list_accounts()', 'EXECUTE')
+  AND NOT has_function_privilege('anon', 'public.platform_list_accounts()', 'EXECUTE'), 'platform_list_accounts keeps its grants');
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '11400000-0000-4000-8000-00000000000e', true);
+SELECT pg_temp.assert_fails_with($q$SELECT * FROM platform_list_accounts()$q$, '42501', 'not callable by a non-platform admin');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', true);
 
 -- grants, spelled out
 SELECT pg_temp.assert_true(

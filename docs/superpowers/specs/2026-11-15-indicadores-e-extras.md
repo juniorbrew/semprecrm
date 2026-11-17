@@ -133,45 +133,44 @@ Página nova em **Plataforma → Uso**, visível só para o dono da plataforma (
 - Sem preço, o plano não oferece aquele extra e o limite continua bloqueando, como hoje.
 - Um preço só vale para quem contrata depois da mudança. Quem já tem extras mantém o preço que contratou, como já acontece com as versões de plano.
 
-### Para o admin da empresa (Configurações → Plano)
+### Para o dono da empresa (Configurações → Plano)
 
-- **Mostra:** o que o plano inclui, os extras contratados e o total da próxima cobrança.
-- **Botões:** "+ usuário extra" e "+ número extra", com quantidade, pedindo confirmação com o novo valor mensal.
-- **Remover um extra:** só é possível se a empresa estiver usando menos que o novo limite. Por exemplo, com 4 usuários ativos e limite de 3 + 1 extra, ela precisa tirar alguém antes.
-- **Ao bater no limite:** convidar usuário ou conectar número mostra "Contratar 1 extra por R$ X/mês" em vez de só bloquear, quando o plano oferece o extra.
+- **Quem muda:** só o **dono da conta** contrata ou remove extras (igual à assinatura). O admin vê o painel só para leitura, com "Peça ao dono da conta".
+- **Mostra:** o que o plano inclui, os extras contratados, o que está em uso e o total da próxima cobrança.
+- **Botões:** "+ usuário extra" e "+ número extra", com quantidade, pedindo confirmação com o novo valor (no anual, mostra o preço por extra por ano, 12 meses pelo preço de 10).
+- **Adicionar:** o limite sobe na hora e o extra entra na **próxima cobrança, mesmo que ela já tenha sido gerada** (sem cobrança proporcional).
+- **Remover:** só se a empresa estiver usando menos que o novo limite (usuários = membros + convites pendentes; números conectados). A remoção **não derruba o limite na hora**: o extra continua ativo até o fim do período já pago, e **todo extra é cobrado por pelo menos um período completo**. O painel mostra "remoção agendada para DD/MM" e permite **cancelar** a remoção. A cobrança seguinte à remoção não inclui o extra. Enquanto há remoção agendada, não dá para adicionar nem remover outro extra: cancele primeiro.
+- **Ao bater no limite:** convidar usuário ou conectar número mostra "Contratar 1 extra por R$ X/mês" (para o dono) em vez de só bloquear, quando o plano oferece o extra. Para quem não é dono, diz para pedir ao dono.
 
 ### Como a cobrança funciona
 
-- **Limite real** = limite do plano + extras contratados. As verificações que já existem passam a usar o limite real (`canAddUser` e `canAddChannel`, em `plans.ts`), no servidor.
-- **Valor da assinatura** = preço do plano + extras × preço de cada extra, no ciclo da assinatura. No anual, o extra é 12 × o preço mensal, com o mesmo desconto anual do plano.
-- **Ao mudar os extras:**
-  1. o sistema atualiza o valor da assinatura no Asaas;
-  2. só grava os extras depois que o Asaas confirma.
-- **Quando passa a valer:** o novo valor entra a partir da **próxima cobrança**, sem cobrança proporcional no meio do mês. O limite novo vale na hora.
+- **Limite real** = limite do plano + extras contratados (só onde o limite do plano não é ilimitado). As verificações que já existem passam a usar o limite real, no servidor; as páginas da plataforma também.
+- **Valor da assinatura** = preço do plano + extras × preço travado de cada extra, no ciclo da assinatura. No anual, o extra é 10 × o preço mensal (12 meses pelo preço de 10, igual ao plano).
+- **Adicionar:** 1) o sistema atualiza o valor da assinatura no Asaas, com `updatePendingPayments: true` (a próxima cobrança, mesmo já gerada, acompanha); 2) só grava os extras depois que o Asaas confirma.
+- **Remover (linha do tempo):** o pedido só agenda. O dia da remoção `D` é o vencimento da primeira cobrança que não inclui o extra: o fim do período já pago, mas nunca antes de um período completo cobrado do extra mais novo. Quando a cobrança anterior a `D` está paga, o cron (de hora em hora) baixa o valor no Asaas (as cobranças geradas a partir de `D` seguem o valor novo). No dia `D` o limite cai. Se nesse momento o uso não couber mais, os extras ficam, o Asaas volta ao valor cheio e a auditoria registra `billing.extras_removal_blocked`; ninguém é removido.
+  - Exemplo (mensal, pago em 01/12): em 05/12 adiciona 1 usuário (limite +1 na hora; a cobrança de 01/01 sai com o extra); em 10/12 pede para remover (agendado para 01/02); 01/01 cobrança com o extra, paga; depois disso o valor cai no Asaas; a cobrança de 01/02 sai sem o extra; em 01/02 o limite volta ao do plano.
+- **Trocar de plano ou assinar de novo:** os extras vão junto, com o preço travado, só nos tipos que o plano novo aproveita; um tipo cujo limite é ilimitado ou que o plano novo não vende some (e deixa de ser cobrado). A remoção agendada é desfeita.
 - **Situação da conta:** com a conta em teste grátis, só leitura ou bloqueada, contratar extra fica indisponível, com uma explicação.
 - **Proteções:**
-  - **Um pedido por vez:** dois cliques simultâneos não somam duas vezes. A gravação compara o valor que foi lido antes de trocar.
-  - **Limite de alterações:** há um número máximo de mudanças por dia.
-  - **Auditoria:** cada alteração fica registrada, com o valor anterior e o novo.
-  - **Falha do Asaas:** se o Asaas falhar, nada muda e o admin vê "Não foi possível alterar agora, tente de novo".
+  - **Um pedido por vez, por conta:** a conta é reservada no banco (trava + ficha) antes de falar com o Asaas; dois cliques simultâneos não somam duas vezes. A gravação compara tudo o que foi lido.
+  - **Limite de alterações:** no máximo 10 por dia, contado das linhas de auditoria sob a trava (sem falha aberta).
+  - **Auditoria:** a mudança e a linha de auditoria (valor anterior e novo) entram na mesma transação.
+  - **Asaas e banco concordam:** depois de qualquer falha, o sistema consulta o valor no Asaas (nunca restaura às cegas), corrige para o valor do banco e confere de novo; se ainda divergir, grava `billing.extras_mismatch` na auditoria.
+  - **Falha do Asaas:** nada muda e o dono vê "Não foi possível alterar agora, tente de novo".
 
 ### Banco (migration `114_plan_extras.sql`)
 
-- **Preços dos extras:** o JSON das versões de plano ganha `extra_user_price_cents` e `extra_channel_price_cents`, com a validação no mesmo lugar das outras chaves.
-- **`account_billing`:** ganha as colunas `extra_users`, `extra_channels`, `extra_user_price_cents` e `extra_channel_price_cents`.
-  - As duas últimas guardam o preço travado no momento da contratação.
-- **Gravação:** só o servidor grava, pelo service_role. O admin lê os próprios dados.
-- **Limite real:** a regra de entitlements no banco (094/099) soma os extras, e a contagem de usuários e canais no banco usa o limite real.
-- Rollback e teste SQL.
+- **Preços dos extras:** o JSON das versões de plano ganha `extra_user_price_cents` e `extra_channel_price_cents` (opcionais, de 1 centavo a R$ 100.000,00), com a validação no mesmo lugar das outras chaves.
+- **`account_billing`:** ganha `extra_users`, `extra_channels`, os preços travados, `extras_first_due`, a remoção agendada (`pending_extra_*`, `extras_reduce_due`, `extras_asaas_lowered`) e a ficha da conta (`extras_claim_*`).
+- **Gravação:** só o servidor grava, por três funções fechadas ao service_role (reservar, gravar e liberar). O dono/admin lê os próprios dados.
+- **Limite real:** o banco não tem gatilho de limite de usuários/canais; o limite real vale no servidor. `platform_list_accounts()` devolve os extras para as páginas da plataforma.
+- Idempotente, com rollback (que explica quando não é seguro voltar) e teste SQL.
 
 ### Testes da parte C
 
-- **Vitest:**
-  - o cálculo do valor (mensal, anual, sem extras, preço travado);
-  - a rota de alterar extras: só admin, conta ativa, Asaas fora do ar não muda nada, dois pedidos simultâneos, remover abaixo do uso, limite diário, auditoria;
-  - o convite e a conexão de número usando o limite real.
-- **SQL:** o limite real no banco, e o agente não altera extras.
-- **Asaas:** contra um servidor falso local; nenhuma chamada real.
+- **Vitest:** o cálculo do valor e das datas (mensal, anual, preço travado, remoção agendada); a rota (só o dono, conta ativa, Asaas fora do ar, conferência do Asaas, dois pedidos simultâneos, remover abaixo do uso, limite diário, auditoria); o sweep da remoção; o convite e a conexão de número com o limite real; assinar de novo com extras.
+- **SQL:** preços do plano, restrições, reserva/gravação/liberação, teto diário, auditoria na mesma transação, o agente não altera extras.
+- **Asaas:** só falso/simulado; nenhuma chamada real.
 - **Navegador:** Configurações → Plano e o aviso ao bater no limite, no computador e no iPhone.
 - **Revisão de segurança (Opus):** é obrigatória, porque esta parte envolve dinheiro.
 
