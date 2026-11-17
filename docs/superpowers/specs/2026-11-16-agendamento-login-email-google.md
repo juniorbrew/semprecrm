@@ -10,7 +10,7 @@ Continua a parte 1 (PR #142, migration 113).
 ## Regra de segurança (o que muda e o que não muda)
 - **WhatsApp (como hoje):** prova o celular → a sessão é do **contato** → "Meus horários" mostra os horários do contato.
 - **E-mail/Google:** prova só o e-mail/conta → a sessão é da **identidade** (e-mail ou conta Google) → "Meus horários" mostra **só os horários marcados por essa identidade**. Nunca abre os horários de um contato existente só porque o celular digitado bate.
-- O horário é registrado no contato do celular digitado (acha pelo número exato, com a variante do 9º dígito; senão cria). Na agenda do CRM aparece a nota "Agendado pelo link — celular não confirmado (entrou com Google: x@y)".
+- O horário é registrado no contato do celular digitado (acha pelo número exato, com a variante do 9º dígito; senão cria). Na agenda do CRM aparece a nota "Agendado pelo link (entrou com Google) — celular não confirmado"; o nome mostrado é o que a pessoa digitou (pedido do dono: nome, não e-mail).
 - Limites: o limite de horários futuros vale para a identidade **e** para o contato (a trava do banco da 113 continua).
 - Risco aceito (igual a qualquer formulário de agendamento): alguém pode digitar o celular de outra pessoa; ela receberá os lembretes daquele horário. Fica visível para a empresa pela nota.
 

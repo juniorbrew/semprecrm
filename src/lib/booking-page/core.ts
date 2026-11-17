@@ -119,6 +119,39 @@ export function whatsappCodeLink(number: string | null | undefined, code: string
 }
 
 // ------------------------------------------------------------
+// E-mail code (115)
+// ------------------------------------------------------------
+
+export const EMAIL_CODE_TTL_MS = 10 * 60_000
+export const EMAIL_CODE_MAX_ATTEMPTS = 5
+export const EMAIL_COOKIE = 'sc_agendar_email'
+
+/** Lowercased, trimmed e-mail, or null when it does not look like one. */
+export function normalizeEmail(input: unknown): string | null {
+  if (typeof input !== 'string') return null
+  const e = input.trim().toLowerCase()
+  if (e.length < 3 || e.length > 254) return null
+  return /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[a-z]{2,}$/.test(e) ? e : null
+}
+
+function codeKey(secret: string | undefined = process.env.ENCRYPTION_KEY): Buffer {
+  const hex = (secret ?? '').trim()
+  if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('ENCRYPTION_KEY must be 64 hex chars to hash booking codes')
+  return createHmac('sha256', Buffer.from(hex, 'hex')).update('booking-email-code:v1').digest()
+}
+
+/** HMAC of a 6-digit code (a plain hash of 1,000,000 values would be trivial to reverse). */
+export function hashEmailCode(email: string, code: string, secret?: string): string {
+  return createHmac('sha256', codeKey(secret)).update(`${email}:${code}`).digest('hex')
+}
+
+export function sameHash(a: string, b: string): boolean {
+  const x = Buffer.from(a, 'utf8')
+  const y = Buffer.from(b, 'utf8')
+  return x.length === y.length && timingSafeEqual(x, y)
+}
+
+// ------------------------------------------------------------
 // Session cookie
 // ------------------------------------------------------------
 
@@ -126,10 +159,16 @@ export const SESSION_MAX_AGE_S = 30 * 24 * 3600
 export const SESSION_COOKIE = 'sc_agendar'
 export const CHECK_COOKIE = 'sc_agendar_check'
 
+/**
+ * Exactly one of the two:
+ *   contactId   the phone was confirmed on WhatsApp: the session sees that contact's appointments
+ *   identityId  entered with e-mail / Google (115): sees only what this identity booked
+ */
 export interface BookingSession {
   accountId: string
   pageId: string
-  contactId: string
+  contactId: string | null
+  identityId: string | null
   issuedAt: number
 }
 
@@ -141,8 +180,12 @@ function sessionKey(secret: string | undefined = process.env.ENCRYPTION_KEY): Bu
 
 const sign = (payload: string, secret?: string) => createHmac('sha256', sessionKey(secret)).update(payload).digest('hex')
 
-export function signSession(s: Omit<BookingSession, 'issuedAt'> & { issuedAt?: number }, secret?: string): string {
-  const body = { a: s.accountId, p: s.pageId, c: s.contactId, t: s.issuedAt ?? Date.now() }
+export function signSession(
+  s: { accountId: string; pageId: string; issuedAt?: number } & ({ contactId: string } | { identityId: string }),
+  secret?: string,
+): string {
+  const who = 'contactId' in s ? { c: s.contactId } : { i: s.identityId }
+  const body = { a: s.accountId, p: s.pageId, ...who, t: s.issuedAt ?? Date.now() }
   const payload = Buffer.from(JSON.stringify(body), 'utf8').toString('base64url')
   return `${payload}.${sign(payload, secret)}`
 }
@@ -168,18 +211,20 @@ export function verifySession(
   const a = Buffer.from(sig, 'utf8')
   const b = Buffer.from(expected, 'utf8')
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null
-  let body: { a?: unknown; p?: unknown; c?: unknown; t?: unknown }
+  let body: { a?: unknown; p?: unknown; c?: unknown; i?: unknown; t?: unknown }
   try {
     body = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
   } catch {
     return null
   }
-  if (typeof body.a !== 'string' || typeof body.p !== 'string' || typeof body.c !== 'string' || typeof body.t !== 'number') return null
-  if (!UUID_RE.test(body.c)) return null
+  if (typeof body.a !== 'string' || typeof body.p !== 'string' || typeof body.t !== 'number') return null
+  const contact = typeof body.c === 'string' && UUID_RE.test(body.c) ? body.c : null
+  const identity = typeof body.i === 'string' && UUID_RE.test(body.i) ? body.i : null
+  if (!contact === !identity || (body.c !== undefined && !contact) || (body.i !== undefined && !identity)) return null
   if (body.a !== opts.accountId || body.p !== opts.pageId) return null
   const now = opts.now ?? Date.now()
   if (body.t > now + 60_000 || now - body.t > SESSION_MAX_AGE_S * 1000) return null
-  return { accountId: body.a, pageId: body.p, contactId: body.c, issuedAt: body.t }
+  return { accountId: body.a, pageId: body.p, contactId: contact, identityId: identity, issuedAt: body.t }
 }
 
 // ------------------------------------------------------------

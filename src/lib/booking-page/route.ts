@@ -55,7 +55,7 @@ export function cookiePath(slug: string): string {
   return `/api/agendar/${slug}`
 }
 
-const secure = () => (process.env.NEXT_PUBLIC_SITE_URL ?? '').startsWith('https://')
+export const secure = () => (process.env.NEXT_PUBLIC_SITE_URL ?? '').startsWith('https://')
 
 export function setSessionCookie(res: NextResponse, slug: string, token: string): void {
   res.cookies.set(SESSION_COOKIE, token, {
@@ -71,8 +71,8 @@ export function clearCookie(res: NextResponse, slug: string, name: string): void
   res.cookies.set(name, '', { httpOnly: true, sameSite: 'lax', secure: secure(), path: cookiePath(slug), maxAge: 0 })
 }
 
-export function setCheckCookie(res: NextResponse, slug: string, secret: string): void {
-  res.cookies.set(CHECK_COOKIE, secret, {
+export function setCheckCookie(res: NextResponse, slug: string, secret: string, name: string = CHECK_COOKIE): void {
+  res.cookies.set(name, secret, {
     httpOnly: true,
     sameSite: 'lax',
     secure: secure(),
@@ -81,7 +81,7 @@ export function setCheckCookie(res: NextResponse, slug: string, secret: string):
   })
 }
 
-/** Signature only (no DB): the routes that act on data re-check the contact with usableContact. */
+/** Signature only (no DB): the routes that act on data re-check it with usableSession. */
 export function sessionOf(request: NextRequest, page: BookingPageRow): BookingSession | null {
   return verifySession(request.cookies.get(SESSION_COOKIE)?.value, { pageId: page.id, accountId: page.account_id })
 }

@@ -30,11 +30,19 @@ import {
 import type { Slot } from '@/lib/agenda/types'
 import { shiftDate, todayIn } from '@/lib/agenda/ui'
 import { parseBranding } from '@/lib/branding'
+import { isMailConfigured, sendMail } from '@/lib/mail/smtp'
+
+import { googleConfigured } from './google'
+import { findSuppressedPhones } from '@/lib/lgpd/suppression'
 import { accountHasModule, accountIsWritable } from '@/lib/plans-server'
 import type { CalendarEvent } from '@/types'
 
 import {
   canClientChange,
+  EMAIL_CODE_MAX_ATTEMPTS,
+  EMAIL_CODE_TTL_MS,
+  hashEmailCode,
+  sameHash,
   CHECK_TTL_MS,
   cleanName,
   filterSlots,
@@ -127,6 +135,8 @@ export interface PublicPage {
   state: PageState
   services: PublicService[]
   resources: PublicResource[]
+  /** Ways to sign in besides WhatsApp: shown only when the server can do them (SMTP / Google client). */
+  login: { email: boolean; google: boolean }
   /** max_days_ahead: the stricter of the page and the agenda (the week arrows stop there). */
   rules: { allow_cancel: boolean; allow_reschedule: boolean; change_limit_hours: number; max_days_ahead: number }
 }
@@ -167,6 +177,7 @@ export async function loadPublicPage(db: SupabaseClient, page: BookingPageRow, s
     resources: config.resources
       .filter((r) => offered.has(r.id))
       .map((r) => ({ id: r.id, name: r.name, color: r.color })),
+    login: { email: isMailConfigured(), google: googleConfigured() },
     rules: {
       allow_cancel: page.allow_cancel,
       allow_reschedule: page.allow_reschedule,
@@ -285,16 +296,50 @@ export async function readPhoneCheck(
 }
 
 // ------------------------------------------------------------
-// Contact + bookings of the session
+// Session: a confirmed contact (WhatsApp) or an identity (e-mail / Google, 115)
 // ------------------------------------------------------------
 
+interface IdentityRow {
+  id: string
+  kind: 'email' | 'google'
+  email: string | null
+  name: string | null
+  contact_id: string | null
+  revoked_before: string | null
+}
+
+async function loadIdentity(db: SupabaseClient, session: BookingSession): Promise<IdentityRow | null> {
+  if (!session.identityId) return null
+  const res = await db
+    .from('booking_identities')
+    .select('id, kind, email, name, contact_id, revoked_before')
+    .eq('account_id', session.accountId)
+    .eq('id', session.identityId)
+    .maybeSingle()
+  if (res.error) throw new Error(`identity read failed: ${res.error.code ?? 'unknown'}`)
+  const row = res.data as IdentityRow | null
+  if (!row) return null
+  if (row.revoked_before && session.issuedAt <= Date.parse(row.revoked_before)) return null
+  return row
+}
+
+async function contactUsable(db: SupabaseClient, accountId: string, contactId: string): Promise<boolean> {
+  const res = await db.from('contacts').select('id, anonymized_at').eq('account_id', accountId).eq('id', contactId).maybeSingle()
+  if (res.error) throw new Error(`contact read failed: ${res.error.code ?? 'unknown'}`)
+  const c = res.data as { anonymized_at: string | null } | null
+  return !!c && !c.anonymized_at
+}
+
 /**
- * The session's contact still exists, is not anonymised, and the session was
- * issued after the contact's last "sair de todos os aparelhos" (113).
+ * The session still works: its contact exists, is not anonymised and was not
+ * signed out of every device after the session was issued (113); or its
+ * identity exists and was not signed out (115).
  */
-export async function usableContact(db: SupabaseClient, session: BookingSession): Promise<boolean> {
-  const [res, revoked] = await Promise.all([
-    db.from('contacts').select('id, anonymized_at').eq('account_id', session.accountId).eq('id', session.contactId).maybeSingle(),
+export async function usableSession(db: SupabaseClient, session: BookingSession): Promise<boolean> {
+  if (session.identityId) return !!(await loadIdentity(db, session))
+  if (!session.contactId) return false
+  const [ok, revoked] = await Promise.all([
+    contactUsable(db, session.accountId, session.contactId),
     db
       .from('booking_session_revocations')
       .select('revoked_before')
@@ -302,24 +347,124 @@ export async function usableContact(db: SupabaseClient, session: BookingSession)
       .eq('contact_id', session.contactId)
       .maybeSingle(),
   ])
-  if (res.error || revoked.error) throw new Error(`contact read failed: ${(res.error ?? revoked.error)?.code ?? 'unknown'}`)
-  const c = res.data as { anonymized_at: string | null } | null
-  if (!c || c.anonymized_at) return false
+  if (revoked.error) throw new Error(`revocation read failed: ${revoked.error.code ?? 'unknown'}`)
   const before = (revoked.data as { revoked_before?: string } | null)?.revoked_before
-  return !before || session.issuedAt > Date.parse(before)
+  return ok && (!before || session.issuedAt > Date.parse(before))
 }
 
-/** Ends every session of this contact on this account (every device). */
+export interface SessionInfo {
+  kind: 'whatsapp' | 'email' | 'google'
+  /** E-mail / Google identity that has not given a phone yet: the next booking asks for it. */
+  needs_phone: boolean
+  /** The name the customer gave (or Google's), to prefill the form. */
+  name: string | null
+}
+
+export async function sessionInfo(db: SupabaseClient, session: BookingSession | null): Promise<SessionInfo | null> {
+  if (!session) return null
+  if (session.identityId) {
+    const identity = await loadIdentity(db, session)
+    if (!identity) return null
+    const hasContact = !!identity.contact_id && (await contactUsable(db, session.accountId, identity.contact_id))
+    return { kind: identity.kind, needs_phone: !hasContact, name: identity.name }
+  }
+  return (await usableSession(db, session)) ? { kind: 'whatsapp', needs_phone: false, name: null } : null
+}
+
+/** Ends every session of this contact / identity on this account (every device). */
 export async function revokeSessions(db: SupabaseClient, session: BookingSession, now: Date = new Date()): Promise<void> {
-  const res = await db
-    .from('booking_session_revocations')
-    .upsert({ account_id: session.accountId, contact_id: session.contactId, revoked_before: now.toISOString() })
+  const res = session.identityId
+    ? await db
+        .from('booking_identities')
+        .update({ revoked_before: now.toISOString() })
+        .eq('account_id', session.accountId)
+        .eq('id', session.identityId)
+    : await db
+        .from('booking_session_revocations')
+        .upsert({ account_id: session.accountId, contact_id: session.contactId, revoked_before: now.toISOString() })
   if (res.error) throw new Error(`revoke failed: ${res.error.code ?? 'unknown'}`)
+}
+
+/** Creates or updates the identity of an e-mail / Google login; returns its id. */
+export async function upsertIdentity(
+  db: SupabaseClient,
+  input: { accountId: string; kind: 'email' | 'google'; subject: string; email: string | null; name: string | null },
+): Promise<string> {
+  const row: Record<string, unknown> = { account_id: input.accountId, kind: input.kind, subject: input.subject, email: input.email }
+  if (input.name) row.name = cleanName(input.name) || null
+  const res = await db.from('booking_identities').upsert(row, { onConflict: 'account_id,kind,subject' }).select('id').single()
+  if (res.error || !res.data) throw new Error(`identity upsert failed: ${res.error?.code ?? 'unknown'}`)
+  return (res.data as { id: string }).id
+}
+
+/** Same mobile with and without the Brazilian 9th digit (exact match otherwise). */
+function phoneForms(phone: string): string[] {
+  if (phone.startsWith('55') && phone.length === 13 && phone[4] === '9') return [phone, phone.slice(0, 4) + phone.slice(5)]
+  if (phone.startsWith('55') && phone.length === 12) return [phone, phone.slice(0, 4) + '9' + phone.slice(4)]
+  return [phone]
+}
+
+/**
+ * The contact of a phone an e-mail / Google customer TYPED (not confirmed):
+ * exact number only, and an existing contact is never renamed or changed —
+ * typing someone's number must not touch their record. Null when that number
+ * belongs to an anonymised contact.
+ */
+async function contactForTypedPhone(db: SupabaseClient, accountId: string, phone: string, name: string): Promise<string | null> {
+  const forms = phoneForms(phone)
+  const found = await db.from('contacts').select('id, anonymized_at').eq('account_id', accountId).in('phone_normalized', forms).limit(1)
+  if (found.error) throw new Error(`contact read failed: ${found.error.code ?? 'unknown'}`)
+  const hit = (found.data ?? [])[0] as { id: string; anonymized_at: string | null } | undefined
+  if (hit) return hit.anonymized_at ? null : hit.id
+
+  const account = await db.from('accounts').select('owner_user_id').eq('id', accountId).maybeSingle()
+  const owner = (account.data as { owner_user_id?: string } | null)?.owner_user_id
+  if (!owner) throw new Error('account owner not found')
+  let suppressed = false
+  try {
+    suppressed = (await findSuppressedPhones(db, accountId, [phone])).size > 0
+  } catch {
+    suppressed = false
+  }
+  const ins = await db
+    .from('contacts')
+    .insert({ account_id: accountId, user_id: owner, phone, name, ...(suppressed ? { opted_out_at: new Date().toISOString() } : {}) })
+    .select('id')
+    .single()
+  if (!ins.error) return (ins.data as { id: string }).id
+  if (ins.error.code === '23505') return contactForTypedPhone(db, accountId, phone, name)
+  throw new Error(`contact insert failed: ${ins.error.code ?? 'unknown'}`)
 }
 
 /** L3: the customer sees / changes only appointments of what this page offers (not every staff booking). */
 function offeredEvent(page: BookingPageRow, e: Pick<CalendarEvent, 'service_id' | 'resource_id'>): boolean {
   return !!e.service_id && serviceOffered(page, e.service_id) && (!e.resource_id || resourceOffered(page, e.resource_id))
+}
+
+/** Upcoming open appointments this session may see: its contact's, or only those its identity booked. */
+async function sessionUpcoming(db: SupabaseClient, page: BookingPageRow, session: BookingSession, now: Date): Promise<CalendarEvent[]> {
+  if (session.contactId) return listUpcomingForContact(db, { accountId: page.account_id, contactId: session.contactId, now, limit: 20 })
+  const links = await db
+    .from('booking_identity_events')
+    .select('event_id')
+    .eq('account_id', page.account_id)
+    .eq('identity_id', session.identityId as string)
+    .limit(200)
+  if (links.error) throw new Error(`identity events read failed: ${links.error.code ?? 'unknown'}`)
+  const ids = (links.data ?? []).map((l) => (l as { event_id: string }).event_id)
+  if (!ids.length) return []
+  const res = await db
+    .from('calendar_events')
+    .select('*')
+    .eq('account_id', page.account_id)
+    .in('id', ids)
+    .not('service_id', 'is', null)
+    .in('status', ['scheduled', 'confirmed'])
+    .gte('ends_at', now.toISOString())
+    .order('starts_at')
+    .limit(20)
+  if (res.error) throw new Error(`identity events read failed: ${res.error.code ?? 'unknown'}`)
+  return (res.data ?? []) as CalendarEvent[]
 }
 
 export interface MyAppointment {
@@ -341,11 +486,8 @@ export async function listMine(
   session: BookingSession,
   now: Date = new Date(),
 ): Promise<MyAppointment[]> {
-  if (!(await usableContact(db, session))) return []
-  const [events, config] = await Promise.all([
-    listUpcomingForContact(db, { accountId: page.account_id, contactId: session.contactId, now, limit: 20 }),
-    loadConfig(db, page.account_id),
-  ])
+  if (!(await usableSession(db, session))) return []
+  const [events, config] = await Promise.all([sessionUpcoming(db, page, session, now), loadConfig(db, page.account_id)])
   return events
     .filter((e) => offeredEvent(page, e))
     .map((e) => ({
@@ -364,7 +506,7 @@ export async function listMine(
 
 export type BookResult =
   | { ok: true; appointment: CalendarEvent }
-  | { ok: false; reason: 'limit' | 'contact' | 'unavailable'; message: string; alternatives: Slot[] }
+  | { ok: false; reason: 'limit' | 'contact' | 'unavailable' | 'needs_phone'; message: string; alternatives: Slot[] }
 
 /** The next free slots of the same service / professional, for a "this one was taken" answer. */
 async function alternativesFor(
@@ -387,7 +529,7 @@ async function alternativesFor(
 
 const RETRY_NEXT = new Set(['slot_taken', 'busy', 'resource_unavailable', 'outside_hours', 'service_not_offered'])
 
-/** booking_client_book refused: the contact reached the page's limit (AG012). */
+/** booking_client_book refused: the contact or identity reached the page's limit (AG012). */
 class ClientLimitError extends Error {}
 
 function limitResult(count: number): BookResult {
@@ -399,17 +541,56 @@ function limitResult(count: number): BookResult {
   }
 }
 
+const CONTACT_FAIL: BookResult = {
+  ok: false,
+  reason: 'contact',
+  message: 'Não foi possível agendar para este celular. Fale com a empresa.',
+  alternatives: [],
+}
+
 export async function bookForClient(
   db: SupabaseClient,
   page: BookingPageRow,
   session: BookingSession,
-  input: { serviceId: string; resourceId: string | null; startsAt: string; idempotencyKey: string; now?: Date },
+  input: {
+    serviceId: string
+    resourceId: string | null
+    startsAt: string
+    idempotencyKey: string
+    /** E-mail / Google customers without a phone yet: name + typed phone (not confirmed). */
+    details?: { name: string; phone: string } | null
+    now?: Date
+  },
 ): Promise<BookResult> {
   const now = input.now ?? new Date()
   if (!serviceOffered(page, input.serviceId)) throw new AgendaError('not_found', 'Serviço não encontrado.')
   if (input.resourceId && !resourceOffered(page, input.resourceId)) throw new AgendaError('not_found', 'Profissional não encontrado.')
-  if (!(await usableContact(db, session))) {
-    return { ok: false, reason: 'contact', message: 'Não foi possível agendar para este celular. Fale com a empresa.', alternatives: [] }
+
+  // Who the appointment is for.
+  let contactId: string
+  let identity: IdentityRow | null = null
+  if (session.identityId) {
+    identity = await loadIdentity(db, session)
+    if (!identity) return CONTACT_FAIL
+    if (identity.contact_id && (await contactUsable(db, page.account_id, identity.contact_id))) {
+      contactId = identity.contact_id
+    } else {
+      if (!input.details) {
+        return { ok: false, reason: 'needs_phone', message: 'Informe seu nome e celular para os lembretes.', alternatives: [] }
+      }
+      const found = await contactForTypedPhone(db, page.account_id, input.details.phone, input.details.name)
+      if (!found) return CONTACT_FAIL
+      contactId = found
+      const upd = await db
+        .from('booking_identities')
+        .update({ contact_id: contactId, name: input.details.name })
+        .eq('account_id', page.account_id)
+        .eq('id', identity.id)
+      if (upd.error) throw new Error(`identity update failed: ${upd.error.code ?? 'unknown'}`)
+    }
+  } else {
+    if (!session.contactId || !(await usableSession(db, session))) return CONTACT_FAIL
+    contactId = session.contactId
   }
 
   // The same key returns the same appointment (double tap, retry after a timeout).
@@ -418,12 +599,12 @@ export async function bookForClient(
   // Needed here (not only inside bookAppointment) so a retry after the limit is reached still gets its booking.
   if (prior.data) {
     const p = prior.data as CalendarEvent
-    if (p.contact_id !== session.contactId) throw new AgendaError('idempotency_conflict')
+    if (p.contact_id !== contactId) throw new AgendaError('idempotency_conflict')
     if (p.status === 'scheduled' || p.status === 'confirmed') return { ok: true, appointment: p }
     throw new AgendaError('idempotency_conflict', 'Esse agendamento foi cancelado. Escolha o horário de novo.')
   }
 
-  const upcoming = await listUpcomingForContact(db, { accountId: page.account_id, contactId: session.contactId, now, limit: 11 })
+  const upcoming = await sessionUpcoming(db, page, session, now)
   if (upcoming.length >= page.max_future_per_contact) return limitResult(upcoming.length)
 
   const unavailable = async (message: string): Promise<BookResult> => ({
@@ -443,8 +624,13 @@ export async function bookForClient(
     candidates = resourcesForService(config, input.serviceId).filter((r) => resourceOffered(page, r.id)).map((r) => r.id)
   }
 
-  // The count above is the friendly early answer; the guarantee is booking_client_book (113),
-  // which locks the contact and counts again in the booking's own transaction.
+  // Staff see who booked and that the phone was not confirmed (the name, never the e-mail).
+  const notes = identity
+    ? `Agendado pelo link (entrou com ${identity.kind === 'google' ? 'Google' : 'e-mail'}) — celular não confirmado.`
+    : null
+
+  // The count above is the friendly early answer; the guarantee is booking_client_book (113/115),
+  // which locks the contact (and the identity) and counts again in the booking's own transaction.
   const writer: RpcWriter = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       if (fn !== 'agenda_book_appointment') return db.rpc(fn, args)
@@ -456,6 +642,8 @@ export async function bookForClient(
         p_starts_at: args.p_starts_at,
         p_max_future: page.max_future_per_contact,
         p_idempotency_key: args.p_idempotency_key,
+        p_identity_id: identity?.id ?? null,
+        p_notes: notes,
       })
       if (res.error?.code === 'AG012') throw new ClientLimitError()
       return res
@@ -472,7 +660,7 @@ export async function bookForClient(
           actorId: null,
           serviceId: input.serviceId,
           resourceId,
-          contactId: session.contactId,
+          contactId,
           startsAt: input.startsAt,
           source: 'client',
           idempotencyKey: key,
@@ -496,12 +684,24 @@ export async function bookForClient(
 /** The session's own open appointment on this page's account, or a not_found error. */
 async function ownAppointment(db: SupabaseClient, page: BookingPageRow, session: BookingSession, eventId: string): Promise<CalendarEvent> {
   const ev = await getAppointment(db, page.account_id, eventId)
+  let mine = false
+  if (ev && session.contactId) mine = ev.contact_id === session.contactId
+  if (ev && session.identityId) {
+    const link = await db
+      .from('booking_identity_events')
+      .select('event_id')
+      .eq('account_id', page.account_id)
+      .eq('identity_id', session.identityId)
+      .eq('event_id', ev.id)
+      .maybeSingle()
+    mine = !!link.data
+  }
   if (
     !ev ||
-    ev.contact_id !== session.contactId ||
+    !mine ||
     (ev.status !== 'scheduled' && ev.status !== 'confirmed') ||
     !offeredEvent(page, ev) ||
-    !(await usableContact(db, session))
+    !(await usableSession(db, session))
   ) {
     throw new AgendaError('not_found', 'Agendamento não encontrado.')
   }
@@ -555,4 +755,91 @@ export async function rescheduleForClient(
     }
     throw err
   }
+}
+
+// ------------------------------------------------------------
+// E-mail code (115): we send a 6-digit code; the device that asked types it
+// ------------------------------------------------------------
+
+/** Codes one e-mail may have open on one page (each send is an e-mail out). */
+export const MAX_OPEN_EMAIL_CODES = 3
+
+export type StartEmailResult = { ok: true } | { ok: false; reason: 'too_many' | 'mail_off' | 'send_failed' }
+
+export async function startEmailCode(
+  db: SupabaseClient,
+  page: BookingPageRow,
+  input: { email: string; browserSecret: string; businessName: string; now?: Date },
+): Promise<StartEmailResult> {
+  if (!isMailConfigured()) return { ok: false, reason: 'mail_off' }
+  const now = input.now ?? new Date()
+  await db.from('booking_email_codes').delete().lt('expires_at', now.toISOString())
+  const open = await db
+    .from('booking_email_codes')
+    .select('id', { count: 'exact', head: true })
+    .eq('page_id', page.id)
+    .eq('email', input.email)
+  if (open.error) throw new Error(`email code read failed: ${open.error.code ?? 'unknown'}`)
+  if ((open.count ?? 0) >= MAX_OPEN_EMAIL_CODES) return { ok: false, reason: 'too_many' }
+
+  const code = generateCode()
+  const ins = await db
+    .from('booking_email_codes')
+    .insert({
+      account_id: page.account_id,
+      page_id: page.id,
+      email: input.email,
+      code_hash: hashEmailCode(input.email, code),
+      browser_hash: hashSecret(input.browserSecret),
+      expires_at: new Date(now.getTime() + EMAIL_CODE_TTL_MS).toISOString(),
+    })
+    .select('id')
+    .single()
+  if (ins.error) throw new Error(`email code insert failed: ${ins.error.code ?? 'unknown'}`)
+  const name = input.businessName.replace(/[\r\n]+/g, ' ').slice(0, 80)
+  const sent = await sendMail({
+    to: input.email,
+    subject: `Seu código para agendar em ${name}`,
+    text:
+      `Seu código para entrar na página de agendamento de ${name} é: ${code}\n\n` +
+      'Ele vale por 10 minutos. Se não foi você quem pediu, ignore este e-mail.',
+  })
+  if (!sent) {
+    await db.from('booking_email_codes').delete().eq('id', (ins.data as { id: string }).id)
+    return { ok: false, reason: 'send_failed' }
+  }
+  return { ok: true }
+}
+
+export type VerifyEmailResult = { ok: true; identityId: string } | { ok: false; reason: 'wrong' | 'expired' }
+
+export async function verifyEmailCode(
+  db: SupabaseClient,
+  page: BookingPageRow,
+  input: { browserSecret: string; code: string; now?: Date },
+): Promise<VerifyEmailResult> {
+  const now = input.now ?? new Date()
+  const res = await db
+    .from('booking_email_codes')
+    .select('id, email, code_hash, attempts, expires_at')
+    .eq('page_id', page.id)
+    .eq('browser_hash', hashSecret(input.browserSecret))
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (res.error) throw new Error(`email code read failed: ${res.error.code ?? 'unknown'}`)
+  const row = res.data as { id: string; email: string; code_hash: string; attempts: number; expires_at: string } | null
+  if (!row || Date.parse(row.expires_at) <= now.getTime() || row.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
+    if (row) await db.from('booking_email_codes').delete().eq('id', row.id)
+    return { ok: false, reason: 'expired' }
+  }
+  if (!/^\d{6}$/.test(input.code) || !sameHash(row.code_hash, hashEmailCode(row.email, input.code))) {
+    await db.from('booking_email_codes').update({ attempts: row.attempts + 1 }).eq('id', row.id)
+    return { ok: false, reason: row.attempts + 1 >= EMAIL_CODE_MAX_ATTEMPTS ? 'expired' : 'wrong' }
+  }
+  // Single use: only the request that deletes the row signs in.
+  const del = await db.from('booking_email_codes').delete().eq('id', row.id).select('id')
+  if (del.error || !(del.data ?? []).length) return { ok: false, reason: 'expired' }
+  const identityId = await upsertIdentity(db, { accountId: page.account_id, kind: 'email', subject: row.email, email: row.email, name: null })
+  return { ok: true, identityId }
 }
