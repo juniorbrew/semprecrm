@@ -40,7 +40,9 @@ const extraPricesInput = (v: PlanVersion) => ({
 const parseExtraPrice = (raw: string): number | undefined | null => {
   if (raw.trim() === '') return undefined;
   const cents = parseBrazilianPrice(raw);
-  return cents !== null && cents <= MAX_EXTRA_PRICE_CENTS ? cents : null;
+  return cents !== null && cents >= 1 && cents <= MAX_EXTRA_PRICE_CENTS
+    ? cents
+    : null;
 };
 const limitsInput = (v: PlanVersion) => ({
   max_users:

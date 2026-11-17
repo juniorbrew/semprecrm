@@ -71,6 +71,16 @@ export function PlanVersionHistoryList({ plan }: { plan: Plan }) {
               {t('channels')}
             </p>
             <p>
+              {t('Extra user price')}:{' '}
+              {v.definition.extra_user_price_cents === undefined
+                ? t('Not offered by the plan')
+                : formatPlanPrice(v.definition.extra_user_price_cents)}{' '}
+              · {t('Extra number price')}:{' '}
+              {v.definition.extra_channel_price_cents === undefined
+                ? t('Not offered by the plan')
+                : formatPlanPrice(v.definition.extra_channel_price_cents)}
+            </p>
+            <p>
               {v.definition.modules
                 .map((m) => t(MODULE_LABELS[m]))
                 .join(', ') || t('No optional modules')}
