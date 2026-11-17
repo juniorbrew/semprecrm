@@ -5,7 +5,7 @@ vi.mock('@/lib/audit-server', () => ({ audit: vi.fn() }));
 vi.mock('@/lib/plan-catalog-server', () => ({ loadCurrentPlanCatalog: vi.fn() }));
 vi.mock('@/lib/billing/asaas', () => ({ asaasConfigured: () => true, AsaasError: class extends Error {} }));
 
-import { CHECKOUT_ERRORS } from '@/app/api/billing/checkout/route';
+import { CHECKOUT_ERRORS } from '@/lib/billing/checkout-errors';
 import { paymentStatusKey } from '@/lib/billing/overview';
 import { translateLiteral } from '@/lib/i18n';
 
