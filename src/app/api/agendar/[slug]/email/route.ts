@@ -32,7 +32,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!('page' in ctx)) return ctx
     const blocked = requireOk(ctx)
     if (blocked) return blocked
-    // Per business per day: our mail server is not a bulk sender.
+    // Per business per day: our mail server is not a bulk sender. Trade-off (accepted): someone who burns it
+    // blocks e-mail sign-in for that day only; Google and WhatsApp keep working.
     const perAccount = checkRateLimit(`agendar:email:account:${ctx.page.account_id}`, { limit: 300, windowMs: 24 * 60 * 60_000 })
     if (!perAccount.success) return rateLimitResponse(perAccount)
     const pub = await loadPublicPage(ctx.db, ctx.page, ctx.state)

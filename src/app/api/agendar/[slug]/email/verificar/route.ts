@@ -13,7 +13,9 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const over = limited(request, slug, 'email-verify', { limit: 20, windowMs: 10 * 60_000 }, { limit: 300, windowMs: 10 * 60_000 })
+  // Per IP only: the attempt counter per code (in the database) is what stops guessing; a page-wide cap would let
+  // anyone lock every customer out of e-mail sign-in.
+  const over = limited(request, slug, 'email-verify', { limit: 20, windowMs: 10 * 60_000 })
   if (over) return over
   const body = await readJson(request)
   if (body instanceof Response) return body
