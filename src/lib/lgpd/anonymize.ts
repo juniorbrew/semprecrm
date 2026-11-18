@@ -65,6 +65,7 @@ const STORAGE_CHUNK = 100
  * on a hard delete (the rows go with the contact).
  */
 export const SCRUBBED_TABLES = {
+  booking_identities: 'e-mail / Google logins of the booking page that booked on this contact deleted (migration 115)',
   messages: 'content_text / error_details replaced, media_url nulled after the object is removed',
   conversations: 'last_message_text replaced, subject / sentiment / snooze_note nulled (cascade)',
   conversation_events: 'ai_handoff / deal_stage_changed payload emptied, free-text keys dropped (cascade)',
@@ -450,6 +451,16 @@ export async function scrubContactData(
         'deals scrub',
       )
       add('deals', res.count)
+    })
+
+    // Booking page logins (migration 115): the e-mail / Google identities that booked on this contact are
+    // deleted (their e-mail and name go, their sessions stop working, the links to these appointments go with them).
+    await step('booking_identities', async () => {
+      const res = must(
+        await admin.from('booking_identities').delete({ count: 'exact' }).eq('account_id', accountId).eq('contact_id', contactId),
+        'booking_identities delete',
+      )
+      add('booking_identities', res.count)
     })
 
     // Conversions API (migration 110): an anonymised customer is never reported to Meta. The rows carry no

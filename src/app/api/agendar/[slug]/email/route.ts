@@ -24,11 +24,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const ip = rateLimitIpKey(getClientIp(request))
   const perEmail = checkRateLimit(`agendar:email:${hashSecret(`${slug}:${email}:${ip}`).slice(0, 32)}`, { limit: 3, windowMs: 60 * 60_000 })
   if (!perEmail.success) return rateLimitResponse(perEmail)
+  // The same address, from any network and any business: nobody gets flooded with codes.
+  const anywhere = checkRateLimit(`agendar:email:any:${hashSecret(email).slice(0, 32)}`, { limit: 5, windowMs: 60 * 60_000 })
+  if (!anywhere.success) return rateLimitResponse(anywhere)
   try {
     const ctx = await pageContext(slug)
     if (!('page' in ctx)) return ctx
     const blocked = requireOk(ctx)
     if (blocked) return blocked
+    // Per business per day: our mail server is not a bulk sender.
+    const perAccount = checkRateLimit(`agendar:email:account:${ctx.page.account_id}`, { limit: 300, windowMs: 24 * 60 * 60_000 })
+    if (!perAccount.success) return rateLimitResponse(perAccount)
     const pub = await loadPublicPage(ctx.db, ctx.page, ctx.state)
     const secret = newBrowserSecret()
     const res = await startEmailCode(ctx.db, ctx.page, { email, browserSecret: secret, businessName: pub.name })

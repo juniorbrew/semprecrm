@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const over = limited(request, slug, 'email-verify', { limit: 20, windowMs: 10 * 60_000 })
+  const over = limited(request, slug, 'email-verify', { limit: 20, windowMs: 10 * 60_000 }, { limit: 300, windowMs: 10 * 60_000 })
   if (over) return over
   const body = await readJson(request)
   if (body instanceof Response) return body
@@ -28,7 +28,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const res = await verifyEmailCode(ctx.db, ctx.page, { browserSecret: secret, code })
     if (!res.ok) {
       if (res.reason === 'wrong') return json({ error: 'Código incorreto. Confira o e-mail e tente de novo.', reason: 'wrong' }, 400)
-      const out = json({ error: 'O código venceu. Peça um novo.', reason: 'expired' }, 410)
+      const out =
+        res.reason === 'too_many'
+          ? json({ error: 'Muitas tentativas erradas. Peça um novo código.', reason: 'expired' }, 429)
+          : json({ error: 'O código venceu. Peça um novo.', reason: 'expired' }, 410)
       clearCookie(out, slug, EMAIL_COOKIE)
       return out
     }

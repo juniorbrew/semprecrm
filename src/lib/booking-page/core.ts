@@ -21,7 +21,7 @@ export const SLUG_MAX = 40
 /** Words that read like the product itself or a system page. */
 export const RESERVED_SLUGS = new Set([
   'admin', 'api', 'app', 'agendar', 'agenda', 'login', 'semprecrm', 'suporte', 'support', 'teste', 'test',
-  'www', 'manifest', 'icon', 'icons', 'meus', 'novo', 'nova', 'config', 'settings', 'plataforma', 'platform',
+  'www', 'manifest', 'icon', 'icons', 'meus', 'novo', 'nova', 'config', 'settings', 'plataforma', 'platform', 'google',
 ])
 
 export function isValidSlug(slug: unknown): slug is string {

@@ -82,22 +82,37 @@ DECLARE
   v_row  public.calendar_events;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('booking-client:' || p_contact_id::text, 0));
-  SELECT count(*) INTO v_open FROM public.calendar_events
-   WHERE account_id = p_account_id AND contact_id = p_contact_id AND service_id IS NOT NULL
-     AND status IN ('scheduled', 'confirmed') AND ends_at >= now()
-     AND idempotency_key IS DISTINCT FROM p_idempotency_key;
-  IF v_open >= p_max_future THEN
-    RAISE EXCEPTION 'booking_client_limit' USING ERRCODE = 'AG012';
-  END IF;
 
-  IF p_identity_id IS NOT NULL THEN
+  IF p_identity_id IS NULL THEN
+    -- Phone confirmed on WhatsApp: the contact's own bookings. Bookings an e-mail / Google login
+    -- made with this phone typed in do not count (a stranger cannot fill this customer's limit).
+    SELECT count(*) INTO v_open FROM public.calendar_events e
+     WHERE e.account_id = p_account_id AND e.contact_id = p_contact_id AND e.service_id IS NOT NULL
+       AND e.status IN ('scheduled', 'confirmed') AND e.ends_at >= now()
+       AND e.idempotency_key IS DISTINCT FROM p_idempotency_key
+       AND NOT EXISTS (SELECT 1 FROM public.booking_identity_events l WHERE l.event_id = e.id);
+    IF v_open >= p_max_future THEN
+      RAISE EXCEPTION 'booking_client_limit' USING ERRCODE = 'AG012';
+    END IF;
+  ELSE
     IF NOT EXISTS (SELECT 1 FROM public.booking_identities WHERE id = p_identity_id AND account_id = p_account_id) THEN
       RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtextextended('booking-identity:' || p_identity_id::text, 0));
+    -- The login's own limit.
     SELECT count(*) INTO v_open FROM public.booking_identity_events l
       JOIN public.calendar_events e ON e.id = l.event_id
-     WHERE l.identity_id = p_identity_id AND e.status IN ('scheduled', 'confirmed') AND e.ends_at >= now()
+     WHERE l.account_id = p_account_id AND l.identity_id = p_identity_id
+       AND e.status IN ('scheduled', 'confirmed') AND e.ends_at >= now()
+       AND e.idempotency_key IS DISTINCT FROM p_idempotency_key;
+    IF v_open >= p_max_future THEN
+      RAISE EXCEPTION 'booking_client_limit' USING ERRCODE = 'AG012';
+    END IF;
+    -- Unconfirmed bookings one typed phone can receive, from any login (bounds unwanted reminders).
+    SELECT count(*) INTO v_open FROM public.booking_identity_events l
+      JOIN public.calendar_events e ON e.id = l.event_id
+     WHERE l.account_id = p_account_id AND e.contact_id = p_contact_id
+       AND e.status IN ('scheduled', 'confirmed') AND e.ends_at >= now()
        AND e.idempotency_key IS DISTINCT FROM p_idempotency_key;
     IF v_open >= p_max_future THEN
       RAISE EXCEPTION 'booking_client_limit' USING ERRCODE = 'AG012';
@@ -119,6 +134,25 @@ $$;
 ALTER FUNCTION public.booking_client_book(uuid, uuid, uuid, uuid, timestamptz, integer, text, uuid, text) OWNER TO postgres;
 REVOKE ALL ON FUNCTION public.booking_client_book(uuid, uuid, uuid, uuid, timestamptz, integer, text, uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.booking_client_book(uuid, uuid, uuid, uuid, timestamptz, integer, text, uuid, text) TO service_role;
+
+-- ---- booking_email_code_try ----------------------------------------------------
+-- One attempt at an e-mail code, counted BEFORE the comparison and atomically: parallel
+-- guesses cannot all see attempts = 0. Returns the row to compare, or nothing when the code
+-- is expired / out of attempts.
+CREATE OR REPLACE FUNCTION public.booking_email_code_try(p_id UUID, p_max_attempts INTEGER)
+RETURNS TABLE (email TEXT, code_hash TEXT, attempts INTEGER)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  UPDATE public.booking_email_codes c
+     SET attempts = c.attempts + 1
+   WHERE c.id = p_id AND c.attempts < p_max_attempts AND c.expires_at > now()
+  RETURNING c.email, c.code_hash, c.attempts;
+$$;
+ALTER FUNCTION public.booking_email_code_try(uuid, integer) OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.booking_email_code_try(uuid, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.booking_email_code_try(uuid, integer) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;

@@ -412,7 +412,13 @@ function phoneForms(phone: string): string[] {
  */
 async function contactForTypedPhone(db: SupabaseClient, accountId: string, phone: string, name: string): Promise<string | null> {
   const forms = phoneForms(phone)
-  const found = await db.from('contacts').select('id, anonymized_at').eq('account_id', accountId).in('phone_normalized', forms).limit(1)
+  const found = await db
+    .from('contacts')
+    .select('id, anonymized_at')
+    .eq('account_id', accountId)
+    .in('phone_normalized', forms)
+    .order('created_at')
+    .limit(1)
   if (found.error) throw new Error(`contact read failed: ${found.error.code ?? 'unknown'}`)
   const hit = (found.data ?? [])[0] as { id: string; anonymized_at: string | null } | undefined
   if (hit) return hit.anonymized_at ? null : hit.id
@@ -420,12 +426,8 @@ async function contactForTypedPhone(db: SupabaseClient, accountId: string, phone
   const account = await db.from('accounts').select('owner_user_id').eq('id', accountId).maybeSingle()
   const owner = (account.data as { owner_user_id?: string } | null)?.owner_user_id
   if (!owner) throw new Error('account owner not found')
-  let suppressed = false
-  try {
-    suppressed = (await findSuppressedPhones(db, accountId, [phone])).size > 0
-  } catch {
-    suppressed = false
-  }
+  // Fail closed: if the opt-out list cannot be read, no new contact is created from a typed phone.
+  const suppressed = (await findSuppressedPhones(db, accountId, [phone])).size > 0
   const ins = await db
     .from('contacts')
     .insert({ account_id: accountId, user_id: owner, phone, name, ...(suppressed ? { opted_out_at: new Date().toISOString() } : {}) })
@@ -604,8 +606,16 @@ export async function bookForClient(
     throw new AgendaError('idempotency_conflict', 'Esse agendamento foi cancelado. Escolha o horário de novo.')
   }
 
+  // Friendly early answer for logins; the database (booking_client_book) is the guarantee for everyone.
   const upcoming = await sessionUpcoming(db, page, session, now)
-  if (upcoming.length >= page.max_future_per_contact) return limitResult(upcoming.length)
+  let counted = upcoming.length
+  if (!identity && upcoming.length) {
+    // WhatsApp customer: bookings made by e-mail / Google logins with this phone typed in do not count.
+    const linked = await db.from('booking_identity_events').select('event_id').in('event_id', upcoming.map((e) => e.id))
+    if (linked.error) throw new Error(`identity events read failed: ${linked.error.code ?? 'unknown'}`)
+    counted -= (linked.data ?? []).length
+  }
+  if (counted >= page.max_future_per_contact) return limitResult(counted)
 
   const unavailable = async (message: string): Promise<BookResult> => ({
     ok: false,
@@ -799,7 +809,7 @@ export async function startEmailCode(
   const name = input.businessName.replace(/[\r\n]+/g, ' ').slice(0, 80)
   const sent = await sendMail({
     to: input.email,
-    subject: `Seu código para agendar em ${name}`,
+    subject: 'Seu código de agendamento',
     text:
       `Seu código para entrar na página de agendamento de ${name} é: ${code}\n\n` +
       'Ele vale por 10 minutos. Se não foi você quem pediu, ignore este e-mail.',
@@ -811,7 +821,7 @@ export async function startEmailCode(
   return { ok: true }
 }
 
-export type VerifyEmailResult = { ok: true; identityId: string } | { ok: false; reason: 'wrong' | 'expired' }
+export type VerifyEmailResult = { ok: true; identityId: string } | { ok: false; reason: 'wrong' | 'expired' | 'too_many' }
 
 export async function verifyEmailCode(
   db: SupabaseClient,
@@ -831,11 +841,15 @@ export async function verifyEmailCode(
   const row = res.data as { id: string; email: string; code_hash: string; attempts: number; expires_at: string } | null
   if (!row || Date.parse(row.expires_at) <= now.getTime() || row.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
     if (row) await db.from('booking_email_codes').delete().eq('id', row.id)
-    return { ok: false, reason: 'expired' }
+    return { ok: false, reason: row && row.attempts >= EMAIL_CODE_MAX_ATTEMPTS ? 'too_many' : 'expired' }
   }
-  if (!/^\d{6}$/.test(input.code) || !sameHash(row.code_hash, hashEmailCode(row.email, input.code))) {
-    await db.from('booking_email_codes').update({ attempts: row.attempts + 1 }).eq('id', row.id)
-    return { ok: false, reason: row.attempts + 1 >= EMAIL_CODE_MAX_ATTEMPTS ? 'expired' : 'wrong' }
+  // The attempt is counted in the database BEFORE comparing (parallel guesses cannot all see 0).
+  const tried = await db.rpc('booking_email_code_try', { p_id: row.id, p_max_attempts: EMAIL_CODE_MAX_ATTEMPTS })
+  if (tried.error) throw new Error(`email code try failed: ${tried.error.code ?? 'unknown'}`)
+  const attempt = ((tried.data ?? []) as { email: string; code_hash: string; attempts: number }[])[0]
+  if (!attempt) return { ok: false, reason: 'too_many' }
+  if (!/^\d{6}$/.test(input.code) || !sameHash(attempt.code_hash, hashEmailCode(attempt.email, input.code))) {
+    return { ok: false, reason: attempt.attempts >= EMAIL_CODE_MAX_ATTEMPTS ? 'too_many' : 'wrong' }
   }
   // Single use: only the request that deletes the row signs in.
   const del = await db.from('booking_email_codes').delete().eq('id', row.id).select('id')

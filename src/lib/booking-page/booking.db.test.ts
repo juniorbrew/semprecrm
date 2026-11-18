@@ -250,12 +250,26 @@ describe.runIf(RUN)('booking page against the local database', () => {
     expect(mineA.some((m) => m.id === booked.appointment.id)).toBe(true)
     if (other) await expect(cancelForClient(db, page, sess, other.id)).rejects.toMatchObject({ code: 'not_found' })
 
-    // A's contact is at the page limit (2): the identity cannot add more on that phone.
-    if (mineA.length >= 2) {
-      const more = await bookForClient(db, page, sess, { serviceId: service.id, resourceId: null, startsAt: slots[slots.length - 1].starts_at, idempotencyKey: randomUUID() })
-      expect(more.ok).toBe(false)
-      if (!more.ok) expect(more.reason).toBe('limit')
-    }
+    // Unconfirmed bookings on A's phone are capped (2 at most, from any login)...
+    const second = await bookForClient(db, page, sess, { serviceId: service.id, resourceId: null, startsAt: slots[1].starts_at, idempotencyKey: randomUUID() })
+    expect(second.ok).toBe(true)
+    if (second.ok) events.push(second.appointment.id)
+    const other2 = await upsertIdentity(db, { accountId: ACCOUNT, kind: 'email', subject: `outra-${SLUG}@x.com`, email: null, name: null })
+    const sess2: BookingSession = { accountId: ACCOUNT, pageId: page.id, contactId: null, identityId: other2, issuedAt: Date.now() }
+    const third = await bookForClient(db, page, sess2, {
+      serviceId: service.id,
+      resourceId: null,
+      startsAt: slots[2].starts_at,
+      idempotencyKey: randomUUID(),
+      details: { name: 'Mais Um', phone: PHONE_A },
+    })
+    expect(third.ok).toBe(false)
+    if (!third.ok) expect(third.reason).toBe('limit')
+    // ...and they never use up A's own limit: A (WhatsApp) still books.
+    await db.from('calendar_events').update({ status: 'cancelled' }).eq('contact_id', sessionA.contactId as string).eq('booking_source', 'client').not('id', 'in', `(${[booked.appointment.id, second.ok ? second.appointment.id : booked.appointment.id].join(',')})`)
+    const own = await bookForClient(db, page, sessionA, { serviceId: service.id, resourceId: null, startsAt: slots[slots.length - 1].starts_at, idempotencyKey: randomUUID() })
+    expect(own.ok).toBe(true)
+    if (own.ok) events.push(own.appointment.id)
   })
 
   it('e-mail code: wrong tries count, the right code signs in once', async () => {

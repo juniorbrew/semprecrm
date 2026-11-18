@@ -175,8 +175,10 @@ function BookFlow({
   onSeeMine: () => void
 }) {
   // Back from Google: start from what the customer had picked.
-  const [pending] = useState(() => (arrival.google && typeof window !== 'undefined' ? readPending(page.slug, page) : null))
-  const [step, setStep] = useState<Step>(arrival.google ? 'resume' : 'service')
+  const fromGoogle = arrival.google || arrival.error === 'google'
+  const [pending] = useState(() => (fromGoogle && typeof window !== 'undefined' ? readPending(page.slug, page) : null))
+  const [step, setStep] = useState<Step>(fromGoogle ? 'resume' : 'service')
+  const [arrivalError, setArrivalError] = useState(arrival.error)
   const [service, setService] = useState<PublicService | null>(pending?.service ?? null)
   const [resourceId, setResourceId] = useState<string | null>(pending?.resourceId ?? null)
   const [slot, setSlot] = useState<Slot | null>(pending?.slot ?? null)
@@ -213,6 +215,7 @@ function BookFlow({
         } catch {
           // nothing saved
         }
+        if (details && session) onSignedIn({ ...session, needs_phone: false })
         setBooked({ starts_at: r.data.starts_at })
         setStep('done')
         return
@@ -229,9 +232,14 @@ function BookFlow({
       if (r.status >= 400 && r.status < 500) keyRef.current = null
       setError(r.data.error ?? 'Não foi possível agendar.')
       setAlternatives(r.data.alternatives ?? [])
-      if (r.status === 409) setStep('time')
+      // Slot taken / limit: the server already kept the name + phone, so the next try needs only a time.
+      if (r.status === 409 && r.data.reason !== 'contact') {
+        if (details && session) onSignedIn({ ...session, needs_phone: false })
+        setStep('time')
+      }
+      // Anything else with details: stay on the form, where the error shows.
     },
-    [page.slug, resourceId, service],
+    [onSignedIn, page.slug, resourceId, service, session],
   )
 
   const pickSlot = (s: Slot) => {
@@ -306,9 +314,9 @@ function BookFlow({
 
   return (
     <section className="flex flex-col gap-4">
-      {arrival.error && view === 'service' && (
+      {arrivalError && (view === 'service' || view === 'confirm') && (
         <p role="alert" className="bg-destructive/10 text-destructive rounded-xl p-3 text-sm">
-          {arrival.error === 'google'
+          {arrivalError === 'google'
             ? 'Não foi possível entrar com o Google. Tente de novo ou use outra opção.'
             : 'O agendamento online está indisponível no momento.'}
         </p>
@@ -332,6 +340,7 @@ function BookFlow({
                     type="button"
                     onClick={() => {
                       setService(s)
+                      setArrivalError(null)
                       const only = s.resource_ids.length === 1 ? s.resource_ids[0] : null
                       setResourceId(only)
                       setStep(only ? 'time' : 'professional')
@@ -458,8 +467,7 @@ function BookFlow({
           busy={busy}
           error={error}
           onSubmit={(d) => {
-            onSignedIn({ ...(session as SessionInfo), needs_phone: false })
-            setStep('time')
+            setStep('details')
             void book(slot, d)
           }}
         />
@@ -741,7 +749,14 @@ function EmailLogin({ page, onBack, onSignedIn }: { page: PublicPage; onBack: ()
           <Button type="submit" size="lg" disabled={busy || code.length !== 6}>
             {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} Entrar
           </Button>
-          <button type="button" onClick={() => setSent(false)} className="text-muted-foreground w-fit text-xs underline underline-offset-4">
+          <button
+            type="button"
+            onClick={() => {
+              setSent(false)
+              setCode('')
+              setError(null)
+            }}
+            className="text-muted-foreground w-fit text-xs underline underline-offset-4">
             Usar outro e-mail ou pedir novo código
           </button>
         </form>

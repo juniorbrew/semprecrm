@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!('page' in ctx)) return ctx
     const page = await loadPublicPage(ctx.db, ctx.page, ctx.state)
     const session = await sessionInfo(ctx.db, sessionOf(request, ctx.page))
-    return json({ page, signed_in: !!session, session })
+    return json({ page, session })
   } catch (err) {
     return errorResponse(err)
   }
