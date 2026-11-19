@@ -119,7 +119,7 @@ export function whatsappCodeLink(number: string | null | undefined, code: string
 }
 
 // ------------------------------------------------------------
-// E-mail code (115)
+// E-mail code (114)
 // ------------------------------------------------------------
 
 export const EMAIL_CODE_TTL_MS = 10 * 60_000
@@ -162,7 +162,7 @@ export const CHECK_COOKIE = 'sc_agendar_check'
 /**
  * Exactly one of the two:
  *   contactId   the phone was confirmed on WhatsApp: the session sees that contact's appointments
- *   identityId  entered with e-mail / Google (115): sees only what this identity booked
+ *   identityId  entered with e-mail / Google (114): sees only what this identity booked
  */
 export interface BookingSession {
   accountId: string

@@ -1,5 +1,5 @@
 // ============================================================
-// Página de agendamento (115) — "Continuar com Google".
+// Página de agendamento (114) — "Continuar com Google".
 //
 //   iniciar   /api/agendar/google/iniciar?pagina=<slug> → signed state {slug,
 //             nonce, time} + the nonce in an HttpOnly cookie → Google consent

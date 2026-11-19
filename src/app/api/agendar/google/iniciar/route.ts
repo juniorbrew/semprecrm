@@ -1,4 +1,4 @@
-// GET /api/agendar/google/iniciar?pagina=<slug> — "Continuar com Google" (115).
+// GET /api/agendar/google/iniciar?pagina=<slug> — "Continuar com Google" (114).
 // Signed state (slug + nonce + time) and the nonce in an HttpOnly cookie, then
 // Google's consent screen. Back on /api/agendar/google/retorno.
 

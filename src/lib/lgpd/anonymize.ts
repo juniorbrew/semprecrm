@@ -65,7 +65,7 @@ const STORAGE_CHUNK = 100
  * on a hard delete (the rows go with the contact).
  */
 export const SCRUBBED_TABLES = {
-  booking_identities: 'e-mail / Google logins of the booking page that booked on this contact deleted (migration 115)',
+  booking_identities: 'e-mail / Google logins of the booking page that booked on this contact deleted (migration 114)',
   messages: 'content_text / error_details replaced, media_url nulled after the object is removed',
   conversations: 'last_message_text replaced, subject / sentiment / snooze_note nulled (cascade)',
   conversation_events: 'ai_handoff / deal_stage_changed payload emptied, free-text keys dropped (cascade)',
@@ -453,7 +453,7 @@ export async function scrubContactData(
       add('deals', res.count)
     })
 
-    // Booking page logins (migration 115): the e-mail / Google identities that booked on this contact are
+    // Booking page logins (migration 114): the e-mail / Google identities that booked on this contact are
     // deleted (their e-mail and name go, their sessions stop working, the links to these appointments go with them).
     await step('booking_identities', async () => {
       const res = must(

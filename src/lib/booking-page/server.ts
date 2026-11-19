@@ -296,7 +296,7 @@ export async function readPhoneCheck(
 }
 
 // ------------------------------------------------------------
-// Session: a confirmed contact (WhatsApp) or an identity (e-mail / Google, 115)
+// Session: a confirmed contact (WhatsApp) or an identity (e-mail / Google, 114)
 // ------------------------------------------------------------
 
 interface IdentityRow {
@@ -333,7 +333,7 @@ async function contactUsable(db: SupabaseClient, accountId: string, contactId: s
 /**
  * The session still works: its contact exists, is not anonymised and was not
  * signed out of every device after the session was issued (113); or its
- * identity exists and was not signed out (115).
+ * identity exists and was not signed out (114).
  */
 export async function usableSession(db: SupabaseClient, session: BookingSession): Promise<boolean> {
   if (session.identityId) return !!(await loadIdentity(db, session))
@@ -639,7 +639,7 @@ export async function bookForClient(
     ? `Agendado pelo link (entrou com ${identity.kind === 'google' ? 'Google' : 'e-mail'}) — celular não confirmado.`
     : null
 
-  // The count above is the friendly early answer; the guarantee is booking_client_book (113/115),
+  // The count above is the friendly early answer; the guarantee is booking_client_book (113/114),
   // which locks the contact (and the identity) and counts again in the booking's own transaction.
   const writer: RpcWriter = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
@@ -768,7 +768,7 @@ export async function rescheduleForClient(
 }
 
 // ------------------------------------------------------------
-// E-mail code (115): we send a 6-digit code; the device that asked types it
+// E-mail code (114): we send a 6-digit code; the device that asked types it
 // ------------------------------------------------------------
 
 /** Codes one e-mail may have open on one page (each send is an e-mail out). */

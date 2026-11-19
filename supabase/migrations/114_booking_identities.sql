@@ -1,5 +1,5 @@
 -- ============================================================
--- 115 — Página de agendamento: entrar com e-mail (código) ou Google
+-- 114 — Página de agendamento: entrar com e-mail (código) ou Google
 -- (spec docs/superpowers/specs/2026-11-16-agendamento-login-email-google.md).
 --
 --   * booking_identities: quem entrou por e-mail ou Google numa conta. A sessão

@@ -1,6 +1,6 @@
 # Página de agendamento — entrar com e-mail ou Google
 
-Data: 2026-11-16 · Branch `feat/agendamento-login` · Worktree `C:\SempreCRM-agendar-login` · Migration **115** (114 = extras da Entrega 10).
+Data: 2026-11-16 · Branch `feat/agendamento-login` · Worktree `C:\SempreCRM-agendar-login` · Migration **114** (os extras da Entrega 10 passam a 115).
 Continua a parte 1 (PR #142, migration 113).
 
 ## Decisões do dono (2026-11-16)
@@ -22,7 +22,7 @@ Continua a parte 1 (PR #142, migration 113).
 4. Se a identidade ainda não tem celular: pede nome + celular (+ aviso LGPD) e agenda.
 5. "Meus horários" e "Sair de todos os aparelhos" funcionam para os dois tipos de sessão.
 
-## Banco — migration 115
+## Banco — migration 114
 - `booking_identities`: conta, tipo (`email`|`google`), identificador (e-mail minúsculo ou `sub` do Google), e-mail, nome, `contact_id` (depois do 1º horário), `revoked_before`. Único por (conta, tipo, identificador). Só service role.
 - `booking_email_codes`: conta, página, e-mail, **hash** do código, hash do segredo do aparelho, tentativas, validade 10 min. Só service role.
 - `booking_identity_events`: qual identidade marcou qual horário (conta, identidade, evento). Só service role.

@@ -1,6 +1,6 @@
 // POST /api/agendar/[slug]/email/verificar {codigo} — the code from the e-mail,
 // typed on the device that asked for it (its cookie). 5 tries; single use. On
-// success the session belongs to the e-mail identity (115), not to a contact.
+// success the session belongs to the e-mail identity (114), not to a contact.
 
 import type { NextRequest } from 'next/server'
 

@@ -1,4 +1,4 @@
-// POST /api/agendar/[slug]/email {email} — sends a 6-digit code to sign in (115).
+// POST /api/agendar/[slug]/email {email} — sends a 6-digit code to sign in (114).
 // A random secret goes into an HttpOnly cookie: only this device can use the code.
 // Limits per IP, per page and per e-mail+IP (each request is an e-mail out).
 

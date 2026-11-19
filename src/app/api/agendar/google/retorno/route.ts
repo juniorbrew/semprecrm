@@ -1,4 +1,4 @@
-// GET /api/agendar/google/retorno — Google's answer to "Continuar com Google" (115).
+// GET /api/agendar/google/retorno — Google's answer to "Continuar com Google" (114).
 // State signature + age + nonce cookie (single use: cleared here) → code →
 // userinfo (verified e-mail only) → e-mail/Google identity of THIS page's
 // account → session cookie on the page's API path → back to the page.
