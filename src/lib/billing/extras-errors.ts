@@ -18,6 +18,7 @@ export const EXTRAS_ERRORS = {
   removalLocked: 'The removal is already in your next charge, so it cannot be cancelled. Once it takes effect, buy the extra again.',
   pendingPurchase: 'A purchase is waiting for payment. Pay it, or wait until it expires, before changing the extras.',
   overdue: 'Regularize the pending payment first.',
+  renewalPending: 'The annual renewal charge was already generated. Buy extras after paying it.',
   tooMany: 'Too many changes in the last 24 hours. Try again tomorrow or talk to the SempreCRM team.',
   conflict: 'Your subscription changed while you were doing this. Reload the page and try again.',
   provider: 'Could not change it right now, try again.',

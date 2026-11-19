@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   oneOffs: [] as { customer: string; value: number; dueDate: string }[],
   deleted: [] as string[],
   audits: [] as Record<string, unknown>[],
+  /** 'landed' = the commit is applied but its answer is lost; 'lost' = it never reaches the database. */
+  commitMode: null as null | 'landed' | 'lost',
 }))
 
 vi.mock('@/lib/automations/admin-client', () => ({ supabaseAdmin: () => h.fake.db }))
@@ -142,6 +144,7 @@ beforeEach(() => {
     oneOffs: [],
     deleted: [],
     audits: [],
+    commitMode: null,
   })
   h.fake = makeFakeDb(
     {
@@ -177,7 +180,15 @@ beforeEach(() => {
       account_invitations: [],
       audit_log: [],
     },
-    { rpc: extrasRpc },
+    {
+      rpc: (fn, args, tables) => {
+        if (fn === 'billing_extras_commit' && h.commitMode) {
+          if (h.commitMode === 'landed') extrasRpc(fn, args, tables)
+          return { data: null, error: { message: 'connection reset' } }
+        }
+        return extrasRpc(fn, args, tables)
+      },
+    },
   )
 })
 
@@ -210,6 +221,15 @@ describe('adding extras', () => {
     expect(await res.json()).toEqual({ error: 'Regularize the pending payment first.' })
     expect(h.calls).toEqual([])
     expect(billing().extra_users).toBe(0)
+  })
+
+  it('a PENDING charge whose due date passed counts as overdue (Asaas has not flagged it yet)', async () => {
+    h.payments = [
+      { id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 59.9 },
+      { id: 'p2', dueDate: '2020-01-01', status: 'PENDING', value: 59.9 },
+    ]
+    expect((await change({ kind: 'user', delta: 1 })).status).toBe(409)
+    expect(h.calls).toEqual([])
   })
 
   it('the charge list is read whole: >10 charges oldest-first still find the right next charge', async () => {
@@ -247,7 +267,7 @@ describe('adding extras', () => {
 describe('annual subscriptions: a one-off charge now, the limit when it is paid', () => {
   const annual = () => Object.assign(billing(), { cycle: 'annual', value_cents: 59900 })
   beforeEach(() => {
-    h.payments = [{ id: 'p1', dueDate: '2027-12-01', status: 'PENDING', value: 599 }] // renewal in 2027
+    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 599 }] // paid; the renewal (2027-12-01) is not generated yet
   })
 
   it('creates the prorated one-off charge (months to the renewal x monthly price), changes neither limit nor subscription value', async () => {
@@ -260,9 +280,10 @@ describe('annual subscriptions: a one-off charge now, the limit when it is paid'
     // months = ceil(days to 01/12/2027 / 30.4), 1..12; amount = months x 2 x 15,00
     expect(h.oneOffs).toHaveLength(1)
     const cents = body.pendingPurchase.cents
-    expect(cents % 3000).toBe(0)
-    expect(cents / 3000).toBeGreaterThanOrEqual(1)
-    expect(cents / 3000).toBeLessThanOrEqual(12)
+    // 12 months cost 10: months x 2 x 15,00 x 10/12 = months x 25,00
+    expect(cents % 2500).toBe(0)
+    expect(cents / 2500).toBeGreaterThanOrEqual(1)
+    expect(cents / 2500).toBeLessThanOrEqual(12)
     expect(h.oneOffs[0]).toMatchObject({ customer: 'cus_1', value: cents / 100 })
     expect(h.calls).toEqual([]) // the subscription value waits for the payment
     expect(billing()).toMatchObject({
@@ -274,6 +295,7 @@ describe('annual subscriptions: a one-off charge now, the limit when it is paid'
       extras_oneoff_payment_id: 'pay_oneoff_1',
       extras_oneoff_url: 'https://asaas.invalid/i/oneoff',
       extras_oneoff_cents: cents,
+      extras_oneoff_renewal_due: '2027-12-01',
     })
     expect(new Date(String(billing().extras_oneoff_expires_at)).getTime()).toBeGreaterThan(Date.now() + 6 * 86_400_000)
     expect(changed()).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ type: 'add_awaiting_payment', payment_id: 'pay_oneoff_1', one_off_cents: cents }) })])
@@ -298,6 +320,46 @@ describe('annual subscriptions: a one-off charge now, the limit when it is paid'
     expect((await change({ kind: 'user', delta: 1 })).status).toBe(409)
     expect(h.deleted).toEqual(['pay_lost'])
     expect(billing().extras_oneoff_payment_id).toBeNull()
+  })
+
+  it('refuses while the renewal charge is already generated (the price would be stale)', async () => {
+    annual()
+    h.payments = [
+      { id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 599 },
+      { id: 'p2', dueDate: '2027-12-01', status: 'PENDING', value: 599 },
+    ]
+    const res = await change({ kind: 'user', delta: 1 })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/renewal charge was already generated/)
+    expect(h.oneOffs).toEqual([])
+  })
+
+  it('a commit whose answer is lost but that DID land keeps the charge (the row points to it)', async () => {
+    annual()
+    h.commitMode = 'landed'
+    const res = await change({ kind: 'user', delta: 1 })
+    expect(res.status).toBe(200)
+    expect(h.deleted).toEqual([])
+    expect(billing().extras_oneoff_payment_id).toBe('pay_oneoff_1')
+  })
+
+  it('a commit that is lost and did NOT land cancels the charge', async () => {
+    annual()
+    h.commitMode = 'lost'
+    expect((await change({ kind: 'user', delta: 1 })).status).toBe(500)
+    expect(h.deleted).toEqual(['pay_oneoff_1'])
+    expect(billing().extras_oneoff_payment_id).toBeNull()
+  })
+
+  it('if the charge cannot be cancelled either: an audit row and a [billing:refund-needed] log', async () => {
+    annual()
+    h.commitMode = 'lost'
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(asaas.deletePayment).mockRejectedValueOnce(new Error('Asaas down'))
+    expect((await change({ kind: 'user', delta: 1 })).status).toBe(500)
+    expect(log.mock.calls.some((c) => String(c[0]).includes('[billing:refund-needed]'))).toBe(true)
+    expect(h.audits).toEqual([expect.objectContaining({ action: 'billing.extras_refund_needed', accountId: 'acct-1', metadata: expect.objectContaining({ payment_id: 'pay_oneoff_1' }) })])
+    log.mockRestore()
   })
 
   it('monthly accounts are unchanged: no one-off charge, the value goes up for the next charge', async () => {

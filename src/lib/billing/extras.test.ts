@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { addCycles, addDays, carryExtras, oneOffCents, remainingMonths, changeExtras, extrasCostCents, nextChargeDue, removalDueDate, subscriptionValueCents, type ExtrasState } from './extras'
+import { addCycles, addDays, carryExtras, chargeIsGone, oneOffCents, remainingMonths, changeExtras, extrasCostCents, nextChargeDue, removalDueDate, subscriptionValueCents, type ExtrasState } from './extras'
 
 const none: ExtrasState = { users: 0, channels: 0, userPriceCents: null, channelPriceCents: null }
 
@@ -122,7 +122,11 @@ describe('charge dates', () => {
     expect(remainingMonths('2027-11-30', '2027-12-01')).toBe(1)
     expect(remainingMonths('2027-12-01', '2027-12-01')).toBe(1) // never zero
     expect(remainingMonths('2026-01-01', '2030-01-01')).toBe(12) // never more than 12
-    expect(oneOffCents(1500, 2, 12)).toBe(36000)
+    // 12 months cost 10 (the annual discount): months x quantity x monthly x 10/12, rounded, at least 1 cent
+    expect(oneOffCents(1500, 2, 12)).toBe(30000)
+    expect(oneOffCents(1500, 1, 1)).toBe(1250)
+    expect(oneOffCents(1001, 1, 1)).toBe(834) // 834.17 rounds to the cent
+    expect(oneOffCents(1, 1, 1)).toBe(1) // 0.83 never rounds to a free charge
     expect(addDays('2026-12-30', 3)).toBe('2027-01-02')
   })
 
@@ -148,5 +152,20 @@ describe('carryExtras (resubscribing)', () => {
     expect(carryExtras(held, { ...plan, maxUsers: null })).toEqual({ ...held, users: 0, userPriceCents: null })
     expect(carryExtras(held, { ...plan, channelPriceCents: null })).toEqual({ ...held, channels: 0, channelPriceCents: null })
     expect(carryExtras(held, { maxUsers: null, maxChannels: null, userPriceCents: null, channelPriceCents: null })).toEqual(none)
+  })
+})
+
+describe('charges that no longer exist, and the annual renewal rule', () => {
+  it('removed, refunded and charged-back charges are gone; open and paid ones are not', () => {
+    for (const status of ['DELETED', 'REFUNDED', 'REFUND_REQUESTED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE']) expect(chargeIsGone({ status }), status).toBe(true)
+    expect(chargeIsGone({ status: 'PENDING', deleted: true })).toBe(true)
+    for (const status of ['PENDING', 'RECEIVED', 'CONFIRMED', 'OVERDUE']) expect(chargeIsGone({ status }), status).toBe(false)
+  })
+
+  it('an annual add is refused while the renewal charge is already generated; a monthly one is not', () => {
+    const base = { currentValueCents: 59900, current: none, kind: 'user' as const, delta: 1, offeredPriceCents: 1500, baseLimit: 3, usage: 1, renewalPending: true }
+    expect(changeExtras({ ...base, cycle: 'annual' })).toEqual({ ok: false, code: 'renewal_pending' })
+    expect(changeExtras({ ...base, cycle: 'monthly', currentValueCents: 5990 })).toMatchObject({ ok: true, type: 'add' })
+    expect(changeExtras({ ...base, cycle: 'annual', renewalPending: false })).toMatchObject({ ok: true, type: 'add' })
   })
 })

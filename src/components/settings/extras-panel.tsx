@@ -8,7 +8,11 @@ import { useLanguage } from '@/hooks/use-language';
 import type { ExtraKind } from '@/lib/billing/extras';
 import { formatBrl, type ExtrasView } from '@/lib/billing/overview';
 import { oneOffCents, remainingMonths } from '@/lib/billing/extras';
-import { periodPriceCents, type BillingCycle } from '@/lib/billing/rules';
+import {
+  periodPriceCents,
+  todayInSaoPaulo,
+  type BillingCycle,
+} from '@/lib/billing/rules';
 import { SettingsGroup } from './settings-group';
 
 type Pending = { kind: ExtraKind; delta: number };
@@ -121,7 +125,7 @@ export function ExtrasPanel({
     <SettingsGroup
       title={t('Extras beyond the plan')}
       description={t(
-        'Add users or WhatsApp numbers without changing plan. Added extras work right away and go into your next charge. Removed extras stay active until the end of the period you already paid.'
+        'Add users or WhatsApp numbers without changing plan. On monthly plans added extras work right away and go into your next charge; on annual plans they work after the one-off charge is paid. Removing lowers the limit for new users and numbers right away, while the ones already paid keep working until the end of the paid period.'
       )}
     >
       <p className="text-sm">
@@ -378,7 +382,7 @@ function Confirm({
   const annual = cycle === 'annual';
   const renewal = extras.renewalDue;
   const months = renewal
-    ? remainingMonths(new Date().toISOString().slice(0, 10), renewal)
+    ? remainingMonths(todayInSaoPaulo(), renewal)
     : 12;
   const oneOff = oneOffCents(unit, pending.delta, months);
   const label =
@@ -440,7 +444,7 @@ function Confirm({
           {t('Remove')} <span data-no-translate>{Math.abs(pending.delta)}</span>{' '}
           {label}.{' '}
           {t(
-            'They stay active until the end of the period you already paid (and every extra is billed for at least one full period). The charge after that no longer includes them.'
+            'From now on you cannot add users or numbers above the new limit. The ones already paid keep working until the end of the period you already paid (every extra is billed for at least one full period). The charge after that no longer includes them.'
           )}
         </p>
       )}

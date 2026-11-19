@@ -14,7 +14,6 @@ import { asaasConfigured } from '@/lib/billing/asaas'
 import { buildExtrasView, buildOverview, type BillingRowView, type PaymentRowView } from '@/lib/billing/overview'
 import { isBillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
-import { settleExtrasPurchase } from '@/lib/billing/extras-sweep'
 import { countConnectedChannels, loadAccountEntitlements } from '@/lib/plans-server'
 
 export const dynamic = 'force-dynamic'
@@ -22,8 +21,7 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     const ctx = await requireRole('admin')
-    // An annual add the owner has just paid: release it now instead of waiting for the hourly sweep.
-    await settleIfAwaitingPayment(ctx.accountId)
+    // Read only: settling an annual purchase belongs to the webhook and the hourly sweep (no Asaas call per page load).
     const [catalog, billingRes, paymentsRes] = await Promise.all([
       loadCurrentPlanCatalog(supabaseAdmin()),
       ctx.supabase
@@ -129,15 +127,4 @@ function toCount(v: unknown): number | null {
 
 function toCents(v: unknown): number | null {
   return typeof v === 'number' && Number.isSafeInteger(v) ? v : null
-}
-
-async function settleIfAwaitingPayment(accountId: string): Promise<void> {
-  try {
-    const admin = supabaseAdmin()
-    const { data } = await admin.from('account_billing').select('extras_oneoff_payment_id').eq('account_id', accountId).maybeSingle()
-    if (data?.extras_oneoff_payment_id) await settleExtrasPurchase(admin, accountId)
-  } catch (err) {
-    // The panel must load anyway; the hourly sweep retries.
-    console.error('[billing/overview] could not settle the extras purchase:', err instanceof Error ? err.message : err)
-  }
 }

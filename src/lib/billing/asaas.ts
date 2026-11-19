@@ -74,6 +74,9 @@ export interface AsaasSubscription {
 export interface AsaasPayment {
   id: string
   subscription?: string | null
+  customer?: string | null
+  /** Asaas flags a removed charge instead of (or besides) answering 404. */
+  deleted?: boolean
   status: string
   value: number
   dueDate: string

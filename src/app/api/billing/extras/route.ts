@@ -58,6 +58,7 @@ const REFUSALS: Record<Refusal | 'busy' | 'daily_cap' | 'conflict' | 'provider' 
   pending_removal: ['pendingRemoval', 409],
   pending_purchase: ['pendingPurchase', 409],
   overdue: ['overdue', 409],
+  renewal_pending: ['renewalPending', 409],
   unavailable: ['unavailable', 403],
   no_pending_removal: ['noPendingRemoval', 409],
   removal_locked: ['removalLocked', 409],
@@ -130,7 +131,9 @@ export async function POST(request: Request) {
           usage: d < 0 ? (await accountUsage(db, ctx.accountId))[k === 'user' ? 'users' : 'channels'] : 0,
           removalPending: pending,
           purchasePending,
-          overdue: payments.some((p) => p.status === 'OVERDUE'),
+          // A PENDING charge whose due date has passed (Asaas has not flagged it yet) is overdue too.
+          overdue: payments.some((p) => p.status === 'OVERDUE' || (p.status === 'PENDING' && p.dueDate < today)),
+          renewalPending: payments.some((p) => p.status === 'PENDING'),
         })
         if (!change.ok) return { refuse: change.code }
 
@@ -183,10 +186,12 @@ export async function POST(request: Request) {
               extras_oneoff_url: safeInvoiceUrl(payment.invoiceUrl),
               extras_oneoff_cents: cents,
               extras_oneoff_expires_at: new Date(Date.now() + ONE_OFF_EXPIRES_DAYS * 86_400_000).toISOString(),
+              extras_oneoff_renewal_due: nextDue,
             }),
             asaas: null,
             action: 'billing.extras_changed',
             metadata: { type: 'add_awaiting_payment', kind: k, delta: d, months, one_off_cents: cents, payment_id: payment.id, renewal_due: nextDue },
+            sideEffect: { paymentId: payment.id, cents },
             compensate: async () => {
               await deletePayment(payment.id)
             },

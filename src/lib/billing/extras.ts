@@ -86,9 +86,17 @@ export function remainingMonths(today: string, renewalDue: string): number {
   return Math.min(12, Math.max(1, Math.ceil(daysBetween(today, renewalDue) / 30.4)))
 }
 
-/** The one-off charge, in cents: months x quantity x the locked monthly price. */
+/**
+ * The one-off charge, in cents: months x quantity x the locked monthly price x 10/12 (the annual
+ * discount: 12 months cost 10), rounded to the cent, never below 1 cent.
+ */
 export function oneOffCents(unitMonthlyCents: number, quantity: number, months: number): number {
-  return months * quantity * unitMonthlyCents
+  return Math.max(1, Math.round((months * quantity * unitMonthlyCents * 10) / 12))
+}
+
+/** A charge that no longer exists as something to pay: removed, refunded or charged back. */
+export function chargeIsGone(p: { status: string; deleted?: boolean }): boolean {
+  return p.deleted === true || p.status === 'DELETED' || p.status === 'REFUNDED' || p.status === 'REFUND_REQUESTED' || p.status.startsWith('CHARGEBACK')
 }
 
 /**
@@ -115,6 +123,7 @@ export type ExtrasRefusal =
   | 'pending_removal'
   | 'pending_purchase'
   | 'overdue'
+  | 'renewal_pending'
 
 export type ExtrasChange =
   | { ok: true; type: 'add'; next: ExtrasState; valueCents: number }
@@ -143,6 +152,8 @@ export function changeExtras(input: {
   purchasePending?: boolean
   /** Some charge of the subscription is overdue: nothing is added until it is regularised. */
   overdue?: boolean
+  /** Annual only: the renewal charge is already generated, so a one-off priced against it would be stale. */
+  renewalPending?: boolean
 }): ExtrasChange {
   const { kind, delta, current } = input
   if (!Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > MAX_EXTRAS) return { ok: false, code: 'invalid' }
@@ -173,6 +184,7 @@ export function changeExtras(input: {
 
   if (input.baseLimit === null) return { ok: false, code: 'unlimited' }
   if (input.overdue) return { ok: false, code: 'overdue' }
+  if (input.renewalPending && input.cycle === 'annual') return { ok: false, code: 'renewal_pending' }
   const price = have === 0 ? input.offeredPriceCents : lockedPrice
   if (price === null) return { ok: false, code: 'not_offered' }
   const next: ExtrasState =

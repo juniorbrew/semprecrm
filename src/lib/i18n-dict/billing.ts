@@ -137,8 +137,8 @@ export const DICT_BILLING: Record<string, string> = {
     'Muitas alterações nas últimas 24 horas. Tente novamente amanhã ou fale com a equipe do SempreCRM.',
   'Your subscription changed while you were doing this. Reload the page and try again.':
     'Sua assinatura mudou enquanto você fazia isso. Recarregue a página e tente de novo.',
-  'Add users or WhatsApp numbers without changing plan. Added extras work right away and go into your next charge. Removed extras stay active until the end of the period you already paid.':
-    'Adicione usuários ou números de WhatsApp sem trocar de plano. Extras adicionados valem na hora e entram na próxima cobrança. Extras removidos continuam ativos até o fim do período já pago.',
+  'Add users or WhatsApp numbers without changing plan. On monthly plans added extras work right away and go into your next charge; on annual plans they work after the one-off charge is paid. Removing lowers the limit for new users and numbers right away, while the ones already paid keep working until the end of the paid period.':
+    'Adicione usuários ou números de WhatsApp sem trocar de plano. No plano mensal os extras adicionados valem na hora e entram na próxima cobrança; no anual valem depois que a cobrança avulsa é paga. Remover baixa já o limite para novos usuários e números, enquanto os que já foram pagos continuam valendo até o fim do período pago.',
   'Extras added. The limit is already higher; the new value is in your next charge.':
     'Extras adicionados. O limite já aumentou; o valor novo entra na próxima cobrança.',
   'Removal scheduled: the extras stay active until':
@@ -155,8 +155,8 @@ export const DICT_BILLING: Record<string, string> = {
     'por extra, por ano (12 meses pelo preço de 10)',
   'It works right away and goes into your next charge, even one already issued.':
     'Vale na hora e entra na próxima cobrança, mesmo que ela já tenha sido emitida.',
-  'They stay active until the end of the period you already paid (and every extra is billed for at least one full period). The charge after that no longer includes them.':
-    'Eles continuam ativos até o fim do período já pago (e todo extra é cobrado por pelo menos um período completo). A cobrança seguinte não inclui mais esses extras.',
+  'From now on you cannot add users or numbers above the new limit. The ones already paid keep working until the end of the period you already paid (every extra is billed for at least one full period). The charge after that no longer includes them.':
+    'A partir de agora não dá para ter usuários ou números acima do novo limite. Os que já foram pagos continuam valendo até o fim do período já pago (todo extra é cobrado por pelo menos um período completo). A cobrança seguinte não inclui mais esses extras.',
   'Ask the account owner to add 1 extra for':
     'Peça ao dono da conta para contratar 1 extra por',
   'Extra user price':
@@ -187,6 +187,8 @@ export const DICT_BILLING: Record<string, string> = {
     'Na renovação a assinatura passa a',
   'Regularize the pending payment first.':
     'Regularize o pagamento pendente primeiro.',
+  'The annual renewal charge was already generated. Buy extras after paying it.':
+    'A renovação anual já foi gerada. Compre extras depois de pagá-la.',
   'A purchase is waiting for payment. Pay it, or wait until it expires, before changing the extras.':
     'Há uma compra aguardando pagamento. Pague-a, ou espere ela expirar, antes de alterar os extras.',
   'The removal is already in your next charge, so it cannot be cancelled. Once it takes effect, buy the extra again.':
