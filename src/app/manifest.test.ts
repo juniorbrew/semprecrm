@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { config as middlewareConfig } from '@/middleware';
 import { appManifest as manifest } from '@/lib/pwa/app-manifest';
 import { GET as manifestGET } from './manifest.webmanifest/route';
-import { GET, ICON_VARIANTS, generateStaticParams } from './icons/[variant]/route';
+import { ICON_VARIANTS } from '@/lib/pwa/icon-variants';
+import { GET, generateStaticParams } from './icons/[variant]/route';
 
 describe('installable app manifest', () => {
   const m = manifest();
