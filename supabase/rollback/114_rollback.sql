@@ -32,6 +32,7 @@ ALTER TABLE public.account_billing
   DROP CONSTRAINT IF EXISTS account_billing_extra_channels_priced,
   DROP CONSTRAINT IF EXISTS account_billing_extras_pending_shape,
   DROP CONSTRAINT IF EXISTS account_billing_extras_purchase_shape,
+  DROP CONSTRAINT IF EXISTS account_billing_extras_diff_shape,
   DROP COLUMN IF EXISTS extra_users,
   DROP COLUMN IF EXISTS extra_channels,
   DROP COLUMN IF EXISTS extra_user_price_cents,
@@ -50,7 +51,11 @@ ALTER TABLE public.account_billing
   DROP COLUMN IF EXISTS extras_oneoff_payment_id,
   DROP COLUMN IF EXISTS extras_oneoff_url,
   DROP COLUMN IF EXISTS extras_oneoff_cents,
-  DROP COLUMN IF EXISTS extras_oneoff_expires_at;
+  DROP COLUMN IF EXISTS extras_oneoff_expires_at,
+  DROP COLUMN IF EXISTS extras_oneoff_renewal_due,
+  DROP COLUMN IF EXISTS extras_oneoff_paid_id,
+  DROP COLUMN IF EXISTS extras_diff_payment_id,
+  DROP COLUMN IF EXISTS extras_diff_expires_at;
 
 -- platform_list_accounts() without the extras columns (081 shape).
 DROP FUNCTION IF EXISTS public.platform_list_accounts();

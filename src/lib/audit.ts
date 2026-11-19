@@ -57,6 +57,10 @@ export const AUDIT_ACTIONS = {
   BILLING_EXTRAS_REMOVAL_BLOCKED: 'billing.extras_removal_blocked',
   BILLING_EXTRAS_ADD_CANCELLED: 'billing.extras_add_cancelled',
   BILLING_EXTRAS_MISMATCH: 'billing.extras_mismatch',
+  BILLING_EXTRAS_REFUND_NEEDED: 'billing.extras_refund_needed',
+  BILLING_EXTRAS_DIFF_SETTLED: 'billing.extras_diff_settled',
+  BILLING_EXTRAS_DIFF_EXPIRED: 'billing.extras_diff_expired',
+  BILLING_EXTRAS_CHARGE_REVERSED: 'billing.extras_charge_reversed',
   META_CHANNEL_TAKEN_OVER: 'meta_channel.taken_over',
   META_CHANNEL_LOST: 'meta_channel.lost',
 } as const
@@ -114,6 +118,10 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'billing.extras_removal_blocked': 'Remoção de extras cancelada (uso acima do novo limite)',
     'billing.extras_add_cancelled': 'Compra de extras cancelada (cobrança não paga)',
     'billing.extras_mismatch': 'Valor da assinatura no Asaas pode estar diferente do sistema',
+    'billing.extras_refund_needed': 'Cobrança de extras paga sem liberar os extras: devolver o valor',
+    'billing.extras_diff_settled': 'Cobrança da diferença de extras encerrada',
+    'billing.extras_diff_expired': 'Cobrança da diferença de extras não paga (assinatura marcada como atrasada)',
+    'billing.extras_charge_reversed': 'Cobrança de extras paga foi estornada (assinatura marcada como atrasada)',
   },
   'en-US': {
     'member.invited': 'Member invited',
@@ -154,6 +162,10 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'billing.extras_removal_blocked': 'Extras removal cancelled (usage above the new limit)',
     'billing.extras_add_cancelled': 'Extras purchase cancelled (charge not paid)',
     'billing.extras_mismatch': 'Asaas subscription value may differ from the system',
+    'billing.extras_refund_needed': 'Extras charge paid but extras not released: refund it',
+    'billing.extras_diff_settled': 'Extras difference charge closed',
+    'billing.extras_diff_expired': 'Extras difference charge unpaid (subscription marked past due)',
+    'billing.extras_charge_reversed': 'Paid extras charge was reversed (subscription marked past due)',
   },
 }
 

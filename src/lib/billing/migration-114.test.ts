@@ -72,7 +72,8 @@ describe('migration 114 contract', () => {
   })
 
   it('platform_list_accounts counts extras only for an active subscription, returns them, and keeps its grants', () => {
-    expect(sql).toContain("CASE WHEN b.status = 'active' THEN b.extra_users ELSE 0 END")
+    // active only, and the TARGET while a removal is pending (what new invites are checked against)
+    expect(sql).toContain("CASE WHEN b.status = 'active' THEN LEAST(b.extra_users, COALESCE(b.pending_extra_users, b.extra_users)) ELSE 0 END")
   })
 
   it('platform_list_accounts returns the extras and keeps its grants', () => {

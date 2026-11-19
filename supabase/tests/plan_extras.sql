@@ -89,11 +89,16 @@ SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_ex
 SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extras_asaas_lowered = true WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'lowered without a schedule');
 -- an awaited annual purchase is all-or-nothing, with a positive amount and a locked price for what it adds
 SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0 WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'purchase without its charge');
-SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 0, pending_add_channels = 0, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now() WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a purchase of nothing');
-SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now() WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a purchase without the price it locks');
-SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, pending_add_user_price_cents = 1500, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 0, extras_oneoff_expires_at = now() WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a free one-off charge');
-SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, pending_add_user_price_cents = 1500, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now() WHERE account_id = %L$q$, (SELECT acc_a FROM ctx))), 1, 'a complete purchase is accepted');
-UPDATE account_billing SET pending_add_users = NULL, pending_add_channels = NULL, pending_add_user_price_cents = NULL, extras_oneoff_payment_id = NULL, extras_oneoff_cents = NULL, extras_oneoff_expires_at = NULL WHERE account_id = (SELECT acc_a FROM ctx);
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 0, pending_add_channels = 0, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now(), extras_oneoff_renewal_due = '2027-12-01' WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a purchase of nothing');
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now(), extras_oneoff_renewal_due = '2027-12-01' WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a purchase without the price it locks');
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, pending_add_user_price_cents = 1500, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 0, extras_oneoff_expires_at = now(), extras_oneoff_renewal_due = '2027-12-01' WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a free one-off charge');
+SELECT pg_temp.assert_eq(pg_temp.rows(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, pending_add_user_price_cents = 1500, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now(), extras_oneoff_renewal_due = '2027-12-01' WHERE account_id = %L$q$, (SELECT acc_a FROM ctx))), 1, 'a complete purchase is accepted');
+UPDATE account_billing SET pending_add_users = NULL, pending_add_channels = NULL, pending_add_user_price_cents = NULL, extras_oneoff_payment_id = NULL, extras_oneoff_cents = NULL, extras_oneoff_expires_at = NULL, extras_oneoff_renewal_due = NULL WHERE account_id = (SELECT acc_a FROM ctx);
+
+-- the renewal the purchase was priced against is part of the all-or-nothing shape; the difference charge needs its expiry
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET pending_add_users = 1, pending_add_channels = 0, pending_add_user_price_cents = 1500, extras_oneoff_payment_id = 'p', extras_oneoff_cents = 100, extras_oneoff_expires_at = now() WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a purchase without its renewal due');
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extras_diff_payment_id = 'pay_d' WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'a difference charge without its expiry');
+SELECT pg_temp.assert_fails_with(format($q$UPDATE account_billing SET extras_diff_expires_at = now() WHERE account_id = %L$q$, (SELECT acc_a FROM ctx)), '23514', 'an expiry without its difference charge');
 
 -- service_role (the server) writes; the compare-and-swap UPDATE matches 1 row, then 0 when stale
 SET ROLE service_role;
@@ -205,24 +210,32 @@ SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_a FROM ctx), ((
 SELECT pg_temp.assert_true(billing_extras_commit((SELECT acc_a FROM ctx), ((SELECT r FROM claim3)->>'token')::uuid,
   jsonb_build_object('asaas_subscription_id','sub_ext_a','value_cents',8990,'extra_users',2,'extra_channels',0,'extra_user_price_cents',1500,'pending_extra_users',NULL,'extras_asaas_lowered',false),
   jsonb_build_object('extra_users',2,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',8990,'extras_asaas_lowered',false,
-    'pending_add_users',1,'pending_add_channels',0,'pending_add_user_price_cents',1500,'extras_oneoff_payment_id','pay_1','extras_oneoff_url','https://asaas.invalid/i/1','extras_oneoff_cents',15000,'extras_oneoff_expires_at','2027-01-01T00:00:00Z'),
+    'pending_add_users',1,'pending_add_channels',0,'pending_add_user_price_cents',1500,'extras_oneoff_payment_id','pay_1','extras_oneoff_url','https://asaas.invalid/i/1','extras_oneoff_cents',15000,'extras_oneoff_expires_at','2027-01-01T00:00:00Z','extras_oneoff_renewal_due','2027-12-01'),
   '11400000-0000-4000-8000-00000000000a', 'billing.extras_changed', '{"type":"add_awaiting_payment"}'), 'the awaited purchase is committed');
 RESET ROLE;
-SELECT pg_temp.assert_true((SELECT pending_add_users = 1 AND extras_oneoff_payment_id = 'pay_1' AND extras_oneoff_cents = 15000 AND extra_users = 2 AND value_cents = 8990
+SELECT pg_temp.assert_true((SELECT extras_oneoff_renewal_due = DATE '2027-12-01' AND pending_add_users = 1 AND extras_oneoff_payment_id = 'pay_1' AND extras_oneoff_cents = 15000 AND extra_users = 2 AND value_cents = 8990
   FROM account_billing WHERE account_id = (SELECT acc_a FROM ctx)), 'purchase stored; the limit-bearing extras and the value did not move');
 SET ROLE service_role;
 CREATE TEMP TABLE claim4 AS SELECT billing_extras_claim((SELECT acc_a FROM ctx), NULL) AS r;
 GRANT SELECT ON claim4 TO service_role;
 SELECT pg_temp.assert_true(billing_extras_commit((SELECT acc_a FROM ctx), ((SELECT r FROM claim4)->>'token')::uuid,
   jsonb_build_object('asaas_subscription_id','sub_ext_a','value_cents',8990,'extra_users',2,'extra_channels',0,'extra_user_price_cents',1500,'extras_asaas_lowered',false,'extras_oneoff_payment_id','pay_1'),
-  jsonb_build_object('extra_users',3,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',10490,'extras_asaas_lowered',false),
+  jsonb_build_object('extra_users',3,'extra_channels',0,'extra_user_price_cents',1500,'value_cents',10490,'extras_asaas_lowered',false,'extras_oneoff_paid_id','pay_1','extras_first_due','2027-12-01'),
   NULL, 'billing.extras_changed', '{"type":"add_activated"}'), 'activation releases the extras and clears the purchase');
 SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_a FROM ctx), gen_random_uuid(), '{}', '{}', NULL, 'billing.extras_add_cancelled', '{}'), 'the cancelled-purchase action exists (wrong token still refused)');
 RESET ROLE;
 SELECT pg_temp.assert_true((SELECT extra_users = 3 AND value_cents = 10490 AND pending_add_users IS NULL AND extras_oneoff_payment_id IS NULL AND extras_oneoff_url IS NULL
   FROM account_billing WHERE account_id = (SELECT acc_a FROM ctx)), 'extras active, purchase cleared');
+SELECT pg_temp.assert_true((SELECT extras_oneoff_renewal_due IS NULL AND extras_oneoff_paid_id = 'pay_1' AND extras_first_due = DATE '2027-12-01'
+  FROM account_billing WHERE account_id = (SELECT acc_a FROM ctx)), 'the paid charge id is kept for a later refund; the renewal due is cleared');
+-- the new audit actions exist (a wrong token is still refused, not an unknown action), and a stale difference charge fails the swap
+SET ROLE service_role;
+SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_a FROM ctx), gen_random_uuid(), '{}', '{}', NULL, 'billing.extras_refund_needed', '{}'), 'refund-needed action exists');
+SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_a FROM ctx), gen_random_uuid(), '{}', '{}', NULL, 'billing.extras_diff_settled', '{}'), 'diff-settled action exists');
+SELECT pg_temp.assert_true(NOT billing_extras_commit((SELECT acc_a FROM ctx), gen_random_uuid(), '{}', '{}', NULL, 'billing.extras_diff_expired', '{}'), 'diff-expired action exists');
+RESET ROLE;
 -- the platform list counts extras only while the subscription is active
-SELECT pg_temp.assert_true(pg_get_functiondef('public.platform_list_accounts()'::regprocedure) LIKE '%b.status = ''active'' THEN b.extra_users%', 'platform extras count only for an active subscription');
+SELECT pg_temp.assert_true(pg_get_functiondef('public.platform_list_accounts()'::regprocedure) LIKE '%b.status = ''active'' THEN LEAST(b.extra_users, COALESCE(b.pending_extra_users, b.extra_users))%', 'platform extras: active only, and the target while a removal is pending');
 -- nobody but service_role runs them
 SELECT pg_temp.assert_true(
   NOT has_function_privilege('anon', 'public.billing_extras_claim(uuid,integer)', 'EXECUTE')
