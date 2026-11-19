@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   subs: 0,
   rpc: [] as { fn: string; args: Record<string, unknown> }[],
   activateResult: true as boolean,
+  oneOffStatus: 'PENDING' as string,
 }))
 
 // The per-minute limiter is per process and would trip over this many requests.
@@ -51,6 +52,7 @@ vi.mock('@/lib/billing/asaas', () => {
     createSubscription: vi.fn(async () => ({ id: `sub_${++h.subs}`, status: 'ACTIVE' })),
     deleteSubscription: vi.fn(async () => ({})),
     deletePayment: vi.fn(async () => ({})),
+    getPayment: vi.fn(async (id: string) => ({ id, status: h.oneOffStatus })),
     listSubscriptionPayments: vi.fn(async (sub: string) => [
       { id: `pay_${sub}`, subscription: sub, status: 'PENDING', value: 89.9, dueDate: '2026-10-12', invoiceUrl: `https://asaas/i/${sub}` },
     ]),
@@ -77,6 +79,7 @@ function checkout(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks()
   h.role = 'owner'
+  h.oneOffStatus = 'PENDING'
   h.subs = 0
   h.fake = makeFakeDb({
     accounts: [
@@ -281,6 +284,23 @@ describe('billing checkout', () => {
         extra_channel_price_cents: null,
         value_cents: 89900 + 15000,
         pending_extra_users: null,
+      })
+    })
+
+    const awaiting = { pending_add_users: 1, pending_add_channels: 0, pending_add_user_price_cents: 1500, extras_oneoff_payment_id: 'pay_oneoff', extras_oneoff_cents: 12500, pending_extra_users: null, pending_extra_channels: null, extras_reduce_due: null, extras_asaas_lowered: false }
+
+    it('an annual add whose one-off charge was PAID but not yet released goes with the account (carried, not dropped)', async () => {
+      Object.assign(h.fake.tables.account_billing[0], awaiting)
+      h.oneOffStatus = 'RECEIVED'
+      expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
+      expect(asaas.deletePayment).not.toHaveBeenCalled()
+      expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ value: 899 + 3 * 150 + 400 }))
+      expect(h.fake.tables.account_billing[0]).toMatchObject({
+        extra_users: 3,
+        extra_user_price_cents: 1500,
+        pending_add_users: null,
+        extras_oneoff_payment_id: null,
+        extras_oneoff_paid_id: 'pay_oneoff',
       })
     })
 
