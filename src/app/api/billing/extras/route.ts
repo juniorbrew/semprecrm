@@ -7,11 +7,14 @@
 // blocked accounts are refused. Body { kind: 'user' | 'channel', delta } or
 // { cancel_removal: true }. The account is the session's, never the body's.
 //
-//   delta > 0  the limit grows now; the next charge carries the extra (Asaas
-//              `updatePendingPayments: true`, no proration).
-//   delta < 0  nothing drops now: the extras stay until the end of the paid
-//              period (and for at least one full billed period); the sweep applies
-//              it. The usage check runs now and again when it takes effect.
+//   delta > 0, monthly  the limit grows now; the next charge carries the extra (Asaas
+//                       `updatePendingPayments: true`, no proration).
+//   delta > 0, annual   an immediate one-off charge for the months left until the renewal;
+//                       the limit is released when it is paid (extras-sweep.ts), and the
+//                       subscription value rises for the renewal at that moment.
+//   delta < 0           nothing drops now: the extras stay until the end of the paid
+//                       period (and for at least one full billed period); the sweep applies
+//                       it. The usage check runs now and again when it takes effect.
 //
 // The whole change runs through runExtrasChange (extras-service.ts): per-account
 // claim, Asaas first, then one transaction for the extras and their audit row.
@@ -21,17 +24,21 @@ import { NextResponse } from 'next/server'
 
 import { requireRole, requireWritable, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { asaasConfigured, listSubscriptionPayments } from '@/lib/billing/asaas'
+import { asaasConfigured, createPayment, deletePayment, listSubscriptionPayments } from '@/lib/billing/asaas'
 import {
-  changeExtras,
-  extrasCostCents,
-  nextChargeDue,
-  removalDueDate,
   addCycles,
+  addDays,
+  changeExtras,
+  nextChargeDue,
+  oneOffCents,
+  remainingMonths,
+  removalDueDate,
   type ExtrasRefusal,
   type ExtrasState,
 } from '@/lib/billing/extras'
+import { EXTRAS_ERRORS, MAX_EXTRAS_CHANGES_PER_DAY, ONE_OFF_DUE_DAYS, ONE_OFF_EXPIRES_DAYS } from '@/lib/billing/extras-errors'
 import { accountUsage, pickNew, runExtrasChange, type BillingExtrasRow, type Decision } from '@/lib/billing/extras-service'
+import { safeInvoiceUrl } from '@/lib/billing/overview'
 import { isBillingCycle, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { loadAccountEntitlements } from '@/lib/plans-server'
@@ -39,25 +46,8 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 
 export const dynamic = 'force-dynamic'
 
-/** Extras changes per account in 24 h (each one edits a real subscription in Asaas). */
-export const MAX_EXTRAS_CHANGES_PER_DAY = 10
 
-export const EXTRAS_ERRORS = {
-  notConfigured: 'Online payment is not available yet. Talk to the SempreCRM team.',
-  body: 'Choose what to change and how many.',
-  unavailable: 'Extras are only available on an active paid subscription. Subscribe first, or wait until the payment is confirmed.',
-  notOffered: 'Your plan does not offer this extra. Talk to the SempreCRM team.',
-  unlimited: 'Your plan has no limit here, so there is nothing to add.',
-  cap: 'You reached the maximum number of extras. Talk to the SempreCRM team.',
-  belowUsage: 'You are using more than the new limit would allow. Free up a user or number first.',
-  pendingRemoval: 'A removal is already scheduled. Cancel it first to change the extras.',
-  noPendingRemoval: 'There is no scheduled removal to cancel.',
-  tooMany: 'Too many changes in the last 24 hours. Try again tomorrow or talk to the SempreCRM team.',
-  conflict: 'Your subscription changed while you were doing this. Reload the page and try again.',
-  provider: 'Could not change it right now, try again.',
-} as const
-
-type Refusal = ExtrasRefusal | 'unavailable' | 'no_pending_removal'
+type Refusal = ExtrasRefusal | 'unavailable' | 'no_pending_removal' | 'removal_locked'
 
 const REFUSALS: Record<Refusal | 'busy' | 'daily_cap' | 'conflict' | 'provider' | 'none', [keyof typeof EXTRAS_ERRORS, number]> = {
   invalid: ['body', 400],
@@ -66,8 +56,11 @@ const REFUSALS: Record<Refusal | 'busy' | 'daily_cap' | 'conflict' | 'provider' 
   cap: ['cap', 400],
   below_usage: ['belowUsage', 409],
   pending_removal: ['pendingRemoval', 409],
+  pending_purchase: ['pendingPurchase', 409],
+  overdue: ['overdue', 409],
   unavailable: ['unavailable', 403],
   no_pending_removal: ['noPendingRemoval', 409],
+  removal_locked: ['removalLocked', 409],
   busy: ['conflict', 409],
   daily_cap: ['tooMany', 429],
   conflict: ['conflict', 409],
@@ -91,6 +84,7 @@ export async function POST(request: Request) {
     }
 
     const db = supabaseAdmin()
+    const today = todayInSaoPaulo()
     const result = await runExtrasChange<Refusal>(db, {
       accountId: ctx.accountId,
       actorId: ctx.userId,
@@ -104,31 +98,25 @@ export async function POST(request: Request) {
         }
         const current = stateOf(row)
         const pending = row.pending_extra_users !== null
+        const purchasePending = row.extras_oneoff_payment_id !== null
 
         if (cancel) {
+          if (purchasePending) return { refuse: 'pending_purchase' }
           if (!pending) return { refuse: 'no_pending_removal' }
-          // Asaas was already lowered for the charge after the removal: raise it back.
-          const restored = row.extras_asaas_lowered
-            ? Number(row.value_cents) -
-              extrasCostCents(cycle, { ...current, users: row.pending_extra_users ?? 0, channels: row.pending_extra_channels ?? 0 }) +
-              extrasCostCents(cycle, current)
-            : Number(row.value_cents)
+          // Once the lowered value is in Asaas the next charge may already be paid without the
+          // extra: cancelling would hand out free extras. Buying again bills normally.
+          if (row.extras_asaas_lowered) return { refuse: 'removal_locked' }
           return {
-            next: pickNew(row, {
-              value_cents: restored,
-              pending_extra_users: null,
-              pending_extra_channels: null,
-              extras_reduce_due: null,
-              extras_asaas_lowered: false,
-            }),
-            asaas: row.extras_asaas_lowered ? { valueCents: restored, updatePending: true } : null,
+            next: pickNew(row, { pending_extra_users: null, pending_extra_channels: null, extras_reduce_due: null }),
+            asaas: null,
             action: 'billing.extras_changed',
-            metadata: { type: 'removal_cancelled', extra_users: row.extra_users, extra_channels: row.extra_channels, value_cents: restored },
+            metadata: { type: 'removal_cancelled', extra_users: row.extra_users, extra_channels: row.extra_channels, value_cents: Number(row.value_cents) },
           }
         }
 
         const k = kind as 'user' | 'channel'
         const d = delta as number
+        const payments = (await listSubscriptionPayments(subscriptionId)).map((p) => ({ dueDate: p.dueDate, status: p.status }))
         const catalogDefinition = d > 0 ? (await loadCurrentPlanCatalog(db)).find((v) => v.plan === ent.plan)?.definition : undefined
         const baseLimit = baseOf(k === 'user' ? ent.limits.max_users : ent.limits.max_channels, k === 'user' ? ent.extras.users : ent.extras.channels)
         const change = changeExtras({
@@ -141,13 +129,14 @@ export async function POST(request: Request) {
           baseLimit,
           usage: d < 0 ? (await accountUsage(db, ctx.accountId))[k === 'user' ? 'users' : 'channels'] : 0,
           removalPending: pending,
+          purchasePending,
+          overdue: payments.some((p) => p.status === 'OVERDUE'),
         })
         if (!change.ok) return { refuse: change.code }
 
-        const payments = (await listSubscriptionPayments(subscriptionId)).map((p) => ({ dueDate: p.dueDate, status: p.status }))
-        const nextDue = nextChargeDue(payments, cycle) ?? addCycles(todayInSaoPaulo(), cycle, 1)
+        const nextDue = nextChargeDue(payments, cycle, today) ?? addCycles(today, cycle, 1)
 
-        if (change.type === 'add') {
+        if (change.type === 'add' && cycle === 'monthly') {
           return {
             next: pickNew(row, {
               extra_users: change.next.users,
@@ -170,6 +159,40 @@ export async function POST(request: Request) {
             },
           }
         }
+
+        if (change.type === 'add') {
+          // Annual: charge now for the months until the renewal; the limit is released when paid.
+          const unit = (k === 'user' ? change.next.userPriceCents : change.next.channelPriceCents) as number
+          const months = remainingMonths(today, nextDue)
+          const cents = oneOffCents(unit, d, months)
+          if (!row.asaas_customer_id) return { refuse: 'unavailable' }
+          const payment = await createPayment({
+            customer: row.asaas_customer_id,
+            value: cents / 100,
+            dueDate: addDays(today, ONE_OFF_DUE_DAYS),
+            description: `SempreCRM extras (${d} ${k === 'user' ? 'usuário(s)' : 'número(s)'} extra(s), ${months} mes(es) até a renovação)`,
+            externalReference: ctx.accountId,
+          })
+          return {
+            next: pickNew(row, {
+              pending_add_users: k === 'user' ? d : 0,
+              pending_add_channels: k === 'channel' ? d : 0,
+              pending_add_user_price_cents: k === 'user' ? unit : null,
+              pending_add_channel_price_cents: k === 'channel' ? unit : null,
+              extras_oneoff_payment_id: payment.id,
+              extras_oneoff_url: safeInvoiceUrl(payment.invoiceUrl),
+              extras_oneoff_cents: cents,
+              extras_oneoff_expires_at: new Date(Date.now() + ONE_OFF_EXPIRES_DAYS * 86_400_000).toISOString(),
+            }),
+            asaas: null,
+            action: 'billing.extras_changed',
+            metadata: { type: 'add_awaiting_payment', kind: k, delta: d, months, one_off_cents: cents, payment_id: payment.id, renewal_due: nextDue },
+            compensate: async () => {
+              await deletePayment(payment.id)
+            },
+          }
+        }
+
         const effective = removalDueDate(nextDue, row.extras_first_due, cycle as BillingCycle)
         return {
           next: pickNew(row, {
@@ -202,6 +225,7 @@ export async function POST(request: Request) {
       valueCents: r.value_cents,
       pendingRemoval:
         r.pending_extra_users === null ? null : { users: r.pending_extra_users, channels: r.pending_extra_channels, effectiveDate: r.extras_reduce_due },
+      pendingPurchase: r.extras_oneoff_payment_id === null ? null : { cents: r.extras_oneoff_cents, url: r.extras_oneoff_url },
     })
   } catch (err) {
     return toErrorResponse(err)

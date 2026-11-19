@@ -24,6 +24,7 @@ import {
   AsaasError,
   createCustomer,
   createSubscription,
+  deletePayment,
   deleteSubscription,
   listSubscriptionPayments,
   type AsaasPayment,
@@ -32,25 +33,11 @@ import { carryExtras, subscriptionValueCents } from '@/lib/billing/extras'
 import { asaasCycle, isBillingCycle, isNewPayment, periodEnd, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { PLANS, type Plan } from '@/lib/plans'
+import { CHECKOUT_ERRORS, MAX_CHECKOUTS_PER_DAY } from '@/lib/billing/checkout-errors'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
-/** Subscriptions created per account in 24 h (each one is a real object in Asaas). */
-export const MAX_CHECKOUTS_PER_DAY = 10
-
-export const CHECKOUT_ERRORS = {
-  notConfigured: 'Online payment is not available yet. Talk to the SempreCRM team.',
-  body: 'Choose a plan and a billing cycle.',
-  notForSale: 'This plan is sold by our team. Talk to us to subscribe.',
-  taxId: 'Add your CPF or CNPJ in Settings → Empresa before subscribing.',
-  alreadyActive: 'This account already has an active subscription.',
-  confirming: 'Your payment is being confirmed. This takes a few minutes.',
-  suspended: 'This account is suspended. Talk to the SempreCRM team.',
-  busy: 'Another subscription request is in progress. Try again.',
-  tooMany: 'Too many subscription attempts in the last 24 hours. Try again tomorrow or talk to the SempreCRM team.',
-  provider: 'Could not reach the payment provider. Try again in a few minutes.',
-} as const
 
 type BillingRow = {
   asaas_customer_id: string | null
@@ -63,6 +50,9 @@ type BillingRow = {
   extra_channels: number | null
   extra_user_price_cents: number | null
   extra_channel_price_cents: number | null
+  pending_extra_users: number | null
+  pending_extra_channels: number | null
+  extras_oneoff_payment_id: string | null
 }
 
 export async function POST(request: Request) {
@@ -103,7 +93,7 @@ export async function POST(request: Request) {
     const { data: existing, error: billErr } = await db
       .from('account_billing')
       .select(
-        'asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end, extra_users, extra_channels, extra_user_price_cents, extra_channel_price_cents',
+        'asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end, extra_users, extra_channels, extra_user_price_cents, extra_channel_price_cents, pending_extra_users, pending_extra_channels, extras_oneoff_payment_id',
       )
       .eq('account_id', ctx.accountId)
       .maybeSingle()
@@ -171,8 +161,9 @@ export async function POST(request: Request) {
     const def = version.definition
     const carried = carryExtras(
       {
-        users: current?.extra_users ?? 0,
-        channels: current?.extra_channels ?? 0,
+        // A scheduled removal already decided the target: that is what carries over.
+        users: Math.min(current?.extra_users ?? 0, current?.pending_extra_users ?? Infinity),
+        channels: Math.min(current?.extra_channels ?? 0, current?.pending_extra_channels ?? Infinity),
         userPriceCents: current?.extra_user_price_cents ?? null,
         channelPriceCents: current?.extra_channel_price_cents ?? null,
       },
@@ -215,6 +206,15 @@ export async function POST(request: Request) {
         pending_extra_channels: null,
         extras_reduce_due: null,
         extras_asaas_lowered: false,
+        // An annual add still waiting for its one-off charge is dropped (the charge is cancelled below).
+        pending_add_users: null,
+        pending_add_channels: null,
+        pending_add_user_price_cents: null,
+        pending_add_channel_price_cents: null,
+        extras_oneoff_payment_id: null,
+        extras_oneoff_url: null,
+        extras_oneoff_cents: null,
+        extras_oneoff_expires_at: null,
       }
       // Compare-and-swap against what was read: a concurrent checkout loses.
       const swap = current
@@ -238,6 +238,13 @@ export async function POST(request: Request) {
       const { data: now } = await db.from('account_billing').select('asaas_subscription_id').eq('account_id', ctx.accountId).maybeSingle()
       if (now?.asaas_subscription_id !== subscription.id) await cancelQuietly(subscription.id)
       throw err
+    }
+    if (current?.extras_oneoff_payment_id) {
+      try {
+        await deletePayment(current.extras_oneoff_payment_id)
+      } catch (err) {
+        console.error('[billing/checkout] could not cancel the extras one-off charge', current.extras_oneoff_payment_id, err instanceof Error ? err.message : err)
+      }
     }
     if (current?.asaas_subscription_id) await cancelReplaced(current.asaas_subscription_id, current.cycle as BillingCycle, covered)
     const url = openInvoice(await syncPayments(db, ctx.accountId, subscription.id))
