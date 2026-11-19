@@ -84,7 +84,7 @@ interface AccountSummary extends PlanAccountFields {
 
 /** Columns the auth provider selects off `accounts`. */
 const ACCOUNT_SELECT =
-  'id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name, phone, email, address, plan_version_id, plan_version:platform_plan_versions!accounts_plan_version_fk(id,plan,definition), account_billing(extra_users,extra_channels)';
+  'id, name, default_currency, plan, plan_status, plan_expires_at, module_overrides, limit_overrides, preferences, branding, person_type, tax_id, legal_name, phone, email, address, plan_version_id, plan_version:platform_plan_versions!accounts_plan_version_fk(id,plan,definition), account_billing(status,extra_users,extra_channels,pending_extra_users,pending_extra_channels)';
 
 interface AuthContextValue {
   user: User | null;

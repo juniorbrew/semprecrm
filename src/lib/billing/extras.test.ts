@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { addCycles, carryExtras, changeExtras, extrasCostCents, nextChargeDue, removalDueDate, subscriptionValueCents, type ExtrasState } from './extras'
+import { addCycles, addDays, carryExtras, oneOffCents, remainingMonths, changeExtras, extrasCostCents, nextChargeDue, removalDueDate, subscriptionValueCents, type ExtrasState } from './extras'
 
 const none: ExtrasState = { users: 0, channels: 0, userPriceCents: null, channelPriceCents: null }
 
@@ -56,6 +56,13 @@ describe('changeExtras: adding', () => {
     expect(changeExtras({ ...base, current: full, kind: 'user', delta: 1 })).toEqual({ ok: false, code: 'cap' })
   })
 
+  it('refuses an add while a charge is overdue or a purchase awaits payment', () => {
+    expect(changeExtras({ ...base, kind: 'user', delta: 1, overdue: true })).toEqual({ ok: false, code: 'overdue' })
+    expect(changeExtras({ ...base, kind: 'user', delta: 1, purchasePending: true })).toEqual({ ok: false, code: 'pending_purchase' })
+    // removing is not an add: an overdue charge does not stop it (the account is read-only anyway)
+    expect(changeExtras({ ...base, current: { ...none, users: 1, userPriceCents: 1500 }, currentValueCents: 10490, kind: 'user', delta: -1, overdue: true })).toMatchObject({ ok: true, type: 'remove' })
+  })
+
   it('refuses any change while a removal is pending', () => {
     expect(changeExtras({ ...base, kind: 'user', delta: 1, removalPending: true })).toEqual({ ok: false, code: 'pending_removal' })
     expect(changeExtras({ ...base, kind: 'user', delta: -1, removalPending: true })).toEqual({ ok: false, code: 'pending_removal' })
@@ -89,11 +96,34 @@ describe('charge dates', () => {
     expect(addCycles('2027-01-01', 'monthly', -1)).toBe('2026-12-01')
   })
 
-  it('the next unpaid charge is the earliest unpaid one; else one cycle after the latest', () => {
+  it('the next charge is the earliest PENDING one due today or later; else one cycle after the latest', () => {
     const paid = { dueDate: '2026-12-01', status: 'RECEIVED' }
-    expect(nextChargeDue([paid], 'monthly')).toBe('2027-01-01')
-    expect(nextChargeDue([paid, { dueDate: '2027-01-01', status: 'PENDING' }, { dueDate: '2027-02-01', status: 'PENDING' }], 'monthly')).toBe('2027-01-01')
-    expect(nextChargeDue([], 'monthly')).toBeNull()
+    expect(nextChargeDue([paid], 'monthly', '2026-12-05')).toBe('2027-01-01')
+    expect(nextChargeDue([paid, { dueDate: '2027-01-01', status: 'PENDING' }, { dueDate: '2027-02-01', status: 'PENDING' }], 'monthly', '2026-12-05')).toBe('2027-01-01')
+    expect(nextChargeDue([], 'monthly', '2026-12-05')).toBeNull()
+  })
+
+  it('an overdue or past charge never anchors the next one', () => {
+    const old = { dueDate: '2026-11-01', status: 'OVERDUE' }
+    expect(nextChargeDue([old, { dueDate: '2026-12-01', status: 'PENDING' }], 'monthly', '2026-11-20')).toBe('2026-12-01')
+    expect(nextChargeDue([old], 'monthly', '2026-11-20')).toBe('2026-12-01') // from the latest, not from the overdue one itself
+    expect(nextChargeDue([{ dueDate: '2026-11-01', status: 'PENDING' }], 'monthly', '2026-11-20')).toBe('2026-12-01')
+  })
+
+  it('the order of the list does not matter, even with more than ten charges', () => {
+    const many = Array.from({ length: 14 }, (_, i) => ({ dueDate: addCycles('2025-11-01', 'monthly', i), status: 'RECEIVED' }))
+    expect(nextChargeDue(many, 'monthly', '2026-12-05')).toBe('2027-01-01')
+    expect(nextChargeDue([...many].reverse(), 'monthly', '2026-12-05')).toBe('2027-01-01')
+  })
+
+  it('annual one-off: months left until the renewal, rounded up, between 1 and 12', () => {
+    expect(remainingMonths('2026-12-05', '2027-12-01')).toBe(12) // 361 days
+    expect(remainingMonths('2027-05-01', '2027-12-01')).toBe(8) // 214 days / 30.4 = 7.04, rounded up
+    expect(remainingMonths('2027-11-30', '2027-12-01')).toBe(1)
+    expect(remainingMonths('2027-12-01', '2027-12-01')).toBe(1) // never zero
+    expect(remainingMonths('2026-01-01', '2030-01-01')).toBe(12) // never more than 12
+    expect(oneOffCents(1500, 2, 12)).toBe(36000)
+    expect(addDays('2026-12-30', 3)).toBe('2027-01-02')
   })
 
   it('removal day: an extra already paid for leaves at the next charge; a fresh one is billed one full period first', () => {

@@ -24,7 +24,9 @@ const h = vi.hoisted(() => ({
   onAsaas: null as null | (() => void),
   updateFails: false as false | 'before' | 'after',
   getFails: false,
-  payments: [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED' }] as { id: string; dueDate: string; status: string }[],
+  payments: [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 59.9 }] as { id: string; dueDate: string; status: string; value: number }[],
+  oneOffs: [] as { customer: string; value: number; dueDate: string }[],
+  deleted: [] as string[],
   audits: [] as Record<string, unknown>[],
 }))
 
@@ -75,6 +77,14 @@ vi.mock('@/lib/plans-server', async () => {
 vi.mock('@/lib/billing/asaas', () => ({
   asaasConfigured: vi.fn(() => true),
   listSubscriptionPayments: vi.fn(async () => h.payments),
+  createPayment: vi.fn(async (input: { customer: string; value: number; dueDate: string }) => {
+    h.oneOffs.push({ customer: input.customer, value: input.value, dueDate: input.dueDate })
+    return { id: 'pay_oneoff_' + h.oneOffs.length, status: 'PENDING', invoiceUrl: 'https://asaas.invalid/i/oneoff' }
+  }),
+  deletePayment: vi.fn(async (id: string) => {
+    h.deleted.push(id)
+    return {}
+  }),
   getSubscription: vi.fn(async (id: string) => {
     if (h.getFails) throw new Error('Asaas down')
     return { id, status: 'ACTIVE', value: h.asaasValue }
@@ -128,7 +138,9 @@ beforeEach(() => {
     onAsaas: null,
     updateFails: false,
     getFails: false,
-    payments: [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED' }],
+    payments: [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 59.9 }],
+    oneOffs: [],
+    deleted: [],
     audits: [],
   })
   h.fake = makeFakeDb(
@@ -136,6 +148,7 @@ beforeEach(() => {
       account_billing: [
         {
           account_id: 'acct-1',
+          asaas_customer_id: 'cus_1',
           asaas_subscription_id: 'sub_1',
           plan: 'basico',
           cycle: 'monthly',
@@ -150,6 +163,14 @@ beforeEach(() => {
           pending_extra_channels: null,
           extras_reduce_due: null,
           extras_asaas_lowered: false,
+          pending_add_users: null,
+          pending_add_channels: null,
+          pending_add_user_price_cents: null,
+          pending_add_channel_price_cents: null,
+          extras_oneoff_payment_id: null,
+          extras_oneoff_url: null,
+          extras_oneoff_cents: null,
+          extras_oneoff_expires_at: null,
         },
       ],
       profiles: [{ user_id: 'u1', account_id: 'acct-1' }, { user_id: 'u2', account_id: 'acct-1' }],
@@ -164,7 +185,7 @@ describe('adding extras', () => {
   it('Asaas gets the new value first (pending charges follow), then the row and its audit row are saved together', async () => {
     const res = await change({ kind: 'user', delta: 2, account_id: 'acct-other' })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ extras: { users: 2, channels: 0 }, valueCents: 8990, pendingRemoval: null })
+    expect(await res.json()).toEqual({ extras: { users: 2, channels: 0 }, valueCents: 8990, pendingRemoval: null, pendingPurchase: null })
     expect(h.calls).toEqual([{ id: 'sub_1', value: 89.9, pending: true }])
     expect(billing()).toMatchObject({ extra_users: 2, extra_user_price_cents: 1500, value_cents: 8990, extras_first_due: '2027-01-01', extras_claim_token: null })
     expect(changed()).toEqual([
@@ -182,11 +203,20 @@ describe('adding extras', () => {
     ])
   })
 
-  it('annual accounts pay the extra at 10 months', async () => {
-    Object.assign(billing(), { cycle: 'annual', value_cents: 59900 })
-    const res = await change({ kind: 'channel', delta: 1 })
-    expect(await res.json()).toMatchObject({ valueCents: 59900 + 40000 })
-    expect(h.calls).toEqual([{ id: 'sub_1', value: 999, pending: true }])
+  it('OVERDUE charge: nothing is added until it is regularised', async () => {
+    h.payments = [{ id: 'p1', dueDate: '2026-11-01', status: 'OVERDUE', value: 59.9 }]
+    const res = await change({ kind: 'user', delta: 1 })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'Regularize the pending payment first.' })
+    expect(h.calls).toEqual([])
+    expect(billing().extra_users).toBe(0)
+  })
+
+  it('the charge list is read whole: >10 charges oldest-first still find the right next charge', async () => {
+    h.payments = Array.from({ length: 14 }, (_, i) => ({ id: 'p' + i, dueDate: new Date(Date.UTC(2025, 11 + i, 1)).toISOString().slice(0, 10), status: 'RECEIVED', value: 59.9 }))
+    // latest charge 2027-01-01 (index 13): next charge 2027-02-01
+    expect((await change({ kind: 'user', delta: 1 })).status).toBe(200)
+    expect(billing().extras_first_due).toBe('2027-02-01')
   })
 
   it('a locked price survives a new plan price', async () => {
@@ -211,6 +241,83 @@ describe('adding extras', () => {
       expect((await change(body)).status, JSON.stringify(body)).toBe(400)
     }
     expect(asaas.updateSubscriptionValue).not.toHaveBeenCalled()
+  })
+})
+
+describe('annual subscriptions: a one-off charge now, the limit when it is paid', () => {
+  const annual = () => Object.assign(billing(), { cycle: 'annual', value_cents: 59900 })
+  beforeEach(() => {
+    h.payments = [{ id: 'p1', dueDate: '2027-12-01', status: 'PENDING', value: 599 }] // renewal in 2027
+  })
+
+  it('creates the prorated one-off charge (months to the renewal x monthly price), changes neither limit nor subscription value', async () => {
+    annual()
+    const res = await change({ kind: 'user', delta: 2 })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.extras).toEqual({ users: 0, channels: 0 })
+    expect(body.pendingPurchase).toEqual({ cents: expect.any(Number), url: 'https://asaas.invalid/i/oneoff' })
+    // months = ceil(days to 01/12/2027 / 30.4), 1..12; amount = months x 2 x 15,00
+    expect(h.oneOffs).toHaveLength(1)
+    const cents = body.pendingPurchase.cents
+    expect(cents % 3000).toBe(0)
+    expect(cents / 3000).toBeGreaterThanOrEqual(1)
+    expect(cents / 3000).toBeLessThanOrEqual(12)
+    expect(h.oneOffs[0]).toMatchObject({ customer: 'cus_1', value: cents / 100 })
+    expect(h.calls).toEqual([]) // the subscription value waits for the payment
+    expect(billing()).toMatchObject({
+      extra_users: 0,
+      value_cents: 59900,
+      pending_add_users: 2,
+      pending_add_channels: 0,
+      pending_add_user_price_cents: 1500,
+      extras_oneoff_payment_id: 'pay_oneoff_1',
+      extras_oneoff_url: 'https://asaas.invalid/i/oneoff',
+      extras_oneoff_cents: cents,
+    })
+    expect(new Date(String(billing().extras_oneoff_expires_at)).getTime()).toBeGreaterThan(Date.now() + 6 * 86_400_000)
+    expect(changed()).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ type: 'add_awaiting_payment', payment_id: 'pay_oneoff_1', one_off_cents: cents }) })])
+  })
+
+  it('while a purchase awaits payment nothing else can be changed or cancelled', async () => {
+    annual()
+    await change({ kind: 'user', delta: 1 })
+    for (const body of [{ kind: 'user', delta: 1 }, { kind: 'channel', delta: 1 }, { kind: 'user', delta: -1 }, { cancel_removal: true }]) {
+      expect((await change(body)).status, JSON.stringify(body)).toBe(409)
+    }
+    expect(h.oneOffs).toHaveLength(1)
+  })
+
+  it('if the commit is lost, the one-off charge is cancelled again (no orphan charge)', async () => {
+    annual()
+    // another change wins the compare-and-swap while ours is in Asaas
+    vi.mocked(asaas.createPayment).mockImplementationOnce(async () => {
+      Object.assign(billing(), { value_cents: 61900 })
+      return { id: 'pay_lost', status: 'PENDING', invoiceUrl: 'https://asaas.invalid/i/lost' } as never
+    })
+    expect((await change({ kind: 'user', delta: 1 })).status).toBe(409)
+    expect(h.deleted).toEqual(['pay_lost'])
+    expect(billing().extras_oneoff_payment_id).toBeNull()
+  })
+
+  it('monthly accounts are unchanged: no one-off charge, the value goes up for the next charge', async () => {
+    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 59.9 }]
+    expect((await change({ kind: 'user', delta: 1 })).status).toBe(200)
+    expect(h.oneOffs).toEqual([])
+    expect(h.calls).toEqual([{ id: 'sub_1', value: 74.9, pending: true }])
+  })
+})
+
+describe('a removal already lowered in Asaas cannot be cancelled', () => {
+  it('refuses (409) once the lowered value is in Asaas; before that it can be cancelled', async () => {
+    Object.assign(billing(), { extra_users: 2, extra_user_price_cents: 1500, value_cents: 8990, extras_first_due: '2026-10-01' })
+    await change({ kind: 'user', delta: -2 })
+    Object.assign(billing(), { value_cents: 5990, extras_asaas_lowered: true }) // what the sweep does
+    const res = await change({ cancel_removal: true })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/already in your next charge/)
+    expect(billing()).toMatchObject({ extra_users: 2, pending_extra_users: 0, extras_asaas_lowered: true })
+    expect(h.calls).toEqual([])
   })
 })
 
@@ -316,7 +423,7 @@ describe('removing extras is scheduled', () => {
 
   it('keeps the extras and the limit, touches nothing in Asaas, and says the day (end of the paid period)', async () => {
     withTwoUsers()
-    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED' }]
+    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 89.9 }]
     const res = await change({ kind: 'user', delta: -1 })
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ extras: { users: 2 }, valueCents: 8990, pendingRemoval: { users: 1, channels: 0, effectiveDate: '2027-01-01' } })
@@ -326,7 +433,7 @@ describe('removing extras is scheduled', () => {
   })
 
   it('an extra bought this period is still billed one full period: bought 05/12, removed 10/12 -> gone from 01/02', async () => {
-    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED' }]
+    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 89.9 }]
     expect((await change({ kind: 'user', delta: 1 })).status).toBe(200) // first charge 01/01
     expect(billing().extras_first_due).toBe('2027-01-01')
     const res = await change({ kind: 'user', delta: -1 })
@@ -368,14 +475,13 @@ describe('removing extras is scheduled', () => {
     expect(h.calls).toEqual([]) // Asaas had not been lowered yet
     expect((await change({ cancel_removal: true })).status).toBe(409) // nothing left to cancel
   })
+})
 
-  it('cancelling after Asaas was already lowered raises it back for the pending charges', async () => {
-    withTwoUsers()
-    await change({ kind: 'user', delta: -2 })
-    Object.assign(billing(), { value_cents: 5990, extras_asaas_lowered: true }) // what the sweep does
-    const res = await change({ cancel_removal: true })
-    expect(res.status).toBe(200)
-    expect(h.calls).toEqual([{ id: 'sub_1', value: 89.9, pending: true }])
-    expect(billing()).toMatchObject({ value_cents: 8990, extras_asaas_lowered: false, pending_extra_users: null })
+describe('route files export only handlers and segment config (Next 16 rejects the rest)', () => {
+  it('extras and checkout routes', async () => {
+    const allowed = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'dynamic', 'runtime', 'revalidate', 'maxDuration'])
+    for (const mod of [await import('./route'), await import('../checkout/route')]) {
+      for (const name of Object.keys(mod)) expect(allowed.has(name), name).toBe(true)
+    }
   })
 })

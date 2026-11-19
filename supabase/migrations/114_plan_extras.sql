@@ -85,7 +85,17 @@ ALTER TABLE public.account_billing
   ADD COLUMN IF NOT EXISTS extras_reduce_due DATE,
   ADD COLUMN IF NOT EXISTS extras_asaas_lowered BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS extras_claim_token UUID,
-  ADD COLUMN IF NOT EXISTS extras_claim_until TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS extras_claim_until TIMESTAMPTZ,
+  -- Annual subscriptions: an add waits for its one-off prorated charge to be paid (the limit is
+  -- released only then). The deltas, the prices the purchase locks, and the Asaas charge.
+  ADD COLUMN IF NOT EXISTS pending_add_users INTEGER,
+  ADD COLUMN IF NOT EXISTS pending_add_channels INTEGER,
+  ADD COLUMN IF NOT EXISTS pending_add_user_price_cents INTEGER,
+  ADD COLUMN IF NOT EXISTS pending_add_channel_price_cents INTEGER,
+  ADD COLUMN IF NOT EXISTS extras_oneoff_payment_id TEXT,
+  ADD COLUMN IF NOT EXISTS extras_oneoff_url TEXT,
+  ADD COLUMN IF NOT EXISTS extras_oneoff_cents BIGINT,
+  ADD COLUMN IF NOT EXISTS extras_oneoff_expires_at TIMESTAMPTZ;
 
 -- Recreated every run so a second run does not fail.
 ALTER TABLE public.account_billing
@@ -94,7 +104,8 @@ ALTER TABLE public.account_billing
   DROP CONSTRAINT IF EXISTS account_billing_extra_prices_range,
   DROP CONSTRAINT IF EXISTS account_billing_extra_users_priced,
   DROP CONSTRAINT IF EXISTS account_billing_extra_channels_priced,
-  DROP CONSTRAINT IF EXISTS account_billing_extras_pending_shape;
+  DROP CONSTRAINT IF EXISTS account_billing_extras_pending_shape,
+  DROP CONSTRAINT IF EXISTS account_billing_extras_purchase_shape;
 ALTER TABLE public.account_billing
   ADD CONSTRAINT account_billing_extra_users_range CHECK (extra_users BETWEEN 0 AND 100),
   ADD CONSTRAINT account_billing_extra_channels_range CHECK (extra_channels BETWEEN 0 AND 100),
@@ -109,7 +120,17 @@ ALTER TABLE public.account_billing
     AND (pending_extra_users IS NULL) = (extras_reduce_due IS NULL)
     AND (pending_extra_users IS NULL OR (pending_extra_users BETWEEN 0 AND extra_users
          AND pending_extra_channels BETWEEN 0 AND extra_channels))
-    AND (extras_asaas_lowered = false OR extras_reduce_due IS NOT NULL));
+    AND (extras_asaas_lowered = false OR extras_reduce_due IS NOT NULL)),
+  -- An awaited purchase is all-or-nothing: deltas, charge, link, amount and expiry together.
+  ADD CONSTRAINT account_billing_extras_purchase_shape CHECK (
+    (pending_add_users IS NULL) = (pending_add_channels IS NULL)
+    AND (pending_add_users IS NULL) = (extras_oneoff_payment_id IS NULL)
+    AND (pending_add_users IS NULL) = (extras_oneoff_cents IS NULL)
+    AND (pending_add_users IS NULL) = (extras_oneoff_expires_at IS NULL)
+    AND (pending_add_users IS NULL OR (pending_add_users >= 0 AND pending_add_channels >= 0
+         AND pending_add_users + pending_add_channels > 0 AND extras_oneoff_cents > 0
+         AND (pending_add_users = 0 OR (pending_add_user_price_cents IS NOT NULL AND pending_add_user_price_cents BETWEEN 1 AND 10000000))
+         AND (pending_add_channels = 0 OR (pending_add_channel_price_cents IS NOT NULL AND pending_add_channel_price_cents BETWEEN 1 AND 10000000)))));
 
 -- Clients get no write path: 090 gave authenticated SELECT only (RLS: owner/admin of the account).
 REVOKE INSERT, UPDATE, DELETE ON public.account_billing FROM PUBLIC, anon, authenticated;
@@ -161,7 +182,7 @@ DECLARE
   b public.account_billing%ROWTYPE;
   v_name text;
 BEGIN
-  IF p_action NOT IN ('billing.extras_changed', 'billing.extras_removal_applied', 'billing.extras_removal_blocked') THEN
+  IF p_action NOT IN ('billing.extras_changed', 'billing.extras_removal_applied', 'billing.extras_removal_blocked', 'billing.extras_add_cancelled') THEN
     RAISE EXCEPTION 'Unknown extras action' USING ERRCODE = '22023';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('billing_extras:' || p_account::text, 0));
@@ -179,7 +200,8 @@ BEGIN
      OR b.extra_user_price_cents IS DISTINCT FROM (p_expect->>'extra_user_price_cents')::int
      OR b.extra_channel_price_cents IS DISTINCT FROM (p_expect->>'extra_channel_price_cents')::int
      OR b.pending_extra_users IS DISTINCT FROM (p_expect->>'pending_extra_users')::int
-     OR b.extras_asaas_lowered IS DISTINCT FROM (p_expect->>'extras_asaas_lowered')::boolean THEN
+     OR b.extras_asaas_lowered IS DISTINCT FROM (p_expect->>'extras_asaas_lowered')::boolean
+     OR b.extras_oneoff_payment_id IS DISTINCT FROM (p_expect->>'extras_oneoff_payment_id') THEN
     RETURN false;
   END IF;
   UPDATE public.account_billing SET
@@ -193,6 +215,14 @@ BEGIN
     pending_extra_channels = (p_new->>'pending_extra_channels')::int,
     extras_reduce_due = (p_new->>'extras_reduce_due')::date,
     extras_asaas_lowered = coalesce((p_new->>'extras_asaas_lowered')::boolean, false),
+    pending_add_users = (p_new->>'pending_add_users')::int,
+    pending_add_channels = (p_new->>'pending_add_channels')::int,
+    pending_add_user_price_cents = (p_new->>'pending_add_user_price_cents')::int,
+    pending_add_channel_price_cents = (p_new->>'pending_add_channel_price_cents')::int,
+    extras_oneoff_payment_id = (p_new->>'extras_oneoff_payment_id'),
+    extras_oneoff_url = (p_new->>'extras_oneoff_url'),
+    extras_oneoff_cents = (p_new->>'extras_oneoff_cents')::bigint,
+    extras_oneoff_expires_at = (p_new->>'extras_oneoff_expires_at')::timestamptz,
     extras_claim_token = NULL, extras_claim_until = NULL
   WHERE account_id = p_account;
   IF p_actor IS NOT NULL THEN SELECT full_name INTO v_name FROM public.profiles WHERE user_id = p_actor; END IF;
@@ -219,7 +249,7 @@ GRANT EXECUTE ON FUNCTION public.billing_extras_commit(uuid, uuid, jsonb, jsonb,
 GRANT EXECUTE ON FUNCTION public.billing_extras_release(uuid, uuid) TO service_role;
 
 -- ------------------------------------------------------------
--- platform_list_accounts(): same as 081 plus the contracted extras, so /platform, the account
+-- platform_list_accounts(): same as 081 plus the contracted extras (only while the subscription is active), so /platform, the account
 -- page and Usage compute the real limit. Same owner and grants.
 -- ------------------------------------------------------------
 DROP FUNCTION IF EXISTS public.platform_list_accounts();
@@ -282,8 +312,8 @@ BEGIN
        WHERE i.account_id = a.id
          AND i.accepted_at IS NULL
          AND i.expires_at > NOW())                                         AS pending_invites_count,
-    COALESCE(b.extra_users, 0)                                             AS extra_users,
-    COALESCE(b.extra_channels, 0)                                          AS extra_channels
+    CASE WHEN b.status = 'active' THEN b.extra_users ELSE 0 END            AS extra_users,
+    CASE WHEN b.status = 'active' THEN b.extra_channels ELSE 0 END         AS extra_channels
   FROM accounts a
   JOIN platform_plan_versions v ON v.id=a.plan_version_id AND v.plan=a.plan
   LEFT JOIN account_billing b ON b.account_id = a.id

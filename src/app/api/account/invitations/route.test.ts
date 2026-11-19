@@ -17,7 +17,7 @@ const h = vi.hoisted(() => ({
       plan_expires_at: null as string | null,
       module_overrides: {} as Record<string, unknown>,
       limit_overrides: {} as Record<string, unknown>,
-      account_billing: null as null | { extra_users: number; extra_channels: number },
+      account_billing: null as null | { status?: string; extra_users: number; extra_channels: number; pending_extra_users?: number | null },
     },
     members: 1,
     pendingInvites: 0,
@@ -158,9 +158,21 @@ describe('POST /api/account/invitations — max_users', () => {
   it('counts contracted extra users in the limit (plan + extras, migration 114)', async () => {
     h.state.members = 2; // trial: 2 seats
     expect((await POST(request({ role: 'agent' }))).status).toBe(403);
-    h.state.account.account_billing = { extra_users: 1, extra_channels: 0 };
+    h.state.account.account_billing = { status: 'active', extra_users: 1, extra_channels: 0 };
     expect((await POST(request({ role: 'agent' }))).status).toBe(201);
     h.state.pendingInvites = 1; // 2 members + 1 pending = 3 seats used
+    expect((await POST(request({ role: 'agent' }))).status).toBe(403);
+  });
+
+  it('a scheduled removal already lowers the limit for new invites (the target counts)', async () => {
+    h.state.members = 2;
+    h.state.account.account_billing = { status: 'active', extra_users: 1, extra_channels: 0, pending_extra_users: 0 };
+    expect((await POST(request({ role: 'agent' }))).status).toBe(403);
+  });
+
+  it('extras of a subscription that is not active do not count', async () => {
+    h.state.members = 2;
+    h.state.account.account_billing = { status: 'past_due', extra_users: 1, extra_channels: 0 };
     expect((await POST(request({ role: 'agent' }))).status).toBe(403);
   });
 

@@ -50,6 +50,7 @@ vi.mock('@/lib/billing/asaas', () => {
     createCustomer: vi.fn(async () => ({ id: 'cus_1' })),
     createSubscription: vi.fn(async () => ({ id: `sub_${++h.subs}`, status: 'ACTIVE' })),
     deleteSubscription: vi.fn(async () => ({})),
+    deletePayment: vi.fn(async () => ({})),
     listSubscriptionPayments: vi.fn(async (sub: string) => [
       { id: `pay_${sub}`, subscription: sub, status: 'PENDING', value: 89.9, dueDate: '2026-10-12', invoiceUrl: `https://asaas/i/${sub}` },
     ]),
@@ -255,6 +256,7 @@ describe('billing checkout', () => {
     })
 
     it('are kept at their locked prices where the target plan can use them (pro sells both), and a pending removal is cleared', async () => {
+      Object.assign(h.fake.tables.account_billing[0], { pending_extra_users: null, pending_extra_channels: null, extras_reduce_due: null, extras_asaas_lowered: false })
       expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
       expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ value: 899 + 300 + 400, cycle: 'YEARLY' }))
       expect(h.fake.tables.account_billing[0]).toMatchObject({
@@ -267,6 +269,26 @@ describe('billing checkout', () => {
         extras_reduce_due: null,
         extras_asaas_lowered: false,
       })
+    })
+
+    it('carry the REDUCED target when a removal is scheduled, not the full current extras', async () => {
+      Object.assign(h.fake.tables.account_billing[0], { pending_extra_users: 1, pending_extra_channels: 0 })
+      expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
+      expect(h.fake.tables.account_billing[0]).toMatchObject({
+        extra_users: 1,
+        extra_user_price_cents: 1500,
+        extra_channels: 0,
+        extra_channel_price_cents: null,
+        value_cents: 89900 + 15000,
+        pending_extra_users: null,
+      })
+    })
+
+    it('an annual add still waiting for its one-off charge is dropped and the charge cancelled', async () => {
+      Object.assign(h.fake.tables.account_billing[0], { pending_add_users: 1, pending_add_channels: 0, extras_oneoff_payment_id: 'pay_oneoff', extras_oneoff_cents: 15000 })
+      expect((await checkout({ plan: 'pro', cycle: 'annual' })).status).toBe(200)
+      expect(asaas.deletePayment).toHaveBeenCalledWith('pay_oneoff')
+      expect(h.fake.tables.account_billing[0]).toMatchObject({ pending_add_users: null, extras_oneoff_payment_id: null, extras_oneoff_cents: null })
     })
 
     it('are dropped, with their locked prices, where the target plan sells no price for them', async () => {

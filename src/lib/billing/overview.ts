@@ -3,7 +3,7 @@
 // the rows, this shapes them), so the rules are what the tests pin.
 // ============================================================
 
-import { ANNUAL_MONTHS_CHARGED, PAID_STATUSES, periodPriceCents, type BillingCycle } from './rules'
+import { ANNUAL_MONTHS_CHARGED, GRACE_DAYS, PAID_STATUSES, periodPriceCents, type BillingCycle } from './rules'
 
 export interface CatalogPlan {
   plan: string
@@ -57,6 +57,12 @@ export interface ExtrasView {
   usedChannels: number
   /** A removal waiting for its day: the limit drops to these counts on `effectiveDate` (YYYY-MM-DD). */
   pendingRemoval: { users: number; channels: number; effectiveDate: string } | null
+  /** The removal is already in the charges (Asaas lowered): it can no longer be cancelled, only bought again. */
+  removalLocked: boolean
+  /** An annual add waiting for its one-off charge: `url` is the payment page (https only). */
+  /** Next renewal due date (YYYY-MM-DD), from the paid period end: only an estimate for the annual one-off amount. */
+  renewalDue: string | null
+  pendingPurchase: { users: number; channels: number; cents: number; url: string | null; expiresAt: string | null } | null
   /** Only the account owner buys and removes extras; admins see the panel read-only. */
   canChange: boolean
 }
@@ -67,7 +73,12 @@ export function buildExtrasView(input: {
   offered: { userCents: number | null; channelCents: number | null }
   locked: { userCents: number | null; channelCents: number | null }
   usage: { users: number; channels: number }
-  pending?: { users: number | null; channels: number | null; effectiveDate: string | null }
+  pending?: { users: number | null; channels: number | null; effectiveDate: string | null; lowered?: boolean }
+  /** Extras actually bought (the effective limit may already be lower while a removal is scheduled). */
+  bought?: { users: number; channels: number }
+  purchase?: { users: number | null; channels: number | null; cents: number | null; url: string | null; expiresAt: string | null }
+  /** `current_period_end` of the billing row. */
+  periodEnd?: string | null
   isOwner: boolean
 }): ExtrasView {
   const { ent, offered, locked } = input
@@ -75,15 +86,21 @@ export function buildExtrasView(input: {
   return {
     includedUsers: base(ent.limits.max_users, ent.extras.users),
     includedChannels: base(ent.limits.max_channels, ent.extras.channels),
-    users: ent.extras.users,
-    channels: ent.extras.channels,
-    userUnitCents: ent.extras.users > 0 && locked.userCents !== null ? locked.userCents : offered.userCents,
-    channelUnitCents: ent.extras.channels > 0 && locked.channelCents !== null ? locked.channelCents : offered.channelCents,
+    users: (input.bought ?? ent.extras).users,
+    channels: (input.bought ?? ent.extras).channels,
+    userUnitCents: (input.bought ?? ent.extras).users > 0 && locked.userCents !== null ? locked.userCents : offered.userCents,
+    channelUnitCents: (input.bought ?? ent.extras).channels > 0 && locked.channelCents !== null ? locked.channelCents : offered.channelCents,
     usedUsers: input.usage.users,
     usedChannels: input.usage.channels,
     pendingRemoval:
       input.pending && input.pending.users !== null && input.pending.channels !== null && input.pending.effectiveDate
         ? { users: input.pending.users, channels: input.pending.channels, effectiveDate: input.pending.effectiveDate }
+        : null,
+    removalLocked: input.pending?.lowered === true,
+    renewalDue: renewalFromPeriodEnd(input.periodEnd ?? null),
+    pendingPurchase:
+      input.purchase && input.purchase.users !== null && input.purchase.channels !== null && input.purchase.cents !== null
+        ? { users: input.purchase.users, channels: input.purchase.channels, cents: input.purchase.cents, url: safeInvoiceUrl(input.purchase.url), expiresAt: input.purchase.expiresAt }
         : null,
     canChange: input.isOwner,
   }
@@ -94,6 +111,16 @@ const UNPAID = new Set(['PENDING', 'OVERDUE'])
 /** Only https links are ever handed to the browser. */
 export function safeInvoiceUrl(url: string | null | undefined): string | null {
   return typeof url === 'string' && /^https:\/\//i.test(url) ? url : null
+}
+
+/**
+ * The period end is the due date + one cycle + the grace days, at 23:59:59 in São Paulo (rules.ts),
+ * i.e. 02:59:59Z of the next day: the renewal due date is the UTC date minus grace + 1 days.
+ */
+export function renewalFromPeriodEnd(periodEnd: string | null): string | null {
+  const ms = periodEnd ? Date.parse(periodEnd) : NaN
+  if (!Number.isFinite(ms)) return null
+  return new Date(ms - (GRACE_DAYS + 1) * 86_400_000).toISOString().slice(0, 10)
 }
 
 export function buildOverview(input: {

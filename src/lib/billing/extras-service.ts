@@ -23,6 +23,7 @@ import { countConnectedChannels } from '@/lib/plans-server'
 /** What the claim returns (columns of account_billing the engine needs). */
 export interface BillingExtrasRow {
   account_id: string
+  asaas_customer_id: string | null
   asaas_subscription_id: string | null
   cycle: string
   status: string
@@ -36,6 +37,15 @@ export interface BillingExtrasRow {
   pending_extra_channels: number | null
   extras_reduce_due: string | null
   extras_asaas_lowered: boolean
+  /** An annual add waiting for its one-off charge (deltas, locked prices, the Asaas charge). */
+  pending_add_users: number | null
+  pending_add_channels: number | null
+  pending_add_user_price_cents: number | null
+  pending_add_channel_price_cents: number | null
+  extras_oneoff_payment_id: string | null
+  extras_oneoff_url: string | null
+  extras_oneoff_cents: number | null
+  extras_oneoff_expires_at: string | null
 }
 
 /** The columns a change writes (everything else of the row is untouched). */
@@ -51,9 +61,21 @@ export type NewExtrasRow = Pick<
   | 'pending_extra_channels'
   | 'extras_reduce_due'
   | 'extras_asaas_lowered'
+  | 'pending_add_users'
+  | 'pending_add_channels'
+  | 'pending_add_user_price_cents'
+  | 'pending_add_channel_price_cents'
+  | 'extras_oneoff_payment_id'
+  | 'extras_oneoff_url'
+  | 'extras_oneoff_cents'
+  | 'extras_oneoff_expires_at'
 >
 
-export type ExtrasAction = 'billing.extras_changed' | 'billing.extras_removal_applied' | 'billing.extras_removal_blocked'
+export type ExtrasAction =
+  | 'billing.extras_changed'
+  | 'billing.extras_removal_applied'
+  | 'billing.extras_removal_blocked'
+  | 'billing.extras_add_cancelled'
 
 export type Decision<C extends string> =
   | { refuse: C }
@@ -63,6 +85,8 @@ export type Decision<C extends string> =
       asaas: { valueCents: number; updatePending: boolean } | null
       action: ExtrasAction
       metadata: Record<string, unknown>
+      /** Undo a side effect made while deciding (a one-off charge) when the change is not committed. */
+      compensate?: () => Promise<void>
     }
 
 export type ExtrasResult<C extends string> =
@@ -81,6 +105,14 @@ export function pickNew(row: BillingExtrasRow, patch: Partial<NewExtrasRow> = {}
     pending_extra_channels: row.pending_extra_channels,
     extras_reduce_due: row.extras_reduce_due,
     extras_asaas_lowered: row.extras_asaas_lowered,
+    pending_add_users: row.pending_add_users,
+    pending_add_channels: row.pending_add_channels,
+    pending_add_user_price_cents: row.pending_add_user_price_cents,
+    pending_add_channel_price_cents: row.pending_add_channel_price_cents,
+    extras_oneoff_payment_id: row.extras_oneoff_payment_id,
+    extras_oneoff_url: row.extras_oneoff_url,
+    extras_oneoff_cents: row.extras_oneoff_cents,
+    extras_oneoff_expires_at: row.extras_oneoff_expires_at,
     ...patch,
   }
 }
@@ -105,9 +137,11 @@ export async function runExtrasChange<C extends string>(
   const row = c.row
   const subscriptionId = row.asaas_subscription_id
   let committed = false
+  let compensate: (() => Promise<void>) | undefined
   try {
     const decision = await o.decide(row)
     if ('refuse' in decision) return { ok: false, code: decision.refuse }
+    compensate = decision.compensate
 
     if (decision.asaas && subscriptionId) {
       try {
@@ -133,6 +167,7 @@ export async function runExtrasChange<C extends string>(
           extra_channel_price_cents: row.extra_channel_price_cents,
           pending_extra_users: row.pending_extra_users,
           extras_asaas_lowered: row.extras_asaas_lowered,
+          extras_oneoff_payment_id: row.extras_oneoff_payment_id,
         },
         p_new: decision.next,
         p_actor: o.actorId,
@@ -154,6 +189,13 @@ export async function runExtrasChange<C extends string>(
     return { ok: true, row: decision.next }
   } finally {
     if (!committed) {
+      if (compensate) {
+        try {
+          await compensate()
+        } catch (err) {
+          console.error('[billing/extras] could not undo a side effect, check Asaas:', err instanceof Error ? err.message : err)
+        }
+      }
       const { error } = await db.rpc('billing_extras_release', { p_account: o.accountId, p_token: token })
       if (error) console.error('[billing/extras] could not release the claim (it expires by itself):', error.message)
     }

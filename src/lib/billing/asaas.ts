@@ -140,9 +140,39 @@ export function deleteSubscription(id: string): Promise<unknown> {
   return request(`/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+const PAGE = 100
+const MAX_PAGES = 20
+
+/**
+ * Every charge of a subscription, in any order: pages through the whole list (Asaas
+ * answers { data, hasMore }) instead of trusting the order or a small first page.
+ * Callers sort what they need.
+ */
 export async function listSubscriptionPayments(id: string): Promise<AsaasPayment[]> {
-  const page = await request<{ data?: AsaasPayment[] }>(`/subscriptions/${encodeURIComponent(id)}/payments?limit=10`)
-  return page.data ?? []
+  const all: AsaasPayment[] = []
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await request<{ data?: AsaasPayment[]; hasMore?: boolean }>(
+      `/subscriptions/${encodeURIComponent(id)}/payments?limit=${PAGE}&offset=${page * PAGE}`,
+    )
+    all.push(...(res.data ?? []))
+    if (!res.hasMore) return all
+  }
+  throw new AsaasError('Asaas subscription has too many charges to list', 502)
+}
+
+/** A one-off charge for the customer (annual extras, difference owed): Pix, boleto or card on the Asaas page. */
+export function createPayment(input: {
+  customer: string
+  value: number
+  dueDate: string
+  description: string
+  externalReference: string
+}): Promise<AsaasPayment> {
+  return request<AsaasPayment>('/payments', { method: 'POST', body: { ...input, billingType: 'UNDEFINED' } })
+}
+
+export function deletePayment(id: string): Promise<unknown> {
+  return request(`/payments/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function getPayment(id: string): Promise<AsaasPayment> {

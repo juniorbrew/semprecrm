@@ -111,19 +111,28 @@ export function parsePlanVersion(raw: unknown): PlanVersion | null {
   };
 }
 /**
- * Extras joined from account_billing (object for the one-to-one embed, array
- * tolerated). Missing (agent: RLS hides the row) or malformed = no extras.
+ * Extras joined from account_billing (object for the one-to-one embed, array tolerated).
+ * They count only while the subscription is `active`; while a removal is scheduled the limit
+ * for new users/numbers is already the TARGET (so a removal cannot be "blocked" on purpose).
+ * Missing (agent: RLS hides the row) or malformed = no extras.
  */
 function extrasOf(raw: { account_billing?: unknown }): PlanAccountFields['extras'] {
   const row = Array.isArray(raw.account_billing)
     ? raw.account_billing[0]
     : raw.account_billing;
-  if (!record(row)) return null;
+  if (!record(row) || row.status !== 'active') return null;
   const n = (v: unknown) =>
     typeof v === 'number' && Number.isSafeInteger(v) && v > 0
       ? Math.min(v, MAX_EXTRAS)
       : 0;
-  return { users: n(row.extra_users), channels: n(row.extra_channels) };
+  const scheduled = (bought: unknown, target: unknown) =>
+    typeof target === 'number' && Number.isSafeInteger(target) && target >= 0
+      ? Math.min(n(bought), target)
+      : n(bought);
+  return {
+    users: scheduled(row.extra_users, row.pending_extra_users),
+    channels: scheduled(row.extra_channels, row.pending_extra_channels),
+  };
 }
 /** Normalize joined rows once; reject missing or mismatched assigned relationships. */
 export function normalizeAssignedPlan(

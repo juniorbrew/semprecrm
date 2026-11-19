@@ -55,6 +55,7 @@ export const AUDIT_ACTIONS = {
   BILLING_EXTRAS_CHANGED: 'billing.extras_changed',
   BILLING_EXTRAS_REMOVAL_APPLIED: 'billing.extras_removal_applied',
   BILLING_EXTRAS_REMOVAL_BLOCKED: 'billing.extras_removal_blocked',
+  BILLING_EXTRAS_ADD_CANCELLED: 'billing.extras_add_cancelled',
   BILLING_EXTRAS_MISMATCH: 'billing.extras_mismatch',
   META_CHANNEL_TAKEN_OVER: 'meta_channel.taken_over',
   META_CHANNEL_LOST: 'meta_channel.lost',
@@ -111,6 +112,7 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'billing.extras_changed': 'Extras da assinatura alterados',
     'billing.extras_removal_applied': 'Remoção de extras aplicada',
     'billing.extras_removal_blocked': 'Remoção de extras cancelada (uso acima do novo limite)',
+    'billing.extras_add_cancelled': 'Compra de extras cancelada (cobrança não paga)',
     'billing.extras_mismatch': 'Valor da assinatura no Asaas pode estar diferente do sistema',
   },
   'en-US': {
@@ -150,6 +152,7 @@ export const AUDIT_ACTION_LABELS: Record<Language, Record<AuditAction, string>> 
     'billing.extras_changed': 'Subscription extras changed',
     'billing.extras_removal_applied': 'Extras removal applied',
     'billing.extras_removal_blocked': 'Extras removal cancelled (usage above the new limit)',
+    'billing.extras_add_cancelled': 'Extras purchase cancelled (charge not paid)',
     'billing.extras_mismatch': 'Asaas subscription value may differ from the system',
   },
 }

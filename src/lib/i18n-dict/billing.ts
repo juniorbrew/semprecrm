@@ -169,4 +169,26 @@ export const DICT_BILLING: Record<string, string> = {
     'Já existe uma remoção agendada. Cancele-a antes de alterar os extras.',
   'There is no scheduled removal to cancel.':
     'Não há remoção agendada para cancelar.',
+  'Charge created. The extras are released as soon as it is paid.':
+    'Cobrança criada. Os extras são liberados assim que for paga.',
+  'One-off charge':
+    'Cobrança avulsa',
+  'The extras are released as soon as the charge is paid.':
+    'Os extras são liberados assim que a cobrança for paga.',
+  'The removal is already in your next charge, so it can no longer be cancelled.':
+    'A remoção já está na próxima cobrança, então não dá mais para cancelar.',
+  'One-off charge now (estimate)':
+    'Cobrança avulsa agora (estimativa)',
+  'months until the renewal on':
+    'meses até a renovação em',
+  'The limit is released when the charge is paid.':
+    'O limite é liberado quando a cobrança for paga.',
+  'At the renewal the subscription goes to':
+    'Na renovação a assinatura passa a',
+  'Regularize the pending payment first.':
+    'Regularize o pagamento pendente primeiro.',
+  'A purchase is waiting for payment. Pay it, or wait until it expires, before changing the extras.':
+    'Há uma compra aguardando pagamento. Pague-a, ou espere ela expirar, antes de alterar os extras.',
+  'The removal is already in your next charge, so it cannot be cancelled. Once it takes effect, buy the extra again.':
+    'A remoção já está na próxima cobrança, então não dá para cancelar. Quando ela valer, contrate o extra de novo.',
 };

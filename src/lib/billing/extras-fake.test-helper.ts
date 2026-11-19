@@ -18,6 +18,7 @@ const EXPECT_COLUMNS = [
   'extra_channel_price_cents',
   'pending_extra_users',
   'extras_asaas_lowered',
+  'extras_oneoff_payment_id',
 ] as const
 
 const NEW_COLUMNS = [
@@ -31,6 +32,14 @@ const NEW_COLUMNS = [
   'pending_extra_channels',
   'extras_reduce_due',
   'extras_asaas_lowered',
+  'pending_add_users',
+  'pending_add_channels',
+  'pending_add_user_price_cents',
+  'pending_add_channel_price_cents',
+  'extras_oneoff_payment_id',
+  'extras_oneoff_url',
+  'extras_oneoff_cents',
+  'extras_oneoff_expires_at',
 ] as const
 
 export const extrasRpc: NonNullable<FakeDbOptions['rpc']> = (fn, args, tables) => {

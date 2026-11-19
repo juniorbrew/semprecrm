@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildExtrasView, buildOverview, cyclePricing, formatBrl, paymentStatusKey, planAction, safeInvoiceUrl, situationOf, type PaymentRowView } from './overview'
+import { buildExtrasView, buildOverview, renewalFromPeriodEnd, cyclePricing, formatBrl, paymentStatusKey, planAction, safeInvoiceUrl, situationOf, type PaymentRowView } from './overview'
 
 const catalog = [
   { plan: 'trial', priceMonthlyCents: null },
@@ -149,6 +149,30 @@ describe('buildExtrasView', () => {
     expect(v.canChange).toBe(false)
     expect(buildExtrasView({ ...base, isOwner: true }).pendingRemoval).toBeNull()
     expect(buildExtrasView({ ...base, isOwner: true, pending: { users: null, channels: null, effectiveDate: null } }).pendingRemoval).toBeNull()
+  })
+
+  it('shows what is bought even while the effective limit already is the removal target', () => {
+    const lowered = { limits: { max_users: 4, max_channels: 3 }, extras: { users: 1, channels: 0 } } // target 1, bought 3
+    const v = buildExtrasView({
+      ent: lowered,
+      bought: { users: 3, channels: 0 },
+      offered: { userCents: 1500, channelCents: null },
+      locked: { userCents: 1000, channelCents: null },
+      usage,
+      pending: { users: 1, channels: 0, effectiveDate: '2027-02-01', lowered: true },
+      isOwner: true,
+    })
+    expect(v).toMatchObject({ users: 3, includedUsers: 3, userUnitCents: 1000, removalLocked: true })
+  })
+
+  it('carries an annual purchase awaiting payment (https links only) and the renewal estimate', () => {
+    const base = { ent, offered: { userCents: 1500, channelCents: null }, locked: { userCents: null, channelCents: null }, usage, isOwner: true }
+    const v = buildExtrasView({ ...base, periodEnd: '2027-12-07T02:59:59.000Z', purchase: { users: 2, channels: 0, cents: 36000, url: 'https://asaas.invalid/i/1', expiresAt: '2026-12-12T00:00:00Z' } })
+    expect(v.pendingPurchase).toEqual({ users: 2, channels: 0, cents: 36000, url: 'https://asaas.invalid/i/1', expiresAt: '2026-12-12T00:00:00Z' })
+    expect(v.renewalDue).toBe('2027-12-01')
+    expect(buildExtrasView({ ...base, purchase: { users: 2, channels: 0, cents: 1, url: 'javascript:alert(1)', expiresAt: null } }).pendingPurchase?.url).toBeNull()
+    expect(buildExtrasView({ ...base, purchase: { users: null, channels: null, cents: null, url: null, expiresAt: null } }).pendingPurchase).toBeNull()
+    expect(renewalFromPeriodEnd(null)).toBeNull()
   })
 
   it('buildOverview carries the block, or null', () => {

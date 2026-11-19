@@ -7,11 +7,15 @@ import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/hooks/use-language';
 import type { ExtraKind } from '@/lib/billing/extras';
 import { formatBrl, type ExtrasView } from '@/lib/billing/overview';
+import { oneOffCents, remainingMonths } from '@/lib/billing/extras';
 import { periodPriceCents, type BillingCycle } from '@/lib/billing/rules';
 import { SettingsGroup } from './settings-group';
 
 type Pending = { kind: ExtraKind; delta: number };
-type Response = { error?: string; pendingRemoval?: { effectiveDate: string } | null };
+type Response = {
+  error?: string;
+  pendingRemoval?: { effectiveDate: string } | null;
+};
 
 /**
  * Settings → Plano → extras: what the plan includes, the extras bought and the
@@ -39,6 +43,7 @@ export function ExtrasPanel({
   const [error, setError] = useState<string | null>(null);
 
   const scheduled = extras.pendingRemoval;
+  const purchase = extras.pendingPurchase;
   const locked = !extras.canChange || busy;
   const rows = [
     {
@@ -62,9 +67,15 @@ export function ExtrasPanel({
   ];
   const cycleLabel = cycle === 'annual' ? t('/year') : t('/month');
   const day = (iso: string) =>
-    new Date(`${iso}T12:00:00`).toLocaleDateString(language, { day: '2-digit', month: '2-digit' });
+    new Date(`${iso}T12:00:00`).toLocaleDateString(language, {
+      day: '2-digit',
+      month: '2-digit',
+    });
 
-  async function send(body: Record<string, unknown>, done: (r: Response) => string) {
+  async function send(
+    body: Record<string, unknown>,
+    done: (r: Response) => string
+  ) {
     setBusy(true);
     setError(null);
     try {
@@ -75,7 +86,9 @@ export function ExtrasPanel({
       });
       const data = (await res.json().catch(() => null)) as Response | null;
       if (!res.ok) {
-        const message = data?.error ? t(data.error) : t('Could not change it right now, try again.');
+        const message = data?.error
+          ? t(data.error)
+          : t('Could not change it right now, try again.');
         setError(message);
         toast.error(message);
         return;
@@ -96,20 +109,27 @@ export function ExtrasPanel({
     pending &&
     send(pending, (r) =>
       pending.delta > 0
-        ? t('Extras added. The limit is already higher; the new value is in your next charge.')
-        : `${t('Removal scheduled: the extras stay active until')} ${r.pendingRemoval ? day(r.pendingRemoval.effectiveDate) : ''}.`,
+        ? cycle === 'annual'
+          ? t('Charge created. The extras are released as soon as it is paid.')
+          : t(
+              'Extras added. The limit is already higher; the new value is in your next charge.'
+            )
+        : `${t('Removal scheduled: the extras stay active until')} ${r.pendingRemoval ? day(r.pendingRemoval.effectiveDate) : ''}.`
     );
 
   return (
     <SettingsGroup
       title={t('Extras beyond the plan')}
       description={t(
-        'Add users or WhatsApp numbers without changing plan. Added extras work right away and go into your next charge. Removed extras stay active until the end of the period you already paid.',
+        'Add users or WhatsApp numbers without changing plan. Added extras work right away and go into your next charge. Removed extras stay active until the end of the period you already paid.'
       )}
     >
       <p className="text-sm">
         {t('Next charge')}:{' '}
-        <span className="text-foreground font-semibold tabular-nums" data-no-translate>
+        <span
+          className="text-foreground font-semibold tabular-nums"
+          data-no-translate
+        >
           {formatBrl(valueCents)}
         </span>
         <span className="text-muted-foreground">{cycleLabel}</span>
@@ -117,19 +137,76 @@ export function ExtrasPanel({
 
       {!extras.canChange ? (
         <p role="status" className="text-muted-foreground text-sm">
-          {t('Only the account owner can buy or remove extras. Ask the account owner.')}
+          {t(
+            'Only the account owner can buy or remove extras. Ask the account owner.'
+          )}
         </p>
       ) : null}
 
-      {scheduled ? (
-        <div role="status" className="border-border bg-muted/40 flex flex-wrap items-center gap-3 rounded-xl border p-3 text-sm">
+      {purchase ? (
+        <div
+          role="status"
+          className="border-border bg-muted/40 flex flex-wrap items-center gap-3 rounded-xl border p-3 text-sm"
+        >
           <span>
-            {t('Removal scheduled: the extras stay active until')} <span data-no-translate>{day(scheduled.effectiveDate)}</span>.{' '}
-            {t('Then the limit drops to')} <span data-no-translate>{scheduled.users}</span> {t('extra user(s)')},{' '}
-            <span data-no-translate>{scheduled.channels}</span> {t('extra number(s)')}.
+            <strong>{t('Awaiting payment')}</strong>:{' '}
+            <span data-no-translate>{purchase.users}</span> {t('extra user(s)')}
+            , <span data-no-translate>{purchase.channels}</span>{' '}
+            {t('extra number(s)')}. {t('One-off charge')}:{' '}
+            <span className="tabular-nums" data-no-translate>
+              {formatBrl(purchase.cents)}
+            </span>
+            . {t('The extras are released as soon as the charge is paid.')}
           </span>
-          {extras.canChange ? (
-            <Button size="sm" variant="outline" disabled={locked} onClick={() => void send({ cancel_removal: true }, () => t('Removal cancelled.'))}>
+          {purchase.url ? (
+            <Button
+              size="sm"
+              nativeButton={false}
+              render={
+                <a
+                  href={purchase.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+            >
+              {t('Pay now')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {scheduled ? (
+        <div
+          role="status"
+          className="border-border bg-muted/40 flex flex-wrap items-center gap-3 rounded-xl border p-3 text-sm"
+        >
+          <span>
+            {t('Removal scheduled: the extras stay active until')}{' '}
+            <span data-no-translate>{day(scheduled.effectiveDate)}</span>.{' '}
+            {t('Then the limit drops to')}{' '}
+            <span data-no-translate>{scheduled.users}</span>{' '}
+            {t('extra user(s)')},{' '}
+            <span data-no-translate>{scheduled.channels}</span>{' '}
+            {t('extra number(s)')}.
+          </span>
+          {extras.removalLocked ? (
+            <span className="text-muted-foreground">
+              {t(
+                'The removal is already in your next charge, so it can no longer be cancelled.'
+              )}
+            </span>
+          ) : extras.canChange ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={locked}
+              onClick={() =>
+                void send({ cancel_removal: true }, () =>
+                  t('Removal cancelled.')
+                )
+              }
+            >
               {t('Cancel removal')}
             </Button>
           ) : null}
@@ -139,21 +216,34 @@ export function ExtrasPanel({
       <ul className="grid gap-3 sm:grid-cols-2">
         {rows.map((r) => {
           const q = qty[r.kind];
-          const canAdd = !scheduled && r.included !== null && r.unit !== null;
-          const canRemove = !scheduled && r.bought > 0 && q <= r.bought && (r.included === null || r.used <= r.included + r.bought - q);
+          const canAdd =
+            !scheduled && !purchase && r.included !== null && r.unit !== null;
+          const canRemove =
+            !scheduled &&
+            !purchase &&
+            r.bought > 0 &&
+            q <= r.bought &&
+            (r.included === null || r.used <= r.included + r.bought - q);
           const inputId = `extra-qty-${r.kind}`;
           return (
-            <li key={r.kind} className="border-border flex flex-col gap-3 rounded-xl border p-4">
+            <li
+              key={r.kind}
+              className="border-border flex flex-col gap-3 rounded-xl border p-4"
+            >
               <span className="text-foreground font-semibold">{r.title}</span>
               <dl className="text-sm">
                 <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">{t('Included in the plan')}</dt>
+                  <dt className="text-muted-foreground">
+                    {t('Included in the plan')}
+                  </dt>
                   <dd className="tabular-nums" data-no-translate>
                     {r.included === null ? t('Unlimited') : r.included}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">{t('Extras bought')}</dt>
+                  <dt className="text-muted-foreground">
+                    {t('Extras bought')}
+                  </dt>
                   <dd className="tabular-nums" data-no-translate>
                     {r.bought}
                   </dd>
@@ -166,23 +256,38 @@ export function ExtrasPanel({
                 </div>
               </dl>
               {r.included === null ? (
-                <p className="text-muted-foreground text-xs">{t('Your plan has no limit here, so there is nothing to add.')}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t(
+                    'Your plan has no limit here, so there is nothing to add.'
+                  )}
+                </p>
               ) : r.unit === null ? (
-                <p className="text-muted-foreground text-xs">{t('Your plan does not offer this extra. Talk to the SempreCRM team.')}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t(
+                    'Your plan does not offer this extra. Talk to the SempreCRM team.'
+                  )}
+                </p>
               ) : (
                 <p className="text-muted-foreground text-xs">
-                  <span data-no-translate>{formatBrl(r.unit)}</span> {t('per extra, per month')}
+                  <span data-no-translate>{formatBrl(r.unit)}</span>{' '}
+                  {t('per extra, per month')}
                   {cycle === 'annual' ? (
                     <>
                       {' · '}
-                      <span data-no-translate>{formatBrl(periodPriceCents(r.unit, cycle))}</span> {t('per extra, per year (12 months for the price of 10)')}
+                      <span data-no-translate>
+                        {formatBrl(periodPriceCents(r.unit, cycle))}
+                      </span>{' '}
+                      {t('per extra, per year (12 months for the price of 10)')}
                     </>
                   ) : null}
                 </p>
               )}
               <div className="mt-auto flex flex-wrap items-end gap-2">
                 <div>
-                  <label htmlFor={inputId} className="text-muted-foreground mb-1 block text-xs">
+                  <label
+                    htmlFor={inputId}
+                    className="text-muted-foreground mb-1 block text-xs"
+                  >
                     {t('Quantity')}
                   </label>
                   <input
@@ -192,14 +297,31 @@ export function ExtrasPanel({
                     max={100}
                     value={q}
                     disabled={locked}
-                    onChange={(e) => setQty((prev) => ({ ...prev, [r.kind]: Math.max(1, Math.min(100, Math.floor(Number(e.target.value)) || 1)) }))}
+                    onChange={(e) =>
+                      setQty((prev) => ({
+                        ...prev,
+                        [r.kind]: Math.max(
+                          1,
+                          Math.min(100, Math.floor(Number(e.target.value)) || 1)
+                        ),
+                      }))
+                    }
                     className="border-input bg-background h-9 w-20 rounded-md border px-2 text-sm"
                   />
                 </div>
-                <Button size="sm" disabled={!canAdd || locked} onClick={() => setPending({ kind: r.kind, delta: q })}>
+                <Button
+                  size="sm"
+                  disabled={!canAdd || locked}
+                  onClick={() => setPending({ kind: r.kind, delta: q })}
+                >
                   {r.add}
                 </Button>
-                <Button size="sm" variant="outline" disabled={!canRemove || locked} onClick={() => setPending({ kind: r.kind, delta: -q })}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!canRemove || locked}
+                  onClick={() => setPending({ kind: r.kind, delta: -q })}
+                >
                   {t('Remove')}
                 </Button>
               </div>
@@ -208,7 +330,17 @@ export function ExtrasPanel({
         })}
       </ul>
 
-      {pending ? <Confirm pending={pending} extras={extras} cycle={cycle} valueCents={valueCents} busy={busy} onConfirm={() => void confirm()} onCancel={() => setPending(null)} /> : null}
+      {pending ? (
+        <Confirm
+          pending={pending}
+          extras={extras}
+          cycle={cycle}
+          valueCents={valueCents}
+          busy={busy}
+          onConfirm={() => void confirm()}
+          onCancel={() => setPending(null)}
+        />
+      ) : null}
 
       {error ? (
         <p role="alert" className="text-destructive text-sm">
@@ -237,32 +369,79 @@ function Confirm({
   onCancel: () => void;
 }) {
   const { t } = useLanguage();
-  const unit = (pending.kind === 'user' ? extras.userUnitCents : extras.channelUnitCents) ?? 0;
+  const unit =
+    (pending.kind === 'user'
+      ? extras.userUnitCents
+      : extras.channelUnitCents) ?? 0;
   const period = periodPriceCents(unit, cycle);
   const adding = pending.delta > 0;
-  const label = pending.kind === 'user' ? t('extra user(s)') : t('extra number(s)');
+  const annual = cycle === 'annual';
+  const renewal = extras.renewalDue;
+  const months = renewal
+    ? remainingMonths(new Date().toISOString().slice(0, 10), renewal)
+    : 12;
+  const oneOff = oneOffCents(unit, pending.delta, months);
+  const label =
+    pending.kind === 'user' ? t('extra user(s)') : t('extra number(s)');
   const cycleLabel = cycle === 'annual' ? t('/year') : t('/month');
   return (
-    <div role="alertdialog" aria-label={t('Confirm the change')} className="border-border bg-muted/40 space-y-3 rounded-xl border p-4 text-sm">
+    <div
+      role="alertdialog"
+      aria-label={t('Confirm the change')}
+      className="border-border bg-muted/40 space-y-3 rounded-xl border p-4 text-sm"
+    >
       {adding ? (
-        <p>
-          {t('Add')} <span data-no-translate>{pending.delta}</span> {label}. {t('New charge')}:{' '}
-          <span className="text-foreground font-semibold tabular-nums" data-no-translate>
-            {formatBrl(valueCents + pending.delta * period)}
-          </span>
-          {cycleLabel}
-          {cycle === 'annual' ? (
-            <>
-              {' '}
-              (<span data-no-translate>{formatBrl(period)}</span> {t('per extra, per year (12 months for the price of 10)')})
-            </>
-          ) : null}
-          . {t('It works right away and goes into your next charge, even one already issued.')}
-        </p>
+        annual ? (
+          <p>
+            {t('Add')} <span data-no-translate>{pending.delta}</span> {label}.{' '}
+            {t('One-off charge now (estimate)')}:{' '}
+            <span
+              className="text-foreground font-semibold tabular-nums"
+              data-no-translate
+            >
+              {formatBrl(oneOff)}
+            </span>{' '}
+            {renewal ? (
+              <>
+                (<span data-no-translate>{months}</span>{' '}
+                {t('months until the renewal on')}{' '}
+                <span data-no-translate>{renewal}</span>)
+              </>
+            ) : null}
+            . {t('The limit is released when the charge is paid.')}{' '}
+            {t('At the renewal the subscription goes to')}{' '}
+            <span
+              className="text-foreground font-semibold tabular-nums"
+              data-no-translate
+            >
+              {formatBrl(valueCents + pending.delta * period)}
+            </span>
+            {cycleLabel} (<span data-no-translate>{formatBrl(period)}</span>{' '}
+            {t('per extra, per year (12 months for the price of 10)')}).
+          </p>
+        ) : (
+          <p>
+            {t('Add')} <span data-no-translate>{pending.delta}</span> {label}.{' '}
+            {t('New charge')}:{' '}
+            <span
+              className="text-foreground font-semibold tabular-nums"
+              data-no-translate
+            >
+              {formatBrl(valueCents + pending.delta * period)}
+            </span>
+            {cycleLabel}.{' '}
+            {t(
+              'It works right away and goes into your next charge, even one already issued.'
+            )}
+          </p>
+        )
       ) : (
         <p>
-          {t('Remove')} <span data-no-translate>{Math.abs(pending.delta)}</span> {label}.{' '}
-          {t('They stay active until the end of the period you already paid (and every extra is billed for at least one full period). The charge after that no longer includes them.')}
+          {t('Remove')} <span data-no-translate>{Math.abs(pending.delta)}</span>{' '}
+          {label}.{' '}
+          {t(
+            'They stay active until the end of the period you already paid (and every extra is billed for at least one full period). The charge after that no longer includes them.'
+          )}
         </p>
       )}
       <div className="flex gap-2">

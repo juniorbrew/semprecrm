@@ -55,18 +55,40 @@ export function addCycles(date: string, cycle: BillingCycle, n: number): string 
   return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last))).toISOString().slice(0, 10)
 }
 
-const UNPAID = new Set(['PENDING', 'OVERDUE'])
-
 /**
- * Due date of the next charge that has not been paid: the earliest unpaid one
- * if Asaas already generated it, otherwise one cycle after the latest charge.
- * null when there is no charge to anchor on.
+ * Due date of the next charge still to come: the earliest PENDING charge due today or later
+ * (Asaas already generated it), otherwise one cycle after the latest charge. Overdue charges
+ * never anchor it (the add path refuses while any is overdue). null with no charge at all.
  */
-export function nextChargeDue(payments: { dueDate: string; status: string }[], cycle: BillingCycle): string | null {
-  const unpaid = payments.filter((p) => UNPAID.has(p.status)).map((p) => p.dueDate).sort()
-  if (unpaid.length > 0) return unpaid[0]
+export function nextChargeDue(payments: { dueDate: string; status: string }[], cycle: BillingCycle, today: string): string | null {
+  const coming = payments.filter((p) => p.status === 'PENDING' && p.dueDate >= today).map((p) => p.dueDate).sort()
+  if (coming.length > 0) return coming[0]
   const latest = payments.map((p) => p.dueDate).sort().at(-1)
   return latest ? addCycles(latest, cycle, 1) : null
+}
+
+/** `date` plus `n` days (YYYY-MM-DD). */
+export function addDays(date: string, n: number): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
+}
+
+/** Whole days from `from` to `to` (YYYY-MM-DD), never negative. */
+export function daysBetween(from: string, to: string): number {
+  const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)
+  return Math.max(0, Math.round(ms / 86_400_000))
+}
+
+/**
+ * Annual subscriptions charge an add at once, for the months left until the renewal:
+ * ceil(days / 30.4), at least 1 and at most 12 (so never zero, never more than 12 x monthly).
+ */
+export function remainingMonths(today: string, renewalDue: string): number {
+  return Math.min(12, Math.max(1, Math.ceil(daysBetween(today, renewalDue) / 30.4)))
+}
+
+/** The one-off charge, in cents: months x quantity x the locked monthly price. */
+export function oneOffCents(unitMonthlyCents: number, quantity: number, months: number): number {
+  return months * quantity * unitMonthlyCents
 }
 
 /**
@@ -84,7 +106,15 @@ export function removalDueDate(nextDue: string, firstDue: string | null, cycle: 
 
 // ---------------- changes ----------------
 
-export type ExtrasRefusal = 'invalid' | 'not_offered' | 'unlimited' | 'cap' | 'below_usage' | 'pending_removal'
+export type ExtrasRefusal =
+  | 'invalid'
+  | 'not_offered'
+  | 'unlimited'
+  | 'cap'
+  | 'below_usage'
+  | 'pending_removal'
+  | 'pending_purchase'
+  | 'overdue'
 
 export type ExtrasChange =
   | { ok: true; type: 'add'; next: ExtrasState; valueCents: number }
@@ -96,7 +126,8 @@ export type ExtrasChange =
  * `baseLimit` is the plan limit WITHOUT extras (null = unlimited); `usage` is what the
  * account uses today (users = members + pending invites). `offeredPriceCents` is the plan's
  * current price for that extra (null = not offered). Only one removal can be pending, and
- * nothing can be added or removed while one is: cancel it first.
+ * nothing can be added or removed while one is: cancel it first. Adds are also refused while a
+ * purchase awaits payment or a charge is overdue.
  */
 export function changeExtras(input: {
   cycle: BillingCycle
@@ -108,9 +139,14 @@ export function changeExtras(input: {
   baseLimit: number | null
   usage: number
   removalPending?: boolean
+  /** An annual add is waiting for its one-off charge to be paid. */
+  purchasePending?: boolean
+  /** Some charge of the subscription is overdue: nothing is added until it is regularised. */
+  overdue?: boolean
 }): ExtrasChange {
   const { kind, delta, current } = input
   if (!Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > MAX_EXTRAS) return { ok: false, code: 'invalid' }
+  if (input.purchasePending) return { ok: false, code: 'pending_purchase' }
   if (input.removalPending) return { ok: false, code: 'pending_removal' }
   const have = kind === 'user' ? current.users : current.channels
   const lockedPrice = kind === 'user' ? current.userPriceCents : current.channelPriceCents
@@ -136,6 +172,7 @@ export function changeExtras(input: {
   }
 
   if (input.baseLimit === null) return { ok: false, code: 'unlimited' }
+  if (input.overdue) return { ok: false, code: 'overdue' }
   const price = have === 0 ? input.offeredPriceCents : lockedPrice
   if (price === null) return { ok: false, code: 'not_offered' }
   const next: ExtrasState =

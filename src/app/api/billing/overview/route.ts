@@ -14,6 +14,7 @@ import { asaasConfigured } from '@/lib/billing/asaas'
 import { buildExtrasView, buildOverview, type BillingRowView, type PaymentRowView } from '@/lib/billing/overview'
 import { isBillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
+import { settleExtrasPurchase } from '@/lib/billing/extras-sweep'
 import { countConnectedChannels, loadAccountEntitlements } from '@/lib/plans-server'
 
 export const dynamic = 'force-dynamic'
@@ -21,12 +22,14 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     const ctx = await requireRole('admin')
+    // An annual add the owner has just paid: release it now instead of waiting for the hourly sweep.
+    await settleIfAwaitingPayment(ctx.accountId)
     const [catalog, billingRes, paymentsRes] = await Promise.all([
       loadCurrentPlanCatalog(supabaseAdmin()),
       ctx.supabase
         .from('account_billing')
         .select(
-          'plan, cycle, value_cents, status, current_period_end, asaas_subscription_id, extra_user_price_cents, extra_channel_price_cents, pending_extra_users, pending_extra_channels, extras_reduce_due',
+          'plan, cycle, value_cents, status, current_period_end, asaas_subscription_id, extra_user_price_cents, extra_channel_price_cents, pending_extra_users, pending_extra_channels, extras_reduce_due, extras_asaas_lowered, extra_users, extra_channels, pending_add_users, pending_add_channels, extras_oneoff_cents, extras_oneoff_url, extras_oneoff_expires_at',
         )
         .eq('account_id', ctx.accountId)
         .maybeSingle(),
@@ -89,7 +92,17 @@ export async function GET() {
             users: toCount(b?.pending_extra_users),
             channels: toCount(b?.pending_extra_channels),
             effectiveDate: typeof b?.extras_reduce_due === 'string' ? b.extras_reduce_due : null,
+            lowered: b?.extras_asaas_lowered === true,
           },
+          bought: { users: toCount(b?.extra_users) ?? 0, channels: toCount(b?.extra_channels) ?? 0 },
+          purchase: {
+            users: toCount(b?.pending_add_users),
+            channels: toCount(b?.pending_add_channels),
+            cents: toCount(b?.extras_oneoff_cents),
+            url: typeof b?.extras_oneoff_url === 'string' ? b.extras_oneoff_url : null,
+            expiresAt: typeof b?.extras_oneoff_expires_at === 'string' ? b.extras_oneoff_expires_at : null,
+          },
+          periodEnd: billing.currentPeriodEnd,
           isOwner: ctx.role === 'owner',
         })
       }
@@ -116,4 +129,15 @@ function toCount(v: unknown): number | null {
 
 function toCents(v: unknown): number | null {
   return typeof v === 'number' && Number.isSafeInteger(v) ? v : null
+}
+
+async function settleIfAwaitingPayment(accountId: string): Promise<void> {
+  try {
+    const admin = supabaseAdmin()
+    const { data } = await admin.from('account_billing').select('extras_oneoff_payment_id').eq('account_id', accountId).maybeSingle()
+    if (data?.extras_oneoff_payment_id) await settleExtrasPurchase(admin, accountId)
+  } catch (err) {
+    // The panel must load anyway; the hourly sweep retries.
+    console.error('[billing/overview] could not settle the extras purchase:', err instanceof Error ? err.message : err)
+  }
 }

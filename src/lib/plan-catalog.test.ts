@@ -127,11 +127,38 @@ describe('assigned catalog', () => {
     const base = { ...old, plan_version: { id, plan: 'pro', definition: PLAN_CATALOG.pro } };
     const users = (billing: unknown) =>
       resolveEntitlements(normalizeAssignedPlan({ ...base, account_billing: billing })).limits.max_users;
-    expect(users({ extra_users: 3, extra_channels: 0 })).toBe(13);
-    expect(users([{ extra_users: 3, extra_channels: 0 }])).toBe(13);
+    const row = { status: 'active', extra_users: 3, extra_channels: 0 };
+    expect(users(row)).toBe(13);
+    expect(users([row])).toBe(13);
     expect(users(null)).toBe(10); // an agent: RLS hides the row
-    expect(users({ extra_users: '3' })).toBe(10);
+    expect(users({ ...row, extra_users: '3' })).toBe(10);
     expect(users(undefined)).toBe(10);
+  });
+  it('extras raise limits only while the subscription is active', () => {
+    const base = { ...old, plan_version: { id, plan: 'pro', definition: PLAN_CATALOG.pro } };
+    const limits = (status: string) =>
+      resolveEntitlements(
+        normalizeAssignedPlan({ ...base, account_billing: { status, extra_users: 3, extra_channels: 1 } })
+      ).limits;
+    expect(limits('active')).toEqual({ max_users: 13, max_channels: 3 });
+    for (const status of ['pending', 'past_due', 'canceled'])
+      expect(limits(status)).toEqual(PLAN_CATALOG.pro.limits);
+  });
+  it('while a removal is scheduled the limit for NEW users and numbers is already the target', () => {
+    const base = { ...old, plan_version: { id, plan: 'pro', definition: PLAN_CATALOG.pro } };
+    const ent = resolveEntitlements(
+      normalizeAssignedPlan({
+        ...base,
+        account_billing: { status: 'active', extra_users: 3, extra_channels: 2, pending_extra_users: 1, pending_extra_channels: 2 },
+      })
+    );
+    expect(ent.limits).toEqual({ max_users: 11, max_channels: 4 });
+    expect(ent.extras).toEqual({ users: 1, channels: 2 });
+    // a target above what is bought never raises the limit
+    const odd = resolveEntitlements(
+      normalizeAssignedPlan({ ...base, account_billing: { status: 'active', extra_users: 1, extra_channels: 0, pending_extra_users: 5, pending_extra_channels: 0 } })
+    );
+    expect(odd.limits.max_users).toBe(11);
   });
   it('validates versions and free trial', () => {
     const version = {

@@ -38,7 +38,7 @@ describe('migration 114 contract', () => {
   })
 
   it('adds the columns, capped, with a locked price required for any extra', () => {
-    for (const col of ['extra_users', 'extra_channels', 'extra_user_price_cents', 'extra_channel_price_cents', 'pending_extra_users', 'extras_reduce_due', 'extras_asaas_lowered', 'extras_claim_token']) {
+    for (const col of ['extra_users', 'extra_channels', 'extra_user_price_cents', 'extra_channel_price_cents', 'pending_extra_users', 'extras_reduce_due', 'extras_asaas_lowered', 'extras_claim_token', 'pending_add_users', 'extras_oneoff_payment_id', 'extras_oneoff_expires_at']) {
       expect(sql).toContain(`ADD COLUMN IF NOT EXISTS ${col}`)
     }
     expect(sql).toMatch(/CHECK \(extra_users BETWEEN 0 AND 100\)/)
@@ -64,6 +64,17 @@ describe('migration 114 contract', () => {
     expect(sql.slice(sql.indexOf('FUNCTION public.billing_extras_claim'), sql.indexOf('FUNCTION public.billing_extras_commit'))).toContain("action = 'billing.extras_changed'")
   })
 
+  it('an awaited purchase is all-or-nothing with a price that is really present (NULL would slip through a CHECK)', () => {
+    expect(sql).toContain('account_billing_extras_purchase_shape')
+    expect(sql).toMatch(/pending_add_user_price_cents IS NOT NULL AND pending_add_user_price_cents BETWEEN 1 AND 10000000/)
+    expect(sql).toMatch(/pending_add_channel_price_cents IS NOT NULL AND pending_add_channel_price_cents BETWEEN 1 AND 10000000/)
+    expect(sql).toContain("'billing.extras_add_cancelled'")
+  })
+
+  it('platform_list_accounts counts extras only for an active subscription, returns them, and keeps its grants', () => {
+    expect(sql).toContain("CASE WHEN b.status = 'active' THEN b.extra_users ELSE 0 END")
+  })
+
   it('platform_list_accounts returns the extras and keeps its grants', () => {
     expect(sql).toContain('extra_users           INTEGER')
     expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.platform_list_accounts\(\) TO authenticated, service_role/)
@@ -74,6 +85,11 @@ describe('migration 114 contract', () => {
       expect(rollback).toContain(`DROP COLUMN IF EXISTS ${col}`)
     }
     for (const fn of ['billing_extras_claim', 'billing_extras_commit', 'billing_extras_release']) expect(rollback).toContain(`DROP FUNCTION IF EXISTS public.${fn}`)
+    expect(rollback).toContain('DROP COLUMN IF EXISTS extras_oneoff_payment_id')
+    expect(rollback).toContain('account_billing_extras_purchase_shape')
+    // the 113 function is inlined, not referred to
+    expect(rollback).toMatch(/CREATE OR REPLACE FUNCTION public.valid_plan_definition/)
+    expect(rollback).toContain("value - ARRAY['modules','limits'] <> '{}'") // the strict 113 key check
     expect(rollback).toMatch(/old app parser/)
     expect(rollback).toMatch(/parser stays strict/)
   })

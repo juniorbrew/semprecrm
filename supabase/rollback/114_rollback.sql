@@ -31,6 +31,7 @@ ALTER TABLE public.account_billing
   DROP CONSTRAINT IF EXISTS account_billing_extra_users_priced,
   DROP CONSTRAINT IF EXISTS account_billing_extra_channels_priced,
   DROP CONSTRAINT IF EXISTS account_billing_extras_pending_shape,
+  DROP CONSTRAINT IF EXISTS account_billing_extras_purchase_shape,
   DROP COLUMN IF EXISTS extra_users,
   DROP COLUMN IF EXISTS extra_channels,
   DROP COLUMN IF EXISTS extra_user_price_cents,
@@ -41,7 +42,15 @@ ALTER TABLE public.account_billing
   DROP COLUMN IF EXISTS extras_reduce_due,
   DROP COLUMN IF EXISTS extras_asaas_lowered,
   DROP COLUMN IF EXISTS extras_claim_token,
-  DROP COLUMN IF EXISTS extras_claim_until;
+  DROP COLUMN IF EXISTS extras_claim_until,
+  DROP COLUMN IF EXISTS pending_add_users,
+  DROP COLUMN IF EXISTS pending_add_channels,
+  DROP COLUMN IF EXISTS pending_add_user_price_cents,
+  DROP COLUMN IF EXISTS pending_add_channel_price_cents,
+  DROP COLUMN IF EXISTS extras_oneoff_payment_id,
+  DROP COLUMN IF EXISTS extras_oneoff_url,
+  DROP COLUMN IF EXISTS extras_oneoff_cents,
+  DROP COLUMN IF EXISTS extras_oneoff_expires_at;
 
 -- platform_list_accounts() without the extras columns (081 shape).
 DROP FUNCTION IF EXISTS public.platform_list_accounts();
@@ -77,7 +86,42 @@ ALTER FUNCTION public.platform_list_accounts() OWNER TO postgres;
 REVOKE ALL ON FUNCTION public.platform_list_accounts() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.platform_list_accounts() TO authenticated, service_role;
 
--- valid_plan_definition: re-apply the body from supabase/migrations/113_booking_pages.sql
--- (copy that CREATE OR REPLACE FUNCTION public.valid_plan_definition block and run it).
+-- valid_plan_definition back to the 113 text (copied from supabase/migrations/113_booking_pages.sql).
+CREATE OR REPLACE FUNCTION public.valid_plan_definition(value jsonb) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE SET search_path = public AS $$
+DECLARE item jsonb; key text; capacity jsonb;
+BEGIN
+  IF jsonb_typeof(value) IS DISTINCT FROM 'object'
+     OR NOT value ?& ARRAY['modules','limits']
+     OR value - ARRAY['modules','limits'] <> '{}'
+     OR jsonb_typeof(value->'modules') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(value->'limits') IS DISTINCT FROM 'object'
+     OR NOT (value->'limits') ?& ARRAY['max_users','max_channels']
+     OR (value->'limits') - ARRAY['max_users','max_channels'] <> '{}' THEN
+    RETURN false;
+  END IF;
+  FOR item IN SELECT * FROM jsonb_array_elements(value->'modules') LOOP
+    IF jsonb_typeof(item) <> 'string' OR NOT (item #>> '{}') = ANY(ARRAY[
+      'dashboard','pipelines','tasks','broadcasts','automations','flows',
+      'channel_official','channel_qr','lead_capture','white_label','internal_chat','calendar','ai',
+      'reports','api','support','ai_actions','channel_instagram','channel_messenger','booking_page'
+    ]) THEN RETURN false; END IF;
+  END LOOP;
+  IF (SELECT count(*) <> count(DISTINCT x) FROM jsonb_array_elements(value->'modules') x)
+     THEN RETURN false; END IF;
+  FOREACH key IN ARRAY ARRAY['max_users','max_channels'] LOOP
+    capacity := value->'limits'->key;
+    IF capacity <> 'null'::jsonb THEN
+      IF jsonb_typeof(capacity) <> 'number' THEN RETURN false; END IF;
+      IF (capacity #>> '{}')::numeric < 0 OR (capacity #>> '{}')::numeric > 9007199254740991
+         OR trunc((capacity #>> '{}')::numeric) <> (capacity #>> '{}')::numeric
+         THEN RETURN false; END IF;
+    END IF;
+  END LOOP;
+  RETURN true;
+END $$;
+REVOKE ALL ON FUNCTION public.valid_plan_definition(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.valid_plan_definition(jsonb) TO service_role;
+
 NOTIFY pgrst, 'reload schema';
 COMMIT;
