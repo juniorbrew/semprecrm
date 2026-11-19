@@ -46,6 +46,13 @@ export interface BillingExtrasRow {
   extras_oneoff_url: string | null
   extras_oneoff_cents: number | null
   extras_oneoff_expires_at: string | null
+  /** The renewal due date the awaited purchase was priced against (YYYY-MM-DD). */
+  extras_oneoff_renewal_due: string | null
+  /** The paid one-off charge of the last activated purchase (a later refund of it is acted on). */
+  extras_oneoff_paid_id: string | null
+  /** The charge for the difference of a blocked removal, and when it stops being waited for. */
+  extras_diff_payment_id: string | null
+  extras_diff_expires_at: string | null
 }
 
 /** The columns a change writes (everything else of the row is untouched). */
@@ -69,6 +76,10 @@ export type NewExtrasRow = Pick<
   | 'extras_oneoff_url'
   | 'extras_oneoff_cents'
   | 'extras_oneoff_expires_at'
+  | 'extras_oneoff_renewal_due'
+  | 'extras_oneoff_paid_id'
+  | 'extras_diff_payment_id'
+  | 'extras_diff_expires_at'
 >
 
 export type ExtrasAction =
@@ -76,6 +87,9 @@ export type ExtrasAction =
   | 'billing.extras_removal_applied'
   | 'billing.extras_removal_blocked'
   | 'billing.extras_add_cancelled'
+  | 'billing.extras_refund_needed'
+  | 'billing.extras_diff_settled'
+  | 'billing.extras_diff_expired'
 
 export type Decision<C extends string> =
   | { refuse: C }
@@ -85,6 +99,8 @@ export type Decision<C extends string> =
       asaas: { valueCents: number; updatePending: boolean } | null
       action: ExtrasAction
       metadata: Record<string, unknown>
+      /** The Asaas charge this decision created: if the commit's answer is lost, the row is re-read before compensating. */
+      sideEffect?: { paymentId: string; cents: number }
       /** Undo a side effect made while deciding (a one-off charge) when the change is not committed. */
       compensate?: () => Promise<void>
     }
@@ -113,6 +129,10 @@ export function pickNew(row: BillingExtrasRow, patch: Partial<NewExtrasRow> = {}
     extras_oneoff_url: row.extras_oneoff_url,
     extras_oneoff_cents: row.extras_oneoff_cents,
     extras_oneoff_expires_at: row.extras_oneoff_expires_at,
+    extras_oneoff_renewal_due: row.extras_oneoff_renewal_due,
+    extras_oneoff_paid_id: row.extras_oneoff_paid_id,
+    extras_diff_payment_id: row.extras_diff_payment_id,
+    extras_diff_expires_at: row.extras_diff_expires_at,
     ...patch,
   }
 }
@@ -138,10 +158,12 @@ export async function runExtrasChange<C extends string>(
   const subscriptionId = row.asaas_subscription_id
   let committed = false
   let compensate: (() => Promise<void>) | undefined
+  let sideEffect: { paymentId: string; cents: number } | undefined
   try {
     const decision = await o.decide(row)
     if ('refuse' in decision) return { ok: false, code: decision.refuse }
     compensate = decision.compensate
+    sideEffect = decision.sideEffect
 
     if (decision.asaas && subscriptionId) {
       try {
@@ -168,6 +190,7 @@ export async function runExtrasChange<C extends string>(
           pending_extra_users: row.pending_extra_users,
           extras_asaas_lowered: row.extras_asaas_lowered,
           extras_oneoff_payment_id: row.extras_oneoff_payment_id,
+          extras_diff_payment_id: row.extras_diff_payment_id,
         },
         p_new: decision.next,
         p_actor: o.actorId,
@@ -177,8 +200,17 @@ export async function runExtrasChange<C extends string>(
       if (error) throw new Error(error.message)
       ok = data === true
     } catch (err) {
-      // The commit may even have landed with only its answer lost: Asaas must follow the database.
+      // The commit may even have landed with only its answer lost: Asaas must follow the database,
+      // and a charge the stored row already points to must NOT be cancelled.
       await reconcileToDatabase(db, o.accountId, subscriptionId)
+      if (sideEffect) {
+        const landed = await storedPointsTo(db, o.accountId, sideEffect.paymentId)
+        if (landed !== false) {
+          committed = true // landed, or unknown: either way the charge stays
+          if (landed === true) return { ok: true, row: decision.next }
+          console.error('[billing:refund-needed] could not confirm the commit, check charge', sideEffect.paymentId, 'of account', o.accountId)
+        }
+      }
       throw err
     }
     if (!ok) {
@@ -193,12 +225,32 @@ export async function runExtrasChange<C extends string>(
         try {
           await compensate()
         } catch (err) {
-          console.error('[billing/extras] could not undo a side effect, check Asaas:', err instanceof Error ? err.message : err)
+          const why = err instanceof Error ? err.message : String(err)
+          console.error('[billing:refund-needed] orphan charge, cancel or refund it in Asaas:', sideEffect?.paymentId, 'account', o.accountId, why)
+          await audit({
+            accountId: o.accountId,
+            actorUserId: null,
+            action: AUDIT_ACTIONS.BILLING_EXTRAS_REFUND_NEEDED,
+            entityType: 'account_billing',
+            entityId: o.accountId,
+            metadata: { reason: 'charge created but not saved and not cancelled', payment_id: sideEffect?.paymentId ?? null, cents: sideEffect?.cents ?? null, error: why.slice(0, 200) },
+          })
         }
       }
       const { error } = await db.rpc('billing_extras_release', { p_account: o.accountId, p_token: token })
       if (error) console.error('[billing/extras] could not release the claim (it expires by itself):', error.message)
     }
+  }
+}
+
+/** Does the stored row reference this charge? null = could not read it. */
+async function storedPointsTo(db: SupabaseClient, accountId: string, paymentId: string): Promise<boolean | null> {
+  try {
+    const { data, error } = await db.from('account_billing').select('extras_oneoff_payment_id, extras_diff_payment_id').eq('account_id', accountId).maybeSingle()
+    if (error) return null
+    return data?.extras_oneoff_payment_id === paymentId || data?.extras_diff_payment_id === paymentId
+  } catch {
+    return null
   }
 }
 

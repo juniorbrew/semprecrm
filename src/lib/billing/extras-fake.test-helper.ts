@@ -19,6 +19,7 @@ const EXPECT_COLUMNS = [
   'pending_extra_users',
   'extras_asaas_lowered',
   'extras_oneoff_payment_id',
+  'extras_diff_payment_id',
 ] as const
 
 const NEW_COLUMNS = [
@@ -40,6 +41,10 @@ const NEW_COLUMNS = [
   'extras_oneoff_url',
   'extras_oneoff_cents',
   'extras_oneoff_expires_at',
+  'extras_oneoff_renewal_due',
+  'extras_oneoff_paid_id',
+  'extras_diff_payment_id',
+  'extras_diff_expires_at',
 ] as const
 
 export const extrasRpc: NonNullable<FakeDbOptions['rpc']> = (fn, args, tables) => {
@@ -89,6 +94,12 @@ export const extrasRpc: NonNullable<FakeDbOptions['rpc']> = (fn, args, tables) =
       row.extras_claim_until = null
     }
     return ok(null)
+  }
+  if (fn === 'billing_mark_past_due') {
+    const r = billing.find((x) => x.account_id === args.p_account_id && x.asaas_subscription_id === args.p_subscription_id) as Row | undefined
+    if (!r || (r.status !== 'active' && r.status !== 'past_due')) return ok(false)
+    r.status = 'past_due'
+    return ok(true)
   }
   return { data: null, error: { message: `unexpected rpc ${fn}` } }
 }
