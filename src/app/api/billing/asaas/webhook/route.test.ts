@@ -25,7 +25,10 @@ vi.mock('@/lib/billing/asaas', () => ({
   getPayment: vi.fn(async (id: string) => ({ id, ...h.apiPayment })),
 }))
 
+vi.mock('@/lib/billing/extras-sweep', () => ({ settleExtrasPurchase: vi.fn(async () => undefined) }))
+
 import { AsaasError, getPayment } from '@/lib/billing/asaas'
+import { settleExtrasPurchase } from '@/lib/billing/extras-sweep'
 import { POST } from './route'
 
 const TOKEN = 'whk_test_token_123'
@@ -159,3 +162,20 @@ function makeDup(fake: typeof h.fake) {
     },
   }
 }
+
+describe('one-off charge of an annual extras purchase (no subscription)', () => {
+  const oneOff = { id: 'pay_oneoff' }
+  it('a paid event settles the purchase of the account that waits for that charge', async () => {
+    h.fake.tables.account_billing.push({ account_id: 'acct-2', asaas_subscription_id: 'sub_2', cycle: 'annual', status: 'active', extras_oneoff_payment_id: 'pay_oneoff' })
+    vi.mocked(settleExtrasPurchase).mockClear()
+    const res = await send({ id: 'evt_o1', event: 'PAYMENT_RECEIVED', payment: oneOff })
+    expect(res.status).toBe(200)
+    expect(settleExtrasPurchase).toHaveBeenCalledWith(expect.anything(), 'acct-2')
+  })
+  it('a charge nobody waits for, or an unpaid event, settles nothing', async () => {
+    vi.mocked(settleExtrasPurchase).mockClear()
+    await send({ id: 'evt_o2', event: 'PAYMENT_RECEIVED', payment: oneOff })
+    await send({ id: 'evt_o3', event: 'PAYMENT_OVERDUE', payment: oneOff })
+    expect(settleExtrasPurchase).not.toHaveBeenCalled()
+  })
+})

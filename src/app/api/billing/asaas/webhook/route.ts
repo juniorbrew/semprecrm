@@ -22,6 +22,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { AsaasError, getPayment, type AsaasPayment } from '@/lib/billing/asaas'
 import { eventEffect, isBillingCycle, PAID_STATUSES, periodEnd } from '@/lib/billing/rules'
+import { settleExtrasPurchase } from '@/lib/billing/extras-sweep'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,8 +100,17 @@ async function processEvent(
 ): Promise<void> {
   const paymentId = typeof hint?.id === 'string' ? hint.id : null
   const subscriptionId = typeof hint?.subscription === 'string' ? hint.subscription : null
-  if (!paymentId || !subscriptionId) return // not a subscription charge: nothing of ours
+  if (!paymentId) return
   const effect = eventEffect(event)
+  if (!subscriptionId) {
+    // Not a subscription charge: it may be the one-off charge of an annual extras purchase
+    // (the sweep or the panel would also find it paid; this just releases it sooner).
+    if (effect !== 'activate') return
+    const { data: buy, error: buyErr } = await db.from('account_billing').select('account_id').eq('extras_oneoff_payment_id', paymentId).maybeSingle()
+    if (buyErr) throw new Error(`extras purchase read failed: ${buyErr.message}`)
+    if (buy) await settleExtrasPurchase(db, buy.account_id)
+    return
+  }
   if (effect === 'record') return // the API is read only when the account may change
 
   const { data: billing, error } = await db
