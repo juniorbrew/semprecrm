@@ -7,21 +7,31 @@
 // Customer-facing, Brazil only: pt-BR text, no app i18n.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { ArrowLeft, CalendarCheck, Check, ChevronLeft, ChevronRight, Clock, Loader2, MessageCircle, Share, User } from 'lucide-react'
+import { ArrowLeft, CalendarCheck, Check, ChevronLeft, ChevronRight, Clock, Loader2, Mail, MessageCircle, Share, User } from 'lucide-react'
 
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatDuration, formatPrice, groupSlotsByDay, shiftDate, todayIn } from '@/lib/agenda/ui'
 import type { Slot } from '@/lib/agenda/types'
-import type { MyAppointment, PublicPage, PublicService } from '@/lib/booking-page/server'
+import type { MyAppointment, PublicPage, PublicService, SessionInfo } from '@/lib/booking-page/server'
 import { INSTALL_PROMPT_EVENT, INSTALL_PROMPT_KEY } from '@/lib/pwa/install-prompt'
 
-type Step = 'service' | 'professional' | 'time' | 'confirm' | 'done'
+type Step = 'service' | 'professional' | 'time' | 'confirm' | 'details' | 'resume' | 'done'
+
+/** What the customer picked, kept across the trip to Google and back. */
+interface Pending {
+  serviceId: string
+  resourceId: string | null
+  slot: Slot
+}
+
+const pendingKey = (slug: string) => `agendar:${slug}`
 
 interface ApiError {
   error?: string
   signed_out?: boolean
   alternatives?: Slot[]
+  reason?: string
 }
 
 /** Never throws: no connection comes back as status 0 (common on phones). */
@@ -55,19 +65,21 @@ function fmtWhen(iso: string, tz: string): string {
   )
 }
 
-export function BookingApp({ page }: { page: PublicPage }) {
+/** `arrival`: back from Google (?entrou=google / ?erro=…), read by the server page so both renders agree. */
+export function BookingApp({ page, arrival }: { page: PublicPage; arrival: { google: boolean; error: string | null } }) {
   const [tab, setTab] = useState<'book' | 'mine'>('book')
-  const [signedIn, setSignedIn] = useState(false)
-
+  const [session, setSession] = useState<SessionInfo | null>(null)
   const [checked, setChecked] = useState(false)
   useEffect(() => {
-    api<{ signed_in: boolean }>(page.slug, '').then((r) => {
-      setSignedIn(!!r.data.signed_in)
+    if (arrival.google || arrival.error) window.history.replaceState(null, '', window.location.pathname)
+    api<{ session: SessionInfo | null }>(page.slug, '').then((r) => {
+      setSession(r.data.session ?? null)
       setChecked(true)
     })
-  }, [page.slug])
-  const onSignedIn = useCallback(() => setSignedIn(true), [])
-  const onSignedOut = useCallback(() => setSignedIn(false), [])
+  }, [arrival, page.slug])
+  const signedIn = !!session
+  const onSignedIn = useCallback((info: SessionInfo) => setSession(info), [])
+  const onSignedOut = useCallback(() => setSession(null), [])
   const seeMine = useCallback(() => setTab('mine'), [])
   const seeBook = useCallback(() => setTab('book'), [])
 
@@ -109,7 +121,14 @@ export function BookingApp({ page }: { page: PublicPage }) {
           </nav>
           {/* Kept mounted: switching tabs while waiting for the WhatsApp code must not drop the wait. */}
           <div hidden={tab !== 'book'}>
-            <BookFlow page={page} signedIn={signedIn} onSignedIn={onSignedIn} onSeeMine={seeMine} />
+            <BookFlow
+              page={page}
+              session={session}
+              ready={checked}
+              arrival={arrival}
+              onSignedIn={onSignedIn}
+              onSeeMine={seeMine}
+            />
           </div>
           {tab === 'mine' &&
             (checked ? (
@@ -128,21 +147,41 @@ export function BookingApp({ page }: { page: PublicPage }) {
 // Booking flow
 // ------------------------------------------------------------
 
+/** The choice saved before going to Google (read only when coming back from it). */
+function readPending(slug: string, page: PublicPage): { service: PublicService; resourceId: string | null; slot: Slot } | null {
+  try {
+    const p = JSON.parse(sessionStorage.getItem(pendingKey(slug)) ?? 'null') as Pending | null
+    const service = p ? page.services.find((x) => x.id === p.serviceId) : undefined
+    return p && service ? { service, resourceId: p.resourceId, slot: p.slot } : null
+  } catch {
+    return null
+  }
+}
+
 function BookFlow({
   page,
-  signedIn,
+  session,
+  ready,
+  arrival,
   onSignedIn,
   onSeeMine,
 }: {
   page: PublicPage
-  signedIn: boolean
-  onSignedIn: () => void
+  session: SessionInfo | null
+  /** The session check finished (until then nobody knows whether the customer is signed in). */
+  ready: boolean
+  arrival: { google: boolean; error: string | null }
+  onSignedIn: (info: SessionInfo) => void
   onSeeMine: () => void
 }) {
-  const [step, setStep] = useState<Step>('service')
-  const [service, setService] = useState<PublicService | null>(null)
-  const [resourceId, setResourceId] = useState<string | null>(null)
-  const [slot, setSlot] = useState<Slot | null>(null)
+  // Back from Google: start from what the customer had picked.
+  const fromGoogle = arrival.google || arrival.error === 'google'
+  const [pending] = useState(() => (fromGoogle && typeof window !== 'undefined' ? readPending(page.slug, page) : null))
+  const [step, setStep] = useState<Step>(fromGoogle ? 'resume' : 'service')
+  const [arrivalError, setArrivalError] = useState(arrival.error)
+  const [service, setService] = useState<PublicService | null>(pending?.service ?? null)
+  const [resourceId, setResourceId] = useState<string | null>(pending?.resourceId ?? null)
+  const [slot, setSlot] = useState<Slot | null>(pending?.slot ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [alternatives, setAlternatives] = useState<Slot[]>([])
@@ -157,7 +196,7 @@ function BookFlow({
   )
 
   const book = useCallback(
-    async (chosen: Slot) => {
+    async (chosen: Slot, details?: { nome: string; celular: string; aceite: boolean }) => {
       if (!service || inFlight.current) return
       if (keyRef.current?.startsAt !== chosen.starts_at) keyRef.current = { startsAt: chosen.starts_at, key: crypto.randomUUID() }
       inFlight.current = true
@@ -166,11 +205,17 @@ function BookFlow({
       setAlternatives([])
       const r = await api<{ ok: boolean; starts_at: string }>(page.slug, '/agendar', {
         method: 'POST',
-        body: JSON.stringify({ servico: service.id, profissional: resourceId, inicio: chosen.starts_at, chave: keyRef.current.key }),
+        body: JSON.stringify({ servico: service.id, profissional: resourceId, inicio: chosen.starts_at, chave: keyRef.current.key, ...details }),
       })
       inFlight.current = false
       setBusy(false)
       if (r.ok) {
+        try {
+          sessionStorage.removeItem(pendingKey(page.slug))
+        } catch {
+          // nothing saved
+        }
+        if (details && session) onSignedIn({ ...session, needs_phone: false })
         setBooked({ starts_at: r.data.starts_at })
         setStep('done')
         return
@@ -179,28 +224,64 @@ function BookFlow({
         setStep('confirm')
         return
       }
+      if (r.data.reason === 'needs_phone') {
+        setStep('details')
+        return
+      }
       // A definitive refusal: the next attempt at this slot is a new booking.
       if (r.status >= 400 && r.status < 500) keyRef.current = null
       setError(r.data.error ?? 'Não foi possível agendar.')
       setAlternatives(r.data.alternatives ?? [])
-      if (r.status === 409) setStep('time')
+      // Slot taken / limit: the server already kept the name + phone, so the next try needs only a time.
+      if (r.status === 409 && r.data.reason !== 'contact') {
+        if (details && session) onSignedIn({ ...session, needs_phone: false })
+        setStep('time')
+      }
+      // Anything else with details: stay on the form, where the error shows.
     },
-    [page.slug, resourceId, service],
+    [onSignedIn, page.slug, resourceId, service, session],
   )
 
   const pickSlot = (s: Slot) => {
     setSlot(s)
     setError(null)
     setAlternatives([])
-    if (signedIn) void book(s)
-    else setStep('confirm')
+    if (!session) setStep('confirm')
+    else if (session.needs_phone) setStep('details')
+    else void book(s)
   }
+
+  // Before leaving for Google: remember the choice, to pick it up on the way back.
+  const savePending = () => {
+    if (!service || !slot) return
+    try {
+      sessionStorage.setItem(pendingKey(page.slug), JSON.stringify({ serviceId: service.id, resourceId, slot } satisfies Pending))
+    } catch {
+      // private mode: the customer just picks the time again
+    }
+  }
+
+
 
   const back = () => {
     setError(null)
     setAlternatives([])
-    setStep(step === 'confirm' ? 'time' : step === 'time' ? (pros.length > 1 ? 'professional' : 'service') : 'service')
+    setStep(view === 'confirm' || view === 'details' || view === 'review' ? 'time' : step === 'time' ? (pros.length > 1 ? 'professional' : 'service') : 'service')
   }
+
+  // 'resume' becomes a real step once we know who is signed in.
+  const view: Step | 'loading' | 'review' =
+    step !== 'resume'
+      ? step
+      : !ready
+        ? 'loading'
+        : !service || !slot
+          ? 'service'
+          : !session
+            ? 'confirm'
+            : session.needs_phone
+              ? 'details'
+              : 'review'
 
   if (step === 'done' && booked && service) {
     return (
@@ -233,13 +314,20 @@ function BookFlow({
 
   return (
     <section className="flex flex-col gap-4">
-      {step !== 'service' && (
+      {arrivalError && (view === 'service' || view === 'confirm') && (
+        <p role="alert" className="bg-destructive/10 text-destructive rounded-xl p-3 text-sm">
+          {arrivalError === 'google'
+            ? 'Não foi possível entrar com o Google. Tente de novo ou use outra opção.'
+            : 'O agendamento online está indisponível no momento.'}
+        </p>
+      )}
+      {view !== 'service' && view !== 'loading' && (
         <button type="button" onClick={back} className="text-muted-foreground flex w-fit items-center gap-1 text-sm">
           <ArrowLeft className="size-4" aria-hidden /> Voltar
         </button>
       )}
 
-      {step === 'service' && (
+      {view === 'service' && (
         <>
           <h2 className="text-base font-semibold">Escolha o serviço</h2>
           {page.services.length === 0 ? (
@@ -252,6 +340,7 @@ function BookFlow({
                     type="button"
                     onClick={() => {
                       setService(s)
+                      setArrivalError(null)
                       const only = s.resource_ids.length === 1 ? s.resource_ids[0] : null
                       setResourceId(only)
                       setStep(only ? 'time' : 'professional')
@@ -274,7 +363,7 @@ function BookFlow({
         </>
       )}
 
-      {step === 'professional' && service && (
+      {view === 'professional' && service && (
         <>
           <h2 className="text-base font-semibold">Com quem?</h2>
           <ul className="flex flex-col gap-2">
@@ -304,7 +393,7 @@ function BookFlow({
         </>
       )}
 
-      {step === 'time' && service && (
+      {view === 'time' && service && (
         <>
           <h2 className="text-base font-semibold">Escolha o horário</h2>
           <p className="text-muted-foreground -mt-2 text-sm">
@@ -335,14 +424,51 @@ function BookFlow({
         </>
       )}
 
-      {step === 'confirm' && service && slot && (
-        <ConfirmPhone
+      {view === 'loading' && <Loader2 className="text-muted-foreground size-4 animate-spin" aria-label="Carregando" />}
+
+      {view === 'review' && service && slot && (
+        <div className="flex flex-col gap-4">
+          <div className="bg-muted rounded-xl p-3 text-sm">
+            <CalendarCheck className="mr-1 inline size-4 align-[-2px]" aria-hidden /> {service.name} — {fmtWhen(slot.starts_at, page.timezone)}
+          </div>
+          {error && (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          )}
+          <Button size="lg" disabled={busy} onClick={() => void book(slot)}>
+            {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} Confirmar agendamento
+          </Button>
+        </div>
+      )}
+
+      {view === 'confirm' && service && slot && (
+        <SignIn
           page={page}
           summary={`${service.name} — ${fmtWhen(slot.starts_at, page.timezone)}`}
-          onConfirmed={() => {
-            onSignedIn()
-            setStep('time')
-            void book(slot)
+          onLeaveForGoogle={savePending}
+          onSignedIn={(info) => {
+            onSignedIn(info)
+            if (info.needs_phone) {
+              setStep('details')
+            } else {
+              setStep('time')
+              void book(slot)
+            }
+          }}
+        />
+      )}
+
+      {view === 'details' && service && slot && (
+        <Details
+          page={page}
+          summary={`${service.name} — ${fmtWhen(slot.starts_at, page.timezone)}`}
+          initialName={session?.name ?? ''}
+          busy={busy}
+          error={error}
+          onSubmit={(d) => {
+            setStep('details')
+            void book(slot, d)
           }}
         />
       )}
@@ -467,6 +593,242 @@ function SlotPicker({
         </>
       )}
     </div>
+  )
+}
+
+// ------------------------------------------------------------
+// How to sign in: Google, e-mail code, or WhatsApp (phone confirmed)
+// ------------------------------------------------------------
+
+function SignIn({
+  page,
+  summary,
+  onLeaveForGoogle,
+  onSignedIn,
+}: {
+  page: PublicPage
+  summary: string
+  onLeaveForGoogle: () => void
+  onSignedIn: (info: SessionInfo) => void
+}) {
+  const [mode, setMode] = useState<'choose' | 'email' | 'whatsapp'>(
+    page.login.google || page.login.email ? 'choose' : 'whatsapp',
+  )
+
+  if (mode === 'whatsapp') {
+    return (
+      <div className="flex flex-col gap-3">
+        {(page.login.google || page.login.email) && (
+          <button type="button" onClick={() => setMode('choose')} className="text-muted-foreground w-fit text-sm underline underline-offset-4">
+            Outras formas de entrar
+          </button>
+        )}
+        <ConfirmPhone page={page} summary={summary} onConfirmed={() => onSignedIn({ kind: 'whatsapp', needs_phone: false, name: null })} />
+      </div>
+    )
+  }
+  if (mode === 'email') {
+    return <EmailLogin page={page} onBack={() => setMode('choose')} onSignedIn={onSignedIn} />
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="bg-muted rounded-xl p-3 text-sm">
+        <CalendarCheck className="mr-1 inline size-4 align-[-2px]" aria-hidden /> {summary}
+      </div>
+      <h2 className="text-base font-semibold">Como você quer continuar?</h2>
+      {page.login.google && (
+        <a
+          href={`/api/agendar/google/iniciar?pagina=${encodeURIComponent(page.slug)}`}
+          onClick={onLeaveForGoogle}
+          className={buttonVariants({ variant: 'outline', size: 'lg' }) + ' gap-2'}
+        >
+          <GoogleMark /> Continuar com Google
+        </a>
+      )}
+      {page.login.email && (
+        <Button variant="outline" size="lg" onClick={() => setMode('email')}>
+          <Mail className="size-5" aria-hidden /> Continuar com e-mail
+        </Button>
+      )}
+      <Button variant="outline" size="lg" onClick={() => setMode('whatsapp')}>
+        <MessageCircle className="size-5" aria-hidden /> Confirmar pelo WhatsApp
+      </Button>
+    </div>
+  )
+}
+
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5" aria-hidden>
+      <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.7z" />
+      <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z" />
+      <path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.3a12 12 0 0 0 0 10.8l4-3.1z" />
+      <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z" />
+    </svg>
+  )
+}
+
+function EmailLogin({ page, onBack, onSignedIn }: { page: PublicPage; onBack: () => void; onSignedIn: (info: SessionInfo) => void }) {
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [sent, setSent] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const send = async (e: { preventDefault: () => void }) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    const r = await api<{ ok: boolean }>(page.slug, '/email', { method: 'POST', body: JSON.stringify({ email }) })
+    setBusy(false)
+    if (!r.ok) return setError(r.data.error ?? 'Não foi possível enviar o código.')
+    setSent(true)
+  }
+
+  const verify = async (e: { preventDefault: () => void }) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    const r = await api<{ ok: boolean; session: SessionInfo | null }>(page.slug, '/email/verificar', {
+      method: 'POST',
+      body: JSON.stringify({ codigo: code }),
+    })
+    setBusy(false)
+    if (r.ok && r.data.session) return onSignedIn(r.data.session)
+    setError(r.data.error ?? 'Não foi possível confirmar o código.')
+    if (r.data.reason === 'expired') {
+      setSent(false)
+      setCode('')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <button type="button" onClick={onBack} className="text-muted-foreground w-fit text-sm underline underline-offset-4">
+        Outras formas de entrar
+      </button>
+      {!sent ? (
+        <form onSubmit={send} className="flex flex-col gap-4">
+          <h2 className="text-base font-semibold">Entrar com e-mail</h2>
+          <label className="flex flex-col gap-1.5 text-sm">
+            Seu e-mail
+            <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" inputMode="email" autoComplete="email" maxLength={254} required />
+          </label>
+          <p className="text-muted-foreground text-xs">Vamos mandar um código de 6 números. Usamos seu e-mail só para você entrar aqui.</p>
+          {error && (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          )}
+          <Button type="submit" size="lg" disabled={busy}>
+            {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} Enviar código
+          </Button>
+        </form>
+      ) : (
+        <form onSubmit={verify} className="flex flex-col gap-4">
+          <h2 className="text-base font-semibold">Digite o código</h2>
+          <p className="text-muted-foreground text-sm">
+            Enviamos um código para <span className="text-foreground">{email}</span>. Ele vale por 10 minutos.
+          </p>
+          <label className="flex flex-col gap-1.5 text-sm">
+            Código
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              required
+            />
+          </label>
+          {error && (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          )}
+          <Button type="submit" size="lg" disabled={busy || code.length !== 6}>
+            {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} Entrar
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setSent(false)
+              setCode('')
+              setError(null)
+            }}
+            className="text-muted-foreground w-fit text-xs underline underline-offset-4">
+            Usar outro e-mail ou pedir novo código
+          </button>
+        </form>
+      )}
+    </div>
+  )
+}
+
+/** E-mail / Google customers, first booking: name + phone for the reminders (not confirmed). */
+function Details({
+  page,
+  summary,
+  initialName,
+  busy,
+  error,
+  onSubmit,
+}: {
+  page: PublicPage
+  summary: string
+  initialName: string
+  busy: boolean
+  error: string | null
+  onSubmit: (d: { nome: string; celular: string; aceite: boolean }) => void
+}) {
+  const [name, setName] = useState(initialName)
+  const [phone, setPhone] = useState('')
+  const [accept, setAccept] = useState(false)
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        onSubmit({ nome: name, celular: phone, aceite: accept })
+      }}
+      className="flex flex-col gap-4"
+    >
+      <div className="bg-muted rounded-xl p-3 text-sm">
+        <CalendarCheck className="mr-1 inline size-4 align-[-2px]" aria-hidden /> {summary}
+      </div>
+      <h2 className="text-base font-semibold">Seus dados</h2>
+      <label className="flex flex-col gap-1.5 text-sm">
+        Nome
+        <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={80} required />
+      </label>
+      <label className="flex flex-col gap-1.5 text-sm">
+        Celular com DDD (para os lembretes)
+        <Input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="(11) 98765-4321"
+          maxLength={30}
+          required
+        />
+      </label>
+      <label className="text-muted-foreground flex items-start gap-2 text-xs">
+        <input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} className="mt-0.5 size-4" required />
+        <span>
+          Autorizo {page.name} a usar meu nome e celular somente para este agendamento e para os lembretes pelo WhatsApp. Não informe dados de
+          saúde aqui.
+        </span>
+      </label>
+      {error && (
+        <p role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      )}
+      <Button type="submit" size="lg" disabled={busy || !accept}>
+        {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} Agendar
+      </Button>
+    </form>
   )
 }
 
