@@ -16,6 +16,7 @@ import { supabaseAdmin } from '@/lib/flows/admin-client'
 export const dynamic = 'force-dynamic'
 
 type Props = { params: Promise<{ slug: string }> }
+type PageProps = Props & { searchParams: Promise<Record<string, string | string[] | undefined>> }
 
 // generateMetadata, generateViewport and the page share one load per request.
 const load = cache(async (slug: string): Promise<PublicPage | null> => {
@@ -50,13 +51,15 @@ export async function generateViewport({ params }: Props): Promise<Viewport> {
   return { themeColor: normalizeHexColor(page?.color) ?? '#0f172a' }
 }
 
-export default async function BookingPage({ params }: Props) {
+export default async function BookingPage({ params, searchParams }: PageProps) {
   const { slug } = await params
+  const q = await searchParams
+  const arrival = { google: q.entrou === 'google', error: typeof q.erro === 'string' ? q.erro.slice(0, 20) : null }
   const page = await load(slug)
   if (!page) notFound()
   return (
     <div style={brandingCssVars(page.color) as React.CSSProperties} className="min-h-dvh bg-background">
-      <BookingApp page={page} />
+      <BookingApp page={page} arrival={arrival} />
     </div>
   )
 }

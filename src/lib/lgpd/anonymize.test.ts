@@ -67,6 +67,10 @@ function seed(overrides: Partial<Record<string, Row[]>> = {}): Record<string, Ro
     lead_origins: [{ id: 'lo1', account_id: ACC, contact_id: C1, headline: 'Promoção sofás' }, { id: 'lo2', account_id: ACC, contact_id: 'other', headline: 'Outra' }],
     csat_responses: [{ id: 'cs1', account_id: ACC, contact_id: C1, score: 5, comment: 'Ana adorou' }],
     automation_event_queue: [{ id: 1, account_id: ACC, contact_id: C1, context: { message_text: 'oi' } }],
+    booking_identities: [
+      { id: 'bi1', account_id: ACC, kind: 'google', subject: 'g-123', email: 'ana@gmail.com', name: 'Ana', contact_id: C1 },
+      { id: 'bi2', account_id: ACC, kind: 'email', subject: 'outra@x.com', email: 'outra@x.com', name: 'Outra', contact_id: 'other' },
+    ],
     deals: [{ id: 'd1', account_id: ACC, contact_id: C1, conversation_id: 'conv1', title: 'Ana Souza - 11912345678', notes: 'liga às 18h', lost_note: 'caro' }],
     tasks: [
       { id: 't1', account_id: ACC, contact_id: C1, conversation_id: null, title: 'Ligar para Ana', description: 'cpf 123' },
@@ -221,6 +225,12 @@ describe('anonymizeContact', () => {
     const { db, tables } = makeFakeDb(seed())
     await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
     expect(tables.meta_capi_events.map((e) => [e.id, e.status])).toEqual([['mc1', 'cancelled'], ['mc2', 'sent'], ['mc3', 'pending']])
+  })
+
+  it('deletes the booking-page logins (e-mail / Google) that booked on this contact, only those', async () => {
+    const { db, tables } = makeFakeDb(seed())
+    await anonymizeContact(db, ACC, C1, { now, secret: SECRET })
+    expect(tables.booking_identities.map((r) => r.id)).toEqual(['bi2'])
   })
 
   it('covers every table in SCRUBBED_TABLES (coverage)', async () => {

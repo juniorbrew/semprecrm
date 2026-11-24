@@ -1,9 +1,14 @@
+import { createHmac } from 'node:crypto'
+
 import { describe, expect, it } from 'vitest'
 
 import {
   canClientChange,
   codeMessage,
   filterSlots,
+  hashEmailCode,
+  normalizeEmail,
+  sameHash,
   isAcceptablePhone,
   isValidSlug,
   parseCodeMessage,
@@ -96,8 +101,17 @@ describe('session cookie', () => {
       accountId: ACC,
       pageId: PAGE,
       contactId: CONTACT,
+      identityId: null,
       issuedAt: now,
     })
+  })
+
+  it('carries an identity (e-mail / Google) instead of a contact, never both', () => {
+    const t = signSession({ accountId: ACC, pageId: PAGE, identityId: CONTACT, issuedAt: now }, SECRET)
+    expect(verifySession(t, { pageId: PAGE, accountId: ACC, now, secret: SECRET })).toMatchObject({ contactId: null, identityId: CONTACT })
+    const both = Buffer.from(JSON.stringify({ a: ACC, p: PAGE, c: CONTACT, i: CONTACT, t: now })).toString('base64url')
+    const sig = createHmac('sha256', createHmac('sha256', Buffer.from(SECRET, 'hex')).update('booking-session:v1').digest()).update(both).digest('hex')
+    expect(verifySession(`${both}.${sig}`, { pageId: PAGE, accountId: ACC, now, secret: SECRET })).toBeNull()
   })
   it('refuses another page / account, a tampered payload, another key and an expired token', () => {
     expect(verifySession(token, { pageId: ACC, accountId: ACC, now, secret: SECRET })).toBeNull()
@@ -108,6 +122,22 @@ describe('session cookie', () => {
     expect(verifySession(`${payload}.${sig}`, { pageId: PAGE, accountId: ACC, now, secret: 'b'.repeat(64) })).toBeNull()
     expect(verifySession(token, { pageId: PAGE, accountId: ACC, now: now + 31 * 86_400_000, secret: SECRET })).toBeNull()
     expect(verifySession('garbage', { pageId: PAGE, accountId: ACC, now, secret: SECRET })).toBeNull()
+  })
+})
+
+describe('e-mail code', () => {
+  it('normalizes e-mails and refuses junk', () => {
+    expect(normalizeEmail('  Maria@Exemplo.com.BR ')).toBe('maria@exemplo.com.br')
+    expect(normalizeEmail('maria@exemplo')).toBeNull()
+    expect(normalizeEmail('a b@x.com')).toBeNull()
+    expect(normalizeEmail(42)).toBeNull()
+  })
+  it('hashes the code with a server key, bound to the e-mail', () => {
+    const h = hashEmailCode('a@b.com', '123456', SECRET)
+    expect(h).toMatch(/^[0-9a-f]{64}$/)
+    expect(sameHash(h, hashEmailCode('a@b.com', '123456', SECRET))).toBe(true)
+    expect(sameHash(h, hashEmailCode('c@b.com', '123456', SECRET))).toBe(false)
+    expect(sameHash(h, hashEmailCode('a@b.com', '123456', 'b'.repeat(64)))).toBe(false)
   })
 })
 
