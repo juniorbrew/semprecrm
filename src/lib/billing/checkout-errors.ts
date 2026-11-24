@@ -1,3 +1,6 @@
+// Kept out of the route file: Next only lets route.ts export route handlers
+// and segment config.
+
 /** Subscriptions created per account in 24 h (each one is a real object in Asaas). */
 export const MAX_CHECKOUTS_PER_DAY = 10
 
