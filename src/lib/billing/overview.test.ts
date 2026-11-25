@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildOverview, cyclePricing, formatBrl, paymentStatusKey, planAction, safeInvoiceUrl, situationOf, type PaymentRowView } from './overview'
+import { buildExtrasView, buildOverview, renewalFromPeriodEnd, cyclePricing, formatBrl, paymentStatusKey, planAction, safeInvoiceUrl, situationOf, type PaymentRowView } from './overview'
 
 const catalog = [
   { plan: 'trial', priceMonthlyCents: null },
@@ -111,5 +111,74 @@ describe('planAction', () => {
     expect(planAction('active', true)).toBe('locked')
     expect(planAction('active', false)).toBe('locked')
     expect(planAction('suspended', false)).toBe('locked')
+  })
+})
+
+describe('buildExtrasView', () => {
+  const ent = { limits: { max_users: 5, max_channels: 3 }, extras: { users: 2, channels: 0 } }
+  const usage = { users: 4, channels: 1 }
+
+  it('splits the effective limit back into included and bought', () => {
+    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage, isOwner: true })
+    expect(v).toMatchObject({ includedUsers: 3, includedChannels: 3, users: 2, channels: 0, usedUsers: 4, usedChannels: 1 })
+  })
+
+  it('a locked price wins while extras of that kind are held; otherwise the plan price is offered', () => {
+    const v = buildExtrasView({ ent, offered: { userCents: 2500, channelCents: 4000 }, locked: { userCents: 1500, channelCents: null }, usage, isOwner: true })
+    expect(v.userUnitCents).toBe(1500)
+    expect(v.channelUnitCents).toBe(4000)
+    const none = buildExtrasView({ ent, offered: { userCents: null, channelCents: null }, locked: { userCents: null, channelCents: null }, usage, isOwner: true })
+    expect(none.channelUnitCents).toBeNull()
+  })
+
+  it('an unlimited plan limit has no included number', () => {
+    const v = buildExtrasView({
+      ent: { limits: { max_users: null, max_channels: 3 }, extras: { users: 0, channels: 0 } },
+      offered: { userCents: 1500, channelCents: null },
+      locked: { userCents: null, channelCents: null },
+      usage,
+      isOwner: true,
+    })
+    expect(v.includedUsers).toBeNull()
+  })
+
+  it('carries a scheduled removal and whether the viewer may change anything', () => {
+    const base = { ent, offered: { userCents: 1500, channelCents: null }, locked: { userCents: null, channelCents: null }, usage }
+    const v = buildExtrasView({ ...base, isOwner: false, pending: { users: 1, channels: 0, effectiveDate: '2026-02-01' } })
+    expect(v.pendingRemoval).toEqual({ users: 1, channels: 0, effectiveDate: '2026-02-01' })
+    expect(v.canChange).toBe(false)
+    expect(buildExtrasView({ ...base, isOwner: true }).pendingRemoval).toBeNull()
+    expect(buildExtrasView({ ...base, isOwner: true, pending: { users: null, channels: null, effectiveDate: null } }).pendingRemoval).toBeNull()
+  })
+
+  it('shows what is bought even while the effective limit already is the removal target', () => {
+    const lowered = { limits: { max_users: 4, max_channels: 3 }, extras: { users: 1, channels: 0 } } // target 1, bought 3
+    const v = buildExtrasView({
+      ent: lowered,
+      bought: { users: 3, channels: 0 },
+      offered: { userCents: 1500, channelCents: null },
+      locked: { userCents: 1000, channelCents: null },
+      usage,
+      pending: { users: 1, channels: 0, effectiveDate: '2027-02-01', lowered: true },
+      isOwner: true,
+    })
+    expect(v).toMatchObject({ users: 3, includedUsers: 3, userUnitCents: 1000, removalLocked: true })
+  })
+
+  it('carries an annual purchase awaiting payment (https links only) and the renewal estimate', () => {
+    const base = { ent, offered: { userCents: 1500, channelCents: null }, locked: { userCents: null, channelCents: null }, usage, isOwner: true }
+    const v = buildExtrasView({ ...base, periodEnd: '2027-12-07T02:59:59.000Z', purchase: { users: 2, channels: 0, cents: 36000, url: 'https://asaas.invalid/i/1', expiresAt: '2026-12-12T00:00:00Z' } })
+    expect(v.pendingPurchase).toEqual({ users: 2, channels: 0, cents: 36000, url: 'https://asaas.invalid/i/1', expiresAt: '2026-12-12T00:00:00Z' })
+    expect(v.renewalDue).toBe('2027-12-01')
+    expect(buildExtrasView({ ...base, purchase: { users: 2, channels: 0, cents: 1, url: 'javascript:alert(1)', expiresAt: null } }).pendingPurchase?.url).toBeNull()
+    expect(buildExtrasView({ ...base, purchase: { users: null, channels: null, cents: null, url: null, expiresAt: null } }).pendingPurchase).toBeNull()
+    expect(renewalFromPeriodEnd(null)).toBeNull()
+  })
+
+  it('buildOverview carries the block, or null', () => {
+    const base = { configured: true, isOwner: true, catalog: [], billing: null, payments: [] }
+    expect(buildOverview(base).extras).toBeNull()
+    const extras = buildExtrasView({ ent, offered: { userCents: 1, channelCents: 1 }, locked: { userCents: null, channelCents: null }, usage, isOwner: true })
+    expect(buildOverview({ ...base, extras }).extras).toEqual(extras)
   })
 })

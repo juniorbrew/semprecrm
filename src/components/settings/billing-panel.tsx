@@ -20,6 +20,7 @@ import {
 import type { BillingCycle } from '@/lib/billing/rules';
 import { PLAN_LABELS, type Plan } from '@/lib/plans';
 import { cn } from '@/lib/utils';
+import { ExtrasPanel } from './extras-panel';
 import { SettingsGroup } from './settings-group';
 
 /** English keys; the dictionary carries the pt-BR (i18n-dict/billing.ts). */
@@ -239,6 +240,24 @@ export function BillingPanel() {
           </>
         )}
       </SettingsGroup>
+
+      {o.extras && o.billing ? (
+        <ExtrasPanel
+          extras={o.extras}
+          cycle={o.billing.cycle}
+          valueCents={o.billing.valueCents}
+          onChanged={() => {
+            void reload();
+            void refreshAccount();
+          }}
+        />
+      ) : o.configured ? (
+        <SettingsGroup title={t('Extras beyond the plan')}>
+          <p role="status" className="text-muted-foreground text-sm">
+            {t('Extras are only available on an active paid subscription. Subscribe first, or wait until the payment is confirmed.')}
+          </p>
+        </SettingsGroup>
+      ) : null}
 
       <SettingsGroup title={t('Payment history')}>
         {o.payments.length === 0 ? (

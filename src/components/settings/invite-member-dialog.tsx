@@ -16,6 +16,8 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { limitToast, readExtraOffer } from '@/components/billing/extra-offer-toast';
+import { useRouter } from 'next/navigation';
 import { Copy, Loader2, MessageCircle } from 'lucide-react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -92,6 +94,7 @@ export function InviteMemberDialog({
 }: InviteMemberDialogProps) {
   const { account } = useAuth();
   const { t } = useLanguage();
+  const router = useRouter();
   const [role, setRole] = useState<InviteRole>('agent');
   const [expiry, setExpiry] = useState<string>('7');
   const [label, setLabel] = useState('');
@@ -132,6 +135,10 @@ export function InviteMemberDialog({
 
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
+        if (res.status === 403 && payload.code === 'plan_limit_reached') {
+          limitToast(payload.error || t('Failed to create invitation'), readExtraOffer(payload), t, router.push);
+          return;
+        }
         toast.error(payload.error || t('Failed to create invitation'));
         return;
       }

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { limitToast, readExtraOffer } from '@/components/billing/extra-offer-toast';
+import { useRouter } from 'next/navigation';
 import { AlertTriangle, Loader2, LogOut, QrCode, RefreshCw, Unplug } from 'lucide-react';
 
 import { useLanguage } from '@/hooks/use-language';
@@ -52,6 +54,7 @@ const COPY: Record<Language, { danger: string }> = {
  */
 export function WhatsAppQrPanel() {
   const { t, language } = useLanguage();
+  const router = useRouter();
   // Admin or owner — the API enforces the same rule (requireRole('admin')).
   const { canEditSettings: canManage } = useAuth();
 
@@ -101,13 +104,13 @@ export function WhatsAppQrPanel() {
         return null;
       }
       if (res.status === 403 && body.code === 'plan_limit_reached') {
-        toast.error(body.error ?? t('Plan limit reached'));
+        limitToast(body.error ?? t('Plan limit reached'), readExtraOffer(body), t, router.push);
         return null;
       }
       toast.error(body.error ?? t('Something went wrong. Please try again.'));
       return null;
     },
-    [t],
+    [t, router.push],
   );
 
   const fetchStatus = useCallback(async () => {

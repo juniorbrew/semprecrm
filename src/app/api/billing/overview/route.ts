@@ -11,20 +11,24 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { asaasConfigured } from '@/lib/billing/asaas'
-import { buildOverview, type BillingRowView, type PaymentRowView } from '@/lib/billing/overview'
+import { buildExtrasView, buildOverview, type BillingRowView, type PaymentRowView } from '@/lib/billing/overview'
 import { isBillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
+import { countConnectedChannels, loadAccountEntitlements } from '@/lib/plans-server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
     const ctx = await requireRole('admin')
+    // Read only: settling an annual purchase belongs to the webhook and the hourly sweep (no Asaas call per page load).
     const [catalog, billingRes, paymentsRes] = await Promise.all([
       loadCurrentPlanCatalog(supabaseAdmin()),
       ctx.supabase
         .from('account_billing')
-        .select('plan, cycle, value_cents, status, current_period_end, asaas_subscription_id')
+        .select(
+          'plan, cycle, value_cents, status, current_period_end, asaas_subscription_id, extra_user_price_cents, extra_channel_price_cents, pending_extra_users, pending_extra_channels, extras_reduce_due, extras_asaas_lowered, extra_users, extra_channels, pending_add_users, pending_add_channels, extras_oneoff_cents, extras_oneoff_url, extras_oneoff_expires_at',
+        )
         .eq('account_id', ctx.accountId)
         .maybeSingle(),
       ctx.supabase
@@ -58,8 +62,53 @@ export async function GET() {
       invoiceUrl: (p.invoice_url as string | null) ?? null,
     }))
 
+    // Extras (migration 116): only on an active paid subscription of an account that is not blocked.
+    let extras = null
+    if (billing?.status === 'active' && billing.subscriptionId) {
+      const admin = supabaseAdmin()
+      const ent = await loadAccountEntitlements(admin, ctx.accountId)
+      if (ent && !ent.blocked && ent.status === 'active') {
+        const offered = catalog.find((v) => v.plan === ent.plan)?.definition
+        const nowIso = new Date().toISOString()
+        const [members, invites, channels] = await Promise.all([
+          admin.from('profiles').select('user_id', { count: 'exact', head: true }).eq('account_id', ctx.accountId),
+          admin
+            .from('account_invitations')
+            .select('id', { count: 'exact', head: true })
+            .eq('account_id', ctx.accountId)
+            .is('accepted_at', null)
+            .gt('expires_at', nowIso),
+          countConnectedChannels(admin, ctx.accountId),
+        ])
+        if (members.error || invites.error) throw new Error('usage read failed')
+        extras = buildExtrasView({
+          ent,
+          offered: { userCents: offered?.extra_user_price_cents ?? null, channelCents: offered?.extra_channel_price_cents ?? null },
+          locked: { userCents: toCents(b?.extra_user_price_cents), channelCents: toCents(b?.extra_channel_price_cents) },
+          usage: { users: (members.count ?? 0) + (invites.count ?? 0), channels },
+          pending: {
+            users: toCount(b?.pending_extra_users),
+            channels: toCount(b?.pending_extra_channels),
+            effectiveDate: typeof b?.extras_reduce_due === 'string' ? b.extras_reduce_due : null,
+            lowered: b?.extras_asaas_lowered === true,
+          },
+          bought: { users: toCount(b?.extra_users) ?? 0, channels: toCount(b?.extra_channels) ?? 0 },
+          purchase: {
+            users: toCount(b?.pending_add_users),
+            channels: toCount(b?.pending_add_channels),
+            cents: toCount(b?.extras_oneoff_cents),
+            url: typeof b?.extras_oneoff_url === 'string' ? b.extras_oneoff_url : null,
+            expiresAt: typeof b?.extras_oneoff_expires_at === 'string' ? b.extras_oneoff_expires_at : null,
+          },
+          periodEnd: billing.currentPeriodEnd,
+          isOwner: ctx.role === 'owner',
+        })
+      }
+    }
+
     return NextResponse.json(
       buildOverview({
+        extras,
         configured: asaasConfigured(),
         isOwner: ctx.role === 'owner',
         catalog: catalog.map((v) => ({ plan: v.plan, priceMonthlyCents: v.price_monthly_cents })),
@@ -70,4 +119,12 @@ export async function GET() {
   } catch (err) {
     return toErrorResponse(err)
   }
+}
+
+function toCount(v: unknown): number | null {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null
+}
+
+function toCents(v: unknown): number | null {
+  return typeof v === 'number' && Number.isSafeInteger(v) ? v : null
 }

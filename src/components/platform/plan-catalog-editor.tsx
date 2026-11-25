@@ -12,7 +12,11 @@ import {
   LIMIT_LABELS,
   type OptionalModule,
 } from '@/lib/plans';
-import { parsePlanVersion, type PlanVersion } from '@/lib/plan-catalog';
+import {
+  MAX_EXTRA_PRICE_CENTS,
+  parsePlanVersion,
+  type PlanVersion,
+} from '@/lib/plan-catalog';
 import {
   formatPlanPrice,
   parseBrazilianPrice,
@@ -24,6 +28,22 @@ const priceInput = (v: PlanVersion) =>
   v.price_monthly_cents === null
     ? ''
     : `${Math.floor(v.price_monthly_cents / 100)},${String(v.price_monthly_cents % 100).padStart(2, '0')}`;
+const centsInput = (cents: number | undefined) =>
+  cents === undefined
+    ? ''
+    : `${Math.floor(cents / 100)},${String(cents % 100).padStart(2, '0')}`;
+const extraPricesInput = (v: PlanVersion) => ({
+  user: centsInput(v.definition.extra_user_price_cents),
+  channel: centsInput(v.definition.extra_channel_price_cents),
+});
+/** Blank = not offered (undefined); null = filled but invalid. */
+const parseExtraPrice = (raw: string): number | undefined | null => {
+  if (raw.trim() === '') return undefined;
+  const cents = parseBrazilianPrice(raw);
+  return cents !== null && cents >= 1 && cents <= MAX_EXTRA_PRICE_CENTS
+    ? cents
+    : null;
+};
 const limitsInput = (v: PlanVersion) => ({
   max_users:
     v.definition.limits.max_users === null
@@ -49,6 +69,7 @@ export function PlanCatalogEditor({ initial }: { initial: PlanVersion }) {
   const [customPrice, setCustomPrice] = useState(
     initial.price_monthly_cents === null
   );
+  const [extraPrices, setExtraPrices] = useState(extraPricesInput(initial));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState(false);
@@ -65,7 +86,13 @@ export function PlanCatalogEditor({ initial }: { initial: PlanVersion }) {
       ? null
       : parseCapacity(limits.max_channels),
   };
+  const extraCents = {
+    user: parseExtraPrice(extraPrices.user),
+    channel: parseExtraPrice(extraPrices.channel),
+  };
+  const extrasValid = extraCents.user !== null && extraCents.channel !== null;
   const valid =
+    extrasValid &&
     (current.plan === 'trial' || customPrice || cents !== null) &&
     LIMIT_KEYS.every((k) => unlimited[k] || capacities[k] !== null);
   async function save(event: FormEvent) {
@@ -80,7 +107,17 @@ export function PlanCatalogEditor({ initial }: { initial: PlanVersion }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           expected_version_id: current.id,
-          definition: { modules, limits: capacities },
+          definition: {
+            modules,
+            limits: capacities,
+            // Blank = the plan does not offer that extra (key left out).
+            ...(current.plan !== 'trial' && typeof extraCents.user === 'number'
+              ? { extra_user_price_cents: extraCents.user }
+              : {}),
+            ...(current.plan !== 'trial' && typeof extraCents.channel === 'number'
+              ? { extra_channel_price_cents: extraCents.channel }
+              : {}),
+          },
           price_monthly_cents: cents,
         }),
       });
@@ -121,6 +158,7 @@ export function PlanCatalogEditor({ initial }: { initial: PlanVersion }) {
       });
       setPrice(priceInput(next));
       setCustomPrice(next.price_monthly_cents === null);
+      setExtraPrices(extraPricesInput(next));
       setConflict(false);
       setSuccess('');
     } catch (e) {
@@ -240,6 +278,44 @@ export function PlanCatalogEditor({ initial }: { initial: PlanVersion }) {
               </p>
             )}
           </section>
+          {current.plan !== 'trial' && (
+            <section className="space-y-3 border-t pt-5">
+              <h2 className="text-lg font-semibold">{t('Extras beyond the plan')}</h2>
+              <p className="text-muted-foreground text-sm">
+                {t(
+                  'Optional monthly price of one extra user or number. Leave blank to not offer it: the limit keeps blocking. A new price only applies to new purchases.'
+                )}
+              </p>
+              {(['user', 'channel'] as const).map((k) => (
+                <div key={k}>
+                  <label
+                    htmlFor={`plan-extra-${k}`}
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    {k === 'user'
+                      ? t('Extra user, monthly price in BRL')
+                      : t('Extra number, monthly price in BRL')}
+                  </label>
+                  <Input
+                    id={`plan-extra-${k}`}
+                    inputMode="decimal"
+                    value={extraPrices[k]}
+                    onChange={(e) =>
+                      setExtraPrices((prev) => ({ ...prev, [k]: e.target.value }))
+                    }
+                    aria-invalid={extraCents[k] === null}
+                  />
+                  {extraCents[k] === null && (
+                    <p className="text-destructive mt-1 text-sm">
+                      {t(
+                        'Enter a price such as 59,90, with at most two decimal places.'
+                      )}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
           <section className="border-t pt-5">
             <h2 className="text-lg font-semibold">{t('Modules')}</h2>
             <p className="text-muted-foreground mt-1 text-sm">

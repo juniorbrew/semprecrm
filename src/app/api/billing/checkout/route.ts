@@ -24,17 +24,21 @@ import {
   AsaasError,
   createCustomer,
   createSubscription,
+  deletePayment,
+  getPayment,
   deleteSubscription,
   listSubscriptionPayments,
   type AsaasPayment,
 } from '@/lib/billing/asaas'
-import { CHECKOUT_ERRORS, MAX_CHECKOUTS_PER_DAY } from '@/lib/billing/checkout-errors'
-import { asaasCycle, isBillingCycle, isNewPayment, periodEnd, periodPriceCents, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
+import { carryExtras, subscriptionValueCents } from '@/lib/billing/extras'
+import { asaasCycle, isBillingCycle, isNewPayment, PAID_STATUSES, periodEnd, todayInSaoPaulo, type BillingCycle } from '@/lib/billing/rules'
 import { loadCurrentPlanCatalog } from '@/lib/plan-catalog-server'
 import { PLANS, type Plan } from '@/lib/plans'
+import { CHECKOUT_ERRORS, MAX_CHECKOUTS_PER_DAY } from '@/lib/billing/checkout-errors'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
+
 
 type BillingRow = {
   asaas_customer_id: string | null
@@ -43,6 +47,17 @@ type BillingRow = {
   cycle: string
   status: string
   current_period_end: string | null
+  extra_users: number | null
+  extra_channels: number | null
+  extra_user_price_cents: number | null
+  extra_channel_price_cents: number | null
+  pending_extra_users: number | null
+  pending_extra_channels: number | null
+  extras_oneoff_payment_id: string | null
+  pending_add_users: number | null
+  pending_add_channels: number | null
+  pending_add_user_price_cents: number | null
+  pending_add_channel_price_cents: number | null
 }
 
 export async function POST(request: Request) {
@@ -82,7 +97,9 @@ export async function POST(request: Request) {
 
     const { data: existing, error: billErr } = await db
       .from('account_billing')
-      .select('asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end')
+      .select(
+        'asaas_customer_id, asaas_subscription_id, plan, cycle, status, current_period_end, extra_users, extra_channels, extra_user_price_cents, extra_channel_price_cents, pending_extra_users, pending_extra_channels, extras_oneoff_payment_id, pending_add_users, pending_add_channels, pending_add_user_price_cents, pending_add_channel_price_cents',
+      )
       .eq('account_id', ctx.accountId)
       .maybeSingle()
     if (billErr) throw new Error(`billing read failed: ${billErr.message}`)
@@ -143,7 +160,39 @@ export async function POST(request: Request) {
         })
       ).id
 
-    const value = periodPriceCents(monthly, cycle)
+    // Extras already contracted (migration 116) stay, at their locked prices, only for the
+    // kinds the target plan can use: an unlimited limit or a plan that sells no price for the
+    // extra drops it, so nothing useless keeps being billed. A scheduled removal is cleared.
+    const def = version.definition
+    // An annual add whose one-off charge was PAID but not yet released by the sweep goes with the account: dropping
+    // it would keep the money and give nothing. (A 404 or an unpaid charge is dropped and cancelled below.)
+    const awaited = current?.extras_oneoff_payment_id ?? null
+    let paidAdd = false
+    if (current && awaited && current.pending_add_users !== null && current.pending_add_channels !== null) {
+      try {
+        paidAdd = PAID_STATUSES.has((await getPayment(awaited)).status)
+      } catch (err) {
+        if ((err as { status?: number }).status !== 404) throw err
+      }
+    }
+    const addUsers = paidAdd ? (current?.pending_add_users ?? 0) : 0
+    const addChannels = paidAdd ? (current?.pending_add_channels ?? 0) : 0
+    const carried = carryExtras(
+      {
+        // A scheduled removal already decided the target: that is what carries over.
+        users: Math.min(current?.extra_users ?? 0, current?.pending_extra_users ?? Infinity) + addUsers,
+        channels: Math.min(current?.extra_channels ?? 0, current?.pending_extra_channels ?? Infinity) + addChannels,
+        userPriceCents: current?.extra_user_price_cents ?? (addUsers > 0 ? current?.pending_add_user_price_cents ?? null : null),
+        channelPriceCents: current?.extra_channel_price_cents ?? (addChannels > 0 ? current?.pending_add_channel_price_cents ?? null : null),
+      },
+      {
+        maxUsers: def.limits.max_users,
+        maxChannels: def.limits.max_channels,
+        userPriceCents: def.extra_user_price_cents ?? null,
+        channelPriceCents: def.extra_channel_price_cents ?? null,
+      },
+    )
+    const value = subscriptionValueCents(monthly, cycle, carried)
     const label = plan === 'pro' ? 'Pro' : plan === 'basico' ? 'Básico' : plan
     const subscription = await createSubscription({
       customer: customerId,
@@ -165,6 +214,29 @@ export async function POST(request: Request) {
         cycle,
         value_cents: value,
         status: 'pending',
+        extra_users: carried.users,
+        extra_channels: carried.channels,
+        extra_user_price_cents: carried.userPriceCents,
+        extra_channel_price_cents: carried.channelPriceCents,
+        // The new subscription's first charge (due today) is the first one to include them.
+        extras_first_due: carried.users + carried.channels > 0 ? todayInSaoPaulo() : null,
+        pending_extra_users: null,
+        pending_extra_channels: null,
+        extras_reduce_due: null,
+        extras_asaas_lowered: false,
+        // An annual add still waiting for its one-off charge is dropped (the charge is cancelled below).
+        pending_add_users: null,
+        pending_add_channels: null,
+        pending_add_user_price_cents: null,
+        pending_add_channel_price_cents: null,
+        extras_oneoff_payment_id: null,
+        extras_oneoff_url: null,
+        extras_oneoff_cents: null,
+        extras_oneoff_expires_at: null,
+        extras_oneoff_renewal_due: null,
+        extras_oneoff_paid_id: paidAdd ? awaited : null,
+        extras_diff_payment_id: null,
+        extras_diff_expires_at: null,
       }
       // Compare-and-swap against what was read: a concurrent checkout loses.
       const swap = current
@@ -188,6 +260,13 @@ export async function POST(request: Request) {
       const { data: now } = await db.from('account_billing').select('asaas_subscription_id').eq('account_id', ctx.accountId).maybeSingle()
       if (now?.asaas_subscription_id !== subscription.id) await cancelQuietly(subscription.id)
       throw err
+    }
+    if (awaited && !paidAdd) {
+      try {
+        await deletePayment(awaited)
+      } catch (err) {
+        console.error('[billing/checkout] could not cancel the extras one-off charge', awaited, err instanceof Error ? err.message : err)
+      }
     }
     if (current?.asaas_subscription_id) await cancelReplaced(current.asaas_subscription_id, current.cycle as BillingCycle, covered)
     const url = openInvoice(await syncPayments(db, ctx.accountId, subscription.id))

@@ -80,6 +80,86 @@ describe('assigned catalog', () => {
       parsePlanDefinition({ ...PLAN_CATALOG.pro, injected: true })
     ).toBeNull();
   });
+  it('accepts optional extra prices and rejects bad ones (migration 116)', () => {
+    const withPrices = {
+      ...PLAN_CATALOG.pro,
+      extra_user_price_cents: 1500,
+      extra_channel_price_cents: 1,
+    };
+    expect(parsePlanDefinition(withPrices)).toEqual(withPrices);
+    expect(
+      parsePlanDefinition({ ...PLAN_CATALOG.pro, extra_user_price_cents: 1500 })
+    ).toEqual({ ...PLAN_CATALOG.pro, extra_user_price_cents: 1500 });
+    // Absent = not offered; the definition without the keys is unchanged.
+    expect(parsePlanDefinition(PLAN_CATALOG.pro)).not.toHaveProperty(
+      'extra_user_price_cents'
+    );
+    for (const bad of [0, -1, 1.5, '1500', null, 10_000_001, Infinity, NaN])
+      for (const key of ['extra_user_price_cents', 'extra_channel_price_cents'])
+        expect(
+          parsePlanDefinition({ ...PLAN_CATALOG.pro, [key]: bad }),
+          `${key}=${String(bad)}`
+        ).toBeNull();
+    expect(
+      parsePlanDefinition({ ...PLAN_CATALOG.pro, extra_user_price_cents: 10_000_000 })
+    ).not.toBeNull();
+  });
+  it('extras raise finite limits only, and only for an available plan', () => {
+    const acct = { ...old, extras: { users: 2, channels: 1 } };
+    expect(resolveEntitlements(acct).limits).toEqual({ max_users: 12, max_channels: 3 });
+    expect(resolveEntitlements(acct).extras).toEqual({ users: 2, channels: 1 });
+    const unlimited = resolveEntitlements({
+      ...acct,
+      plan_definition: { modules: [], limits: { max_users: null, max_channels: 5 } },
+    });
+    expect(unlimited.limits).toEqual({ max_users: null, max_channels: 6 });
+    expect(unlimited.extras).toEqual({ users: 0, channels: 1 });
+    // junk never lowers a limit; the cap stops absurd values
+    expect(resolveEntitlements({ ...old, extras: { users: -5, channels: 1.5 } }).limits).toEqual(PLAN_CATALOG.pro.limits);
+    expect(resolveEntitlements({ ...old, extras: { users: 100000, channels: 0 } }).limits.max_users).toBe(110);
+    // overrides first, extras on top
+    expect(
+      resolveEntitlements({ ...acct, limit_overrides: { max_users: 4 } }).limits.max_users
+    ).toBe(6);
+    expect(resolveEntitlements({ ...acct, plan_version_id: 'bad' }).limits).toEqual({ max_users: 0, max_channels: 0 });
+  });
+  it('reads extras from the joined account_billing row (object or array, junk = none)', () => {
+    const base = { ...old, plan_version: { id, plan: 'pro', definition: PLAN_CATALOG.pro } };
+    const users = (billing: unknown) =>
+      resolveEntitlements(normalizeAssignedPlan({ ...base, account_billing: billing })).limits.max_users;
+    const row = { status: 'active', extra_users: 3, extra_channels: 0 };
+    expect(users(row)).toBe(13);
+    expect(users([row])).toBe(13);
+    expect(users(null)).toBe(10); // an agent: RLS hides the row
+    expect(users({ ...row, extra_users: '3' })).toBe(10);
+    expect(users(undefined)).toBe(10);
+  });
+  it('extras raise limits only while the subscription is active', () => {
+    const base = { ...old, plan_version: { id, plan: 'pro', definition: PLAN_CATALOG.pro } };
+    const limits = (status: string) =>
+      resolveEntitlements(
+        normalizeAssignedPlan({ ...base, account_billing: { status, extra_users: 3, extra_channels: 1 } })
+      ).limits;
+    expect(limits('active')).toEqual({ max_users: 13, max_channels: 3 });
+    for (const status of ['pending', 'past_due', 'canceled'])
+      expect(limits(status)).toEqual(PLAN_CATALOG.pro.limits);
+  });
+  it('while a removal is scheduled the limit for NEW users and numbers is already the target', () => {
+    const base = { ...old, plan_version: { id, plan: 'pro', definition: PLAN_CATALOG.pro } };
+    const ent = resolveEntitlements(
+      normalizeAssignedPlan({
+        ...base,
+        account_billing: { status: 'active', extra_users: 3, extra_channels: 2, pending_extra_users: 1, pending_extra_channels: 2 },
+      })
+    );
+    expect(ent.limits).toEqual({ max_users: 11, max_channels: 4 });
+    expect(ent.extras).toEqual({ users: 1, channels: 2 });
+    // a target above what is bought never raises the limit
+    const odd = resolveEntitlements(
+      normalizeAssignedPlan({ ...base, account_billing: { status: 'active', extra_users: 1, extra_channels: 0, pending_extra_users: 5, pending_extra_channels: 0 } })
+    );
+    expect(odd.limits.max_users).toBe(11);
+  });
   it('validates versions and free trial', () => {
     const version = {
       id,

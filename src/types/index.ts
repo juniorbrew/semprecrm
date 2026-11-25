@@ -167,6 +167,10 @@ export interface PlatformAccountRow extends Account {
   members_count: number;
   channels_count: number;
   pending_invites_count: number;
+  /** Contracted extras from account_billing (migration 116); `extras` feeds resolveEntitlements. */
+  extra_users?: number;
+  extra_channels?: number;
+  extras?: { users: number; channels: number };
 }
 
 /** `user_id` listed in `platform_admins` = platform (master) admin. */

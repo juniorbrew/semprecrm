@@ -19,8 +19,12 @@ import { timingSafeEqual } from 'node:crypto'
 
 import { NextResponse } from 'next/server'
 
+import { AUDIT_ACTIONS } from '@/lib/audit'
+import { audit } from '@/lib/audit-server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { AsaasError, getPayment, type AsaasPayment } from '@/lib/billing/asaas'
+import { chargeIsGone } from '@/lib/billing/extras'
+import { settleExtrasPurchase } from '@/lib/billing/extras-sweep'
 import { eventEffect, isBillingCycle, PAID_STATUSES, periodEnd } from '@/lib/billing/rules'
 
 export const dynamic = 'force-dynamic'
@@ -99,8 +103,20 @@ async function processEvent(
 ): Promise<void> {
   const paymentId = typeof hint?.id === 'string' ? hint.id : null
   const subscriptionId = typeof hint?.subscription === 'string' ? hint.subscription : null
-  if (!paymentId || !subscriptionId) return // not a subscription charge: nothing of ours
+  if (!paymentId) return
   const effect = eventEffect(event)
+  if (!subscriptionId) {
+    // Not a subscription charge: it may be the one-off charge of an annual extras purchase.
+    if (effect === 'activate') {
+      // Paid: release it now (the hourly sweep would also find it).
+      const { data: buy, error: buyErr } = await db.from('account_billing').select('account_id').eq('extras_oneoff_payment_id', paymentId).maybeSingle()
+      if (buyErr) throw new Error(`extras purchase read failed: ${buyErr.message}`)
+      if (buy) await settleExtrasPurchase(db, buy.account_id)
+    } else if (event === 'PAYMENT_REFUNDED' || event === 'PAYMENT_CHARGEBACK_REQUESTED') {
+      await reverseExtrasCharge(db, paymentId)
+    }
+    return
+  }
   if (effect === 'record') return // the API is read only when the account may change
 
   const { data: billing, error } = await db
@@ -133,6 +149,32 @@ async function processEvent(
     })
     if (rpcErr) throw new Error(`past_due failed: ${rpcErr.message}`)
   }
+}
+
+/**
+ * A refund or chargeback of the PAID one-off charge that released extras: the extras were not paid for,
+ * so the account is marked past_due like for any reversed subscription charge, and it is audited.
+ */
+async function reverseExtrasCharge(db: ReturnType<typeof supabaseAdmin>, paymentId: string): Promise<void> {
+  const { data: b, error } = await db
+    .from('account_billing')
+    .select('account_id, asaas_subscription_id')
+    .eq('extras_oneoff_paid_id', paymentId)
+    .maybeSingle()
+  if (error) throw new Error(`extras charge read failed: ${error.message}`)
+  if (!b?.asaas_subscription_id) return
+  const payment = await getPayment(paymentId) // the API decides, never the event body
+  if (!chargeIsGone(payment)) return
+  const { error: rpcErr } = await db.rpc('billing_mark_past_due', { p_account_id: b.account_id, p_subscription_id: b.asaas_subscription_id })
+  if (rpcErr) throw new Error(`past_due failed: ${rpcErr.message}`)
+  await audit({
+    accountId: b.account_id,
+    actorUserId: null,
+    action: AUDIT_ACTIONS.BILLING_EXTRAS_CHARGE_REVERSED,
+    entityType: 'account_billing',
+    entityId: b.account_id,
+    metadata: { payment_id: paymentId, status: payment.status },
+  })
 }
 
 async function savePayment(

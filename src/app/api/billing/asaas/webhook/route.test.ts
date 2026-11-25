@@ -25,7 +25,12 @@ vi.mock('@/lib/billing/asaas', () => ({
   getPayment: vi.fn(async (id: string) => ({ id, ...h.apiPayment })),
 }))
 
+const audits = vi.hoisted(() => [] as Record<string, unknown>[])
+vi.mock('@/lib/audit-server', () => ({ audit: vi.fn(async (e: Record<string, unknown>) => (audits.push(e), true)) }))
+vi.mock('@/lib/billing/extras-sweep', () => ({ settleExtrasPurchase: vi.fn(async () => undefined) }))
+
 import { AsaasError, getPayment } from '@/lib/billing/asaas'
+import { settleExtrasPurchase } from '@/lib/billing/extras-sweep'
 import { POST } from './route'
 
 const TOKEN = 'whk_test_token_123'
@@ -159,3 +164,55 @@ function makeDup(fake: typeof h.fake) {
     },
   }
 }
+
+describe('one-off charge of an annual extras purchase (no subscription)', () => {
+  const oneOff = { id: 'pay_oneoff' }
+  it('a paid event settles the purchase of the account that waits for that charge', async () => {
+    h.fake.tables.account_billing.push({ account_id: 'acct-2', asaas_subscription_id: 'sub_2', cycle: 'annual', status: 'active', extras_oneoff_payment_id: 'pay_oneoff' })
+    vi.mocked(settleExtrasPurchase).mockClear()
+    const res = await send({ id: 'evt_o1', event: 'PAYMENT_RECEIVED', payment: oneOff })
+    expect(res.status).toBe(200)
+    expect(settleExtrasPurchase).toHaveBeenCalledWith(expect.anything(), 'acct-2')
+  })
+  it('a charge nobody waits for, or an unpaid event, settles nothing', async () => {
+    vi.mocked(settleExtrasPurchase).mockClear()
+    await send({ id: 'evt_o2', event: 'PAYMENT_RECEIVED', payment: oneOff })
+    await send({ id: 'evt_o3', event: 'PAYMENT_OVERDUE', payment: oneOff })
+    expect(settleExtrasPurchase).not.toHaveBeenCalled()
+  })
+})
+
+describe('refund or chargeback of the PAID one-off charge of an annual purchase', () => {
+  const paidOneOff = () =>
+    h.fake.tables.account_billing.push({ account_id: 'acct-2', asaas_subscription_id: 'sub_2', cycle: 'annual', status: 'active', extras_oneoff_paid_id: 'pay_oneoff' })
+  const reversal = { id: 'pay_oneoff' }
+
+  it('marks the subscription past_due like any reversed charge, and audits it', async () => {
+    paidOneOff()
+    audits.length = 0
+    h.apiPayment = { status: 'REFUNDED', value: 360, dueDate: '2026-12-05' }
+    expect((await send({ id: 'evt_r1', event: 'PAYMENT_REFUNDED', payment: reversal })).status).toBe(200)
+    expect(h.fake.rpcCalls).toEqual([{ fn: 'billing_mark_past_due', args: { p_account_id: 'acct-2', p_subscription_id: 'sub_2' } }])
+    expect(audits).toEqual([expect.objectContaining({ action: 'billing.extras_charge_reversed', accountId: 'acct-2' })])
+    h.fake.rpcCalls.length = 0
+    h.apiPayment = { status: 'CHARGEBACK_REQUESTED', value: 360, dueDate: '2026-12-05' }
+    await send({ id: 'evt_r2', event: 'PAYMENT_CHARGEBACK_REQUESTED', payment: reversal })
+    expect(h.fake.rpcCalls).toHaveLength(1)
+  })
+
+  it('the API decides: an event for a charge the API still shows as paid does nothing', async () => {
+    paidOneOff()
+    audits.length = 0
+    h.apiPayment = { status: 'RECEIVED', value: 360, dueDate: '2026-12-05' }
+    await send({ id: 'evt_r3', event: 'PAYMENT_REFUNDED', payment: reversal })
+    expect(h.fake.rpcCalls).toEqual([])
+    expect(audits).toEqual([])
+  })
+
+  it('a refund of any other charge, or an overdue event, does nothing', async () => {
+    paidOneOff()
+    await send({ id: 'evt_r4', event: 'PAYMENT_REFUNDED', payment: { id: 'pay_unknown' } })
+    await send({ id: 'evt_r5', event: 'PAYMENT_OVERDUE', payment: reversal })
+    expect(h.fake.rpcCalls).toEqual([])
+  })
+})

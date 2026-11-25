@@ -26,6 +26,7 @@ import {
   toErrorResponse,
 } from "@/lib/auth/account";
 import { canAddUser } from "@/lib/plans";
+import { extraOfferFor } from "@/lib/billing/extra-offer";
 import {
   clampExpiryDays,
   generateInviteToken,
@@ -256,6 +257,7 @@ export async function POST(request: Request) {
       if (!canAddUser(activeMembers, pendingInvites, maxUsers)) {
         throw new PlanLimitError(
           `Your plan allows up to ${maxUsers} users (including pending invites). Remove a member, revoke an invite, or upgrade the plan.`,
+          await extraOfferFor(ctx.supabase, ctx.accountId, "user", ctx.role === "owner"),
         );
       }
     }

@@ -6,6 +6,7 @@ vi.mock('@/lib/plan-catalog-server', () => ({ loadCurrentPlanCatalog: vi.fn() })
 vi.mock('@/lib/billing/asaas', () => ({ asaasConfigured: () => true, AsaasError: class extends Error {} }));
 
 import { CHECKOUT_ERRORS } from '@/lib/billing/checkout-errors';
+import { EXTRAS_ERRORS } from '@/lib/billing/extras-errors';
 import { paymentStatusKey } from '@/lib/billing/overview';
 import { translateLiteral } from '@/lib/i18n';
 
@@ -15,6 +16,7 @@ describe('billing dictionary', () => {
   it('translates every checkout API message and every charge status label to pt-BR', () => {
     const keys = [
       ...Object.values(CHECKOUT_ERRORS),
+      ...Object.values(EXTRAS_ERRORS),
       ...['PENDING', 'OVERDUE', 'RECEIVED', 'REFUNDED', 'CHARGEBACK_REQUESTED', 'SOMETHING_ELSE'].map(paymentStatusKey),
     ];
     for (const key of keys) {

@@ -348,3 +348,52 @@ describe('limit helpers', () => {
     expect(daysUntil('2026-09-12T13:00:00.000Z', NOW)).toBe(1);
   });
 });
+
+describe('resolveEntitlements — contracted extras (migration 116)', () => {
+  const pro = { plan: 'pro', plan_status: 'active', plan_expires_at: null } as const;
+
+  it('raises a finite limit by the extras and reports what was applied', () => {
+    const ent = resolveEntitlements({ ...pro, extras: { users: 2, channels: 1 } }, NOW);
+    expect(ent.limits).toEqual({ max_users: 12, max_channels: 3 });
+    expect(ent.extras).toEqual({ users: 2, channels: 1 });
+  });
+
+  it('no extras (or none given) leaves the plan limits and reports zero', () => {
+    for (const extras of [undefined, null, { users: 0, channels: 0 }]) {
+      const ent = resolveEntitlements({ ...pro, extras }, NOW);
+      expect(ent.limits).toEqual(PLAN_CATALOG.pro.limits);
+      expect(ent.extras).toEqual({ users: 0, channels: 0 });
+    }
+  });
+
+  it('is ignored where the limit is unlimited, and says so in ent.extras', () => {
+    const ent = resolveEntitlements({ plan: 'empresa', plan_status: 'active', extras: { users: 4, channels: 1 } }, NOW);
+    expect(ent.limits).toEqual({ max_users: null, max_channels: 6 });
+    expect(ent.extras).toEqual({ users: 0, channels: 1 });
+  });
+
+  it('is ignored when the plan is not available (fail closed stays closed)', () => {
+    const ent = resolveAssigned({ plan: 'pro', plan_status: 'active', plan_version_id: 'bad', plan_definition: PLAN_CATALOG.pro, extras: { users: 5, channels: 5 } }, NOW);
+    expect(ent.limits).toEqual({ max_users: 0, max_channels: 0 });
+    expect(ent.extras).toEqual({ users: 0, channels: 0 });
+  });
+
+  it('stacks on limit overrides: the override replaces the plan limit, extras go on top', () => {
+    const ent = resolveEntitlements({ ...pro, limit_overrides: { max_users: 4, max_channels: null }, extras: { users: 2, channels: 3 } }, NOW);
+    expect(ent.limits).toEqual({ max_users: 6, max_channels: null });
+    expect(ent.extras).toEqual({ users: 2, channels: 0 });
+  });
+
+  it('junk never lowers a limit; absurd values are capped at 100', () => {
+    expect(resolveEntitlements({ ...pro, extras: { users: -3, channels: 1.5 } }, NOW).limits).toEqual(PLAN_CATALOG.pro.limits);
+    expect(resolveEntitlements({ ...pro, extras: { users: 100000, channels: 0 } }, NOW).limits.max_users).toBe(110);
+  });
+
+  it('the effective limit is what canAddUser / canAddChannel see', () => {
+    const { limits } = resolveEntitlements({ ...pro, extras: { users: 2, channels: 1 } }, NOW);
+    expect(canAddUser(10, 1, limits.max_users)).toBe(true); // 11 < 12
+    expect(canAddUser(10, 2, limits.max_users)).toBe(false);
+    expect(canAddChannel(2, limits.max_channels)).toBe(true);
+    expect(canAddChannel(3, limits.max_channels)).toBe(false);
+  });
+});

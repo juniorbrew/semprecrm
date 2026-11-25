@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { toast } from 'sonner';
+import { limitToast, readExtraOffer } from '@/components/billing/extra-offer-toast';
+import { useRouter } from 'next/navigation';
 import {
   Eye,
   EyeOff,
@@ -246,6 +248,7 @@ function ChannelCard({
 function WhatsAppOfficialConfig() {
   const supabase = createClient();
   const { t, language } = useLanguage();
+  const router = useRouter();
   // After multi-user, whatsapp_config is one-row-per-account, not
   // one-row-per-user. We pull `accountId` straight off the auth
   // context and key every read off it — so a teammate who just
@@ -497,7 +500,9 @@ function WhatsAppOfficialConfig() {
           ? localized(data.error, data.error_pt)
           : t(data.error || 'Failed to save configuration');
         setSaveFailure({ message, meta: data.meta ?? null });
-        toast.error(message || t('Failed to save configuration'), { duration: 10000 });
+        const offer = res.status === 403 && data.code === 'plan_limit_reached' ? readExtraOffer(data) : null;
+        if (offer) limitToast(message, offer, t, router.push);
+        else toast.error(message || t('Failed to save configuration'), { duration: 10000 });
         setSaving(false);
         return;
       }

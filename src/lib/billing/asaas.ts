@@ -67,11 +67,16 @@ export interface AsaasCustomer {
 export interface AsaasSubscription {
   id: string
   status: string
+  /** Value of each charge, in reais. */
+  value?: number
 }
 
 export interface AsaasPayment {
   id: string
   subscription?: string | null
+  customer?: string | null
+  /** Asaas flags a removed charge instead of (or besides) answering 404. */
+  deleted?: boolean
   status: string
   value: number
   dueDate: string
@@ -116,13 +121,61 @@ export function createSubscription(input: {
   })
 }
 
+/**
+ * Changes the value of the subscription (extras, migration 116). `value` is in reais, like
+ * createSubscription. `updatePendingPayments` decides about the charges Asaas already
+ * generated and not yet paid: true = they follow the new value (use it when the account
+ * adds extras, or lowers them for a charge that must no longer include them); false = they
+ * stay as generated and only the charges generated later change. No proration either way.
+ */
+export function updateSubscriptionValue(id: string, value: number, updatePendingPayments: boolean): Promise<AsaasSubscription> {
+  return request<AsaasSubscription>(`/subscriptions/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: { value, updatePendingPayments },
+  })
+}
+
+export function getSubscription(id: string): Promise<AsaasSubscription> {
+  return request<AsaasSubscription>(`/subscriptions/${encodeURIComponent(id)}`)
+}
+
 export function deleteSubscription(id: string): Promise<unknown> {
   return request(`/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+const PAGE = 100
+const MAX_PAGES = 20
+
+/**
+ * Every charge of a subscription, in any order: pages through the whole list (Asaas
+ * answers { data, hasMore }) instead of trusting the order or a small first page.
+ * Callers sort what they need.
+ */
 export async function listSubscriptionPayments(id: string): Promise<AsaasPayment[]> {
-  const page = await request<{ data?: AsaasPayment[] }>(`/subscriptions/${encodeURIComponent(id)}/payments?limit=10`)
-  return page.data ?? []
+  const all: AsaasPayment[] = []
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await request<{ data?: AsaasPayment[]; hasMore?: boolean }>(
+      `/subscriptions/${encodeURIComponent(id)}/payments?limit=${PAGE}&offset=${page * PAGE}`,
+    )
+    all.push(...(res.data ?? []))
+    if (!res.hasMore) return all
+  }
+  throw new AsaasError('Asaas subscription has too many charges to list', 502)
+}
+
+/** A one-off charge for the customer (annual extras, difference owed): Pix, boleto or card on the Asaas page. */
+export function createPayment(input: {
+  customer: string
+  value: number
+  dueDate: string
+  description: string
+  externalReference: string
+}): Promise<AsaasPayment> {
+  return request<AsaasPayment>('/payments', { method: 'POST', body: { ...input, billingType: 'UNDEFINED' } })
+}
+
+export function deletePayment(id: string): Promise<unknown> {
+  return request(`/payments/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function getPayment(id: string): Promise<AsaasPayment> {

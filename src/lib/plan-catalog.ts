@@ -1,5 +1,6 @@
 import {
   isModule,
+  MAX_EXTRAS,
   isOptionalModule,
   isPlan,
   LIMIT_KEYS,
@@ -25,10 +26,29 @@ export const isVersionId = (value: unknown): value is string =>
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
+/** An extra's monthly price in cents is 1..R$ 100.000,00, same as the DB (absent = not offered). */
+export const MAX_EXTRA_PRICE_CENTS = 10_000_000;
+const EXTRA_PRICE_KEYS = [
+  'extra_user_price_cents',
+  'extra_channel_price_cents',
+] as const;
 export function parsePlanDefinition(raw: unknown): PlanDefinition | null {
   if (
     !record(raw) ||
-    Object.keys(raw).length !== 2 ||
+    !Object.keys(raw).every(
+      (k) =>
+        k === 'modules' ||
+        k === 'limits' ||
+        (EXTRA_PRICE_KEYS as readonly string[]).includes(k)
+    ) ||
+    !EXTRA_PRICE_KEYS.every(
+      (k) =>
+        !(k in raw) ||
+        (typeof raw[k] === 'number' &&
+          Number.isSafeInteger(raw[k]) &&
+          raw[k] >= 1 &&
+          raw[k] <= MAX_EXTRA_PRICE_CENTS)
+    ) ||
     !Array.isArray(raw.modules) ||
     !raw.modules.every((m) => typeof m === 'string') ||
     // A module this build does not know yet (added by a newer migration that
@@ -56,6 +76,9 @@ export function parsePlanDefinition(raw: unknown): PlanDefinition | null {
       max_users: limits.max_users as number | null,
       max_channels: limits.max_channels as number | null,
     },
+    ...Object.fromEntries(
+      EXTRA_PRICE_KEYS.filter((k) => k in raw).map((k) => [k, raw[k]])
+    ),
   };
 }
 export function parsePlanVersion(raw: unknown): PlanVersion | null {
@@ -87,9 +110,36 @@ export function parsePlanVersion(raw: unknown): PlanVersion | null {
     price_monthly_cents: price,
   };
 }
+/**
+ * Extras joined from account_billing (object for the one-to-one embed, array tolerated).
+ * They count only while the subscription is `active`; while a removal is scheduled the limit
+ * for new users/numbers is already the TARGET (so a removal cannot be "blocked" on purpose).
+ * Missing (agent: RLS hides the row) or malformed = no extras.
+ */
+function extrasOf(raw: { account_billing?: unknown }): PlanAccountFields['extras'] {
+  const row = Array.isArray(raw.account_billing)
+    ? raw.account_billing[0]
+    : raw.account_billing;
+  if (!record(row) || row.status !== 'active') return null;
+  const n = (v: unknown) =>
+    typeof v === 'number' && Number.isSafeInteger(v) && v > 0
+      ? Math.min(v, MAX_EXTRAS)
+      : 0;
+  const scheduled = (bought: unknown, target: unknown) =>
+    typeof target === 'number' && Number.isSafeInteger(target) && target >= 0
+      ? Math.min(n(bought), target)
+      : n(bought);
+  return {
+    users: scheduled(row.extra_users, row.pending_extra_users),
+    channels: scheduled(row.extra_channels, row.pending_extra_channels),
+  };
+}
 /** Normalize joined rows once; reject missing or mismatched assigned relationships. */
 export function normalizeAssignedPlan(
-  raw: PlanAccountFields & { plan_version?: unknown }
+  raw: PlanAccountFields & {
+    plan_version?: unknown;
+    account_billing?: unknown;
+  }
 ): PlanAccountFields {
   const version = raw.plan_version;
   const definition =
@@ -98,5 +148,5 @@ export function normalizeAssignedPlan(
     version.plan === raw.plan
       ? parsePlanDefinition(version.definition)
       : null;
-  return { ...raw, plan_definition: definition };
+  return { ...raw, plan_definition: definition, extras: extrasOf(raw) };
 }
