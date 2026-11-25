@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveEntitlements } from '@/lib/plans'
 
 // POST /api/channels/qr/connect — a NEW session must fit under the EFFECTIVE
-// channel limit (plan + contracted extras, migration 114).
+// channel limit (plan + contracted extras, migration 116).
 
 const h = vi.hoisted(() => ({
   extraChannels: 0,

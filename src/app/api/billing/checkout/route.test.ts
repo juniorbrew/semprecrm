@@ -231,7 +231,7 @@ describe('billing checkout', () => {
     expect(res.status).toBe(502)
     expect(JSON.stringify(await res.json())).not.toMatch(/CPF inválido/)
   })
-  describe('extras held by an account that subscribes again (migration 114)', () => {
+  describe('extras held by an account that subscribes again (migration 116)', () => {
     const held = {
       account_id: 'acct-1',
       asaas_customer_id: 'cus_1',

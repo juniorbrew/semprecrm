@@ -160,7 +160,7 @@ export async function POST(request: Request) {
         })
       ).id
 
-    // Extras already contracted (migration 114) stay, at their locked prices, only for the
+    // Extras already contracted (migration 116) stay, at their locked prices, only for the
     // kinds the target plan can use: an unlimited limit or a plan that sells no price for the
     // extra drops it, so nothing useless keeps being billed. A scheduled removal is cleared.
     const def = version.definition

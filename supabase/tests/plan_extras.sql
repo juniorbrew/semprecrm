@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 114 (extras além do plano): preços opcionais no JSON da versão do plano
+-- Migration 116 (extras além do plano): preços opcionais no JSON da versão do plano
 -- (valid_plan_definition), colunas de extras em account_billing (faixas, preço travado
 -- obrigatório), e quem pode ler/gravar: admin lê a PRÓPRIA linha, ninguém do cliente grava,
 -- agente e anon nada, service_role grava. Nada é gravado (termina em ROLLBACK).
@@ -7,9 +7,9 @@
 -- Nota: o banco NAO tem gatilho de max_users / max_channels; o limite real (plano + extras)
 -- vale no servidor (resolveEntitlements, testado em Vitest). Aqui fica o que o banco garante.
 --
--- Precisa do banco local migrado até a 113; aplique a 114 na mesma rodada (tem BEGIN/COMMIT
+-- Precisa do banco local migrado até a 115; aplique a 116 na mesma rodada (tem BEGIN/COMMIT
 -- próprio e é idempotente nos objetos que cria com IF NOT EXISTS; rode so uma vez por banco):
---   (cat supabase/migrations/114_plan_extras.sql supabase/tests/plan_extras.sql) \
+--   (cat supabase/migrations/116_plan_extras.sql supabase/tests/plan_extras.sql) \
 --     | docker exec -i supabase_db_semprecrm psql -v ON_ERROR_STOP=1 -U postgres -d postgres
 -- Nunca rode `supabase db reset`.
 -- ============================================================

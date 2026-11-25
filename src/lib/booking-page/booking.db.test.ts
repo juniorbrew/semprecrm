@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { ingestInboundMessage } from '@/lib/whatsapp/inbound'
 
-import { codeMessage, newBrowserSecret, type BookingSession } from './core'
+import { codeMessage, hashEmailCode, hashSecret, newBrowserSecret, type BookingSession } from './core'
 import {
   bookForClient,
   cancelForClient,
@@ -28,9 +28,12 @@ import {
   pageState,
   readPhoneCheck,
   rescheduleForClient,
+  sessionInfo,
+  upsertIdentity,
+  verifyEmailCode,
   revokeSessions,
   startPhoneCheck,
-  usableContact,
+  usableSession,
   type BookingPageRow,
 } from './server'
 
@@ -67,6 +70,7 @@ describe.runIf(RUN)('booking page against the local database', () => {
   })
 
   afterAll(async () => {
+    await db.from('booking_identities').delete().eq('account_id', ACCOUNT).like('subject', `%${SLUG}%`)
     if (events.length) await db.from('calendar_events').delete().in('id', events)
     await db.from('booking_pages').delete().eq('slug', SLUG)
     if (contacts.length) {
@@ -104,11 +108,11 @@ describe.runIf(RUN)('booking page against the local database', () => {
     expect((await confirm(PHONE_A, PHONE_B)).status).toBe('pending')
     const ok = await confirm(PHONE_A, PHONE_A)
     expect(ok.status).toBe('confirmed')
-    sessionA = { accountId: ACCOUNT, pageId: page.id, contactId: ok.contactId as string, issuedAt: Date.now() }
+    sessionA = { accountId: ACCOUNT, pageId: page.id, contactId: ok.contactId as string, identityId: null, issuedAt: Date.now() }
     // Typed and sent from the twin number, but inbound resolves A's contact: no session for A's data.
     expect((await confirm(PHONE_A_TWIN, PHONE_A_TWIN)).status).toBe('pending')
     const okB = await confirm(PHONE_B, PHONE_B)
-    sessionB = { accountId: ACCOUNT, pageId: page.id, contactId: okB.contactId as string, issuedAt: Date.now() }
+    sessionB = { accountId: ACCOUNT, pageId: page.id, contactId: okB.contactId as string, identityId: null, issuedAt: Date.now() }
     expect(sessionB.contactId).not.toBe(sessionA.contactId)
   })
 
@@ -199,11 +203,94 @@ describe.runIf(RUN)('booking page against the local database', () => {
   })
 
   it('signs out every device: older sessions stop working, a new one works', async () => {
-    expect(await usableContact(db, sessionA)).toBe(true)
+    expect(await usableSession(db, sessionA)).toBe(true)
     await revokeSessions(db, sessionA, new Date())
-    expect(await usableContact(db, sessionA)).toBe(false)
+    expect(await usableSession(db, sessionA)).toBe(false)
     expect(await listMine(db, page, sessionA)).toEqual([])
-    expect(await usableContact(db, { ...sessionA, issuedAt: Date.now() + 1000 })).toBe(true)
+    expect(await usableSession(db, { ...sessionA, issuedAt: Date.now() + 1000 })).toBe(true)
     await db.from('booking_session_revocations').delete().eq('contact_id', sessionA.contactId)
+  })
+
+  it('e-mail/Google identity: books under the typed phone without touching that contact, sees only its own', async () => {
+    const identityId = await upsertIdentity(db, { accountId: ACCOUNT, kind: 'google', subject: `g-${SLUG}`, email: 'x@y.com', name: 'Fulana' })
+    const sess: BookingSession = { accountId: ACCOUNT, pageId: page.id, contactId: null, identityId, issuedAt: Date.now() }
+    expect(await sessionInfo(db, sess)).toMatchObject({ kind: 'google', needs_phone: true, name: 'Fulana' })
+
+    const pub = await loadPublicPage(db, page, 'ok')
+    const service = pub.services[0]
+    const from = new Date(Date.now() + 21 * 86_400_000).toISOString().slice(0, 10)
+    const { slots } = await pageSlots(db, page, { serviceId: service.id, resourceId: null, from })
+    const noPhone = await bookForClient(db, page, sess, { serviceId: service.id, resourceId: null, startsAt: slots[0].starts_at, idempotencyKey: randomUUID() })
+    expect(noPhone.ok).toBe(false)
+    if (!noPhone.ok) expect(noPhone.reason).toBe('needs_phone')
+
+    const before = await db.from('contacts').select('name').eq('id', sessionA.contactId as string).single()
+    const booked = await bookForClient(db, page, sess, {
+      serviceId: service.id,
+      resourceId: null,
+      startsAt: slots[0].starts_at,
+      idempotencyKey: randomUUID(),
+      details: { name: 'Outra Pessoa', phone: PHONE_A },
+    })
+    expect(booked.ok).toBe(true)
+    if (!booked.ok) return
+    events.push(booked.appointment.id)
+    // Typed A's phone: the booking lands on A's contact, A's record is not renamed, staff see the note.
+    expect(booked.appointment.contact_id).toBe(sessionA.contactId)
+    const after = await db.from('contacts').select('name').eq('id', sessionA.contactId as string).single()
+    expect(after.data?.name).toBe(before.data?.name)
+    expect(booked.appointment.description ?? '').toContain('entrou com Google')
+    expect(await sessionInfo(db, sess)).toMatchObject({ needs_phone: false })
+
+    // The identity sees only what it booked; A (WhatsApp-confirmed) sees it as well as its own.
+    const mineIdentity = await listMine(db, page, sess)
+    expect(mineIdentity.map((m) => m.id)).toEqual([booked.appointment.id])
+    const mineA = await listMine(db, page, sessionA)
+    const other = mineA.find((m) => m.id !== booked.appointment.id)
+    expect(mineA.some((m) => m.id === booked.appointment.id)).toBe(true)
+    if (other) await expect(cancelForClient(db, page, sess, other.id)).rejects.toMatchObject({ code: 'not_found' })
+
+    // Unconfirmed bookings on A's phone are capped (2 at most, from any login)...
+    const second = await bookForClient(db, page, sess, { serviceId: service.id, resourceId: null, startsAt: slots[1].starts_at, idempotencyKey: randomUUID() })
+    expect(second.ok).toBe(true)
+    if (second.ok) events.push(second.appointment.id)
+    const other2 = await upsertIdentity(db, { accountId: ACCOUNT, kind: 'email', subject: `outra-${SLUG}@x.com`, email: null, name: null })
+    const sess2: BookingSession = { accountId: ACCOUNT, pageId: page.id, contactId: null, identityId: other2, issuedAt: Date.now() }
+    const third = await bookForClient(db, page, sess2, {
+      serviceId: service.id,
+      resourceId: null,
+      startsAt: slots[2].starts_at,
+      idempotencyKey: randomUUID(),
+      details: { name: 'Mais Um', phone: PHONE_A },
+    })
+    expect(third.ok).toBe(false)
+    if (!third.ok) expect(third.reason).toBe('limit')
+    // ...and they never use up A's own limit: A (WhatsApp) still books.
+    await db.from('calendar_events').update({ status: 'cancelled' }).eq('contact_id', sessionA.contactId as string).eq('booking_source', 'client').not('id', 'in', `(${[booked.appointment.id, second.ok ? second.appointment.id : booked.appointment.id].join(',')})`)
+    const own = await bookForClient(db, page, sessionA, { serviceId: service.id, resourceId: null, startsAt: slots[slots.length - 1].starts_at, idempotencyKey: randomUUID() })
+    expect(own.ok).toBe(true)
+    if (own.ok) events.push(own.appointment.id)
+  })
+
+  it('e-mail code: wrong tries count, the right code signs in once', async () => {
+    const email = `cliente-${SLUG}@exemplo.com`
+    const secret = newBrowserSecret()
+    await db.from('booking_email_codes').insert({
+      account_id: ACCOUNT,
+      page_id: page.id,
+      email,
+      code_hash: hashEmailCode(email, '123456'),
+      browser_hash: hashSecret(secret),
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+    })
+    expect(await verifyEmailCode(db, page, { browserSecret: newBrowserSecret(), code: '123456' })).toEqual({ ok: false, reason: 'expired' })
+    expect(await verifyEmailCode(db, page, { browserSecret: secret, code: '000000' })).toEqual({ ok: false, reason: 'wrong' })
+    const ok = await verifyEmailCode(db, page, { browserSecret: secret, code: '123456' })
+    expect(ok.ok).toBe(true)
+    expect(await verifyEmailCode(db, page, { browserSecret: secret, code: '123456' })).toEqual({ ok: false, reason: 'expired' })
+    if (ok.ok) {
+      const row = await db.from('booking_identities').select('kind, subject').eq('id', ok.identityId).single()
+      expect(row.data).toEqual({ kind: 'email', subject: email })
+    }
   })
 })

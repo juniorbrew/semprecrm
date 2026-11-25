@@ -1,5 +1,5 @@
 -- ============================================================
--- 114 — Extras além do plano (usuário extra e número extra).
+-- 116 — Extras além do plano (usuário extra e número extra).
 -- Spec: docs/superpowers/specs/2026-11-15-indicadores-e-extras.md, Parte C.
 --
 --   * valid_plan_definition (cópia da 113) aceita duas chaves OPCIONAIS no JSON da
@@ -23,7 +23,7 @@
 --
 -- Idempotente: pode rodar de novo (colunas IF NOT EXISTS, constraints recriadas, funções
 -- CREATE OR REPLACE, platform_list_accounts recriada com os mesmos grants).
--- Rollback: supabase/rollback/114_rollback.sql. Teste: supabase/tests/plan_extras.sql.
+-- Rollback: supabase/rollback/116_rollback.sql. Teste: supabase/tests/plan_extras.sql.
 -- ============================================================
 BEGIN;
 SET LOCAL lock_timeout = '5s';

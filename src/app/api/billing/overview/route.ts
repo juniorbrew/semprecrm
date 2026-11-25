@@ -62,7 +62,7 @@ export async function GET() {
       invoiceUrl: (p.invoice_url as string | null) ?? null,
     }))
 
-    // Extras (migration 114): only on an active paid subscription of an account that is not blocked.
+    // Extras (migration 116): only on an active paid subscription of an account that is not blocked.
     let extras = null
     if (billing?.status === 'active' && billing.subscriptionId) {
       const admin = supabaseAdmin()

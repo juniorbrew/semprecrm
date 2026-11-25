@@ -1,4 +1,4 @@
-// Test-only: the three extras RPCs of migration 114 (billing_extras_claim / _commit /
+// Test-only: the three extras RPCs of migration 116 (billing_extras_claim / _commit /
 // _release) over the in-memory fake db, with the same rules as the SQL: one claim at a
 // time per account, the daily cap counted from audit rows, compare-and-swap on commit,
 // and the audit row written together with the change.

@@ -122,7 +122,7 @@ export function createSubscription(input: {
 }
 
 /**
- * Changes the value of the subscription (extras, migration 114). `value` is in reais, like
+ * Changes the value of the subscription (extras, migration 116). `value` is in reais, like
  * createSubscription. `updatePendingPayments` decides about the charges Asaas already
  * generated and not yet paid: true = they follow the new value (use it when the account
  * adds extras, or lowers them for a charge that must no longer include them); false = they

@@ -161,7 +161,7 @@ Página nova em **Plataforma → Uso**, visível só para o dono da plataforma (
   - **Asaas e banco concordam:** depois de qualquer falha, o sistema consulta o valor no Asaas (nunca restaura às cegas), corrige para o valor do banco e confere de novo; se ainda divergir, grava `billing.extras_mismatch` na auditoria.
   - **Falha do Asaas:** nada muda e o dono vê "Não foi possível alterar agora, tente de novo".
 
-### Banco (migration `114_plan_extras.sql`)
+### Banco (migration `116_plan_extras.sql`)
 
 - **Preços dos extras:** o JSON das versões de plano ganha `extra_user_price_cents` e `extra_channel_price_cents` (opcionais, de 1 centavo a R$ 100.000,00), com a validação no mesmo lugar das outras chaves.
 - **`account_billing`:** ganha `extra_users`, `extra_channels`, os preços travados, `extras_first_due`, a remoção agendada (`pending_extra_*`, `extras_reduce_due`, `extras_asaas_lowered`) a compra anual aguardando pagamento (`pending_add_*`, `extras_oneoff_*`) e a ficha da conta (`extras_claim_*`).

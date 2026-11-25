@@ -1,5 +1,5 @@
 // ============================================================
-// Extras beyond the plan (migration 114): one extra user / one extra WhatsApp
+// Extras beyond the plan (migration 116): one extra user / one extra WhatsApp
 // number, each with a monthly price in the plan version. Pure, so the money
 // rules are what the tests pin
 // (docs/superpowers/specs/2026-11-15-indicadores-e-extras.md, Parte C).

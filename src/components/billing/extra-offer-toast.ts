@@ -8,7 +8,7 @@ export interface ExtraOfferPayload {
   canBuy: boolean;
 }
 
-/** Reads the `offer` the limit errors carry (migration 114), or null. */
+/** Reads the `offer` the limit errors carry (migration 116), or null. */
 export function readExtraOffer(body: unknown): ExtraOfferPayload | null {
   const o = (body as { offer?: Partial<ExtraOfferPayload> } | null)?.offer;
   return o && (o.kind === 'user' || o.kind === 'channel') && typeof o.monthlyCents === 'number' && Number.isSafeInteger(o.monthlyCents)

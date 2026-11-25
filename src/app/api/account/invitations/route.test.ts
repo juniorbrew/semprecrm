@@ -155,7 +155,7 @@ describe('POST /api/account/invitations — max_users', () => {
     expect(res.status).toBe(201);
   });
 
-  it('counts contracted extra users in the limit (plan + extras, migration 114)', async () => {
+  it('counts contracted extra users in the limit (plan + extras, migration 116)', async () => {
     h.state.members = 2; // trial: 2 seats
     expect((await POST(request({ role: 'agent' }))).status).toBe(403);
     h.state.account.account_billing = { status: 'active', extra_users: 1, extra_channels: 0 };

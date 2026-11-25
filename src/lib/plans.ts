@@ -99,13 +99,13 @@ export interface PlanDefinition {
   limits: Limits;
   /**
    * Monthly price (BRL cents) of one extra user / one extra WhatsApp number
-   * (migration 114). Absent = the plan does not offer that extra.
+   * (migration 116). Absent = the plan does not offer that extra.
    */
   extra_user_price_cents?: number;
   extra_channel_price_cents?: number;
 }
 
-/** Contracted extras are capped (DB CHECK, migration 114). */
+/** Contracted extras are capped (DB CHECK, migration 116). */
 export const MAX_EXTRAS = 100;
 
 const ALL_OPTIONAL: readonly OptionalModule[] = OPTIONAL_MODULES;
@@ -252,7 +252,7 @@ export interface PlanAccountFields {
   plan_expires_at?: string | Date | null;
   module_overrides?: Record<string, unknown> | null;
   limit_overrides?: Record<string, unknown> | null;
-  /** Extras contracted on top of the plan (account_billing, migration 114). */
+  /** Extras contracted on top of the plan (account_billing, migration 116). */
   extras?: { users: number; channels: number } | null;
 }
 
@@ -270,7 +270,7 @@ export interface Entitlements {
   expiresAt: string | null;
   modules: Record<Module, boolean>;
   limits: Limits;
-  /** Extras already inside `limits` (migration 114); zero when none. */
+  /** Extras already inside `limits` (migration 116); zero when none. */
   extras: { users: number; channels: number };
   blocked: false | { reason: BlockReason };
 }

@@ -3,12 +3,12 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-// Contract of migration 114 (plan extras), read as text so a regression shows up
+// Contract of migration 116 (plan extras), read as text so a regression shows up
 // without a database. The behaviour itself is checked on a real Postgres by
 // supabase/tests/plan_extras.sql.
 
-const sql = readFileSync(join(process.cwd(), 'supabase/migrations/114_plan_extras.sql'), 'utf8')
-const rollback = readFileSync(join(process.cwd(), 'supabase/rollback/114_rollback.sql'), 'utf8')
+const sql = readFileSync(join(process.cwd(), 'supabase/migrations/116_plan_extras.sql'), 'utf8')
+const rollback = readFileSync(join(process.cwd(), 'supabase/rollback/116_rollback.sql'), 'utf8')
 const v113 = readFileSync(join(process.cwd(), 'supabase/migrations/113_booking_pages.sql'), 'utf8')
 
 const modulesIn = (text: string) => {
@@ -16,7 +16,7 @@ const modulesIn = (text: string) => {
   return [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1])
 }
 
-describe('migration 114 contract', () => {
+describe('migration 116 contract', () => {
   it('runs in one transaction with a lock timeout', () => {
     expect(sql).toMatch(/^BEGIN;$/m)
     expect(sql).toMatch(/^COMMIT;$/m)

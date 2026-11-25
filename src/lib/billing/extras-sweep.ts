@@ -1,5 +1,5 @@
 // ============================================================
-// Extras bookkeeping that waits for time or for money (migration 114), run by the
+// Extras bookkeeping that waits for time or for money (migration 116), run by the
 // hourly billing cron (and, for one account, when its owner opens the panel).
 //
 // 1. ANNUAL ADDS waiting for their one-off charge (`extras_oneoff_payment_id`):

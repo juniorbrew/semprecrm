@@ -1,6 +1,6 @@
 // ============================================================
 // "Buy 1 extra for R$ X/month" shown when inviting a user or connecting a
-// number hits the plan limit (migration 114). Server only, and only on the
+// number hits the plan limit (migration 116). Server only, and only on the
 // limit-hit path: two small reads. The offer is just a price to show; buying
 // goes through POST /api/billing/extras, which checks everything again.
 // ============================================================

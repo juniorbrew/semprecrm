@@ -1,4 +1,4 @@
--- Rollback of 114_plan_extras.sql. NOT a migration: run by hand (as postgres).
+-- Rollback of 116_plan_extras.sql. NOT a migration: run by hand (as postgres).
 --
 -- READ FIRST. Roll the APP back before this script, and only if BOTH checks below return 0 rows:
 --

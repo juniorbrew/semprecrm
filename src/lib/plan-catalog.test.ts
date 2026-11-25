@@ -80,7 +80,7 @@ describe('assigned catalog', () => {
       parsePlanDefinition({ ...PLAN_CATALOG.pro, injected: true })
     ).toBeNull();
   });
-  it('accepts optional extra prices and rejects bad ones (migration 114)', () => {
+  it('accepts optional extra prices and rejects bad ones (migration 116)', () => {
     const withPrices = {
       ...PLAN_CATALOG.pro,
       extra_user_price_cents: 1500,

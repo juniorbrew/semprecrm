@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
  * Safety net for paid plans (migration 090): an account whose paid period
  * (plus grace) ended without a new confirmed payment turns past_due — e.g.
  * the subscription was deleted in Asaas or its webhook queue is paused.
- * Also applies the removals of extras that came due (migration 114, extras-sweep.ts).
+ * Also applies the removals of extras that came due (migration 116, extras-sweep.ts).
  * Hit hourly by scripts/cron-tick.mjs with the shared `x-cron-secret` header.
  */
 export async function GET(request: Request) {

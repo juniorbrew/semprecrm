@@ -349,7 +349,7 @@ describe('limit helpers', () => {
   });
 });
 
-describe('resolveEntitlements — contracted extras (migration 114)', () => {
+describe('resolveEntitlements — contracted extras (migration 116)', () => {
   const pro = { plan: 'pro', plan_status: 'active', plan_expires_at: null } as const;
 
   it('raises a finite limit by the extras and reports what was applied', () => {

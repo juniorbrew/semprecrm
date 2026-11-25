@@ -1,6 +1,6 @@
 // ============================================================
 // POST /api/billing/extras — buy extra users / WhatsApp numbers, schedule their
-// removal, or cancel a scheduled removal (migration 114; spec
+// removal, or cancel a scheduled removal (migration 116; spec
 // 2026-11-15-indicadores-e-extras.md, Parte C).
 //
 // OWNER only (like checkout), active paid account only: trial, read-only and

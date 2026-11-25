@@ -84,7 +84,7 @@ export const DICT_BILLING: Record<string, string> = {
   'Could not reach the payment provider. Try again in a few minutes.':
     'Não foi possível falar com o provedor de pagamento. Tente novamente em alguns minutos.',
 
-  // Extras beyond the plan (migration 114)
+  // Extras beyond the plan (migration 116)
   'Extras beyond the plan':
     'Extras além do plano',
   'Optional monthly price of one extra user or number. Leave blank to not offer it: the limit keeps blocking. A new price only applies to new purchases.':
