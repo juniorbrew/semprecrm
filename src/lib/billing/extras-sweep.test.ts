@@ -154,6 +154,14 @@ describe('sweepExtrasRemovals', () => {
     expect(row()).toMatchObject({ extra_users: 2, pending_extra_users: 0 })
   })
 
+  it('waits while the last full-price charge is not even generated yet (sandbox: Asaas generates it near its due date)', async () => {
+    // only the 01/12 charge exists and is paid; the 01/01 one (still billing the extras) is not generated yet
+    h.payments = [{ id: 'p1', dueDate: '2026-12-01', status: 'RECEIVED', value: 89.9 }]
+    expect(await sweepExtrasRemovals(h.fake.db, at('2026-12-05'))).toMatchObject({ lowered: 0, errors: 0 })
+    expect(h.calls).toEqual([])
+    expect(row()).toMatchObject({ value_cents: 8990, extras_asaas_lowered: false })
+  })
+
   it('step 1: once the charge before the day is paid, the Asaas value drops (pending charges follow); the limit does not', async () => {
     expect(await sweepExtrasRemovals(h.fake.db, at('2027-01-20'))).toEqual({ lowered: 1, applied: 0, blocked: 0, activated: 0, cancelled: 0, refunds: 0, diffs: 0, errors: 0 })
     expect(h.calls).toEqual([{ value: 59.9, pending: true }])
