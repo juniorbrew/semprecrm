@@ -87,4 +87,19 @@ desfaz os dados de teste do banco local.
 
 ## Resultado do teste
 
-_(ainda não rodado)_
+Rodado em 26/11/2026 no sandbox, com o sistema local (main 4a094a4 + a correção abaixo). Os avisos de
+pagamento foram simulados (o Asaas não alcança o computador local); o sistema conferiu cada um no Asaas.
+
+| Passo | Resultado |
+|---|---|
+| 1. Assinar Pro mensal e pagar | **ok**: conta ativa. O Asaas **não** gera a próxima cobrança na hora: só perto do vencimento (`nextDueDate` 26/12, nenhuma cobrança gerada no dia). |
+| 2. Comprar 1 usuário (mensal) | **ok**: limite subiu na hora; valor da assinatura 89,90 → 109,80. |
+| 2b. `updatePendingPayments` com cobrança já gerada | **ok**: cobrança PENDING de 10,00 virou 15,00 (assinatura de teste à parte). |
+| 3. Cobrança vencida | **pendente**: o Asaas não aceita criar cobrança com vencimento no passado; a cobrança de teste (`sub_5ilpadp58mjwoe3u`, vence 26/11) fica vencida no dia seguinte, e aí se confere se o valor de uma cobrança vencida muda. |
+| 4. Remover o extra (mensal) | **diferente → corrigido**: a remoção ficou para 26/01 (certo), mas a tarefa de hora em hora baixou o valor no Asaas **na hora**, porque a última cobrança existente antes do dia era a de 26/11 (paga) e a de 26/12 ainda não tinha sido gerada. A de 26/12 sairia sem o extra (um mês de graça). Correção: só baixa quando a cobrança paga é a do último período (vence um ciclo antes do dia). Teste novo em `extras-sweep.test.ts`; rodado de novo no sandbox: não baixou mais. |
+| 5. Mais de 10 cobranças | **em parte**: a resposta do Asaas traz `hasMore`/`totalCount`, que o sistema usa para paginar. Não dá para gerar 10+ cobranças de verdade numa assinatura de teste sem esperar os ciclos. |
+| 6. Assinar Pro anual e pagar | **ok**: R$ 899,00/ano (10 × mensal). |
+| 7. Comprar 2 usuários (anual) | **ok**: cobrança avulsa sem assinatura de R$ 398,00 (12 meses × 2 × 19,90 × 10/12), vence em 3 dias; limite não subiu antes de pagar. |
+| 8. Pagar a avulsa | **ok**: 2 extras liberados; renovação 899,00 → 1.297,00; `extras_first_due` = renovação. |
+| 9. Avulsa não paga em 7 dias | **ok**: a tarefa apagou a cobrança; conta sem mudança. Consultar uma cobrança apagada devolve **200 com `deleted: true` e status PENDING** (não 404); apagar de novo também devolve 200. |
+| 10. Estorno da avulsa paga | **ok**: dinheiro não pode ser estornado (o Asaas só estorna cartão e Pix); paga com o cartão de teste do Asaas e estornada: a conta passou para `past_due`. |
