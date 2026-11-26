@@ -26,6 +26,8 @@ Tudo roda **no computador local** (pasta `C:\SempreCRM-indicadores`, banco local
    ASAAS_WEBHOOK_TOKEN=teste-local-extras
    ```
    Se já existirem linhas `ASAAS_*` nesse arquivo, troque por estas. **Nunca** use a chave de produção aqui.
+   A chave começa com `$`: escreva `ASAAS_API_KEY=\$aact_hmlg_...` (com a barra antes do `$`). Sem a barra o
+   Next lê a chave vazia. O mesmo vale para a chave de produção na VPS.
 4. Docker Desktop ligado. Avise o Claude: "sandbox pronto".
 
 Observação: o Asaas não consegue mandar avisos (webhook) para o computador local. O Claude simula o aviso
