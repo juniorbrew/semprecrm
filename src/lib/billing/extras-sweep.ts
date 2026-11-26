@@ -376,7 +376,9 @@ async function decideRemoval(db: SupabaseClient, row: BillingExtrasRow, today: s
     // The charge due just before D must be paid: every extra was billed for its full period.
     const payments = await listSubscriptionPayments(row.asaas_subscription_id)
     const before = payments.filter((p) => p.dueDate < due).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).at(-1)
-    if (!before || !PAID_STATUSES.has(before.status)) return { refuse: 'skip' }
+    // It must be the charge of the last period (due one cycle before D): Asaas generates a charge only
+    // near its due date, so an older paid charge is not enough (the last one would go out without the extras).
+    if (!before || before.dueDate < addCycles(due, cycle, -1) || !PAID_STATUSES.has(before.status)) return { refuse: 'skip' }
     return {
       step: 'lowered',
       decision: {
